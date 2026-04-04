@@ -38,6 +38,10 @@ services:
       - key: COINGECKO_API_KEY
         sync: false
 
+      # Anthropic API key (required for AI token analysis)
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
       # Admin password (required for curated token management)
       - key: ADMIN_PASSWORD
         sync: false
@@ -54,7 +58,7 @@ services:
       - key: NODE_ENV
         value: production
 
-      # CORS - Update this to your actual frontend URL
+      # CORS - Update this to your actual frontend URL after creating the static site
       - key: CORS_ORIGIN
         value: https://cultscreener-frontend.onrender.com
 
@@ -109,11 +113,11 @@ services:
       - key: NODE_ENV
         value: production
 
-      # Worker performance tuning
+      # Worker performance tuning (starter plan has limited CPU — keep concurrency modest)
       - key: WORKER_CONCURRENCY
-        value: "50"
+        value: "10"
       - key: WORKER_LIMITER_MAX
-        value: "50"
+        value: "10"
 
   # =====================================================
   # Redis (BullMQ job queue)
@@ -123,6 +127,7 @@ services:
     region: oregon
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: [] # Allow only internal Render services
 
 # =====================================================
 # PostgreSQL Database
@@ -135,17 +140,30 @@ databases:
     user: cultscreener_user
 
 # =====================================================
-# MANUAL STEP REQUIRED:
-# After blueprint deployment, create a Static Site manually:
+# MANUAL STEPS REQUIRED AFTER BLUEPRINT DEPLOYMENT:
 #
-# 1. Go to Render Dashboard > New > Static Site
-# 2. Connect your GitHub repository
-# 3. Configure:
-#    - Name: cultscreener-frontend
-#    - Root Directory: frontend
-#    - Build Command: (none)
-#    - Publish Directory: .
-# 4. Add these rewrite rules in Settings > Redirects/Rewrites:
-#    - Source: /token/*    -> Destination: /token.html (Rewrite)
-#    - Source: /community  -> Destination: /community.html (Rewrite)
+# 1. Set API keys in Render Dashboard (Environment tab):
+#    - HELIUS_API_KEY (required for holder analysis)
+#    - ANTHROPIC_API_KEY (required for AI token analysis)
+#    - ADMIN_PASSWORD (required for curated token management)
+#    - COOKIE_SECRET (required for session persistence)
+#    - COINGECKO_API_KEY (optional — higher rate limits)
+#
+# 2. Create the frontend Static Site manually:
+#    a. Go to Render Dashboard > New > Static Site
+#    b. Connect your GitHub repository
+#    c. Configure:
+#       - Name: cultscreener-frontend
+#       - Root Directory: frontend
+#       - Build Command: (leave blank)
+#       - Publish Directory: .
+#    d. Add rewrite rules in Settings > Redirects/Rewrites:
+#       - Source: /token/*    -> Destination: /token.html (Rewrite)
+#       - Source: /community  -> Destination: /community.html (Rewrite)
+#
+# 3. Update CORS_ORIGIN on cultscreener-api:
+#    After creating the static site, copy its URL and update
+#    the CORS_ORIGIN env var on the API service to match.
+#    If using a custom domain, add both:
+#      https://cultscreener-frontend.onrender.com,https://yourdomain.com
 # =====================================================

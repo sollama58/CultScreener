@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Abandoned directories
+telegram-bot/
+
 # Environment variables
 .env
 .env.local
