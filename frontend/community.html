@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Community - CultScreener</title>
+  <meta name="description" content="Community leaderboards — most watchlisted tokens and top sentiment on CultScreener.">
+  <meta name="theme-color" content="#0a0a0a">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CultScreener">
+  <meta property="og:title" content="Community - CultScreener">
+  <meta property="og:description" content="Community leaderboards — most watchlisted tokens and top sentiment on CultScreener.">
+  <meta property="og:url" content="https://cultscreener.com/community">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Community - CultScreener">
+  <meta name="twitter:description" content="Community leaderboards — most watchlisted tokens and top sentiment on CultScreener.">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="dns-prefetch" href="https://api.geckoterminal.com">
+  <link rel="dns-prefetch" href="https://api.jup.ag">
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">
+        <span class="logo-text">CultScreener</span>
+        <span class="powered-badge"><svg class="flame-icon" width="14" height="14" viewBox="0 0 24 24" fill="url(#flameGrad)"><defs><linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#ff4500"/><stop offset="100%" stop-color="#ff8c00"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>Powered by ASDFASDFA</span>
+      </a>
+
+      <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle navigation" aria-expanded="false">
+        <svg class="icon-hamburger" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <svg class="icon-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+
+      <nav class="nav" id="main-nav">
+        <a href="/" class="nav-link">Diamond Hands</a>
+        <a href="community.html" class="nav-link active">Community</a>
+      </nav>
+
+      <div class="header-actions">
+        <button class="btn btn-wallet" id="wallet-connect-btn">Connect Wallet</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main community-page">
+    <div class="community-tabs">
+      <button class="community-tab active" data-tab="watchlist">Most Watchlisted</button>
+      <button class="community-tab" data-tab="sentiment">Top Sentiment</button>
+    </div>
+
+    <div class="community-tab-content" id="tab-watchlist">
+      <div class="leaderboard-table-wrap">
+        <table class="terminal-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Token</th>
+              <th>Price</th>
+              <th>MCap</th>
+              <th>Watchlists</th>
+            </tr>
+          </thead>
+          <tbody id="watchlist-leaderboard-body">
+            <tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="community-tab-content" id="tab-sentiment" style="display:none">
+      <div class="leaderboard-table-wrap">
+        <table class="terminal-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Token</th>
+              <th>Price</th>
+              <th>MCap</th>
+              <th>Bullish</th>
+              <th>Bearish</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody id="sentiment-leaderboard-body">
+            <tr><td colspan="7"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-content">
+      <span>CultScreener &copy; 2025</span>
+      <span class="footer-divider">|</span>
+      <span>Powered by Solana</span>
+    </div>
+  </footer>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/wallet.js"></script>
+  <script src="js/watchlist.js"></script>
+  <script src="js/communityPage.js"></script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+# Render Blueprint - CultScreener
+# Deploy with: render blueprint apply
+# Documentation: https://render.com/docs/blueprint-spec
+#
+# NOTE: Static sites cannot be created via blueprint.
+# After deploying this blueprint, manually create the frontend static site.
+
+services:
+  # =====================================================
+  # Backend API Service
+  # =====================================================
+  - type: web
+    name: cultscreener-api
+    runtime: node
+    region: oregon
+    plan: starter
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      # Database connection (auto-populated from Render PostgreSQL)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cultscreener-db
+          property: connectionString
+
+      # Redis connection (auto-populated from Render Redis)
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: cultscreener-redis
+          property: connectionString
+
+      # API Keys (set these manually in Render dashboard)
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false
+
+      # Admin password (required for curated token management)
+      - key: ADMIN_PASSWORD
+        sync: false
+
+      # Cookie signing secret (required — sessions invalidated on restart without this)
+      - key: COOKIE_SECRET
+        sync: false
+
+      # SSL certificate verification for PostgreSQL (set to 'false' for Render's self-signed certs)
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        value: "false"
+
+      # Application settings
+      - key: NODE_ENV
+        value: production
+
+      # CORS - Update this to your actual frontend URL
+      - key: CORS_ORIGIN
+        value: https://cultscreener-frontend.onrender.com
+
+      # Rate limiting configuration
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "100"
+
+      # Cache settings (seconds)
+      - key: CACHE_TOKEN_TTL
+        value: "300"
+      - key: CACHE_PRICE_TTL
+        value: "60"
+
+  # =====================================================
+  # Background Worker (BullMQ job processor)
+  # =====================================================
+  - type: worker
+    name: cultscreener-worker
+    runtime: node
+    region: oregon
+    plan: starter
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm run worker
+    envVars:
+      # Database connection (auto-populated from Render PostgreSQL)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cultscreener-db
+          property: connectionString
+
+      # Redis connection (auto-populated from Render Redis)
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: cultscreener-redis
+          property: connectionString
+
+      # API Keys — worker needs these for background jobs
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false
+
+      # SSL certificate verification for PostgreSQL (set to 'false' for Render's self-signed certs)
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        value: "false"
+
+      # Application settings
+      - key: NODE_ENV
+        value: production
+
+      # Worker performance tuning
+      - key: WORKER_CONCURRENCY
+        value: "50"
+      - key: WORKER_LIMITER_MAX
+        value: "50"
+
+  # =====================================================
+  # Redis (BullMQ job queue)
+  # =====================================================
+  - type: redis
+    name: cultscreener-redis
+    region: oregon
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+
+# =====================================================
+# PostgreSQL Database
+# =====================================================
+databases:
+  - name: cultscreener-db
+    plan: basic-256mb
+    region: oregon
+    databaseName: cultscreener
+    user: cultscreener_user
+
+# =====================================================
+# MANUAL STEP REQUIRED:
+# After blueprint deployment, create a Static Site manually:
+#
+# 1. Go to Render Dashboard > New > Static Site
+# 2. Connect your GitHub repository
+# 3. Configure:
+#    - Name: cultscreener-frontend
+#    - Root Directory: frontend
+#    - Build Command: (none)
+#    - Publish Directory: .
+# 4. Add these rewrite rules in Settings > Redirects/Rewrites:
+#    - Source: /token/*    -> Destination: /token.html (Rewrite)
+#    - Source: /community  -> Destination: /community.html (Rewrite)
+# =====================================================

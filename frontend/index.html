@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>🔥 CultScreener - Diamond Hands Terminal</title>
+  <meta name="description" content="CultScreener is a Solana token conviction analyzer. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.">
+  <meta name="theme-color" content="#07080a">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CultScreener">
+  <meta property="og:title" content="CultScreener - Diamond Hands Terminal">
+  <meta property="og:description" content="Solana token conviction analyzer. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.">
+  <meta property="og:image" content="https://cultscreener.com/og-image.png">
+  <meta property="og:url" content="https://cultscreener.com/">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="CultScreener - Diamond Hands Terminal">
+  <meta name="twitter:description" content="Solana token conviction analyzer. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.">
+  <meta name="twitter:image" content="https://cultscreener.com/og-image.png">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">
+        <span class="logo-text">CultScreener</span>
+        <span class="powered-badge"><svg class="flame-icon" width="14" height="14" viewBox="0 0 24 24" fill="url(#flameGrad)"><defs><linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#ff4500"/><stop offset="100%" stop-color="#ff8c00"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>Powered by ASDFASDFA</span>
+      </a>
+
+      <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle navigation" aria-expanded="false">
+        <svg class="icon-hamburger" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="3" y1="6" x2="21" y2="6"/>
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+        <svg class="icon-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+
+      <nav class="nav" id="main-nav">
+        <a href="/" class="nav-link active">Diamond Hands</a>
+        <a href="community.html" class="nav-link">Community</a>
+      </nav>
+
+      <div class="header-actions">
+        <button class="btn btn-wallet" id="wallet-connect-btn">Connect Wallet</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main conviction-page terminal-page">
+    <!-- Terminal Header -->
+    <div class="terminal-header">
+      <div class="terminal-title-row">
+        <div class="terminal-title">
+          <span class="terminal-diamond">&#x25C6;</span>
+          <span class="terminal-name">DIAMOND HANDS</span>
+          <span class="terminal-tag">TERMINAL</span>
+        </div>
+        <div class="terminal-status">
+          <span class="terminal-dot"></span>
+          <span id="terminal-status-text">CONNECTING...</span>
+        </div>
+      </div>
+      <div class="terminal-stats" id="terminal-stats">
+        <div class="terminal-stat">
+          <span class="terminal-stat-label">TOKENS</span>
+          <span class="terminal-stat-value" id="stat-total">--</span>
+        </div>
+        <div class="terminal-stat">
+          <span class="terminal-stat-label">AVG CONVICTION</span>
+          <span class="terminal-stat-value" id="stat-avg-conviction">--</span>
+        </div>
+        <div class="terminal-stat">
+          <span class="terminal-stat-label">PAGE</span>
+          <span class="terminal-stat-value" id="stat-page">--</span>
+        </div>
+        <div class="terminal-stat">
+          <span class="terminal-stat-label">SHOWING</span>
+          <span class="terminal-stat-value" id="stat-showing">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal Controls -->
+    <section class="community-section conviction-section terminal-section">
+      <!-- Quick Filter Pills -->
+      <div class="terminal-quick-filters" id="terminal-quick-filters">
+        <button class="terminal-pill active" data-tier="all">ALL</button>
+        <button class="terminal-pill pill-elite" data-tier="elite">ELITE 75%+</button>
+        <button class="terminal-pill pill-high" data-tier="high">HIGH 50%+</button>
+        <button class="terminal-pill pill-mid" data-tier="mid">MID 25%+</button>
+        <button class="terminal-pill pill-low" data-tier="low">LOW &lt;25%</button>
+        <div class="terminal-pill-separator"></div>
+        <button class="terminal-pill pill-mcap" data-mcap="micro">MICRO &lt;$100K</button>
+        <button class="terminal-pill pill-mcap" data-mcap="small">SMALL $100K-$1M</button>
+        <button class="terminal-pill pill-mcap" data-mcap="mid">MID $1M-$10M</button>
+        <button class="terminal-pill pill-mcap" data-mcap="large">LARGE $10M+</button>
+      </div>
+
+      <!-- Search + Advanced Filters Row -->
+      <div class="terminal-controls">
+        <div class="terminal-search-wrap">
+          <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="text" id="conviction-search" placeholder="Search token..." maxlength="100" autocomplete="off" class="terminal-search">
+        </div>
+        <div class="terminal-filter-group">
+          <label>MIN CONVICTION</label>
+          <div class="terminal-range-wrap">
+            <input type="range" id="conviction-min-pct" min="0" max="100" step="5" value="0">
+            <span id="conviction-min-pct-val" class="terminal-range-val">0%</span>
+          </div>
+        </div>
+        <div class="terminal-filter-group">
+          <label>MIN SAMPLE</label>
+          <select id="conviction-min-sample" class="terminal-select">
+            <option value="">Any</option>
+            <option value="10">10+</option>
+            <option value="25">25+</option>
+            <option value="50">50+</option>
+            <option value="100">100+</option>
+          </select>
+        </div>
+        <button class="terminal-clear-btn" id="conviction-filter-reset" style="display:none;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+          CLEAR
+        </button>
+      </div>
+
+      <!-- Hidden select for mcap (used by JS) -->
+      <select id="conviction-mcap" style="display:none;">
+        <option value="">Any</option>
+        <option value="0-100000">Under $100K</option>
+        <option value="100000-1000000">$100K - $1M</option>
+        <option value="1000000-10000000">$1M - $10M</option>
+        <option value="10000000-100000000">$10M - $100M</option>
+        <option value="100000000-">$100M+</option>
+      </select>
+
+      <!-- Data Table -->
+      <div class="community-table-container terminal-table-container">
+        <table class="token-table community-table conviction-table terminal-table">
+          <thead>
+            <tr>
+              <th class="cell-rank sortable" data-sort="rank">#</th>
+              <th class="cell-token">Token</th>
+              <th class="cell-price sortable" data-sort="price">Price <span class="sort-arrow"></span></th>
+              <th class="cell-mcap sortable" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
+              <th class="cell-conviction sortable active-sort" data-sort="conviction">CONVICTION <span class="sort-arrow desc"></span></th>
+              <th class="cell-conviction-bars">Distribution</th>
+              <th class="cell-updated sortable" data-sort="sample">Sample <span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="conviction-table-body">
+            <tr class="loading-row">
+              <td colspan="7">
+                <div class="loading-state">
+                  <div class="loading-spinner"></div>
+                  <span>Initializing terminal...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination terminal-pagination" id="conviction-pagination" style="display: none;">
+        <div class="pagination-left"></div>
+        <div class="pagination-center">
+          <button id="conviction-prev" class="pagination-arrow" disabled title="Previous page">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </button>
+          <div id="conviction-page-tabs" class="page-tabs">
+            <button class="page-tab active" data-page="1">1</button>
+          </div>
+          <button id="conviction-next" class="pagination-arrow" title="Next page">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="pagination-right">
+          <span id="conviction-page-info" class="page-info-text">Page 1</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-content">
+      <span>CultScreener &copy; 2025</span>
+      <span class="footer-divider">|</span>
+      <span>Powered by Solana</span>
+    </div>
+  </footer>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/wallet.js"></script>
+  <script src="js/watchlist.js"></script>
+  <script src="js/conviction.js"></script>
+</body>
+</html>
