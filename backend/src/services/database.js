@@ -1177,8 +1177,8 @@ async function addToWatchlistAtomic(walletAddress, tokenMint, maxItems = 100) {
 
   const result = await pool.query(
     `INSERT INTO watchlist (wallet_address, token_mint)
-     SELECT $1, $2
-     WHERE (SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1) < $3
+     SELECT $1::text, $2::text
+     WHERE (SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1::text) < $3::int
      ON CONFLICT (wallet_address, token_mint) DO NOTHING
      RETURNING *`,
     [walletAddress, tokenMint, maxItems]
