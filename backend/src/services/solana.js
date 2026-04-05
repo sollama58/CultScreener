@@ -283,42 +283,56 @@ async function checkHealth() {
  * @returns {Promise<number|null>} - Token account count (approximate holders) or null if unavailable
  */
 /**
- * Get total holder count from Solscan Pro API.
- * Requires SOLSCAN_API_KEY env var.
+ * Get exact total holder count by paginating Helius DAS getTokenAccounts.
+ * Each page returns up to 1000 accounts. We count across all pages to get
+ * the true number. Cached for 24h so the cost is negligible (a 10k-holder
+ * token = 10 DAS calls once per day).
  */
-const SOLSCAN_API_KEY = process.env.SOLSCAN_API_KEY || '';
-
 async function getTokenHolderCount(mintAddress) {
-  if (!SOLSCAN_API_KEY) {
-    console.log('[Solana] SOLSCAN_API_KEY not configured, skipping holder count');
-    return null;
-  }
+  if (!HELIUS_DAS_URL) return null;
 
   try {
-    const response = await axios.get(
-      `https://api-v2.solscan.io/v2/token/holder/count?address=${encodeURIComponent(mintAddress)}`,
-      {
-        timeout: 10000,
-        httpsAgent,
-        headers: {
-          'Accept': 'application/json',
-          'token': SOLSCAN_API_KEY
-        }
-      }
-    );
+    let totalCount = 0;
+    let page = 1;
+    const MAX_PAGES = 50; // Safety cap: 50,000 holders max
 
-    const count = response.data?.data?.holder_count
-      ?? response.data?.data?.count
-      ?? response.data?.data?.total
-      ?? response.data?.data;
-    if (typeof count === 'number' && count > 0) {
-      console.log(`[Solana] Solscan holder count for ${mintAddress.slice(0, 8)}...: ${count}`);
-      return count;
+    while (page <= MAX_PAGES) {
+      const response = await rateLimitedRequest('helius', () =>
+        axios.post(HELIUS_DAS_URL, {
+          jsonrpc: '2.0',
+          id: `holder-count-p${page}`,
+          method: 'getTokenAccounts',
+          params: {
+            mint: mintAddress,
+            page,
+            limit: 1000,
+            options: { showZeroBalance: false }
+          }
+        }, {
+          timeout: 15000,
+          headers: HELIUS_HEADERS,
+          httpsAgent
+        })
+      );
+
+      if (response.data.error) break;
+
+      const accounts = response.data.result?.token_accounts;
+      if (!accounts || accounts.length === 0) break;
+
+      totalCount += accounts.length;
+
+      // If fewer than 1000 returned, we've reached the last page
+      if (accounts.length < 1000) break;
+      page++;
     }
 
-    return null;
+    if (totalCount > 0) {
+      console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} (${page} pages)`);
+    }
+    return totalCount > 0 ? totalCount : null;
   } catch (error) {
-    console.error('[Solana] Solscan holder count error:', error.message);
+    console.error('[Solana] Helius holder count error:', error.message);
     return null;
   }
 }
