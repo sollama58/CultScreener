@@ -296,7 +296,7 @@ async function getTokenHolderCount(mintAddress) {
 
   try {
     const response = await axios.get(
-      `https://pro-api.solscan.io/v2.0/token/holder/count?address=${encodeURIComponent(mintAddress)}`,
+      `https://api.solscan.io/v2/token/holder/count?address=${encodeURIComponent(mintAddress)}`,
       {
         timeout: 10000,
         httpsAgent,
