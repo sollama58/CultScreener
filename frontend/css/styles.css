@@ -2315,6 +2315,39 @@ select:focus {
   color: var(--fire-primary);
 }
 
+.holders-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.6rem;
+  margin-top: 0.75rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.holders-expand-btn:hover {
+  border-color: var(--fire-primary);
+  color: var(--fire-primary);
+  background: rgba(255, 87, 34, 0.04);
+}
+
+.holders-expand-btn svg {
+  transition: transform var(--transition-fast);
+}
+
+.holders-expand-btn.expanded svg {
+  transform: rotate(180deg);
+}
+
 .hold-time-pending,
 .token-hold-pending {
   color: var(--text-muted);
@@ -3419,7 +3452,7 @@ select:focus {
   padding: 0.3rem 0.6rem;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 0.75rem;
   transition: all var(--transition-fast);
@@ -3434,6 +3467,42 @@ select:focus {
 .social-link svg {
   width: 14px;
   height: 14px;
+}
+
+/* Token socials (curated + on-chain) */
+.token-socials {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
+}
+
+.social-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.social-chip:hover {
+  border-color: var(--fire-primary);
+  color: var(--fire-primary);
+  background: rgba(255, 87, 34, 0.06);
+}
+
+.social-chip svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 /* Pool cards */

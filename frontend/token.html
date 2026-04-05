@@ -29,15 +29,13 @@
   <link rel="stylesheet" href="css/styles.css">
   <link rel="dns-prefetch" href="https://api.geckoterminal.com">
   <link rel="dns-prefetch" href="https://api.jup.ag">
-  <link rel="preload" href="https://unpkg.com/lightweight-charts@5.0.9/dist/lightweight-charts.standalone.production.js" as="script">
-  <script async src="https://unpkg.com/lightweight-charts@5.0.9/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <header class="header">
     <div class="header-content">
       <a href="/" class="logo">
         <span class="logo-text">CultScreener</span>
-        <span class="powered-badge"><svg class="flame-icon" width="14" height="14" viewBox="0 0 24 24" fill="url(#flameGrad)"><defs><linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#ff4500"/><stop offset="100%" stop-color="#ff8c00"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>Solana</span>
+        <span class="powered-badge"><svg class="flame-icon" width="14" height="14" viewBox="0 0 24 24" fill="url(#flameGrad)"><defs><linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#ff4500"/><stop offset="100%" stop-color="#ff8c00"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>Powered by ASDFASDFA</span>
       </a>
 
       <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle navigation" aria-expanded="false">
@@ -168,99 +166,7 @@
       <div class="token-content-grid">
         <!-- Left Column -->
         <div class="token-col-left">
-          <!-- Chart Section -->
-          <section class="chart-section">
-          <div class="chart-header">
-            <div class="chart-title-row">
-              <h2 id="chart-title">Price Chart</h2>
-              <div class="chart-controls">
-                <div class="chart-metric-toggle">
-                  <button class="chart-metric-btn active" data-metric="price" title="Price">Price</button>
-                  <button class="chart-metric-btn" data-metric="mcap" title="Market Cap">MCap</button>
-                </div>
-                <div class="chart-type-toggle">
-                  <button class="chart-type-btn active" data-type="line" title="Line Chart">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                    </svg>
-                  </button>
-                  <button class="chart-type-btn" data-type="candle" title="Candlestick Chart">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="4" y="8" width="4" height="8"></rect>
-                      <line x1="6" y1="4" x2="6" y2="8"></line>
-                      <line x1="6" y1="16" x2="6" y2="20"></line>
-                      <rect x="16" y="6" width="4" height="10"></rect>
-                      <line x1="18" y1="2" x2="18" y2="6"></line>
-                      <line x1="18" y1="16" x2="18" y2="22"></line>
-                    </svg>
-                  </button>
-                </div>
-                <button id="chart-fit-btn" class="chart-type-btn" title="Fit All Data">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                </button>
-                <button id="chart-expand-btn" class="chart-type-btn" title="Expand Chart">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-                </button>
-              </div>
-            </div>
-            <div class="chart-timeframes">
-              <button class="timeframe-btn" data-interval="5m">5M</button>
-              <button class="timeframe-btn" data-interval="15m">15M</button>
-
-              <button class="timeframe-btn active" data-interval="1h">1H</button>
-              <button class="timeframe-btn" data-interval="4h">4H</button>
-              <button class="timeframe-btn" data-interval="1d">1D</button>
-              <button class="timeframe-btn" data-interval="1w">1W</button>
-            </div>
-            <div class="chart-indicators">
-              <button class="indicator-btn active" data-indicator="vol">Vol</button>
-              <button class="indicator-btn" data-indicator="sma">SMA</button>
-              <button class="indicator-btn" data-indicator="ema">EMA</button>
-              <button class="indicator-btn" data-indicator="bb">BB</button>
-              <button class="indicator-btn" data-indicator="log">Log</button>
-            </div>
-          </div>
-          <div class="chart-container">
-            <div id="chart-loading" class="chart-loading">
-              <div class="loading-spinner"></div>
-            </div>
-            <div id="chart-error" class="chart-error" style="display:none">
-              <span class="chart-error-message">Chart data unavailable</span>
-              <span class="chart-error-hint">GeckoTerminal could not be reached</span>
-              <button id="chart-retry-btn" class="chart-retry-btn">&#8635; Retry</button>
-            </div>
-            <div id="price-chart"></div>
-            <div id="chart-empty" class="chart-empty" style="display:none"></div>
-          </div>
-          <div class="chart-stats">
-            <div class="chart-stat">
-              <span class="label">Open</span>
-              <span id="chart-open" class="value">--</span>
-            </div>
-            <div class="chart-stat">
-              <span class="label">High</span>
-              <span id="chart-high" class="value">--</span>
-            </div>
-            <div class="chart-stat">
-              <span class="label">Low</span>
-              <span id="chart-low" class="value">--</span>
-            </div>
-            <div class="chart-stat">
-              <span class="label">Close</span>
-              <span id="chart-close" class="value">--</span>
-            </div>
-            <div class="chart-stat">
-              <span class="label">Volume</span>
-              <span id="chart-volume" class="value">--</span>
-            </div>
-            <div class="chart-stat">
-              <span class="label">Change</span>
-              <span id="chart-change" class="value">--</span>
-            </div>
-          </div>
-        </section>
-
-        <!-- Holder Analytics -->
+        <!-- Conviction Metrics -->
         <section class="holders-section" id="holders-section" style="display:none;">
           <div class="holders-header">
             <h2>
@@ -292,11 +198,6 @@
           </div>
           <!-- Shareable Graphic Area -->
           <div class="holders-graphic" id="holders-graphic">
-          <!-- Risk Rating -->
-          <div class="holders-risk-row" id="holders-risk-row" style="display:none;">
-            <span class="holders-risk-label">Concentration Risk</span>
-            <span class="holders-risk-badge" id="holders-risk-badge">--</span>
-          </div>
           <!-- Concentration Metrics -->
           <div class="holders-metrics" id="holders-metrics">
             <div class="holder-metric">
@@ -503,92 +404,6 @@
       </section>
     </div>
 
-    <!-- Chart Expand Modal -->
-    <div id="chart-modal-overlay" class="chart-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Expanded chart">
-      <div class="chart-modal">
-        <div class="chart-modal-header">
-          <div class="chart-modal-title-row">
-            <h2 class="chart-modal-title" id="chart-modal-title">Price Chart</h2>
-            <div class="chart-controls">
-              <div class="chart-metric-toggle">
-                <button class="chart-metric-btn modal-metric-btn" data-metric="price">Price</button>
-                <button class="chart-metric-btn modal-metric-btn" data-metric="mcap">MCap</button>
-              </div>
-              <div class="chart-type-toggle">
-                <button class="chart-type-btn modal-type-btn" data-type="line" title="Line Chart">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                </button>
-                <button class="chart-type-btn modal-type-btn" data-type="candle" title="Candlestick Chart">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="4" height="8"/><line x1="6" y1="4" x2="6" y2="8"/><line x1="6" y1="16" x2="6" y2="20"/><rect x="16" y="6" width="4" height="10"/><line x1="18" y1="2" x2="18" y2="6"/><line x1="18" y1="16" x2="18" y2="22"/></svg>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="chart-timeframes chart-modal-timeframes">
-            <button class="timeframe-btn modal-timeframe-btn" data-interval="5m">5M</button>
-            <button class="timeframe-btn modal-timeframe-btn" data-interval="15m">15M</button>
-
-            <button class="timeframe-btn modal-timeframe-btn" data-interval="1h">1H</button>
-            <button class="timeframe-btn modal-timeframe-btn" data-interval="4h">4H</button>
-            <button class="timeframe-btn modal-timeframe-btn" data-interval="1d">1D</button>
-            <button class="timeframe-btn modal-timeframe-btn" data-interval="1w">1W</button>
-          </div>
-          <div class="chart-indicators chart-modal-indicators">
-            <button class="indicator-btn modal-indicator-btn active" data-indicator="vol">Vol</button>
-            <button class="indicator-btn modal-indicator-btn" data-indicator="sma">SMA</button>
-            <button class="indicator-btn modal-indicator-btn" data-indicator="ema">EMA</button>
-            <button class="indicator-btn modal-indicator-btn" data-indicator="bb">BB</button>
-            <button class="indicator-btn modal-indicator-btn" data-indicator="log">Log</button>
-          </div>
-          <div class="chart-modal-right-controls">
-            <div class="chart-draw-tools">
-              <button id="chart-tool-trend" class="chart-draw-btn" title="Trendline">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>
-              </button>
-              <button id="chart-tool-fib" class="chart-draw-btn" title="Fibonacci Retracement">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="10" x2="21" y2="10" stroke-dasharray="4 3"/><line x1="3" y1="14" x2="21" y2="14" stroke-dasharray="4 3"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-              </button>
-              <button id="chart-tool-fib-settings" class="chart-draw-btn" title="Fibonacci Level Settings">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              </button>
-              <button id="chart-tool-clear" class="chart-draw-btn" title="Clear Drawings">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-              </button>
-              <button id="chart-tool-cancel" class="chart-draw-btn chart-draw-cancel" title="Cancel Drawing" style="display:none;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div class="chart-zoom-controls">
-              <button id="chart-zoom-in" class="chart-zoom-btn" title="Zoom In">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-              </button>
-              <button id="chart-zoom-out" class="chart-zoom-btn" title="Zoom Out">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-              </button>
-              <button id="chart-zoom-reset" class="chart-zoom-btn" title="Fit All">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-              </button>
-            </div>
-            <button id="chart-modal-close" class="chart-modal-close" title="Close (Esc)">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-          </div>
-        </div>
-        <div class="chart-modal-body">
-          <div id="chart-modal-container" class="chart-container chart-modal-container">
-            <div id="modal-price-chart"></div>
-          </div>
-        </div>
-        <div class="chart-stats chart-modal-stats">
-          <div class="chart-stat"><span class="label">Open</span><span id="modal-chart-open" class="value">--</span></div>
-          <div class="chart-stat"><span class="label">High</span><span id="modal-chart-high" class="value">--</span></div>
-          <div class="chart-stat"><span class="label">Low</span><span id="modal-chart-low" class="value">--</span></div>
-          <div class="chart-stat"><span class="label">Close</span><span id="modal-chart-close" class="value">--</span></div>
-          <div class="chart-stat"><span class="label">Volume</span><span id="modal-chart-volume" class="value">--</span></div>
-          <div class="chart-stat"><span class="label">Change</span><span id="modal-chart-change" class="value">--</span></div>
-        </div>
-      </div>
-    </div>
   </main>
 
   <footer class="footer">
