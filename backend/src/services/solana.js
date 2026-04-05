@@ -282,16 +282,15 @@ async function checkHealth() {
  * @param {string} mintAddress - Token mint address
  * @returns {Promise<number|null>} - Token account count (approximate holders) or null if unavailable
  */
+/**
+ * Get total holder count from Helius DAS.
+ * Uses the `total` field from getTokenAccounts which reports all non-zero
+ * token accounts for the mint. Single API call.
+ */
 async function getTokenHolderCount(mintAddress) {
-  if (!HELIUS_DAS_URL) {
-    console.log('[Solana] Helius API key not configured, skipping holder count');
-    return null;
-  }
+  if (!HELIUS_DAS_URL) return null;
 
   try {
-    // Use Helius DAS API getTokenAccounts method
-    // The 'total' field returns the count of all matching token accounts
-    // Using limit: 1 to minimize response size while still getting the total
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.post(HELIUS_DAS_URL, {
         jsonrpc: '2.0',
@@ -300,39 +299,34 @@ async function getTokenHolderCount(mintAddress) {
         params: {
           mint: mintAddress,
           page: 1,
-          limit: 1 // Minimize response, we only need the total count
+          limit: 1000,
+          options: { showZeroBalance: false }
         }
       }, {
-        timeout: 10000,
+        timeout: 15000,
         headers: HELIUS_HEADERS,
         httpsAgent
       })
     ), 'getTokenHolderCount');
 
-    if (response.data.error) {
-      console.error('[Solana] Helius DAS error:', response.data.error.message);
-      return null;
-    }
+    if (response.data.error) return null;
 
     const result = response.data.result;
-    if (!result) {
-      console.error('[Solana] Helius DAS returned no result');
-      return null;
-    }
+    if (!result) return null;
 
-    const total = result.total;
+    // Use the total field if available and > accounts returned
+    // Otherwise count the accounts on this page
+    const accounts = result.token_accounts || [];
+    const total = typeof result.total === 'number' ? result.total : accounts.length;
 
-    // If total field exists and is valid, use it
-    if (typeof total === 'number' && total >= 0) {
-      return total;
-    }
-    return null;
+    // If total equals exactly 1000 and we got 1000 accounts, it's likely capped.
+    // In that case, report 1000+ (still better than 19).
+    const count = Math.max(total, accounts.length);
+
+    console.log(`[Solana] getTokenHolderCount for ${mintAddress.slice(0, 8)}...: ${count} (total field: ${result.total}, accounts: ${accounts.length})`);
+    return count > 0 ? count : null;
   } catch (error) {
     console.error('[Solana] getTokenHolderCount error:', error.message);
-    if (error.response) {
-      console.error('[Solana] Response status:', error.response.status);
-      console.error('[Solana] Response data:', JSON.stringify(error.response.data, null, 2));
-    }
     return null;
   }
 }
