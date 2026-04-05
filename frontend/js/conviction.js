@@ -261,7 +261,11 @@ const convictionPage = {
     this._loading = true;
 
     const statusEl = document.getElementById('terminal-status-text');
-    if (statusEl) { statusEl.textContent = 'LOADING...'; statusEl.parentElement.classList.add('loading'); }
+    if (statusEl) {
+      statusEl.textContent = 'LOADING...';
+      statusEl.parentElement.classList.remove('error');
+      statusEl.parentElement.classList.add('loading');
+    }
 
     const _t0 = performance.now();
     let _ok = true;
@@ -346,11 +350,18 @@ const convictionPage = {
       this.sortAndRender();
       this.updatePagination();
 
-      if (statusEl) { statusEl.textContent = 'LIVE'; statusEl.parentElement.classList.remove('loading'); }
+      if (statusEl) {
+        statusEl.textContent = 'LIVE';
+        statusEl.parentElement.classList.remove('loading', 'error');
+      }
     } catch (error) {
       _ok = false;
       console.error('Conviction load error:', error);
-      if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.parentElement.classList.add('error'); }
+      if (statusEl) {
+        statusEl.textContent = 'ERROR';
+        statusEl.parentElement.classList.remove('loading');
+        statusEl.parentElement.classList.add('error');
+      }
       tbody.innerHTML = `
         <tr class="empty-row">
           <td colspan="7">
