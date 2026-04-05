@@ -284,40 +284,25 @@ async function checkHealth() {
  */
 /**
  * Get total holder count from Solscan public API.
+ * Uses public-api.solscan.io (no API key required).
  * Returns the exact number of holders for any Solana token.
- * Single HTTP call, no pagination needed.
  */
 async function getTokenHolderCount(mintAddress) {
   try {
     const response = await axios.get(
-      `https://api-v2.solscan.io/v2/token/holder/count?token=${encodeURIComponent(mintAddress)}`,
+      `https://public-api.solscan.io/token/holders?tokenAddress=${encodeURIComponent(mintAddress)}&offset=0&limit=1`,
       {
         timeout: 10000,
         httpsAgent,
-        headers: { 'Accept': 'application/json', 'User-Agent': 'CultScreener/1.0' }
+        headers: { 'Accept': 'application/json' }
       }
     );
 
-    const count = response.data?.data?.holder_count ?? response.data?.data?.count ?? response.data?.holder_count;
-    if (typeof count === 'number' && count > 0) {
-      console.log(`[Solana] Solscan holder count for ${mintAddress.slice(0, 8)}...: ${count}`);
-      return count;
-    }
-
-    // Fallback: try the token meta endpoint
-    const metaResponse = await axios.get(
-      `https://api-v2.solscan.io/v2/token/meta?token=${encodeURIComponent(mintAddress)}`,
-      {
-        timeout: 10000,
-        httpsAgent,
-        headers: { 'Accept': 'application/json', 'User-Agent': 'CultScreener/1.0' }
-      }
-    );
-
-    const metaCount = metaResponse.data?.data?.holder ?? metaResponse.data?.data?.holder_count;
-    if (typeof metaCount === 'number' && metaCount > 0) {
-      console.log(`[Solana] Solscan meta holder count for ${mintAddress.slice(0, 8)}...: ${metaCount}`);
-      return metaCount;
+    // The response has { total, result[] } — we only need the total
+    const total = response.data?.total;
+    if (typeof total === 'number' && total > 0) {
+      console.log(`[Solana] Solscan holder count for ${mintAddress.slice(0, 8)}...: ${total}`);
+      return total;
     }
 
     return null;
