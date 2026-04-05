@@ -63,6 +63,57 @@ router.get('/stats', asyncHandler(async (req, res) => {
 }));
 
 // ==========================================
+// Conviction Maintenance
+// ==========================================
+
+router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res) => {
+  const { cache } = require('../services/cache');
+
+  // Scan for wallet cache keys with -1 sentinel values (failed lookups)
+  // and delete them so the next conviction refresh re-attempts with the ATA fallback.
+  let flushed = 0;
+  let scanned = 0;
+
+  try {
+    // Scan wallet-hold-time, wallet-token-hold, and wallet-age keys
+    const patterns = ['wallet-hold-time:*', 'wallet-token-hold:*', 'wallet-age:*'];
+
+    for (const pattern of patterns) {
+      const keys = await cache.scanKeys(pattern);
+      scanned += keys.length;
+
+      for (const key of keys) {
+        const val = await cache.get(key);
+        if (val === -1 || val === null) {
+          await cache.delete(key);
+          flushed++;
+        }
+      }
+    }
+
+    // Also clear diamond-hands distribution caches so they recompute
+    const dhKeys = await cache.scanKeys('diamond-hands:*');
+    for (const key of dhKeys) {
+      await cache.delete(key);
+      flushed++;
+    }
+
+    // Clear holder-metrics-pending flags so recomputation isn't blocked
+    const pendingKeys = await cache.scanKeys('holder-metrics-pending:*');
+    for (const key of pendingKeys) {
+      await cache.delete(key);
+      flushed++;
+    }
+
+    console.log(`[Admin] Flushed ${flushed} failed wallet caches (scanned ${scanned} keys)`);
+    res.json({ success: true, flushed, scanned });
+  } catch (err) {
+    console.error('[Admin] Flush failed wallet caches error:', err.message);
+    res.status(500).json({ error: 'Failed to flush caches' });
+  }
+}));
+
+// ==========================================
 // Curated Tokens (session-based proxy)
 // ==========================================
 

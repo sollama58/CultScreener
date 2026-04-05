@@ -230,106 +230,56 @@ const wallet = {
       content.appendChild(notInstalledSection);
     }
 
-    // No wallets message — mobile-aware
+    // No wallets detected message
     if (installedWallets.length === 0) {
       const isMobile = typeof utils !== 'undefined' && (utils.isMobile() || utils.isTouchDevice());
 
       if (isMobile) {
-        // Check for existing device session
-        const deviceToken = localStorage.getItem('cultscreener_device_session');
-        const deviceWallet = localStorage.getItem('cultscreener_device_wallet');
-        if (deviceToken && deviceWallet) {
-          // Already linked — just reconnect
-          this.connected = true;
-          this.address = deviceWallet;
-          this.providerName = 'device-session';
-          this.provider = null;
-          this.updateUI();
-          if (typeof toast !== 'undefined') toast.success('Connected via linked device');
-          // Close modal immediately
-          setTimeout(() => { const m = document.querySelector('.wallet-selector-modal'); if (m) m.remove(); }, 100);
-        } else {
-          // Show mobile connection options
-          const mobileSection = document.createElement('div');
-          mobileSection.className = 'wallet-selector-section';
-          mobileSection.style.cssText = 'padding: 0.75rem 0;';
+        const mobileSection = document.createElement('div');
+        mobileSection.className = 'wallet-selector-section';
+        mobileSection.style.cssText = 'padding: 0.75rem 0;';
 
-          // Option 1: Connect via Desktop (primary option on mobile)
-          const opt1 = document.createElement('div');
-          opt1.style.cssText = 'margin-bottom: 1.25rem;';
+        const mobileTitle = document.createElement('h4');
+        mobileTitle.style.cssText = 'color: var(--text-primary); margin-bottom: 0.5rem; font-size: 0.95rem;';
+        mobileTitle.textContent = 'Open in Wallet Browser';
 
-          const opt1Title = document.createElement('h4');
-          opt1Title.style.cssText = 'color: var(--text-primary); margin-bottom: 0.5rem; font-size: 0.95rem;';
-          opt1Title.textContent = 'Connect via Desktop';
+        const mobileDesc = document.createElement('p');
+        mobileDesc.style.cssText = 'color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 0.75rem; line-height: 1.4;';
+        mobileDesc.textContent = 'Open your wallet app (Phantom, Solflare, etc.) and use its built-in browser to visit this page.';
 
-          const opt1Desc = document.createElement('p');
-          opt1Desc.style.cssText = 'color: var(--text-secondary); font-size: 0.85rem; line-height: 1.4;';
-          opt1Desc.textContent = 'Visit CultScreener on desktop, connect your wallet, then use "Link Mobile Device" from the wallet menu to generate a QR code you can scan.';
+        mobileSection.appendChild(mobileTitle);
+        mobileSection.appendChild(mobileDesc);
 
-          opt1.appendChild(opt1Title);
-          opt1.appendChild(opt1Desc);
-          mobileSection.appendChild(opt1);
+        const urlContainer = document.createElement('div');
+        urlContainer.style.cssText = 'display: flex; align-items: center; gap: 0.5rem;';
 
-          // Divider
-          const divider = document.createElement('hr');
-          divider.style.cssText = 'border: none; border-top: 1px solid var(--border-color); margin: 1rem 0;';
-          mobileSection.appendChild(divider);
+        const urlInput = document.createElement('input');
+        urlInput.type = 'text';
+        urlInput.readOnly = true;
+        urlInput.value = window.location.href;
+        urlInput.style.cssText = 'flex: 1; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.8rem; outline: none; min-width: 0;';
 
-          // Option 2: Open in Wallet Browser
-          const opt2 = document.createElement('div');
+        const copyBtn = document.createElement('button');
+        copyBtn.style.cssText = 'padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: 6px; background: var(--accent-primary); color: #fff; font-size: 0.8rem; cursor: pointer; white-space: nowrap; flex-shrink: 0;';
+        copyBtn.textContent = 'Copy URL';
+        copyBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(window.location.href);
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Copy URL'; }, 2000);
+          } catch (_) {
+            urlInput.select();
+            document.execCommand('copy');
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Copy URL'; }, 2000);
+          }
+        };
 
-          const opt2Title = document.createElement('h4');
-          opt2Title.style.cssText = 'color: var(--text-primary); margin-bottom: 0.5rem; font-size: 0.95rem;';
-          opt2Title.textContent = 'Open in Wallet Browser';
-
-          const opt2Desc = document.createElement('p');
-          opt2Desc.style.cssText = 'color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 0.75rem; line-height: 1.4;';
-          opt2Desc.textContent = 'Open your wallet app (Phantom, Solflare, etc.) and use its built-in browser to visit this page.';
-
-          opt2.appendChild(opt2Title);
-          opt2.appendChild(opt2Desc);
-
-          // Copiable URL
-          const urlContainer = document.createElement('div');
-          urlContainer.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;';
-
-          const urlInput = document.createElement('input');
-          urlInput.type = 'text';
-          urlInput.readOnly = true;
-          urlInput.value = window.location.href;
-          urlInput.style.cssText = 'flex: 1; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.8rem; outline: none; min-width: 0;';
-
-          const copyBtn = document.createElement('button');
-          copyBtn.style.cssText = 'padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: 6px; background: var(--accent-primary); color: #fff; font-size: 0.8rem; cursor: pointer; white-space: nowrap; flex-shrink: 0;';
-          copyBtn.textContent = 'Copy';
-          copyBtn.onclick = async () => {
-            try {
-              await navigator.clipboard.writeText(window.location.href);
-              copyBtn.textContent = 'Copied!';
-              setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
-            } catch (_) {
-              urlInput.select();
-              document.execCommand('copy');
-              copyBtn.textContent = 'Copied!';
-              setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
-            }
-          };
-
-          urlContainer.appendChild(urlInput);
-          urlContainer.appendChild(copyBtn);
-          opt2.appendChild(urlContainer);
-
-          const urlHint = document.createElement('p');
-          urlHint.style.cssText = 'text-align: center; color: var(--text-tertiary); font-size: 0.75rem; margin-top: 0.5rem;';
-          urlHint.textContent = 'Copy and paste into your wallet\'s browser';
-          opt2.appendChild(urlHint);
-
-          mobileSection.appendChild(opt2);
-
-          content.appendChild(mobileSection);
-        }
+        urlContainer.appendChild(urlInput);
+        urlContainer.appendChild(copyBtn);
+        mobileSection.appendChild(urlContainer);
+        content.appendChild(mobileSection);
       } else {
-        // Desktop: show original message
         const helpText = document.createElement('p');
         helpText.className = 'wallet-selector-help';
         helpText.textContent = 'No Solana wallet detected. Install one of the wallets above to continue.';
@@ -416,25 +366,9 @@ const wallet = {
     return false; // Connection happens asynchronously via modal
   },
 
-  // Disconnect wallet (handles both real wallets and device sessions)
+  // Disconnect wallet
   async disconnect() {
-    const isDeviceSession = this.providerName === 'device-session';
-
-    if (isDeviceSession) {
-      // Read token BEFORE clearing localStorage
-      const token = localStorage.getItem('cultscreener_device_session');
-      localStorage.removeItem('cultscreener_device_session');
-      localStorage.removeItem('cultscreener_device_wallet');
-      // Revoke server-side (fire and forget)
-      if (token) {
-        try {
-          fetch(`${config.api.baseUrl}/api/auth/device-session`, {
-            method: 'DELETE',
-            headers: { 'X-Device-Session': token }
-          }).catch(() => {});
-        } catch (_) {}
-      }
-    } else if (this.provider) {
+    if (this.provider) {
       try {
         await this.provider.disconnect();
       } catch (error) {
@@ -455,19 +389,15 @@ const wallet = {
       this.broadcastConnectionChange('disconnected');
     }
 
-    // Emit disconnection event
     window.dispatchEvent(new CustomEvent('walletDisconnected'));
 
     if (wasConnected && typeof toast !== 'undefined') {
-      toast.info(isDeviceSession ? 'Device unlinked' : 'Wallet disconnected');
+      toast.info('Wallet disconnected');
     }
   },
 
   // Sign message (for vote/submission verification)
   async signMessage(message) {
-    if (this.providerName === 'device-session') {
-      throw new Error('Cannot sign messages with a linked device session');
-    }
     if (!this.connected || !this.provider) {
       throw new Error('Wallet not connected');
     }
@@ -495,25 +425,15 @@ const wallet = {
     const connectBtn = document.getElementById('connect-wallet');
     if (connectBtn) {
       if (this.connected) {
-        // Create button content with wallet icon
         connectBtn.innerHTML = '';
 
-        if (this.providerName === 'device-session') {
-          // Show a phone/link icon for device sessions
-          const linkIcon = document.createElement('span');
-          linkIcon.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>`;
-          linkIcon.className = 'wallet-btn-icon';
-          linkIcon.style.cssText = 'display: flex; align-items: center;';
-          connectBtn.appendChild(linkIcon);
-        } else {
-          const walletConfig = this.getWalletById(this.providerName);
-          if (walletConfig) {
-            const icon = document.createElement('img');
-            icon.src = walletConfig.icon;
-            icon.alt = walletConfig.name;
-            icon.className = 'wallet-btn-icon';
-            connectBtn.appendChild(icon);
-          }
+        const walletConfig = this.getWalletById(this.providerName);
+        if (walletConfig) {
+          const icon = document.createElement('img');
+          icon.src = walletConfig.icon;
+          icon.alt = walletConfig.name;
+          icon.className = 'wallet-btn-icon';
+          connectBtn.appendChild(icon);
         }
 
         const addressSpan = document.createElement('span');
@@ -561,20 +481,7 @@ const wallet = {
     const walletInfo = document.createElement('div');
     walletInfo.className = 'wallet-menu-info';
 
-    if (this.providerName === 'device-session') {
-      const iconSpan = document.createElement('span');
-      iconSpan.className = 'wallet-menu-icon';
-      iconSpan.style.cssText = 'display: flex; align-items: center; justify-content: center; width: 24px; height: 24px;';
-      iconSpan.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>';
-
-      const walletName = document.createElement('span');
-      walletName.className = 'wallet-menu-name';
-      walletName.textContent = 'Linked Device';
-
-      walletInfo.appendChild(iconSpan);
-      walletInfo.appendChild(walletName);
-      header.appendChild(walletInfo);
-    } else if (walletConfig) {
+    if (walletConfig) {
       const icon = document.createElement('img');
       icon.src = walletConfig.icon;
       icon.alt = walletConfig.name;
@@ -662,160 +569,12 @@ const wallet = {
 
     actions.appendChild(copyBtn);
     actions.appendChild(viewBtn);
-
-    // Link Mobile Device button (only for real wallet connections, not device sessions)
-    if (this.providerName !== 'device-session') {
-      const linkBtn = document.createElement('button');
-      linkBtn.className = 'btn btn-secondary';
-      linkBtn.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
-          <line x1="12" y1="18" x2="12.01" y2="18"/>
-        </svg>
-        Link Mobile Device
-      `;
-      linkBtn.onclick = async () => {
-        menu.remove();
-        await this.showDeviceLinkModal();
-      };
-      actions.appendChild(linkBtn);
-    }
-
-    // Disconnect / Unlink button
-    const isDeviceSession = this.providerName === 'device-session';
-    disconnectBtn.innerHTML = `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-        <polyline points="16 17 21 12 16 7"/>
-        <line x1="21" y1="12" x2="9" y2="12"/>
-      </svg>
-      ${isDeviceSession ? 'Unlink Device' : 'Disconnect'}
-    `;
-
     actions.appendChild(disconnectBtn);
     content.appendChild(actions);
 
     menu.appendChild(overlay);
     menu.appendChild(content);
     document.body.appendChild(menu);
-  },
-
-  // Show modal to generate QR code for mobile device linking
-  async showDeviceLinkModal() {
-    // 1. Sign a message proving wallet ownership
-    const timestamp = Date.now();
-    const message = `Link mobile device to ${this.address} at ${timestamp}`;
-
-    let signResult;
-    try {
-      signResult = await this.signMessage(message);
-    } catch (err) {
-      if (typeof toast !== 'undefined') toast.error(err.message || 'Signature rejected');
-      return;
-    }
-
-    // 2. Request device session from backend
-    let response;
-    try {
-      response = await fetch(`${config.api.baseUrl}/api/auth/device-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          walletAddress: this.address,
-          signature: signResult.signature,
-          signatureTimestamp: timestamp
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to create device link');
-      response = data;
-    } catch (err) {
-      if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to create device link');
-      return;
-    }
-
-    // 3. Show QR code modal
-    const { linkUrl, expiresAt } = response.data;
-    this._showQRCodeModal(linkUrl, expiresAt);
-  },
-
-  // Render QR code modal with countdown
-  _showQRCodeModal(linkUrl, expiresAt) {
-    const existing = document.querySelector('.device-link-modal');
-    if (existing) existing.remove();
-
-    const modal = document.createElement('div');
-    modal.className = 'device-link-modal wallet-selector-modal';
-
-    const overlay = document.createElement('div');
-    overlay.className = 'wallet-selector-overlay';
-    overlay.onclick = () => modal.remove();
-
-    const content = document.createElement('div');
-    content.className = 'wallet-selector-content';
-
-    // Header
-    const header = document.createElement('div');
-    header.className = 'wallet-selector-header';
-    const title = document.createElement('h3');
-    title.textContent = 'Link Mobile Device';
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'wallet-selector-close';
-    closeBtn.innerHTML = '&times;';
-    closeBtn.onclick = () => modal.remove();
-    header.appendChild(title);
-    header.appendChild(closeBtn);
-    content.appendChild(header);
-
-    // Instructions
-    const instructions = document.createElement('p');
-    instructions.style.cssText = 'color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.4;';
-    instructions.textContent = 'Scan this QR code with your phone camera to link this wallet to your mobile device.';
-    content.appendChild(instructions);
-
-    // QR Code
-    if (typeof qrcode !== 'undefined') {
-      const qrContainer = document.createElement('div');
-      qrContainer.style.cssText = 'display: flex; justify-content: center; padding: 1rem; background: #fff; border-radius: 12px; width: fit-content; margin: 0 auto;';
-      try {
-        const qr = qrcode(0, 'M');
-        qr.addData(linkUrl);
-        qr.make();
-        qrContainer.innerHTML = qr.createSvgTag(5);
-        content.appendChild(qrContainer);
-      } catch (_) {}
-    }
-
-    // Countdown
-    const expiryEl = document.createElement('p');
-    expiryEl.style.cssText = 'text-align: center; color: var(--text-tertiary); font-size: 0.8rem; margin-top: 1rem;';
-    let countdownTimer;
-    const updateCountdown = () => {
-      const remaining = Math.max(0, Math.floor((new Date(expiresAt) - Date.now()) / 1000));
-      if (remaining <= 0) {
-        expiryEl.textContent = 'Code expired — close and try again.';
-        expiryEl.style.color = 'var(--danger)';
-        clearInterval(countdownTimer);
-        return;
-      }
-      expiryEl.textContent = `Expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
-    };
-    updateCountdown();
-    countdownTimer = setInterval(updateCountdown, 1000);
-    content.appendChild(expiryEl);
-
-    // Clean up timer when modal removed
-    const observer = new MutationObserver(() => {
-      if (!document.body.contains(modal)) {
-        clearInterval(countdownTimer);
-        observer.disconnect();
-      }
-    });
-    observer.observe(document.body, { childList: true });
-
-    modal.appendChild(overlay);
-    modal.appendChild(content);
-    document.body.appendChild(modal);
   },
 
   // Save connection to sessionStorage (privacy-conscious: cleared on browser close)
@@ -1147,23 +906,6 @@ const wallet = {
 
     // Try auto-connect (await it!)
     await this.autoConnect();
-
-    // If not connected via wallet, check for device session (mobile linked device)
-    if (!this.connected) {
-      const deviceWallet = localStorage.getItem('cultscreener_device_wallet');
-      const deviceToken = localStorage.getItem('cultscreener_device_session');
-      if (deviceWallet && deviceToken) {
-        this.connected = true;
-        this.address = deviceWallet;
-        this.providerName = 'device-session';
-        this.provider = null;
-        this.updateUI();
-
-        window.dispatchEvent(new CustomEvent('walletConnected', {
-          detail: { address: deviceWallet, wallet: 'device-session' }
-        }));
-      }
-    }
 
     // Mark as initialized and emit ready event
     this.initialized = true;

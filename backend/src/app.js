@@ -47,16 +47,6 @@ const MAX_CLEANUP_FAILURES = 10;
 function startFallbackCleanup() {
   const CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
-  // Clean up expired sessions immediately on startup
-  if (db.isReady()) {
-    db.cleanupExpiredDeviceSessions()
-      .then(count => {
-        if (count > 0) {
-          console.log(`[Cleanup] Removed ${count} expired device sessions on startup`);
-        }
-      })
-      .catch(err => console.error('[Cleanup] Failed to clean up device sessions:', err.message));
-  }
 
   // Schedule periodic cleanup with failure limit
   cleanupIntervalId = setInterval(async () => {
@@ -71,11 +61,7 @@ function startFallbackCleanup() {
     }
 
     try {
-      const deviceCount = await db.cleanupExpiredDeviceSessions();
       cleanupFailureCount = 0; // Reset on success
-      if (deviceCount > 0) {
-        console.log(`[Cleanup] Removed ${deviceCount} expired device sessions`);
-      }
     } catch (err) {
       cleanupFailureCount++;
       console.error(`[Cleanup] Failed (${cleanupFailureCount}/${MAX_CLEANUP_FAILURES}):`, err.message);
@@ -130,7 +116,7 @@ app.use((req, res, next) => {
     console.log(`[CORS] Preflight: origin="${origin}" allowed=${allowed} corsOrigins=${JSON.stringify(corsOrigins)}`);
     if (allowed && normalizedOrigin) {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-Session, X-Admin-Session, X-Admin-Password');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Session, X-Admin-Password');
       res.setHeader('Access-Control-Max-Age', '86400');
     }
     return res.status(204).end();
@@ -241,9 +227,6 @@ app.use((req, res, next) => {
 // Rate limiting for API routes
 app.use('/api/', defaultLimiter);
 
-// Device session middleware — resolves wallet from X-Device-Session header (non-blocking)
-const { validateDeviceSession } = require('./middleware/validation');
-app.use('/api/', validateDeviceSession);
 
 // Health check routes (no rate limiting)
 app.use('/health', healthRoutes);

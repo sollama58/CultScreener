@@ -12,6 +12,7 @@ const admin = {
     this.bindCuratedActions();
     this.bindAnnouncementActions();
     this.bindFilterActions();
+    this.bindMaintenanceActions();
     document.getElementById('logout-btn').addEventListener('click', () => this.logout());
 
     if (this.token) {
@@ -166,6 +167,32 @@ const admin = {
   bindFilterActions() {
     document.getElementById('bugs-status-filter').addEventListener('change', () => this.loadBugReports());
     document.getElementById('subs-status-filter').addEventListener('change', () => this.loadSubmissions());
+  },
+
+  bindMaintenanceActions() {
+    document.getElementById('admin-flush-wallets').addEventListener('click', () => this.flushFailedWallets());
+  },
+
+  async flushFailedWallets() {
+    const btn = document.getElementById('admin-flush-wallets');
+    const status = document.getElementById('admin-flush-status');
+    btn.disabled = true;
+    btn.textContent = 'Flushing...';
+    status.textContent = '';
+
+    try {
+      const data = await this.request('/api/admin/flush-failed-wallets', { method: 'POST' });
+      status.textContent = `Done: ${data.flushed} failed entries cleared (${data.scanned} scanned). Next conviction refresh will re-attempt.`;
+      status.style.color = 'var(--green)';
+      if (typeof toast !== 'undefined') toast.success(`Flushed ${data.flushed} failed wallet caches`);
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Flush Failed Wallet Caches';
+    }
   },
 
   // ── Dashboard ─────────────────────────────────

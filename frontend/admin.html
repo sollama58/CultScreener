@@ -358,6 +358,14 @@
           <div class="admin-stat-card"><div class="label">Submissions (24h)</div><div class="value" id="stat-recent-subs">--</div></div>
           <div class="admin-stat-card"><div class="label">Votes (24h)</div><div class="value" id="stat-recent-votes">--</div></div>
         </div>
+        <div style="margin-top:1.25rem;">
+          <h3 style="font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Conviction Maintenance</h3>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-sm" id="admin-flush-wallets">Flush Failed Wallet Caches</button>
+            <span id="admin-flush-status" style="font-size:0.78rem;color:var(--text-muted);align-self:center;"></span>
+          </div>
+          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Clears cached -1 sentinel values for wallets where hold time computation failed. Next conviction refresh will re-attempt these wallets with the improved ATA lookup.</p>
+        </div>
       </div>
 
       <!-- Curated Tokens -->

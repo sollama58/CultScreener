@@ -208,15 +208,10 @@ const api = {
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       try {
-        // Inject device session header if present and no real wallet is connected
         const headers = {
           'Content-Type': 'application/json',
           ...options.headers
         };
-        const deviceSession = localStorage.getItem('cultscreener_device_session');
-        if (deviceSession && !headers['X-Device-Session']) {
-          headers['X-Device-Session'] = deviceSession;
-        }
 
         const response = await fetch(url, {
           ...options,

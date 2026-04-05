@@ -837,89 +837,127 @@ const HOLD_TIME_EXCLUDE_TYPES = new Set([
 ]);
 
 async function getWalletHoldMetrics(walletAddress, tokenMint) {
-  // Fetch ALL transaction types (not just SWAP) so we catch token transfers too
+  // Strategy 1: Scan wallet's recent 100 transactions (1 Helius API call).
+  // Gives avg hold time, wallet age, and token hold time IF the token appears
+  // in the last 100 transactions.
   const transactions = await getTransactionsForAddress(walletAddress, { limit: 100 });
-  if (!transactions || transactions.length === 0) {
-    console.log(`[Solana] getWalletHoldMetrics: no txs for ${walletAddress.slice(0, 8)}... → null/null`);
-    return { avgHoldTime: null, tokenHoldTime: null, walletAge: null };
-  }
 
-  // Track per-token buy/sell timestamps for avg hold time
-  const tokenEvents = new Map();
-  // Track earliest receive of the specific token (any transaction type)
   let earliestTokenReceive = null;
-  // Track oldest transaction seen — approximates wallet age
-  let oldestTxTimestamp = null;
-
-  for (const tx of transactions) {
-    const timestamp = (tx.timestamp || 0) * 1000; // seconds → ms
-    if (!timestamp || !tx.tokenTransfers) continue;
-
-    // Skip NFT-related transactions to avoid skewing hold time averages
-    if (HOLD_TIME_EXCLUDE_TYPES.has(tx.type)) continue;
-
-    // Track oldest tx for wallet age (only reliable if we got < 100 txs)
-    if (!oldestTxTimestamp || timestamp < oldestTxTimestamp) {
-      oldestTxTimestamp = timestamp;
-    }
-
-    for (const transfer of tx.tokenTransfers) {
-      const mint = transfer.mint;
-      if (!mint) continue;
-
-      // Track specific token hold duration (all transfer types)
-      if (mint === tokenMint && transfer.toUserAccount === walletAddress) {
-        if (!earliestTokenReceive || timestamp < earliestTokenReceive) {
-          earliestTokenReceive = timestamp;
-        }
-      }
-
-      // Track avg hold time from all transaction types, excluding base currencies.
-      // Previously only SWAP was tracked, but many wallets interact via transfers,
-      // Jupiter routes, and other tx types that Helius classifies differently.
-      if (!HOLD_TIME_EXCLUDE_MINTS.has(mint)) {
-        if (transfer.toUserAccount === walletAddress) {
-          if (!tokenEvents.has(mint)) {
-            tokenEvents.set(mint, { firstBuy: timestamp, lastSell: null });
-          } else {
-            const ev = tokenEvents.get(mint);
-            if (timestamp < ev.firstBuy) ev.firstBuy = timestamp;
-          }
-        } else if (transfer.fromUserAccount === walletAddress) {
-          if (tokenEvents.has(mint)) {
-            const ev = tokenEvents.get(mint);
-            if (!ev.lastSell || timestamp > ev.lastSell) ev.lastSell = timestamp;
-          }
-        }
-      }
-    }
-  }
-
-  // Calculate avg hold time
   let avgHoldTime = null;
-  if (tokenEvents.size > 0) {
-    const now = Date.now();
-    let totalHoldTime = 0;
-    let count = 0;
-    for (const [, events] of tokenEvents) {
-      const holdEnd = events.lastSell || now;
-      const holdTime = holdEnd - events.firstBuy;
-      if (holdTime > 0) { totalHoldTime += holdTime; count++; }
+  let oldestTxTimestamp = null;
+  const tokenEvents = new Map();
+
+  if (transactions && transactions.length > 0) {
+    for (const tx of transactions) {
+      const timestamp = (tx.timestamp || 0) * 1000;
+      if (!timestamp || !tx.tokenTransfers) continue;
+      if (HOLD_TIME_EXCLUDE_TYPES.has(tx.type)) continue;
+
+      if (!oldestTxTimestamp || timestamp < oldestTxTimestamp) {
+        oldestTxTimestamp = timestamp;
+      }
+
+      for (const transfer of tx.tokenTransfers) {
+        const mint = transfer.mint;
+        if (!mint) continue;
+
+        if (mint === tokenMint && transfer.toUserAccount === walletAddress) {
+          if (!earliestTokenReceive || timestamp < earliestTokenReceive) {
+            earliestTokenReceive = timestamp;
+          }
+        }
+
+        if (!HOLD_TIME_EXCLUDE_MINTS.has(mint)) {
+          if (transfer.toUserAccount === walletAddress) {
+            if (!tokenEvents.has(mint)) {
+              tokenEvents.set(mint, { firstBuy: timestamp, lastSell: null });
+            } else {
+              const ev = tokenEvents.get(mint);
+              if (timestamp < ev.firstBuy) ev.firstBuy = timestamp;
+            }
+          } else if (transfer.fromUserAccount === walletAddress) {
+            if (tokenEvents.has(mint)) {
+              const ev = tokenEvents.get(mint);
+              if (!ev.lastSell || timestamp > ev.lastSell) ev.lastSell = timestamp;
+            }
+          }
+        }
+      }
     }
-    if (count > 0) avgHoldTime = Math.floor(totalHoldTime / count);
+
+    if (tokenEvents.size > 0) {
+      const now = Date.now();
+      let totalHoldTime = 0;
+      let count = 0;
+      for (const [, events] of tokenEvents) {
+        const holdEnd = events.lastSell || now;
+        const holdTime = holdEnd - events.firstBuy;
+        if (holdTime > 0) { totalHoldTime += holdTime; count++; }
+      }
+      if (count > 0) avgHoldTime = Math.floor(totalHoldTime / count);
+    }
   }
 
-  // Calculate specific token hold time
-  const tokenHoldTime = earliestTokenReceive ? Date.now() - earliestTokenReceive : null;
+  let tokenHoldTime = earliestTokenReceive ? Date.now() - earliestTokenReceive : null;
 
-  // Wallet age: only reliable when we got the full history (< 100 txs).
-  // If we got exactly 100, the wallet likely has older activity we didn't fetch.
-  const walletAge = (oldestTxTimestamp && transactions.length < 100)
+  // Strategy 2 (fallback): If token wasn't found in the last 100 general transactions,
+  // query the token account (ATA) directly. This costs 2 extra RPC calls but only runs
+  // for wallets that bought the token long ago — recent buyers are already covered above.
+  if (tokenHoldTime == null) {
+    tokenHoldTime = await _getTokenAccountAge(walletAddress, tokenMint).catch(() => null);
+  }
+
+  const walletAge = (oldestTxTimestamp && transactions && transactions.length < 100)
     ? Date.now() - oldestTxTimestamp
-    : null; // null = unknown (wallet has more history than we fetched)
+    : null;
 
-  console.log(`[Solana] getWalletHoldMetrics ${walletAddress.slice(0, 8)}...: ${transactions.length} txs, ${tokenEvents.size} swap tokens, avg=${avgHoldTime}, tokenHold=${tokenHoldTime}, walletAge=${walletAge ? Math.round(walletAge / 3600000) + 'h' : 'unknown'}`);
   return { avgHoldTime, tokenHoldTime, walletAge };
+}
+
+/**
+ * Fallback: find how long a wallet has held a specific token by querying the ATA.
+ * Only called when the general transaction scan didn't find the token (active wallets
+ * with 100+ transactions since their purchase). Costs 2 RPC calls: getTokenAccountsByOwner
+ * + getSignaturesForAddress. Paginates up to 2000 signatures to find the oldest.
+ */
+async function _getTokenAccountAge(walletAddress, tokenMint) {
+  try {
+    const accounts = await rpcCall('getTokenAccountsByOwner', [
+      walletAddress,
+      { mint: tokenMint },
+      { encoding: 'jsonParsed' }
+    ]);
+
+    if (!accounts?.value || accounts.value.length === 0) return null;
+    const ataAddress = accounts.value[0].pubkey;
+
+    // Walk backwards to find the oldest signature on this token account.
+    // Most individual token accounts have < 100 txs, so 1 call usually suffices.
+    let oldestTimestamp = null;
+    let beforeSig = undefined;
+    const MAX_PAGES = 2; // Cap at 2000 signatures (2 RPC calls max)
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const params = [ataAddress, { limit: 1000 }];
+      if (beforeSig) params[1].before = beforeSig;
+
+      const sigs = await rpcCall('getSignaturesForAddress', params);
+      if (!sigs || sigs.length === 0) break;
+
+      const oldest = sigs[sigs.length - 1];
+      if (oldest.blockTime) {
+        oldestTimestamp = oldest.blockTime * 1000;
+      }
+
+      if (sigs.length < 1000) break; // Reached the beginning
+      beforeSig = oldest.signature;
+    }
+
+    if (!oldestTimestamp) return null;
+    return Date.now() - oldestTimestamp;
+  } catch {
+    return null;
+  }
 }
 
 /**
