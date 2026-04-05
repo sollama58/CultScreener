@@ -722,8 +722,12 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
       return null;
     }
 
-    const accounts = response.data.result?.token_accounts;
+    const result = response.data.result;
+    const accounts = result?.token_accounts;
     if (!accounts || accounts.length === 0) return null;
+
+    // Total holder count from DAS (across all pages, not just this page)
+    const totalHolders = typeof result.total === 'number' ? result.total : null;
 
     // Deduplicate by owner wallet, keep ATA address for cheap hold-time lookups
     const seen = new Set();
@@ -742,7 +746,11 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
     const holders = allHolders.slice(0, Math.min(count, cutoff || allHolders.length))
       .map(({ wallet, ata }) => ({ wallet, ata }));
 
-    console.log(`[Solana] getTokenHolderSample: ${holders.length} holders from ${accounts.length} accounts for ${mintAddress.slice(0, 8)}...`);
+    // Attach totalHolders as a non-enumerable property so callers can read it
+    // before the array is JSON-serialized (JSON.stringify strips array properties)
+    Object.defineProperty(holders, 'totalHolders', { value: totalHolders, enumerable: false });
+
+    console.log(`[Solana] getTokenHolderSample: ${holders.length} holders (${totalHolders} total) from ${accounts.length} accounts for ${mintAddress.slice(0, 8)}...`);
     return holders;
   } catch (error) {
     console.error('[Solana] getTokenHolderSample error:', error.message);

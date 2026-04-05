@@ -2051,6 +2051,19 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
         riskLevel: riskLevel,
         holderCount: realHolders.length
       };
+
+      // Get real total holder count from cached DAS total or dedicated holder count
+      try {
+        const dasTotal = await cache.get(`holder-total:${mint}`);
+        if (dasTotal && dasTotal > realHolders.length) {
+          metrics.holderCount = dasTotal;
+        } else {
+          const cachedCount = await cache.get(keys.holderCount(mint));
+          if (cachedCount && cachedCount > metrics.holderCount) {
+            metrics.holderCount = cachedCount;
+          }
+        }
+      } catch (_) {}
     }
 
     const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
@@ -2101,6 +2114,10 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
           const excludeSet = new Set([...BURN_WALLETS, ...LP_PROGRAMS]);
           sample = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
           if (sample && sample.length > 0) {
+            // Cache the total holder count separately (array props don't survive JSON)
+            if (sample.totalHolders) {
+              await cache.set(`holder-total:${mint}`, sample.totalHolders, TTL.DAY);
+            }
             await cache.set(sampleCacheKey, sample, TTL.HOUR);
           }
         }
@@ -2318,6 +2335,9 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
       wallets = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
       if (!wallets || wallets.length === 0) {
         return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
+      }
+      if (wallets.totalHolders) {
+        await cache.set(`holder-total:${mint}`, wallets.totalHolders, TTL.DAY);
       }
       await cache.set(walletsCacheKey, wallets, 3 * TTL.HOUR);
     }

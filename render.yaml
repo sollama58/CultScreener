@@ -155,6 +155,7 @@ databases:
 #    d. Add rewrite rules in Settings > Redirects/Rewrites:
 #       - Source: /token/*    -> Destination: /token.html (Rewrite)
 #       - Source: /community  -> Destination: /community.html (Rewrite)
+#       - Source: /about      -> Destination: /about.html (Rewrite)
 #
 # 3. Update CORS_ORIGIN on cultscreener-api:
 #    After creating the static site, copy its URL and update

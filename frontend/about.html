@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>About - CultScreener</title>
+  <meta name="description" content="Learn how CultScreener analyzes Solana token holder conviction and diamond hands data.">
+  <meta name="theme-color" content="#09090b">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <style>
+    .about-content {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .about-section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem 2rem;
+      margin-bottom: 1.25rem;
+    }
+    .about-section h2 {
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--fire-primary);
+      margin-bottom: 1rem;
+    }
+    .about-section h3 {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 1rem 0 0.4rem;
+    }
+    .about-section h3:first-of-type {
+      margin-top: 0;
+    }
+    .about-section p, .about-section li {
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+    .about-section ul {
+      padding-left: 1.25rem;
+      margin: 0.5rem 0;
+    }
+    .about-section li {
+      margin-bottom: 0.3rem;
+    }
+    .about-section code {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      background: var(--bg-tertiary);
+      padding: 0.1rem 0.4rem;
+      border-radius: var(--radius-xs);
+      color: var(--fire-primary);
+    }
+    .about-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.82rem;
+    }
+    .about-table th {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .about-table td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+    }
+    .about-table td:first-child {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+    .about-table code {
+      font-size: 0.75rem;
+    }
+    .about-hero {
+      text-align: center;
+      padding: 2rem 1rem 1rem;
+    }
+    .about-hero h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #fff 0%, var(--fire-primary) 40%, var(--ember) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.5rem;
+    }
+    .about-hero p {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      max-width: 500px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">
+        <span class="logo-text">CultScreener</span>
+      </a>
+      <a href="token.html?mint=9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump" class="powered-badge"><svg class="flame-icon" width="14" height="14" viewBox="0 0 24 24" fill="url(#flameGrad)"><defs><linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#ff4500"/><stop offset="100%" stop-color="#ff8c00"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>Powered by ASDFASDFA</a>
+
+      <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle navigation" aria-expanded="false">
+        <svg class="icon-hamburger" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <svg class="icon-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+
+      <nav class="nav" id="main-nav">
+        <a href="/" class="nav-link">Diamond Hands</a>
+        <a href="community.html" class="nav-link">Watchlist</a>
+        <a href="about.html" class="nav-link active">About</a>
+      </nav>
+
+      <div class="header-actions">
+        <button class="btn btn-wallet" id="connect-wallet">Connect Wallet</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="about-content">
+      <div class="about-hero">
+        <h1>CultScreener</h1>
+        <p>A Solana token conviction analyzer. Track diamond hands, measure holder commitment, and discover tokens with the strongest communities.</p>
+      </div>
+
+      <!-- How It Works -->
+      <div class="about-section">
+        <h2>How It Works</h2>
+
+        <h3>Conviction Score</h3>
+        <p>The conviction percentage shown on the main leaderboard is the <strong>&gt;1 Month diamond hands rate</strong>. It measures what percentage of sampled holders have been holding a token continuously for more than 30 days.</p>
+        <ul>
+          <li><strong>ELITE (75%+)</strong> &mdash; 3 out of 4 holders are long-term diamond hands</li>
+          <li><strong>HIGH (50%+)</strong> &mdash; Majority of holders are committed</li>
+          <li><strong>MID (25%+)</strong> &mdash; Some committed holders mixed with traders</li>
+          <li><strong>LOW (&lt;25%)</strong> &mdash; Mostly short-term traders</li>
+        </ul>
+
+        <h3>How Hold Time Is Measured</h3>
+        <p>For each holder wallet, CultScreener queries the wallet's <strong>Associated Token Account (ATA)</strong> directly on the Solana blockchain using <code>getSignaturesForAddress</code>. The oldest transaction on that token account tells us when the wallet first received the token. The hold time is <code>now - firstReceivedAt</code>.</p>
+        <p>This approach is reliable regardless of how active the wallet is &mdash; even if a wallet has done thousands of other transactions, the token-specific account only contains transactions for that token.</p>
+
+        <h3>Sampling</h3>
+        <p>CultScreener samples up to <strong>250 holders</strong> per token. Holders are sourced from the Helius DAS API (<code>getTokenAccounts</code>), sorted by balance, with the bottom 10% (dust wallets) excluded. LP pools and burn wallets are also filtered out.</p>
+
+        <h3>Diamond Hands Distribution</h3>
+        <p>The Diamond Hands section on each token page shows what percentage of the sample has held for various time periods: &gt;24h, &gt;3d, &gt;1w, &gt;1M, &gt;3M, &gt;6M, &gt;9M. This gives a fuller picture of holder commitment across different timeframes.</p>
+      </div>
+
+      <!-- Token Pages -->
+      <div class="about-section">
+        <h2>Token Pages</h2>
+        <p>Each token detail page shows:</p>
+        <ul>
+          <li><strong>Price &amp; Market Data</strong> &mdash; Current price, 24h change, market cap, volume, liquidity. Sourced from GeckoTerminal.</li>
+          <li><strong>Token Statistics</strong> &mdash; Market cap, volume, liquidity, holder count, supply, token age, and page views.</li>
+          <li><strong>Conviction Metrics</strong> &mdash; Holder concentration (top 5/10/20%), token age, fresh wallet detection, locked/burnt supply, and the Diamond Hands distribution.</li>
+          <li><strong>Top Holders Table</strong> &mdash; The largest 20 holders with balances, USD values, supply percentages, and individual hold times.</li>
+          <li><strong>Community Sentiment</strong> &mdash; Bullish/bearish voting by connected wallets.</li>
+          <li><strong>Liquidity Pools</strong> &mdash; Active DEX pools with volume and liquidity data.</li>
+        </ul>
+      </div>
+
+      <!-- Watchlist -->
+      <div class="about-section">
+        <h2>Watchlist</h2>
+        <p>Connect your Solana wallet to save tokens to your personal watchlist. You can add tokens from the star button on any token page, and view them from the <strong>WATCHLIST</strong> pill on the main terminal or the dedicated Watchlist page.</p>
+        <p>The Watchlist page also shows global community leaderboards: Most Watchlisted tokens and Top Sentiment tokens.</p>
+      </div>
+
+      <!-- Data Sources -->
+      <div class="about-section">
+        <h2>Data Sources</h2>
+        <table class="about-table">
+          <thead><tr><th>Data</th><th>Source</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Holder list &amp; hold times</td><td>Solana RPC via Helius</td><td>DAS API for token accounts, standard RPC for signature history</td></tr>
+            <tr><td>Price, volume, liquidity</td><td>GeckoTerminal</td><td>Free tier, rate-limited with circuit breakers</td></tr>
+            <tr><td>Token metadata</td><td>Helius DAS + on-chain</td><td>Name, symbol, logo, social links from on-chain &amp; off-chain JSON</td></tr>
+            <tr><td>Holder count</td><td>Jupiter + Helius</td><td>Jupiter search API (fast) with Helius DAS fallback</td></tr>
+            <tr><td>Liquidity pools</td><td>GeckoTerminal</td><td>Pool addresses, reserves, volume per DEX</td></tr>
+            <tr><td>Social links</td><td>On-chain + DexScreener</td><td>Helius metadata extensions, off-chain JSON, DexScreener for curated tokens</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Cache Times -->
+      <div class="about-section">
+        <h2>Cache &amp; Refresh Times</h2>
+        <p>CultScreener caches data at multiple levels to balance freshness with API cost. Here are the current cache durations:</p>
+
+        <h3>Server-Side Cache</h3>
+        <table class="about-table">
+          <thead><tr><th>Data</th><th>Cache Duration</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Per-wallet hold time</td><td><code>48 hours</code></td><td>Cached per wallet per token. A wallet holding for 30d won't change meaningfully in 48h.</td></tr>
+            <tr><td>Diamond Hands distribution</td><td><code>3 hours</code></td><td>Full distribution recomputed when cache expires</td></tr>
+            <tr><td>Token price/market data</td><td><code>1-10 min</code></td><td>Price data: 1 min. Token info: 10 min.</td></tr>
+            <tr><td>Conviction leaderboard</td><td><code>1 min</code></td><td>Leaderboard query results cached briefly</td></tr>
+            <tr><td>Holder analytics (concentration)</td><td><code>1 hour</code></td><td>Top holder list and concentration metrics</td></tr>
+            <tr><td>Holder count</td><td><code>24 hours</code></td><td>From Jupiter/Helius. Cached longer since it changes slowly.</td></tr>
+            <tr><td>Token metadata (name, logo)</td><td><code>1 hour</code></td><td>Stable data, rarely changes</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Frontend Cache (Browser)</h3>
+        <table class="about-table">
+          <thead><tr><th>Data</th><th>Cache Duration</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Token list page</td><td><code>2 min</code></td><td>Auto-refreshes every 2 minutes</td></tr>
+            <tr><td>Token detail page</td><td><code>5 min</code></td><td>Price refreshes every 5 minutes with freshness indicator</td></tr>
+            <tr><td>Search results</td><td><code>2 min</code></td><td>Cached to avoid redundant API calls on re-search</td></tr>
+            <tr><td>Chart/OHLCV data</td><td><code>5 min</code></td><td>Per interval (1h, 4h, 1d, etc.)</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Background Jobs</h3>
+        <table class="about-table">
+          <thead><tr><th>Job</th><th>Interval</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Curated token conviction refresh</td><td><code>1 hour</code></td><td>Re-analyzes all admin-curated tokens</td></tr>
+            <tr><td>Top token conviction warm</td><td><code>10 min</code></td><td>Re-analyzes up to 3 most-viewed tokens per cycle</td></tr>
+            <tr><td>Cache warm on startup</td><td><code>Once</code></td><td>Pre-fetches market data for top 20 most-viewed tokens</td></tr>
+            <tr><td>View count flush</td><td><code>5 sec</code></td><td>Batches page view increments to the database</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Curated Tokens -->
+      <div class="about-section">
+        <h2>Curated Tokens</h2>
+        <p>Site administrators can add tokens to a curated list via the admin panel. Curated tokens:</p>
+        <ul>
+          <li>Appear on the conviction leaderboard immediately (with 0% conviction until analysis completes)</li>
+          <li>Have their conviction data refreshed automatically every hour</li>
+          <li>Can display DexScreener banner images and social links on their token page</li>
+        </ul>
+      </div>
+
+      <!-- Technical -->
+      <div class="about-section">
+        <h2>Technical Details</h2>
+        <ul>
+          <li><strong>Backend:</strong> Node.js + Express, PostgreSQL, Redis (BullMQ), deployed on Render</li>
+          <li><strong>Frontend:</strong> Vanilla HTML/CSS/JS (no build step), static site</li>
+          <li><strong>Wallet:</strong> Supports Phantom, Solflare, Backpack, Coinbase, Trust, Brave, Exodus</li>
+          <li><strong>RPC:</strong> Helius for DAS API and standard Solana RPC, with public RPC fallback</li>
+          <li><strong>Rate Limiting:</strong> Per-IP rate limits on all API endpoints, circuit breakers on external APIs</li>
+          <li><strong>Security:</strong> Helmet CSP headers, CORS, signature-based replay protection, timing-safe admin auth</li>
+        </ul>
+      </div>
+
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-content">
+      <span>CultScreener &copy; 2025-2026</span>
+      <span class="footer-divider">|</span>
+      <span>Powered by Solana</span>
+    </div>
+  </footer>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/wallet.js"></script>
+</body>
+</html>
