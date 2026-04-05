@@ -42,14 +42,6 @@ const tokenDetail = {
       return;
     }
 
-    // Pre-fetch the default chart interval immediately — only the mint is needed,
-    // so this runs in parallel with loadToken() and eliminates one sequential API round-trip.
-    // Chart data is fetched directly from GeckoTerminal (no backend fallback) so the
-    // backend's shared rate-limit budget is reserved for other endpoints.
-    this._chartPreload = (typeof directGecko !== 'undefined')
-      ? directGecko.getOHLCV(this.mint, '1h').catch(() => null)
-      : Promise.resolve(null);
-
     this.bindEvents();
 
     try {
@@ -69,7 +61,6 @@ const tokenDetail = {
 
       // Load additional data in parallel
       await Promise.all([
-        this.loadChart(this.currentInterval),
         this.loadPools(),
         sentiment.loadForToken(this.mint), // Load community sentiment
         this.loadHolderAnalytics(), // Load holder concentration data
@@ -79,6 +70,13 @@ const tokenDetail = {
       // Start price refresh and freshness timer
       this.startPriceRefresh();
       this.startFreshnessTimer();
+
+      // Update watchlist button once watchlist finishes loading (may still be in-flight)
+      this.updateWatchlistButton();
+      window.addEventListener('watchlistReady', () => this.updateWatchlistButton(), { once: true });
+      window.addEventListener('walletConnected', () => {
+        setTimeout(() => this.updateWatchlistButton(), 500);
+      });
     } catch (error) {
       console.error('Failed to initialize token page:', error);
       this.showError('Failed to load token data. Please try again.');

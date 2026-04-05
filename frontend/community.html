@@ -3,30 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Community - CultScreener</title>
-  <meta name="description" content="Community leaderboards — most watchlisted tokens and top sentiment on CultScreener.">
-  <meta name="theme-color" content="#0a0a0a">
+  <title>Watchlist - CultScreener</title>
+  <meta name="description" content="Your watchlist and community leaderboards on CultScreener.">
+  <meta name="theme-color" content="#09090b">
 
-  <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="CultScreener">
-  <meta property="og:title" content="Community - CultScreener">
-  <meta property="og:description" content="Community leaderboards — most watchlisted tokens and top sentiment on CultScreener.">
+  <meta property="og:title" content="Watchlist - CultScreener">
+  <meta property="og:description" content="Your watchlist and community leaderboards on CultScreener.">
   <meta property="og:url" content="https://cultscreener.com/community">
 
-  <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Community - CultScreener">
-  <meta name="twitter:description" content="Community leaderboards — most watchlisted tokens and top sentiment on CultScreener.">
+  <meta name="twitter:title" content="Watchlist - CultScreener">
+  <meta name="twitter:description" content="Your watchlist and community leaderboards on CultScreener.">
 
-  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-
   <link rel="stylesheet" href="css/styles.css">
-  <link rel="dns-prefetch" href="https://api.geckoterminal.com">
-  <link rel="dns-prefetch" href="https://api.jup.ag">
 </head>
 <body>
   <header class="header">
@@ -43,7 +37,7 @@
 
       <nav class="nav" id="main-nav">
         <a href="/" class="nav-link">Diamond Hands</a>
-        <a href="community.html" class="nav-link active">Community</a>
+        <a href="community.html" class="nav-link active">Watchlist</a>
       </nav>
 
       <div class="header-actions">
@@ -53,6 +47,24 @@
   </header>
 
   <main class="main community-page">
+    <!-- My Watchlist Section -->
+    <section class="community-section terminal-section" id="my-watchlist-section">
+      <h2 style="font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:1rem;">My Watchlist</h2>
+      <div id="my-watchlist-connect" style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.88rem;">
+        <p>Connect your wallet to see your watchlisted tokens.</p>
+        <button class="btn btn-primary btn-sm" style="margin-top:0.75rem;" onclick="if(typeof wallet!=='undefined') wallet.connect();">Connect Wallet</button>
+      </div>
+      <div id="my-watchlist-content" style="display:none;">
+        <table class="terminal-table">
+          <thead><tr><th>#</th><th>Token</th><th>Price</th><th>MCap</th><th>Actions</th></tr></thead>
+          <tbody id="my-watchlist-body">
+            <tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Global Leaderboards -->
     <div class="community-tabs">
       <button class="community-tab active" data-tab="watchlist">Most Watchlisted</button>
       <button class="community-tab" data-tab="sentiment">Top Sentiment</button>
@@ -61,15 +73,7 @@
     <div class="community-tab-content" id="tab-watchlist">
       <div class="leaderboard-table-wrap">
         <table class="terminal-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Token</th>
-              <th>Price</th>
-              <th>MCap</th>
-              <th>Watchlists</th>
-            </tr>
-          </thead>
+          <thead><tr><th>#</th><th>Token</th><th>Price</th><th>MCap</th><th>Watchlists</th></tr></thead>
           <tbody id="watchlist-leaderboard-body">
             <tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
           </tbody>
@@ -80,17 +84,7 @@
     <div class="community-tab-content" id="tab-sentiment" style="display:none">
       <div class="leaderboard-table-wrap">
         <table class="terminal-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Token</th>
-              <th>Price</th>
-              <th>MCap</th>
-              <th>Bullish</th>
-              <th>Bearish</th>
-              <th>Score</th>
-            </tr>
-          </thead>
+          <thead><tr><th>#</th><th>Token</th><th>Price</th><th>MCap</th><th>Bullish</th><th>Bearish</th><th>Score</th></tr></thead>
           <tbody id="sentiment-leaderboard-body">
             <tr><td colspan="7"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
           </tbody>
