@@ -1163,6 +1163,18 @@ async function getPendingSubmissions(limit = 50) {
 // Atomic watchlist add with limit enforcement (prevents TOCTOU race condition)
 async function addToWatchlistAtomic(walletAddress, tokenMint, maxItems = 100) {
   if (!pool) return { limitReached: true };
+
+  // Ensure table exists (handles edge case where schema init hasn't completed)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS watchlist (
+      id SERIAL PRIMARY KEY,
+      wallet_address VARCHAR(44) NOT NULL,
+      token_mint VARCHAR(44) NOT NULL,
+      added_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(wallet_address, token_mint)
+    )
+  `).catch(() => {});
+
   const result = await pool.query(
     `INSERT INTO watchlist (wallet_address, token_mint)
      SELECT $1, $2
@@ -1172,7 +1184,6 @@ async function addToWatchlistAtomic(walletAddress, tokenMint, maxItems = 100) {
     [walletAddress, tokenMint, maxItems]
   );
   if (result.rows.length === 0) {
-    // Either already exists or limit reached — check which
     const exists = await isInWatchlist(walletAddress, tokenMint);
     if (exists) return { wallet_address: walletAddress, token_mint: tokenMint, exists: true };
     return { limitReached: true };

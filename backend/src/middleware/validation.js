@@ -1290,6 +1290,7 @@ function createApiKeySignatureMessage(wallet, timestamp) {
  * Signature is optional — if not provided, skip validation
  */
 async function validateWatchlistSignature(req, res, next) {
+  if (!req.body) return next();
   const { wallet, signature, signatureTimestamp } = req.body;
 
   // Signature is optional - if not provided, skip validation

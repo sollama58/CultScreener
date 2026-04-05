@@ -52,7 +52,8 @@ router.get('/:wallet', asyncHandler(async (req, res) => {
 
 // POST /api/watchlist - Add token to watchlist
 router.post('/', walletLimiter, validateWatchlistSignature, asyncHandler(async (req, res) => {
-  const { wallet, tokenMint } = req.body;
+  const wallet = req.body?.wallet;
+  const tokenMint = req.body?.tokenMint;
 
   if (!isValidWallet(wallet)) {
     return res.status(400).json({ error: 'Invalid wallet address' });
@@ -62,27 +63,32 @@ router.post('/', walletLimiter, validateWatchlistSignature, asyncHandler(async (
     return res.status(400).json({ error: 'Invalid token mint address' });
   }
 
-  // Atomic watchlist insert with limit check (prevents TOCTOU race condition)
-  const result = await db.addToWatchlistAtomic(wallet, tokenMint, 100);
-  if (result.limitReached) {
-    return res.status(400).json({
-      error: 'Watchlist limit reached (max 100 tokens)',
-      code: 'WATCHLIST_LIMIT'
-    });
-  }
+  try {
+    const result = await db.addToWatchlistAtomic(wallet, tokenMint, 100);
+    if (result.limitReached) {
+      return res.status(400).json({
+        error: 'Watchlist limit reached (max 100 tokens)',
+        code: 'WATCHLIST_LIMIT'
+      });
+    }
 
-  res.json({
-    success: true,
-    message: result.exists ? 'Token already in watchlist' : 'Token added to watchlist',
-    alreadyExists: !!result.exists,
-    tokenMint,
-    wallet
-  });
+    res.json({
+      success: true,
+      message: result.exists ? 'Token already in watchlist' : 'Token added to watchlist',
+      alreadyExists: !!result.exists,
+      tokenMint,
+      wallet
+    });
+  } catch (err) {
+    console.error('[Watchlist] Add error:', err.message);
+    res.status(500).json({ error: 'Failed to add to watchlist' });
+  }
 }));
 
 // DELETE /api/watchlist - Remove token from watchlist
 router.delete('/', walletLimiter, validateWatchlistSignature, asyncHandler(async (req, res) => {
-  const { wallet, tokenMint } = req.body;
+  const wallet = req.body?.wallet;
+  const tokenMint = req.body?.tokenMint;
 
   if (!isValidWallet(wallet)) {
     return res.status(400).json({ error: 'Invalid wallet address' });
@@ -92,22 +98,27 @@ router.delete('/', walletLimiter, validateWatchlistSignature, asyncHandler(async
     return res.status(400).json({ error: 'Invalid token mint address' });
   }
 
-  const result = await db.removeFromWatchlist(wallet, tokenMint);
+  try {
+    const result = await db.removeFromWatchlist(wallet, tokenMint);
 
-  if (!result) {
-    return res.status(404).json({
-      error: 'Token not found in watchlist',
+    if (!result) {
+      return res.status(404).json({
+        error: 'Token not found in watchlist',
+        tokenMint,
+        wallet
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Token removed from watchlist',
       tokenMint,
       wallet
     });
+  } catch (err) {
+    console.error('[Watchlist] Remove error:', err.message);
+    res.status(500).json({ error: 'Failed to remove from watchlist' });
   }
-
-  res.json({
-    success: true,
-    message: 'Token removed from watchlist',
-    tokenMint,
-    wallet
-  });
 }));
 
 // POST /api/watchlist/check - Check if token is in watchlist
