@@ -2199,49 +2199,80 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
         }
 
         if (useInline) {
-          const bgWallets = [...staleWallets];
           const bgMint = mint;
+          const DAY_MS = 86400000;
 
-          setImmediate(() => {
-            (async () => {
-              console.log(`[HolderMetrics] Inline: computing ${bgWallets.length} wallets for ${bgMint}`);
-              const BATCH_SIZE = 10;
-              const DAY_MS = 86400000;
-              let successCount = 0;
-              let failCount = 0;
+          // Compute top 10 wallets synchronously so the FIRST response has data
+          const syncWallets = staleWallets.slice(0, 10);
+          const asyncWallets = staleWallets.slice(10);
+
+          console.log(`[HolderMetrics] Inline: computing ${syncWallets.length} wallets sync, ${asyncWallets.length} async for ${bgMint}`);
+
+          // Synchronous batch — results go into response
+          const syncResults = await Promise.all(
+            syncWallets.map(async (wallet) => {
               try {
-                for (let i = 0; i < bgWallets.length; i += BATCH_SIZE) {
-                  const batch = bgWallets.slice(i, i + BATCH_SIZE);
-                  const results = await Promise.all(
-                    batch.map(async (wallet) => {
-                      try {
-                        const metrics = await solanaService.getWalletHoldMetrics(wallet, bgMint);
-                        return [wallet, metrics];
-                      } catch (err) {
-                        console.error(`[HolderMetrics] Wallet ${wallet.slice(0,8)}... error:`, err.message);
-                        return [wallet, null];
-                      }
-                    })
-                  );
-                  for (const [wallet, metrics] of results) {
-                    if (!metrics) { failCount++; continue; }
-                    const avg = metrics.avgHoldTime ?? -1;
-                    const token = metrics.tokenHoldTime ?? -1;
-                    const age = metrics.walletAge ?? -1;
-                    await cache.set(`wallet-hold-time:${wallet}`, avg, DAY_MS);
-                    await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, token, DAY_MS);
-                    await cache.set(`wallet-age:${wallet}`, age, DAY_MS);
-                    if (avg > 0 || token > 0) successCount++;
+                const metrics = await solanaService.getWalletHoldMetrics(wallet, bgMint);
+                return [wallet, metrics];
+              } catch { return [wallet, null]; }
+            })
+          );
+
+          for (const [wallet, metrics] of syncResults) {
+            if (!metrics) continue;
+            const avg = metrics.avgHoldTime ?? -1;
+            const token = metrics.tokenHoldTime ?? -1;
+            const age = metrics.walletAge ?? -1;
+            await cache.set(`wallet-hold-time:${wallet}`, avg, DAY_MS);
+            await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, token, DAY_MS);
+            await cache.set(`wallet-age:${wallet}`, age, DAY_MS);
+            if (avg > 0) holdTimes[wallet] = avg;
+            if (token > 0) tokenHoldTimes[wallet] = token;
+            if (age > 0) { walletAgeChecked++; if (age < DAY_MS) freshWalletCount++; }
+          }
+
+          // Remaining wallets computed in background (non-blocking)
+          if (asyncWallets.length > 0) {
+            setImmediate(() => {
+              (async () => {
+                const BATCH_SIZE = 10;
+                let successCount = 0;
+                let failCount = 0;
+                try {
+                  for (let i = 0; i < asyncWallets.length; i += BATCH_SIZE) {
+                    const batch = asyncWallets.slice(i, i + BATCH_SIZE);
+                    const results = await Promise.all(
+                      batch.map(async (wallet) => {
+                        try {
+                          const metrics = await solanaService.getWalletHoldMetrics(wallet, bgMint);
+                          return [wallet, metrics];
+                        } catch (err) {
+                          return [wallet, null];
+                        }
+                      })
+                    );
+                    for (const [wallet, metrics] of results) {
+                      if (!metrics) { failCount++; continue; }
+                      const avg = metrics.avgHoldTime ?? -1;
+                      const token = metrics.tokenHoldTime ?? -1;
+                      const age = metrics.walletAge ?? -1;
+                      await cache.set(`wallet-hold-time:${wallet}`, avg, DAY_MS);
+                      await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, token, DAY_MS);
+                      await cache.set(`wallet-age:${wallet}`, age, DAY_MS);
+                      if (avg > 0 || token > 0) successCount++;
+                    }
                   }
+                  console.log(`[HolderMetrics] Inline async complete for ${bgMint}: ${successCount} with data, ${failCount} failed`);
+                } catch (err) {
+                  console.error(`[HolderMetrics] Inline async failed for ${bgMint}:`, err.message);
+                } finally {
+                  await cache.delete(`holder-metrics-pending:${bgMint}`);
                 }
-                console.log(`[HolderMetrics] Inline complete for ${bgMint}: ${successCount} with data, ${failCount} failed`);
-              } catch (err) {
-                console.error(`[HolderMetrics] Inline failed for ${bgMint}:`, err.message);
-              } finally {
-                await cache.delete(`holder-metrics-pending:${bgMint}`);
-              }
-            })();
-          });
+              })();
+            });
+          } else {
+            await cache.delete(`holder-metrics-pending:${bgMint}`);
+          }
         }
       }
 
