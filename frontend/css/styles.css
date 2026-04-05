@@ -2550,18 +2550,7 @@ select:focus {
   50% { opacity: 0.4; }
 }
 
-/* Holders watermark */
-.holders-watermark {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  justify-content: flex-start;
-  padding-top: 0.75rem;
-  color: var(--text-dim);
-  font-size: 0.7rem;
-  font-weight: 500;
-  opacity: 0.6;
-}
+/* Holders watermark (legacy — replaced by .diamond-hands-watermark) */
 
 
 /* =============================================
@@ -2670,6 +2659,69 @@ select:focus {
 
 .dh-text-low {
   color: var(--text-muted) !important;
+}
+
+/* Diamond Hands Footer Watermark */
+.diamond-hands-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.85rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(255, 87, 34, 0.06);
+}
+
+.diamond-hands-watermark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.75rem;
+  border: 1px solid rgba(255, 87, 34, 0.12);
+  border-radius: var(--radius-full);
+  background: rgba(255, 87, 34, 0.03);
+  text-decoration: none;
+  transition: all 0.25s ease;
+  cursor: pointer;
+}
+
+.diamond-hands-watermark:hover {
+  border-color: rgba(255, 87, 34, 0.3);
+  background: rgba(255, 87, 34, 0.06);
+  box-shadow: 0 0 12px rgba(255, 87, 34, 0.06);
+}
+
+.dh-watermark-flame {
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.3));
+  animation: flameFlicker 3s ease-in-out infinite alternate;
+}
+
+.dh-watermark-text {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.diamond-hands-watermark:hover .dh-watermark-text {
+  color: var(--text-primary);
+}
+
+.dh-watermark-sep {
+  width: 1px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.dh-watermark-powered {
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.diamond-hands-watermark:hover .dh-watermark-powered {
+  color: var(--text-muted);
 }
 
 
@@ -4317,6 +4369,10 @@ select:focus {
   /* Diamond hands */
   .diamond-hands-section { padding: 0.75rem; }
   .diamond-bar-track { height: 18px; }
+  .diamond-hands-footer { margin-top: 0.65rem; padding-top: 0.55rem; }
+  .diamond-hands-watermark { padding: 0.25rem 0.6rem; }
+  .dh-watermark-text { font-size: 0.6rem; }
+  .dh-watermark-powered { font-size: 0.55rem; }
 
   /* Holders table */
   .holders-table { font-size: 0.78rem; }
@@ -4453,6 +4509,12 @@ select:focus {
 
   .diamond-hands-section { padding: 0.6rem; }
   .diamond-hands-title { font-size: 0.7rem; }
+  .diamond-hands-footer { margin-top: 0.5rem; padding-top: 0.45rem; }
+  .diamond-hands-watermark { padding: 0.2rem 0.5rem; gap: 0.25rem; }
+  .dh-watermark-text { font-size: 0.58rem; }
+  .dh-watermark-powered { font-size: 0.52rem; }
+  .dh-watermark-flame { width: 10px; height: 10px; }
+  .dh-watermark-sep { height: 8px; }
   .diamond-bar { gap: 0.3rem; }
   .diamond-bar-label { font-size: 0.6rem; min-width: 24px; }
   .diamond-bar-track { height: 16px; }
