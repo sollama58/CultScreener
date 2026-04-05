@@ -1321,25 +1321,22 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         db.getApprovedSubmissions(mint).catch(() => []),
         // GeckoTerminal token endpoint: provides coingeckoId for social links lookup
         geckoService.getTokenInfo(mint).catch(() => null),
-        // Holder count: always fetch from DAS (cheap, 1 call, returns accurate total)
-        solanaService.isHeliusConfigured()
-          ? solanaService.getTokenHolderCount(mint).catch(() => null)
-          : Promise.resolve(null)
+        // Holder count from Solscan (always, no dependency on Helius)
+        solanaService.getTokenHolderCount(mint).catch(() => null)
       ];
 
       const results = await Promise.all(fetchPromises);
       const [heliusMetadata, geckoOverview, submissions, geckoTokenInfo, fetchedHolders] = results;
 
-      // Use DAS holder count (accurate), fall back to cache
+      // Use Solscan holder count, fall back to cache
       let holders = null;
-      if (typeof fetchedHolders === 'number' && fetchedHolders > 1) {
+      if (typeof fetchedHolders === 'number' && fetchedHolders > 0) {
         holders = fetchedHolders;
         await cache.set(keys.holderCount(mint), holders, TTL.DAY);
         await cache.set(`holder-total:${mint}`, holders, TTL.DAY);
       } else {
-        // Fall back to cached value, but only if it's reasonable (> 20)
         const cached = await cache.get(`holder-total:${mint}`) || await cache.get(keys.holderCount(mint));
-        if (cached && cached > 20) holders = cached;
+        if (cached && cached > 0) holders = cached;
       }
 
       // Privacy: Don't log API response details
@@ -2043,22 +2040,11 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
         holderCount: realHolders.length
       };
 
-      // Get real total holder count — try all sources
+      // Use cached Solscan holder count (set by token detail endpoint or admin refresh)
       try {
-        let totalCount = await cache.get(`holder-total:${mint}`)
+        const totalCount = await cache.get(`holder-total:${mint}`)
           || await cache.get(keys.holderCount(mint));
-
-        // If no cached count, fetch it live from Helius DAS (1 cheap call)
-        if (!totalCount || totalCount <= realHolders.length) {
-          const dasCount = await solanaService.getTokenHolderCount(mint).catch(() => null);
-          if (dasCount && dasCount > 0) {
-            totalCount = dasCount;
-            await cache.set(`holder-total:${mint}`, dasCount, TTL.DAY);
-            await cache.set(keys.holderCount(mint), dasCount, TTL.DAY);
-          }
-        }
-
-        if (totalCount && totalCount > realHolders.length) {
+        if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
         }
       } catch (_) {}

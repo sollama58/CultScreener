@@ -114,35 +114,40 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
 }));
 
 router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
-  const { cache } = require('../services/cache');
+  const { cache, keys } = require('../services/cache');
   const solanaService = require('../services/solana');
 
-  // Get all curated tokens + any tokens with cached conviction data
-  let mints = [];
+  // Collect all token mints: curated + leaderboard
+  const mintSet = new Set();
   try {
     const curated = await db.getCuratedTokens();
-    mints = curated.map(t => t.mintAddress || t.mint_address).filter(Boolean);
+    curated.forEach(t => { if (t.mintAddress || t.mint_address) mintSet.add(t.mintAddress || t.mint_address); });
   } catch (_) {}
 
-  // Also get tokens from conviction leaderboard
   try {
     const { tokens } = await db.getTopConvictionTokens(100, 0, {});
-    for (const t of tokens) {
-      if (t.mint_address && !mints.includes(t.mint_address)) {
-        mints.push(t.mint_address);
-      }
-    }
+    tokens.forEach(t => { if (t.mint_address) mintSet.add(t.mint_address); });
   } catch (_) {}
 
+  const mints = [...mintSet];
   let updated = 0;
   let failed = 0;
+  const results = {};
 
+  // Clear ALL old holder count caches first so stale data isn't served
+  for (const mint of mints) {
+    await cache.delete(`holder-total:${mint}`).catch(() => {});
+    await cache.delete(keys.holderCount(mint)).catch(() => {});
+  }
+
+  // Fetch fresh counts from Solscan
   for (const mint of mints) {
     try {
       const count = await solanaService.getTokenHolderCount(mint);
       if (count && count > 0) {
-        await cache.set(`holder-total:${mint}`, count, 86400000); // 24h
-        await cache.set(`holders:${mint}`, count, 86400000);
+        await cache.set(`holder-total:${mint}`, count, 86400000);
+        await cache.set(keys.holderCount(mint), count, 86400000);
+        results[mint] = count;
         updated++;
       } else {
         failed++;
@@ -150,19 +155,25 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
     } catch {
       failed++;
     }
-    // Rate limit: brief pause between calls
+    // Rate limit Solscan: 500ms between calls
     if (updated + failed < mints.length) {
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 500));
     }
   }
 
-  // Clear leaderboard cache so new counts appear immediately
+  // Clear all caches that display holder counts so new data appears immediately
   try {
+    // Leaderboard cache
     const lbKeys = await cache.scanKeys('leaderboard:conviction:*');
     for (const key of lbKeys) await cache.delete(key);
+    // Token detail page caches
+    for (const mint of mints) {
+      await cache.delete(`token:${mint}`).catch(() => {});
+      await cache.delete(`holder-analytics:${mint}`).catch(() => {});
+    }
   } catch (_) {}
 
-  console.log(`[Admin] Refreshed holder counts: ${updated} updated, ${failed} failed, ${mints.length} total`);
+  console.log(`[Admin] Refreshed holder counts from Solscan: ${updated} updated, ${failed} failed, ${mints.length} total`);
   res.json({ success: true, updated, failed, total: mints.length });
 }));
 

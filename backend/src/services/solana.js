@@ -283,50 +283,46 @@ async function checkHealth() {
  * @returns {Promise<number|null>} - Token account count (approximate holders) or null if unavailable
  */
 /**
- * Get total holder count from Helius DAS.
- * Uses the `total` field from getTokenAccounts which reports all non-zero
- * token accounts for the mint. Single API call.
+ * Get total holder count from Solscan public API.
+ * Returns the exact number of holders for any Solana token.
+ * Single HTTP call, no pagination needed.
  */
 async function getTokenHolderCount(mintAddress) {
-  if (!HELIUS_DAS_URL) return null;
-
   try {
-    const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
-      axios.post(HELIUS_DAS_URL, {
-        jsonrpc: '2.0',
-        id: 'holder-count',
-        method: 'getTokenAccounts',
-        params: {
-          mint: mintAddress,
-          page: 1,
-          limit: 1000,
-          options: { showZeroBalance: false }
-        }
-      }, {
-        timeout: 15000,
-        headers: HELIUS_HEADERS,
-        httpsAgent
-      })
-    ), 'getTokenHolderCount');
+    const response = await axios.get(
+      `https://api.solscan.io/v2/token/holder/count?token=${encodeURIComponent(mintAddress)}`,
+      {
+        timeout: 10000,
+        httpsAgent,
+        headers: { 'Accept': 'application/json', 'User-Agent': 'CultScreener/1.0' }
+      }
+    );
 
-    if (response.data.error) return null;
+    const count = response.data?.data?.holder_count ?? response.data?.data?.count ?? response.data?.holder_count;
+    if (typeof count === 'number' && count > 0) {
+      console.log(`[Solana] Solscan holder count for ${mintAddress.slice(0, 8)}...: ${count}`);
+      return count;
+    }
 
-    const result = response.data.result;
-    if (!result) return null;
+    // Fallback: try the token meta endpoint
+    const metaResponse = await axios.get(
+      `https://api.solscan.io/v2/token/meta?token=${encodeURIComponent(mintAddress)}`,
+      {
+        timeout: 10000,
+        httpsAgent,
+        headers: { 'Accept': 'application/json', 'User-Agent': 'CultScreener/1.0' }
+      }
+    );
 
-    // Use the total field if available and > accounts returned
-    // Otherwise count the accounts on this page
-    const accounts = result.token_accounts || [];
-    const total = typeof result.total === 'number' ? result.total : accounts.length;
+    const metaCount = metaResponse.data?.data?.holder ?? metaResponse.data?.data?.holder_count;
+    if (typeof metaCount === 'number' && metaCount > 0) {
+      console.log(`[Solana] Solscan meta holder count for ${mintAddress.slice(0, 8)}...: ${metaCount}`);
+      return metaCount;
+    }
 
-    // If total equals exactly 1000 and we got 1000 accounts, it's likely capped.
-    // In that case, report 1000+ (still better than 19).
-    const count = Math.max(total, accounts.length);
-
-    console.log(`[Solana] getTokenHolderCount for ${mintAddress.slice(0, 8)}...: ${count} (total field: ${result.total}, accounts: ${accounts.length})`);
-    return count > 0 ? count : null;
+    return null;
   } catch (error) {
-    console.error('[Solana] getTokenHolderCount error:', error.message);
+    console.error('[Solana] Solscan holder count error:', error.message);
     return null;
   }
 }

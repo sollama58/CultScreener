@@ -541,8 +541,8 @@ const tokenDetail = {
     if (volumeEl) volumeEl.textContent = utils.formatNumber(token.volume24h);
     const liqEl = document.getElementById('stat-liquidity');
     if (liqEl) liqEl.textContent = utils.formatNumber(token.liquidity);
-    // Holder count — only show if > 1 (a count of 1 is always stale data)
-    const holdersCount = (typeof token.holders === 'number' && token.holders > 1) ? token.holders : null;
+    // Holder count from Solscan (set by backend)
+    const holdersCount = (typeof token.holders === 'number' && token.holders > 0) ? token.holders : null;
     const holdersEl = document.getElementById('stat-holders');
     if (holdersEl) holdersEl.textContent = holdersCount ? holdersCount.toLocaleString() : '--';
     const holdersTotalEl = document.getElementById('holders-total-count');
@@ -717,7 +717,7 @@ const tokenDetail = {
         }
 
         // Update holder count in BOTH boxes (always overwrite with fresh data from holders endpoint)
-        if (metrics.holderCount && metrics.holderCount > 1) {
+        if (metrics.holderCount && metrics.holderCount > 0) {
           const count = metrics.holderCount.toLocaleString();
           const holdersStatEl = document.getElementById('stat-holders');
           if (holdersStatEl) holdersStatEl.textContent = count;
