@@ -370,6 +370,9 @@ const wallet = {
       this.provider = provider;
       this.providerName = walletId;
 
+      // Set up disconnect/accountChanged listeners for this provider
+      this.setupWalletListeners(provider, walletId);
+
       this.updateUI();
       this.saveConnection();
       this.broadcastConnectionChange('connected');
@@ -425,7 +428,7 @@ const wallet = {
       // Revoke server-side (fire and forget)
       if (token) {
         try {
-          fetch(`${API_BASE_URL}/api/auth/device-session`, {
+          fetch(`${config.api.baseUrl}/api/auth/device-session`, {
             method: 'DELETE',
             headers: { 'X-Device-Session': token }
           }).catch(() => {});
@@ -714,7 +717,7 @@ const wallet = {
     // 2. Request device session from backend
     let response;
     try {
-      response = await fetch(`${API_BASE_URL}/api/auth/device-session`, {
+      response = await fetch(`${config.api.baseUrl}/api/auth/device-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

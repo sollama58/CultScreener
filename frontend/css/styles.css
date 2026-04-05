@@ -2410,58 +2410,62 @@ select:focus {
 .diamond-hands-bars {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.4rem;
 }
 
 .diamond-bar {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.5rem;
 }
 
 .diamond-bar-label {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-family: var(--font-mono);
+  font-weight: 600;
   color: var(--text-muted);
-  min-width: 32px;
+  min-width: 34px;
   text-align: right;
   flex-shrink: 0;
+  letter-spacing: 0.02em;
 }
 
 .diamond-bar-track {
   flex: 1;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 3px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-xs);
   overflow: hidden;
+  position: relative;
 }
 
 .diamond-bar-fill {
   height: 100%;
-  border-radius: 3px;
-  transition: width 0.6s var(--ease-out-expo);
+  border-radius: var(--radius-xs);
+  transition: width 0.8s var(--ease-out-expo);
   min-width: 0;
+  position: relative;
 }
 
 .diamond-bar-fill.dh-high {
-  background: linear-gradient(90deg, var(--fire-dim), var(--fire-primary), var(--ember));
-  box-shadow: 0 0 8px rgba(255, 87, 34, 0.25);
+  background: linear-gradient(90deg, var(--fire-dim), var(--fire-primary));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .diamond-bar-fill.dh-mid {
-  background: linear-gradient(90deg, rgba(255, 87, 34, 0.4), var(--ember));
+  background: linear-gradient(90deg, rgba(255, 145, 0, 0.3), rgba(255, 145, 0, 0.6));
 }
 
 .diamond-bar-fill.dh-low {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .diamond-bar-pct {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-family: var(--font-mono);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-secondary);
-  min-width: 40px;
+  min-width: 44px;
   text-align: right;
   flex-shrink: 0;
 }
@@ -4277,17 +4281,21 @@ select:focus {
   }
 
   .diamond-bar {
-    gap: 0.5rem;
+    gap: 0.4rem;
   }
 
   .diamond-bar-label {
-    font-size: 0.68rem;
+    font-size: 0.65rem;
     min-width: 28px;
   }
 
+  .diamond-bar-track {
+    height: 18px;
+  }
+
   .diamond-bar-pct {
-    font-size: 0.72rem;
-    min-width: 32px;
+    font-size: 0.68rem;
+    min-width: 36px;
   }
 
   /* Chart modal full screen on mobile */
