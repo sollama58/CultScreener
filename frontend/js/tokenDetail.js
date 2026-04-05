@@ -1063,7 +1063,8 @@ const tokenDetail = {
     const btn = document.getElementById('holders-share');
     if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
 
-    let titleBar = null;
+    // Elements we inject for the screenshot and remove after
+    const injected = [];
     try {
       // Dynamically load html2canvas if not already loaded
       if (typeof html2canvas === 'undefined') {
@@ -1076,20 +1077,56 @@ const tokenDetail = {
         });
       }
 
-      // Temporarily boost watermark opacity for screenshot
-      const watermark = graphic.querySelector('.holders-watermark');
-      if (watermark) watermark.style.opacity = '0.6';
-
-      // Build a token title header for the screenshot
-      titleBar = document.createElement('div');
-      titleBar.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding-bottom:0.75rem;margin-bottom:0.75rem;border-bottom:1px solid var(--border-subtle);';
+      const esc = (s) => utils.escapeHtml(s || '');
       const tokenName = this.token?.name || '';
       const tokenSymbol = this.token?.symbol || '';
-      titleBar.innerHTML = `<span style="font-size:0.875rem;font-weight:700;color:var(--text-primary);">Holder Analytics</span><span style="font-size:1.5rem;font-weight:900;color:var(--accent-primary);background:var(--accent-muted);padding:0.3rem 0.875rem;border-radius:var(--radius-sm);letter-spacing:0.03em;line-height:1.2;">${utils.escapeHtml(tokenSymbol ? '$' + tokenSymbol : tokenName)}</span>`;
-      graphic.insertBefore(titleBar, graphic.firstChild);
+      const tokenPrice = this.token?.price ? utils.formatPrice(this.token.price, 6) : '';
+      const priceChange = this.token?.priceChange24h;
+      const priceChangeStr = typeof priceChange === 'number' ? `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%` : '';
+      const priceColor = priceChange >= 0 ? '#10b981' : '#ef4444';
+      const logoSrc = document.getElementById('token-logo')?.src || '';
+
+      // Add padding to the graphic container for the screenshot
+      graphic.style.padding = '1.25rem';
+
+      // 1. Header bar: logo + name + price
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:0.85rem;margin-bottom:0.85rem;border-bottom:1px solid rgba(255,255,255,0.06);';
+      header.innerHTML = `
+        <div style="display:flex;align-items:center;gap:0.6rem;">
+          ${logoSrc ? `<img src="${esc(logoSrc)}" style="width:32px;height:32px;border-radius:50%;background:#161719;" crossorigin="anonymous">` : ''}
+          <div>
+            <div style="font-size:1rem;font-weight:800;color:#f0f0f2;letter-spacing:-0.02em;line-height:1.2;">${esc(tokenName)}</div>
+            <div style="font-size:0.7rem;font-family:'JetBrains Mono',monospace;color:#6b6b74;text-transform:uppercase;letter-spacing:0.04em;">${esc(tokenSymbol)}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          ${tokenPrice ? `<div style="font-size:1.1rem;font-weight:700;color:#f0f0f2;font-family:'JetBrains Mono',monospace;letter-spacing:-0.02em;">${esc(tokenPrice)}</div>` : ''}
+          ${priceChangeStr ? `<div style="font-size:0.75rem;font-weight:600;color:${priceColor};font-family:'JetBrains Mono',monospace;">${esc(priceChangeStr)}</div>` : ''}
+        </div>`;
+      graphic.insertBefore(header, graphic.firstChild);
+      injected.push(header);
+
+      // 2. Section title
+      const sectionTitle = document.createElement('div');
+      sectionTitle.style.cssText = 'font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#6b6b74;margin-bottom:0.6rem;';
+      sectionTitle.textContent = 'CONVICTION METRICS';
+      graphic.insertBefore(sectionTitle, header.nextSibling);
+      injected.push(sectionTitle);
+
+      // 3. Boost watermark opacity
+      const watermark = graphic.querySelector('.holders-watermark');
+      if (watermark) watermark.style.opacity = '0.8';
+
+      // 4. Ticker badge — bottom right
+      const tickerBadge = document.createElement('div');
+      tickerBadge.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:0.4rem;padding-top:0.65rem;margin-top:0.5rem;';
+      tickerBadge.innerHTML = `<span style="font-size:1.1rem;font-weight:900;color:#ff5722;background:rgba(255,87,34,0.1);padding:0.25rem 0.75rem;border-radius:4px;font-family:'JetBrains Mono',monospace;letter-spacing:0.03em;border:1px solid rgba(255,87,34,0.2);">$${esc(tokenSymbol || tokenName)}</span>`;
+      graphic.appendChild(tickerBadge);
+      injected.push(tickerBadge);
 
       const canvas = await html2canvas(graphic, {
-        backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--bg-base').trim() || '#07080a',
+        backgroundColor: '#060607',
         scale: 2,
         useCORS: true,
         logging: false,
@@ -1097,38 +1134,38 @@ const tokenDetail = {
         windowHeight: graphic.scrollHeight,
       });
 
-      // Clean up temporary elements before sharing
-      titleBar.remove();
-      titleBar = null;
+      // Clean up injected elements
+      injected.forEach(el => el.remove());
+      graphic.style.padding = '';
       if (watermark) watermark.style.opacity = '';
 
       const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      const filename = `${(tokenSymbol || tokenName || 'token').toLowerCase()}-conviction.png`;
 
-      // Try native share with file if available, otherwise copy to clipboard
+      // Try native share
       if (navigator.share && navigator.canShare) {
-        const file = new File([blob], 'holder-analytics.png', { type: 'image/png' });
+        const file = new File([blob], filename, { type: 'image/png' });
         const shareData = { files: [file] };
         if (navigator.canShare(shareData)) {
           try {
             await navigator.share(shareData);
           } catch (shareErr) {
-            // User cancelled the share dialog — not an error
             if (shareErr.name !== 'AbortError') throw shareErr;
           }
           return;
         }
       }
 
-      // Fallback: copy image to clipboard
+      // Fallback: copy to clipboard
       if (navigator.clipboard && navigator.clipboard.write) {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         if (typeof toast !== 'undefined') toast.success('Screenshot copied to clipboard!');
       } else {
-        // Last fallback: download the image
+        // Last fallback: download
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'holder-analytics.png';
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1136,11 +1173,12 @@ const tokenDetail = {
         if (typeof toast !== 'undefined') toast.success('Screenshot downloaded!');
       }
     } catch (err) {
-      console.error('Share holder analytics error:', err);
+      console.error('Share conviction stats error:', err);
       if (typeof toast !== 'undefined') toast.error('Failed to capture screenshot');
     } finally {
-      // Always clean up: remove titleBar if still in DOM, restore watermark
-      if (titleBar && titleBar.parentNode) titleBar.remove();
+      // Always clean up
+      injected.forEach(el => { if (el.parentNode) el.remove(); });
+      graphic.style.padding = '';
       const watermark = document.querySelector('#holders-graphic .holders-watermark');
       if (watermark) watermark.style.opacity = '';
       if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }

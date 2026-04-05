@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     id SERIAL PRIMARY KEY,
     wallet_address VARCHAR(44) NOT NULL,
     token_mint VARCHAR(44) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    added_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(wallet_address, token_mint)
 );
 

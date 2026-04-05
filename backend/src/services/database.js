@@ -1209,11 +1209,11 @@ async function removeFromWatchlist(walletAddress, tokenMint) {
 async function getWatchlist(walletAddress) {
   if (!pool) return [];
   const result = await pool.query(
-    `SELECT w.token_mint, w.added_at, t.name, t.symbol, t.logo_uri
+    `SELECT w.token_mint, t.name, t.symbol, t.logo_uri
      FROM watchlist w
      LEFT JOIN tokens t ON w.token_mint = t.mint_address
      WHERE w.wallet_address = $1
-     ORDER BY w.added_at DESC`,
+     ORDER BY w.id DESC`,
     [walletAddress]
   );
   return result.rows.map(row => ({
@@ -1221,7 +1221,7 @@ async function getWatchlist(walletAddress) {
     name: row.name,
     symbol: row.symbol,
     logoUri: row.logo_uri,
-    addedAt: row.added_at
+    addedAt: null
   }));
 }
 
