@@ -486,9 +486,10 @@ const tokenDetail = {
     const inWatchlist = typeof watchlist !== 'undefined' && watchlist.has(this.mint);
     btn.classList.toggle('active', inWatchlist);
     btn.title = inWatchlist ? 'Remove from watchlist' : 'Add to watchlist';
-    btn.innerHTML = inWatchlist
-      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`
-      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+    const starSvg = inWatchlist
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`
+      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+    btn.innerHTML = `${starSvg} ${inWatchlist ? 'Watchlisted' : 'Watchlist'}`;
   },
 
   // Render token info
@@ -712,6 +713,14 @@ const tokenDetail = {
           tokenAgeEl.textContent = this.token?.pairCreatedAt
             ? utils.formatAge(this.token.pairCreatedAt)
             : 'N/A';
+        }
+
+        // Update holder count stat if it was N/A
+        if (metrics.holderCount) {
+          const holdersStatEl = document.getElementById('stat-holders');
+          if (holdersStatEl && (holdersStatEl.textContent === 'N/A' || holdersStatEl.textContent === '--')) {
+            holdersStatEl.textContent = metrics.holderCount.toLocaleString();
+          }
         }
 
         // Color-code percentage metrics (green = distributed, red = concentrated)

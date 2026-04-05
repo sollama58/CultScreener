@@ -17,6 +17,23 @@ const convictionPage = {
     this.bindQuickFilters();
     this.bindSortHeaders();
     this.loadData();
+
+    // If user connects wallet while on watchlist filter, reload
+    window.addEventListener('walletConnected', () => {
+      if (this._activeTier === 'watchlist') this.loadData();
+    });
+    window.addEventListener('walletDisconnected', () => {
+      if (this._activeTier === 'watchlist') {
+        this._activeTier = 'all';
+        const container = document.getElementById('terminal-quick-filters');
+        if (container) {
+          container.querySelectorAll('[data-tier]').forEach(p => p.classList.remove('active'));
+          const allPill = container.querySelector('[data-tier="all"]');
+          if (allPill) allPill.classList.add('active');
+        }
+        this.loadData();
+      }
+    });
   },
 
   bindPagination() {
@@ -68,18 +85,29 @@ const convictionPage = {
       const mcap = pill.dataset.mcap;
 
       if (tier) {
+        // Watchlist requires wallet connection
+        if (tier === 'watchlist') {
+          if (typeof wallet === 'undefined' || !wallet.connected) {
+            if (typeof toast !== 'undefined') toast.info('Connect your wallet to view watchlist');
+            if (typeof wallet !== 'undefined') wallet.connect();
+            return;
+          }
+        }
+
         // Tier pills are exclusive within their group
         container.querySelectorAll('[data-tier]').forEach(p => p.classList.remove('active'));
         pill.classList.add('active');
         this._activeTier = tier;
 
-        // Set the min conviction slider based on tier
-        const minPct = document.getElementById('conviction-min-pct');
-        const minPctVal = document.getElementById('conviction-min-pct-val');
-        const tierMap = { all: 0, elite: 75, high: 50, mid: 25, low: 0 };
-        if (minPct) {
-          minPct.value = tierMap[tier] || 0;
-          if (minPctVal) minPctVal.textContent = `${minPct.value}%`;
+        // Set the min conviction slider based on tier (skip for watchlist)
+        if (tier !== 'watchlist') {
+          const minPct = document.getElementById('conviction-min-pct');
+          const minPctVal = document.getElementById('conviction-min-pct-val');
+          const tierMap = { all: 0, elite: 75, high: 50, mid: 25, low: 0 };
+          if (minPct) {
+            minPct.value = tierMap[tier] || 0;
+            if (minPctVal) minPctVal.textContent = `${minPct.value}%`;
+          }
         }
         // For "low" tier, we need special handling (maxConviction)
         this.applyFilters();
@@ -237,19 +265,68 @@ const convictionPage = {
     `;
 
     try {
-      const params = {
-        limit: this.pageSize,
-        offset: (this.currentPage - 1) * this.pageSize,
-        ...this.getFilters()
-      };
+      // Watchlist mode: fetch user's watchlisted tokens instead of leaderboard
+      if (this._activeTier === 'watchlist' && typeof wallet !== 'undefined' && wallet.connected) {
+        const wlData = await api.watchlist.get(wallet.address);
+        const wlTokens = wlData?.tokens || [];
 
-      const result = await api.tokens.leaderboardConviction(params);
-      this.tokens = result.tokens || [];
-      this.totalItems = result.total || 0;
+        // Map watchlist tokens to the same shape as conviction leaderboard
+        this.tokens = wlTokens.map(t => ({
+          mintAddress: t.mint,
+          address: t.mint,
+          name: t.name || `${t.mint.slice(0, 4)}...${t.mint.slice(-4)}`,
+          symbol: t.symbol || '',
+          logoUri: t.logoUri || t.logo_uri || null,
+          price: 0,
+          marketCap: 0,
+          conviction1m: 0,
+          conviction: {},
+          sampleSize: 0,
+          convictionUpdatedAt: null,
+          addedAt: t.addedAt
+        }));
+        this.totalItems = this.tokens.length;
 
-      // Client-side filter for "low" tier (< 25%)
-      if (this._activeTier === 'low') {
-        this.tokens = this.tokens.filter(t => (t.conviction1m || 0) < 25);
+        // Enrich with batch price data if tokens exist
+        if (this.tokens.length > 0) {
+          try {
+            const mints = this.tokens.map(t => t.mintAddress);
+            const batchData = await api.tokens.getBatch(mints);
+            if (Array.isArray(batchData)) {
+              const dataMap = {};
+              batchData.forEach(t => { if (t) dataMap[t.address || t.mintAddress] = t; });
+              this.tokens.forEach(t => {
+                const d = dataMap[t.mintAddress];
+                if (d) {
+                  t.price = d.price || 0;
+                  t.marketCap = d.marketCap || 0;
+                  t.conviction1m = d.conviction1m || 0;
+                  t.conviction = d.conviction || {};
+                  t.sampleSize = d.sampleSize || 0;
+                  t.name = d.name || t.name;
+                  t.symbol = d.symbol || t.symbol;
+                  t.logoUri = d.logoUri || d.logoURI || t.logoUri;
+                }
+              });
+            }
+          } catch (_) { /* batch enrichment non-critical */ }
+        }
+      } else {
+        // Normal conviction leaderboard
+        const params = {
+          limit: this.pageSize,
+          offset: (this.currentPage - 1) * this.pageSize,
+          ...this.getFilters()
+        };
+
+        const result = await api.tokens.leaderboardConviction(params);
+        this.tokens = result.tokens || [];
+        this.totalItems = result.total || 0;
+
+        // Client-side filter for "low" tier (< 25%)
+        if (this._activeTier === 'low') {
+          this.tokens = this.tokens.filter(t => (t.conviction1m || 0) < 25);
+        }
       }
 
       this.updateTerminalStats();
@@ -307,12 +384,16 @@ const convictionPage = {
     if (!tbody) return;
 
     if (!this.tokens || this.tokens.length === 0) {
+      const isWatchlist = this._activeTier === 'watchlist';
+      const emptyMsg = isWatchlist
+        ? 'Your watchlist is empty. Visit token pages and click the star to add tokens.'
+        : 'No tokens match current filters. Adjust filters or visit token pages to trigger analysis.';
       tbody.innerHTML = `
         <tr class="empty-row">
           <td colspan="7">
             <div class="empty-state">
-              <span style="font-size: 1.5rem; margin-bottom: 0.5rem; opacity: 0.4;">NO DATA</span>
-              <span>No tokens match current filters. Adjust filters or visit token pages to trigger analysis.</span>
+              <span style="font-size: 1.5rem; margin-bottom: 0.5rem; opacity: 0.4;">${isWatchlist ? 'EMPTY WATCHLIST' : 'NO DATA'}</span>
+              <span>${emptyMsg}</span>
             </div>
           </td>
         </tr>

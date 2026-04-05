@@ -84,81 +84,58 @@
 
       <!-- Token Header -->
       <section class="token-header">
-        <div class="token-header-left">
-          <img id="token-logo" class="token-logo-large" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23181b23'/%3E%3Ctext x='16' y='21' text-anchor='middle' fill='%235d6577' font-size='14'%3E?%3C/text%3E%3C/svg%3E" alt="Token Logo">
-          <div class="token-info-header">
-            <div class="token-name-row">
-              <h1 id="token-name">Loading...</h1>
-              <span id="token-symbol" class="token-symbol-badge">---</span>
+        <!-- Top row: identity + price -->
+        <div class="token-header-top">
+          <div class="token-identity">
+            <img id="token-logo" class="token-logo-large" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23181b23'/%3E%3Ctext x='16' y='21' text-anchor='middle' fill='%235d6577' font-size='14'%3E?%3C/text%3E%3C/svg%3E" alt="Token Logo">
+            <div>
+              <div class="token-name-row">
+                <h1 id="token-name">Loading...</h1>
+                <span id="token-symbol" class="token-symbol-badge">---</span>
+              </div>
+              <div class="token-address-row">
+                <span id="token-address" class="token-address" title="Click to copy">---</span>
+                <button id="copy-address" class="btn-icon" title="Copy address">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
             </div>
-            <div class="token-address-row">
-              <span id="token-address" class="token-address" title="Click to copy">---</span>
-              <button id="copy-address" class="btn-icon" title="Copy address">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-              </button>
-              <a id="explorer-link" href="#" target="_blank" rel="noopener" class="btn-icon" title="View on Solscan">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                  <polyline points="15 3 21 3 21 9"></polyline>
-                  <line x1="10" y1="14" x2="21" y2="3"></line>
-                </svg>
-              </a>
-              <a id="bubblemaps-link" href="#" target="_blank" rel="noopener" class="btn-icon" title="View on Bubblemaps">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="3"/>
-                  <circle cx="5" cy="6" r="2"/>
-                  <circle cx="19" cy="6" r="2"/>
-                  <circle cx="5" cy="18" r="2"/>
-                  <circle cx="19" cy="18" r="2"/>
-                  <line x1="7" y1="7" x2="10" y2="10"/>
-                  <line x1="14" y1="10" x2="17" y2="7"/>
-                  <line x1="7" y1="17" x2="10" y2="14"/>
-                  <line x1="14" y1="14" x2="17" y2="17"/>
-                </svg>
-              </a>
-              <button id="share-btn" class="btn-icon" title="Share this token">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="18" cy="5" r="3"/>
-                  <circle cx="6" cy="12" r="3"/>
-                  <circle cx="18" cy="19" r="3"/>
-                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
-                  <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                </svg>
-              </button>
-              <button id="watchlist-btn" class="btn-icon watchlist-btn-header" title="Add to watchlist">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                </svg>
-              </button>
-
-              <!-- Token Socials (populated by JS) -->
-              <div id="token-socials" class="token-socials" style="display:none"></div>
+          </div>
+          <div class="token-header-right">
+            <div class="token-price-container">
+              <span id="token-price" class="token-price-large">$0.00</span>
+              <span id="price-change" class="price-change-badge">0%</span>
+            </div>
+            <div id="price-freshness" class="price-freshness" title="Price refresh status">
+              <span class="freshness-dot"></span>
+              <span class="freshness-text">Updated just now</span>
+              <span class="countdown"></span>
             </div>
           </div>
         </div>
-        <div class="token-header-right">
-          <div class="token-price-container">
-            <span id="token-price" class="token-price-large">$0.00</span>
-            <span id="price-change" class="price-change-badge">0%</span>
+
+        <!-- Action bar: links + socials + watchlist -->
+        <div class="token-actions-bar">
+          <div class="token-action-links">
+            <a id="explorer-link" href="#" target="_blank" rel="noopener" class="token-action-chip" title="View on Solscan">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              Solscan
+            </a>
+            <a id="bubblemaps-link" href="#" target="_blank" rel="noopener" class="token-action-chip" title="View on Bubblemaps">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><line x1="7" y1="7" x2="10" y2="10"/><line x1="14" y1="10" x2="17" y2="7"/><line x1="7" y1="17" x2="10" y2="14"/><line x1="14" y1="14" x2="17" y2="17"/></svg>
+              Bubblemaps
+            </a>
+            <button id="share-btn" class="token-action-chip" title="Share this token">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share
+            </button>
           </div>
-          <div id="price-freshness" class="price-freshness" title="Price refresh status">
-            <span class="freshness-dot"></span>
-            <span class="freshness-text">Updated just now</span>
-            <span class="countdown"></span>
-          </div>
-          <div class="price-stats-mini">
-            <div class="price-stat-mini">
-              <span class="label">24h High</span>
-              <span id="price-high" class="value">--</span>
-            </div>
-            <div class="price-stat-mini">
-              <span class="label">24h Low</span>
-              <span id="price-low" class="value">--</span>
-            </div>
-          </div>
+          <!-- Token Socials (populated by JS) -->
+          <div id="token-socials" class="token-socials" style="display:none"></div>
+          <button id="watchlist-btn" class="token-action-chip watchlist-btn-header" title="Add to watchlist">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Watchlist
+          </button>
         </div>
       </section>
 

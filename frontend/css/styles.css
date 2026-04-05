@@ -237,6 +237,8 @@ img {
   padding: 0.15rem 0.5rem;
   white-space: nowrap;
   transition: border-color 0.2s ease, color 0.2s ease;
+  margin-right: auto;
+  text-decoration: none;
 }
 
 .powered-badge:hover {
@@ -767,6 +769,26 @@ img {
   color: var(--fire-primary);
   background: var(--fire-glow);
   box-shadow: 0 0 8px rgba(255, 69, 0, 0.1);
+}
+
+.terminal-pill.pill-watchlist {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.terminal-pill.pill-watchlist svg {
+  flex-shrink: 0;
+}
+
+.terminal-pill.pill-watchlist.active {
+  border-color: var(--fire-primary);
+  color: var(--fire-primary);
+  background: var(--fire-glow);
+}
+
+.terminal-pill.pill-watchlist.active svg {
+  fill: var(--fire-primary);
 }
 
 .terminal-pill.pill-elite.active {
@@ -1528,42 +1550,41 @@ select:focus {
 /* Token Header */
 .token-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 2rem;
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1.5rem;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 1.25rem;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  flex-wrap: wrap;
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
-.token-header-left {
+.token-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  flex-wrap: wrap;
+}
+
+.token-identity {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.85rem;
   min-width: 0;
   flex: 1;
 }
 
 .token-logo-large {
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
   flex-shrink: 0;
   object-fit: cover;
   border: 2px solid var(--border-color);
-  box-shadow: 0 0 16px rgba(255, 87, 34, 0.08);
-}
-
-.token-info-header {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
 }
 
 .token-name-row {
@@ -1574,23 +1595,86 @@ select:focus {
 }
 
 .token-name-row h1 {
-  font-size: 1.35rem;
+  font-size: 1.3rem;
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.03em;
+  line-height: 1.2;
 }
 
 .token-symbol-badge {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--fire-primary);
   background: rgba(255, 87, 34, 0.08);
-  border: 1px solid rgba(255, 87, 34, 0.15);
+  border: 1px solid rgba(255, 87, 34, 0.12);
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+/* Action bar — links, socials, watchlist */
+.token-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.5rem;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.token-action-links {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.token-action-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.token-action-chip:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.token-action-chip svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.token-action-chip:hover svg {
+  opacity: 1;
+}
+
+/* Watchlist chip active state */
+.token-action-chip.watchlist-btn-header.active {
+  border-color: var(--fire-primary);
+  color: var(--fire-primary);
+  background: rgba(255, 87, 34, 0.06);
+}
+
+.token-action-chip.watchlist-btn-header.active svg {
+  fill: var(--fire-primary);
+  opacity: 1;
 }
 
 .bags-badge {
@@ -4087,9 +4171,11 @@ select:focus {
   }
 
   /* Token header */
-  .token-header {
+  .token-header-top {
     flex-direction: column;
+    align-items: flex-start;
     gap: 1rem;
+    padding: 1rem 1.25rem;
   }
 
   .token-header-right {
@@ -4098,6 +4184,10 @@ select:focus {
 
   .token-price-large {
     font-size: 1.5rem;
+  }
+
+  .token-actions-bar {
+    padding: 0.5rem 1.25rem;
   }
 
   /* Chart */
