@@ -353,26 +353,20 @@ const jobProcessors = {
       const batchResults = await Promise.all(
         batch.map(async (wallet) => {
           try {
-            const metrics = await solanaService.getWalletHoldMetrics(wallet, mint);
-            return [wallet, metrics];
+            const holdTime = await solanaService.getTokenHoldTime(wallet, mint);
+            return [wallet, holdTime];
           } catch (err) {
-            console.warn(`[Worker] Hold metrics failed for ${wallet}:`, err.message);
+            console.warn(`[Worker] Hold time failed for ${wallet}:`, err.message);
             return [wallet, null];
           }
         })
       );
 
-      for (const [wallet, metrics] of batchResults) {
-        if (!metrics) {
-          skipped++;
-          continue;
-        }
-
-        await cache.set(`wallet-hold-time:${wallet}`, metrics.avgHoldTime ?? -1, TTL.DAY);
-        await cache.set(`wallet-token-hold:${wallet}:${mint}`, metrics.tokenHoldTime ?? -1, TTL.DAY);
-        await cache.set(`wallet-age:${wallet}`, metrics.walletAge ?? -1, TTL.DAY);
-
-        computed++;
+      for (const [wallet, holdTime] of batchResults) {
+        const val = holdTime ?? -1;
+        await cache.set(`wallet-hold-time:${wallet}`, val, TTL.DAY);
+        await cache.set(`wallet-token-hold:${wallet}:${mint}`, val, TTL.DAY);
+        if (val > 0) computed++; else skipped++;
       }
     }
 
@@ -381,7 +375,8 @@ const jobProcessors = {
 
     // Rebuild diamond hands distribution and persist to DB
     try {
-      const allWallets = await cache.get(`diamond-hands-wallets:${mint}`) || [];
+      const allSample = await cache.get(`diamond-hands-wallets:${mint}`) || [];
+      const allWallets = allSample.map(e => typeof e === 'object' ? e.wallet : e);
       if (allWallets.length > 0) {
         const holdTimes = {};
         let analyzedCount = 0;

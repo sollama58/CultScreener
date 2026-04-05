@@ -690,6 +690,11 @@ async function getTokenLargestAccountsDAS(mintAddress, decimals = 0) {
  * @param {Set} [excludeAddresses] - Addresses to skip (burn wallets, LP programs, etc.)
  * @returns {Promise<string[]|null>} - Array of wallet addresses or null
  */
+/**
+ * Get a sample of token holders with their ATA addresses.
+ * Returns array of { wallet, ata } objects. Including the ATA allows
+ * downstream hold-time computation to skip the getTokenAccountsByOwner call.
+ */
 async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses = null) {
   if (!HELIUS_DAS_URL) return null;
 
@@ -720,22 +725,65 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
     const accounts = response.data.result?.token_accounts;
     if (!accounts || accounts.length === 0) return null;
 
-    // Deduplicate by owner wallet, skip burn/LP addresses
+    // Deduplicate by owner wallet, keep ATA address for cheap hold-time lookups
     const seen = new Set();
-    const wallets = [];
+    const holders = [];
     for (const a of accounts) {
       if (!a.owner || !a.amount || a.amount === '0' || a.amount === 0) continue;
       if (seen.has(a.owner)) continue;
       if (excludeAddresses && excludeAddresses.has(a.owner)) continue;
       seen.add(a.owner);
-      wallets.push(a.owner);
-      if (wallets.length >= count) break;
+      holders.push({ wallet: a.owner, ata: a.address || null });
+      if (holders.length >= count) break;
     }
 
-    console.log(`[Solana] getTokenHolderSample: ${wallets.length} unique wallets from ${accounts.length} accounts for ${mintAddress.slice(0, 8)}...`);
-    return wallets;
+    console.log(`[Solana] getTokenHolderSample: ${holders.length} holders from ${accounts.length} accounts for ${mintAddress.slice(0, 8)}...`);
+    return holders;
   } catch (error) {
     console.error('[Solana] getTokenHolderSample error:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Get how long a wallet has held a token. Uses the ATA address directly
+ * (skips getTokenAccountsByOwner) when provided. Only 1 RPC call.
+ */
+async function getTokenHoldTime(walletAddress, tokenMint, ataAddress = null) {
+  try {
+    // If we don't have the ATA, look it up (1 extra RPC call)
+    let ata = ataAddress;
+    if (!ata) {
+      const accounts = await rpcCall('getTokenAccountsByOwner', [
+        walletAddress,
+        { mint: tokenMint },
+        { encoding: 'jsonParsed' }
+      ]);
+      if (!accounts?.value || accounts.value.length === 0) return null;
+      ata = accounts.value[0].pubkey;
+    }
+
+    // Get oldest signature on this token account (1 RPC call)
+    // Most individual token accounts have < 100 txs, so 1 call suffices
+    let oldestTimestamp = null;
+    let beforeSig = undefined;
+
+    for (let page = 0; page < 2; page++) {
+      const params = [ata, { limit: 1000 }];
+      if (beforeSig) params[1].before = beforeSig;
+
+      const sigs = await rpcCall('getSignaturesForAddress', params);
+      if (!sigs || sigs.length === 0) break;
+
+      const oldest = sigs[sigs.length - 1];
+      if (oldest.blockTime) oldestTimestamp = oldest.blockTime * 1000;
+      if (sigs.length < 1000) break;
+      beforeSig = oldest.signature;
+    }
+
+    if (!oldestTimestamp) return null;
+    return Date.now() - oldestTimestamp;
+  } catch {
     return null;
   }
 }
@@ -836,128 +884,17 @@ const HOLD_TIME_EXCLUDE_TYPES = new Set([
   'COMPRESSED_NFT_MINT', 'COMPRESSED_NFT_TRANSFER',
 ]);
 
-async function getWalletHoldMetrics(walletAddress, tokenMint) {
-  // Strategy 1: Scan wallet's recent 100 transactions (1 Helius API call).
-  // Gives avg hold time, wallet age, and token hold time IF the token appears
-  // in the last 100 transactions.
-  const transactions = await getTransactionsForAddress(walletAddress, { limit: 100 });
-
-  let earliestTokenReceive = null;
-  let avgHoldTime = null;
-  let oldestTxTimestamp = null;
-  const tokenEvents = new Map();
-
-  if (transactions && transactions.length > 0) {
-    for (const tx of transactions) {
-      const timestamp = (tx.timestamp || 0) * 1000;
-      if (!timestamp || !tx.tokenTransfers) continue;
-      if (HOLD_TIME_EXCLUDE_TYPES.has(tx.type)) continue;
-
-      if (!oldestTxTimestamp || timestamp < oldestTxTimestamp) {
-        oldestTxTimestamp = timestamp;
-      }
-
-      for (const transfer of tx.tokenTransfers) {
-        const mint = transfer.mint;
-        if (!mint) continue;
-
-        if (mint === tokenMint && transfer.toUserAccount === walletAddress) {
-          if (!earliestTokenReceive || timestamp < earliestTokenReceive) {
-            earliestTokenReceive = timestamp;
-          }
-        }
-
-        if (!HOLD_TIME_EXCLUDE_MINTS.has(mint)) {
-          if (transfer.toUserAccount === walletAddress) {
-            if (!tokenEvents.has(mint)) {
-              tokenEvents.set(mint, { firstBuy: timestamp, lastSell: null });
-            } else {
-              const ev = tokenEvents.get(mint);
-              if (timestamp < ev.firstBuy) ev.firstBuy = timestamp;
-            }
-          } else if (transfer.fromUserAccount === walletAddress) {
-            if (tokenEvents.has(mint)) {
-              const ev = tokenEvents.get(mint);
-              if (!ev.lastSell || timestamp > ev.lastSell) ev.lastSell = timestamp;
-            }
-          }
-        }
-      }
-    }
-
-    if (tokenEvents.size > 0) {
-      const now = Date.now();
-      let totalHoldTime = 0;
-      let count = 0;
-      for (const [, events] of tokenEvents) {
-        const holdEnd = events.lastSell || now;
-        const holdTime = holdEnd - events.firstBuy;
-        if (holdTime > 0) { totalHoldTime += holdTime; count++; }
-      }
-      if (count > 0) avgHoldTime = Math.floor(totalHoldTime / count);
-    }
-  }
-
-  let tokenHoldTime = earliestTokenReceive ? Date.now() - earliestTokenReceive : null;
-
-  // Strategy 2 (fallback): If token wasn't found in the last 100 general transactions,
-  // query the token account (ATA) directly. This costs 2 extra RPC calls but only runs
-  // for wallets that bought the token long ago — recent buyers are already covered above.
-  if (tokenHoldTime == null) {
-    tokenHoldTime = await _getTokenAccountAge(walletAddress, tokenMint).catch(() => null);
-  }
-
-  const walletAge = (oldestTxTimestamp && transactions && transactions.length < 100)
-    ? Date.now() - oldestTxTimestamp
-    : null;
-
-  return { avgHoldTime, tokenHoldTime, walletAge };
-}
-
 /**
- * Fallback: find how long a wallet has held a specific token by querying the ATA.
- * Only called when the general transaction scan didn't find the token (active wallets
- * with 100+ transactions since their purchase). Costs 2 RPC calls: getTokenAccountsByOwner
- * + getSignaturesForAddress. Paginates up to 2000 signatures to find the oldest.
+ * Get hold metrics for a wallet. Uses the ATA-based approach exclusively:
+ * 1 RPC call if ATA address is provided, 2 if not.
+ * No Helius enhanced API calls — only standard Solana RPC.
+ *
+ * avgHoldTime is no longer computed (required expensive Helius enhanced API).
+ * tokenHoldTime uses getSignaturesForAddress on the ATA.
  */
-async function _getTokenAccountAge(walletAddress, tokenMint) {
-  try {
-    const accounts = await rpcCall('getTokenAccountsByOwner', [
-      walletAddress,
-      { mint: tokenMint },
-      { encoding: 'jsonParsed' }
-    ]);
-
-    if (!accounts?.value || accounts.value.length === 0) return null;
-    const ataAddress = accounts.value[0].pubkey;
-
-    // Walk backwards to find the oldest signature on this token account.
-    // Most individual token accounts have < 100 txs, so 1 call usually suffices.
-    let oldestTimestamp = null;
-    let beforeSig = undefined;
-    const MAX_PAGES = 2; // Cap at 2000 signatures (2 RPC calls max)
-
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const params = [ataAddress, { limit: 1000 }];
-      if (beforeSig) params[1].before = beforeSig;
-
-      const sigs = await rpcCall('getSignaturesForAddress', params);
-      if (!sigs || sigs.length === 0) break;
-
-      const oldest = sigs[sigs.length - 1];
-      if (oldest.blockTime) {
-        oldestTimestamp = oldest.blockTime * 1000;
-      }
-
-      if (sigs.length < 1000) break; // Reached the beginning
-      beforeSig = oldest.signature;
-    }
-
-    if (!oldestTimestamp) return null;
-    return Date.now() - oldestTimestamp;
-  } catch {
-    return null;
-  }
+async function getWalletHoldMetrics(walletAddress, tokenMint, ataAddress = null) {
+  const tokenHoldTime = await getTokenHoldTime(walletAddress, tokenMint, ataAddress).catch(() => null);
+  return { avgHoldTime: tokenHoldTime, tokenHoldTime, walletAge: null };
 }
 
 /**
@@ -1037,6 +974,7 @@ module.exports = {
   getTokenAuthorities,
   getTransactionsForAddress,
   getWalletHoldMetrics,
+  getTokenHoldTime,
   isHeliusConfigured,
   checkHealth
 };

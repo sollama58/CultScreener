@@ -858,7 +858,6 @@ const tokenDetail = {
         <td class="text-right mono">${bal}</td>
         <td class="text-right mono">${valStr}</td>
         <td class="text-right mono">${pct}</td>
-        <td class="text-right mono holders-holdtime-col">${holdTimeStr}</td>
         <td class="text-right mono holders-share-col">${tokenHoldStr}</td>
       </tr>`;
     }).join('');

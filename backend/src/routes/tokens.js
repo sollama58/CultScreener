@@ -2090,9 +2090,9 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
       .filter(h => !h.isLP && !h.isBurnt && h.address)
       .map(h => h.address);
 
-    // Expand to a broader 250-wallet sample for more accurate fresh-wallet detection.
-    // Uses the same sample cache as diamond-hands to avoid duplicate API calls.
+    // Use shared sample cache (wallet + ATA pairs) for efficient hold-time lookups
     let wallets = top20Wallets;
+    let ataMap = {}; // wallet → ATA address (saves 1 RPC call per wallet)
     if (solanaService.isHeliusConfigured()) {
       try {
         const sampleCacheKey = `diamond-hands-wallets:${mint}`;
@@ -2104,12 +2104,19 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
             await cache.set(sampleCacheKey, sample, TTL.HOUR);
           }
         }
-        if (sample && sample.length > top20Wallets.length) {
-          // Merge: keep top 20 first (they need hold times for the table),
-          // then add extra sample wallets (used for fresh-wallet counting)
-          const top20Set = new Set(top20Wallets);
-          const extra = sample.filter(w => !top20Set.has(w));
-          wallets = [...top20Wallets, ...extra];
+        // Build ATA map from sample (new format: [{wallet, ata}])
+        if (Array.isArray(sample)) {
+          for (const entry of sample) {
+            if (typeof entry === 'object' && entry.wallet) {
+              ataMap[entry.wallet] = entry.ata;
+            }
+          }
+          const sampleWallets = sample.map(e => typeof e === 'object' ? e.wallet : e);
+          if (sampleWallets.length > top20Wallets.length) {
+            const top20Set = new Set(top20Wallets);
+            const extra = sampleWallets.filter(w => !top20Set.has(w));
+            wallets = [...top20Wallets, ...extra];
+          }
         }
       } catch (err) {
         console.warn('[HoldTimes] Failed to expand holder sample:', err.message);
@@ -2202,69 +2209,54 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
           const bgMint = mint;
           const DAY_MS = 86400000;
 
-          // Compute top 10 wallets synchronously so the FIRST response has data
+          // Compute top 10 wallets synchronously (1 RPC call each with ATA)
           const syncWallets = staleWallets.slice(0, 10);
           const asyncWallets = staleWallets.slice(10);
 
-          console.log(`[HolderMetrics] Inline: computing ${syncWallets.length} wallets sync, ${asyncWallets.length} async for ${bgMint}`);
+          console.log(`[HolderMetrics] Inline: ${syncWallets.length} sync, ${asyncWallets.length} async for ${bgMint}`);
 
-          // Synchronous batch — results go into response
           const syncResults = await Promise.all(
             syncWallets.map(async (wallet) => {
               try {
-                const metrics = await solanaService.getWalletHoldMetrics(wallet, bgMint);
-                return [wallet, metrics];
+                const holdTime = await solanaService.getTokenHoldTime(wallet, bgMint, ataMap[wallet] || null);
+                return [wallet, holdTime];
               } catch { return [wallet, null]; }
             })
           );
 
-          for (const [wallet, metrics] of syncResults) {
-            if (!metrics) continue;
-            const avg = metrics.avgHoldTime ?? -1;
-            const token = metrics.tokenHoldTime ?? -1;
-            const age = metrics.walletAge ?? -1;
-            await cache.set(`wallet-hold-time:${wallet}`, avg, DAY_MS);
-            await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, token, DAY_MS);
-            await cache.set(`wallet-age:${wallet}`, age, DAY_MS);
-            if (avg > 0) holdTimes[wallet] = avg;
-            if (token > 0) tokenHoldTimes[wallet] = token;
-            if (age > 0) { walletAgeChecked++; if (age < DAY_MS) freshWalletCount++; }
+          for (const [wallet, holdTime] of syncResults) {
+            const val = holdTime ?? -1;
+            await cache.set(`wallet-hold-time:${wallet}`, val, DAY_MS);
+            await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, val, DAY_MS);
+            if (val > 0) { holdTimes[wallet] = val; tokenHoldTimes[wallet] = val; }
           }
 
-          // Remaining wallets computed in background (non-blocking)
+          // Remaining wallets in background
           if (asyncWallets.length > 0) {
             setImmediate(() => {
               (async () => {
                 const BATCH_SIZE = 10;
-                let successCount = 0;
-                let failCount = 0;
+                let ok = 0, fail = 0;
                 try {
                   for (let i = 0; i < asyncWallets.length; i += BATCH_SIZE) {
                     const batch = asyncWallets.slice(i, i + BATCH_SIZE);
                     const results = await Promise.all(
-                      batch.map(async (wallet) => {
+                      batch.map(async (w) => {
                         try {
-                          const metrics = await solanaService.getWalletHoldMetrics(wallet, bgMint);
-                          return [wallet, metrics];
-                        } catch (err) {
-                          return [wallet, null];
-                        }
+                          return [w, await solanaService.getTokenHoldTime(w, bgMint, ataMap[w] || null)];
+                        } catch { return [w, null]; }
                       })
                     );
-                    for (const [wallet, metrics] of results) {
-                      if (!metrics) { failCount++; continue; }
-                      const avg = metrics.avgHoldTime ?? -1;
-                      const token = metrics.tokenHoldTime ?? -1;
-                      const age = metrics.walletAge ?? -1;
-                      await cache.set(`wallet-hold-time:${wallet}`, avg, DAY_MS);
-                      await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, token, DAY_MS);
-                      await cache.set(`wallet-age:${wallet}`, age, DAY_MS);
-                      if (avg > 0 || token > 0) successCount++;
+                    for (const [w, ht] of results) {
+                      const val = ht ?? -1;
+                      await cache.set(`wallet-hold-time:${w}`, val, DAY_MS);
+                      await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, DAY_MS);
+                      if (val > 0) ok++; else fail++;
                     }
                   }
-                  console.log(`[HolderMetrics] Inline async complete for ${bgMint}: ${successCount} with data, ${failCount} failed`);
+                  console.log(`[HolderMetrics] Async done for ${bgMint}: ${ok} ok, ${fail} fail`);
                 } catch (err) {
-                  console.error(`[HolderMetrics] Inline async failed for ${bgMint}:`, err.message);
+                  console.error(`[HolderMetrics] Async failed for ${bgMint}:`, err.message);
                 } finally {
                   await cache.delete(`holder-metrics-pending:${bgMint}`);
                 }
@@ -2330,17 +2322,25 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
       await cache.set(walletsCacheKey, wallets, 3 * TTL.HOUR);
     }
 
-    // Check per-wallet token hold time caches
-    const holdTimes = {};   // wallet → ms (only positive values)
-    const uncached = [];
-    let analyzedCount = 0;  // wallets that have been analyzed (positive OR sentinel)
+    // Extract wallet addresses (new format: [{wallet, ata}], backwards-compat with old [string])
+    const walletList = wallets.map(e => typeof e === 'object' ? e.wallet : e);
+    const ataMap = {};
+    if (Array.isArray(wallets)) {
+      for (const e of wallets) {
+        if (typeof e === 'object' && e.wallet && e.ata) ataMap[e.wallet] = e.ata;
+      }
+    }
 
-    await Promise.all(wallets.map(async (wallet) => {
+    // Check per-wallet token hold time caches
+    const holdTimes = {};
+    const uncached = [];
+    let analyzedCount = 0;
+
+    await Promise.all(walletList.map(async (wallet) => {
       const val = await cache.get(`wallet-token-hold:${wallet}:${mint}`);
       if (val != null) {
         analyzedCount++;
         if (val > 0) holdTimes[wallet] = val;
-        // val === -1 means no data (sentinel) — analyzed but no hold time found
       } else {
         uncached.push(wallet);
       }
@@ -2348,7 +2348,7 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
 
     // If all wallets are cached, compute final distribution and cache it
     if (uncached.length === 0) {
-      const result = buildDiamondHandsResult(holdTimes, wallets.length, analyzedCount);
+      const result = buildDiamondHandsResult(holdTimes, walletList.length, analyzedCount);
       await cache.set(resultCacheKey, result, 3 * TTL.HOUR);
       // Persist to DB for the conviction leaderboard
       db.upsertConviction(mint, result.distribution, result.sampleSize, result.analyzed).catch(err => {
@@ -2398,57 +2398,48 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
 
         setImmediate(() => {
           (async () => {
-            console.log(`[DiamondHands] Inline: computing ${bgWallets.length} wallets for ${bgMint.slice(0, 8)}...`);
-            const BATCH_SIZE = 25;
+            console.log(`[DiamondHands] Inline: ${bgWallets.length} wallets for ${bgMint.slice(0, 8)}...`);
+            const BATCH_SIZE = 10;
             const DAY_MS = 86400000;
             let ok = 0;
             try {
               for (let i = 0; i < bgWallets.length; i += BATCH_SIZE) {
                 const batch = bgWallets.slice(i, i + BATCH_SIZE);
                 const results = await Promise.all(
-                  batch.map(async (wallet) => {
+                  batch.map(async (w) => {
                     try {
-                      const metrics = await solanaService.getWalletHoldMetrics(wallet, bgMint);
-                      return [wallet, metrics];
-                    } catch (err) {
-                      return [wallet, null];
-                    }
+                      const ht = await solanaService.getTokenHoldTime(w, bgMint, ataMap[w] || null);
+                      return [w, ht];
+                    } catch { return [w, null]; }
                   })
                 );
-                for (const [wallet, metrics] of results) {
-                  if (!metrics) continue;
-                  const avg = metrics.avgHoldTime ?? -1;
-                  const token = metrics.tokenHoldTime ?? -1;
-                  const age = metrics.walletAge ?? -1;
-                  await cache.set(`wallet-hold-time:${wallet}`, avg, DAY_MS);
-                  await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, token, DAY_MS);
-                  await cache.set(`wallet-age:${wallet}`, age, DAY_MS);
-                  ok++;
+                for (const [w, ht] of results) {
+                  const val = ht ?? -1;
+                  await cache.set(`wallet-hold-time:${w}`, val, DAY_MS);
+                  await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, DAY_MS);
+                  if (val > 0) ok++;
                 }
               }
-              console.log(`[DiamondHands] Inline complete: ${ok}/${bgWallets.length} for ${bgMint.slice(0, 8)}...`);
-              // Rebuild full distribution and persist
+              console.log(`[DiamondHands] Inline done: ${ok}/${bgWallets.length} for ${bgMint.slice(0, 8)}`);
+              // Rebuild and persist
               try {
                 const allHoldTimes = {};
                 let totalAnalyzed = 0;
-                const allWallets = await cache.get(`diamond-hands-wallets:${bgMint}`) || [];
-                for (const w of allWallets) {
+                const allSample = await cache.get(`diamond-hands-wallets:${bgMint}`) || [];
+                const allWalletList = allSample.map(e => typeof e === 'object' ? e.wallet : e);
+                for (const w of allWalletList) {
                   const val = await cache.get(`wallet-token-hold:${w}:${bgMint}`);
                   if (val != null) {
                     totalAnalyzed++;
                     if (val > 0) allHoldTimes[w] = val;
                   }
                 }
-                if (totalAnalyzed === allWallets.length && allWallets.length > 0) {
-                  const finalResult = buildDiamondHandsResult(allHoldTimes, allWallets.length, totalAnalyzed);
+                if (totalAnalyzed === allWalletList.length && allWalletList.length > 0) {
+                  const finalResult = buildDiamondHandsResult(allHoldTimes, allWalletList.length, totalAnalyzed);
                   await cache.set(`diamond-hands:${bgMint}`, finalResult, 3 * TTL.HOUR);
-                  db.upsertConviction(bgMint, finalResult.distribution, finalResult.sampleSize, finalResult.analyzed).catch(err => {
-                    console.error(`[DiamondHands] Inline DB persist failed for ${bgMint.slice(0, 8)}:`, err.message);
-                  });
+                  db.upsertConviction(bgMint, finalResult.distribution, finalResult.sampleSize, finalResult.analyzed).catch(() => {});
                 }
-              } catch (persistErr) {
-                console.error(`[DiamondHands] Post-inline persist failed:`, persistErr.message);
-              }
+              } catch (_) {}
             } catch (err) {
               console.error(`[DiamondHands] Inline failed:`, err.message);
             } finally {
