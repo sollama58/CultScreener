@@ -10,6 +10,7 @@ const watchlistRoutes = require('./routes/watchlist');
 const healthRoutes = require('./routes/health');
 const sentimentRoutes = require('./routes/sentiment');
 const curatedRoutes = require('./routes/curated');
+const adminRoutes = require('./routes/admin');
 
 // Import middleware
 const { defaultLimiter } = require('./middleware/rateLimit');
@@ -129,7 +130,7 @@ app.use((req, res, next) => {
     console.log(`[CORS] Preflight: origin="${origin}" allowed=${allowed} corsOrigins=${JSON.stringify(corsOrigins)}`);
     if (allowed && normalizedOrigin) {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-Session');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-Session, X-Admin-Session, X-Admin-Password');
       res.setHeader('Access-Control-Max-Age', '86400');
     }
     return res.status(204).end();
@@ -252,6 +253,7 @@ app.use('/api/tokens', tokenRoutes);
 app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/curated', curatedRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

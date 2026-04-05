@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CultScreener Admin</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#09090b">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <style>
+    .admin-login {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: calc(100vh - 120px);
+    }
+    .login-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: var(--shadow-md);
+    }
+    .login-card h1 {
+      font-size: 1.25rem;
+      margin-bottom: 0.25rem;
+      color: var(--text-primary);
+    }
+    .login-card p {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+    }
+    .login-card input {
+      width: 100%;
+      padding: 0.6rem 0.85rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-size: 0.88rem;
+      font-family: var(--font-sans);
+      margin-bottom: 1rem;
+      outline: none;
+      transition: border-color var(--transition-fast);
+    }
+    .login-card input:focus {
+      border-color: var(--fire-primary);
+    }
+    .login-card .btn-primary {
+      width: 100%;
+      justify-content: center;
+      padding: 0.65rem;
+    }
+    .login-error {
+      color: var(--red);
+      font-size: 0.82rem;
+      margin-bottom: 0.75rem;
+      display: none;
+    }
+
+    /* Admin layout */
+    .admin-panel { display: none; }
+    .admin-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .admin-bar h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .admin-tabs {
+      display: flex;
+      gap: 0.25rem;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 1.5rem;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .admin-tab {
+      padding: 0.6rem 1rem;
+      font-size: 0.82rem;
+      font-weight: 500;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: color var(--transition-fast), border-color var(--transition-fast);
+      font-family: var(--font-sans);
+    }
+    .admin-tab:hover { color: var(--text-secondary); }
+    .admin-tab.active {
+      color: var(--fire-primary);
+      border-bottom-color: var(--fire-primary);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Stats grid */
+    .admin-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .admin-stat-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+    }
+    .admin-stat-card .label {
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.25rem;
+    }
+    .admin-stat-card .value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--text-primary);
+    }
+
+    /* Admin tables */
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .admin-table thead th {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .admin-table tbody td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
+      color: var(--text-secondary);
+    }
+    .admin-table tbody tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Status badges */
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: var(--radius-xs);
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge-green { background: var(--green-light); color: var(--green); }
+    .badge-red { background: var(--red-light); color: var(--red); }
+    .badge-yellow { background: var(--yellow-light); color: var(--yellow); }
+    .badge-blue { background: var(--blue-light); color: var(--blue); }
+    .badge-gray { background: rgba(107,107,116,0.1); color: var(--text-muted); }
+
+    /* Forms */
+    .admin-form {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .admin-form .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .admin-form .field label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .admin-form input,
+    .admin-form select,
+    .admin-form textarea {
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 0.84rem;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: border-color var(--transition-fast);
+    }
+    .admin-form input:focus,
+    .admin-form select:focus,
+    .admin-form textarea:focus {
+      border-color: var(--fire-primary);
+    }
+    .admin-form textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    /* Action buttons in tables */
+    .action-btn {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.72rem;
+      font-weight: 500;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-xs);
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      font-family: var(--font-sans);
+    }
+    .action-btn:hover {
+      border-color: var(--border-default);
+      color: var(--text-primary);
+    }
+    .action-btn.danger:hover {
+      border-color: var(--red);
+      color: var(--red);
+    }
+    .action-btn.success:hover {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    /* Health indicators */
+    .health-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 0.75rem;
+    }
+    .health-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+    }
+    .health-card h3 {
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .health-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .health-dot.ok { background: var(--green); box-shadow: 0 0 4px var(--green-glow); }
+    .health-dot.warn { background: var(--yellow); }
+    .health-dot.err { background: var(--red); }
+    .health-detail {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .section-title {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 1rem;
+    }
+    .empty-msg {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 2rem;
+      font-size: 0.88rem;
+    }
+    .mono { font-family: var(--font-mono); font-size: 0.78rem; }
+    .truncate {
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .actions-cell {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">
+        <span class="logo-text">CultScreener</span>
+        <span class="powered-badge">Admin</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="main" style="max-width: 1200px;">
+    <!-- Login Section -->
+    <section id="login-section" class="admin-login">
+      <div class="login-card">
+        <h1>Admin Panel</h1>
+        <p>Enter the admin password to continue.</p>
+        <div id="login-error" class="login-error"></div>
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+        <button class="btn btn-primary" id="login-btn">Sign In</button>
+      </div>
+    </section>
+
+    <!-- Admin Panel (hidden until authenticated) -->
+    <section id="admin-panel" class="admin-panel">
+      <div class="admin-bar">
+        <h1>Admin Panel</h1>
+        <button class="btn btn-sm" id="logout-btn">Logout</button>
+      </div>
+
+      <div class="admin-tabs">
+        <button class="admin-tab active" data-tab="dashboard">Dashboard</button>
+        <button class="admin-tab" data-tab="curated">Curated Tokens</button>
+        <button class="admin-tab" data-tab="announcements">Announcements</button>
+        <button class="admin-tab" data-tab="bugs">Bug Reports</button>
+        <button class="admin-tab" data-tab="submissions">Submissions</button>
+        <button class="admin-tab" data-tab="health">System Health</button>
+      </div>
+
+      <!-- Dashboard -->
+      <div id="tab-dashboard" class="tab-panel active">
+        <div id="stats-grid" class="admin-stats">
+          <div class="admin-stat-card"><div class="label">Tokens</div><div class="value" id="stat-tokens">--</div></div>
+          <div class="admin-stat-card"><div class="label">Watchlist Entries</div><div class="value" id="stat-watchlist">--</div></div>
+          <div class="admin-stat-card"><div class="label">Total Votes</div><div class="value" id="stat-votes">--</div></div>
+          <div class="admin-stat-card"><div class="label">Pending Submissions</div><div class="value" id="stat-pending">--</div></div>
+          <div class="admin-stat-card"><div class="label">Approved</div><div class="value" id="stat-approved">--</div></div>
+          <div class="admin-stat-card"><div class="label">New Bug Reports</div><div class="value" id="stat-bugs">--</div></div>
+          <div class="admin-stat-card"><div class="label">Submissions (24h)</div><div class="value" id="stat-recent-subs">--</div></div>
+          <div class="admin-stat-card"><div class="label">Votes (24h)</div><div class="value" id="stat-recent-votes">--</div></div>
+        </div>
+      </div>
+
+      <!-- Curated Tokens -->
+      <div id="tab-curated" class="tab-panel">
+        <div class="admin-form">
+          <div class="field" style="flex:1;min-width:250px;">
+            <label>Mint Address</label>
+            <input type="text" id="curated-mint-input" placeholder="Token mint address..." maxlength="44">
+          </div>
+          <button class="btn btn-primary btn-sm" id="curated-add-btn">Add Token</button>
+          <button class="btn btn-sm" id="curated-refresh-btn">Refresh All DexScreener</button>
+        </div>
+        <table class="admin-table">
+          <thead><tr><th>Token</th><th>Mint</th><th>Socials</th><th>Added</th><th>Actions</th></tr></thead>
+          <tbody id="curated-table-body"><tr><td colspan="5" class="empty-msg">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- Announcements -->
+      <div id="tab-announcements" class="tab-panel">
+        <div class="admin-form" id="announcement-form">
+          <div class="field" style="flex:1;min-width:200px;">
+            <label>Title</label>
+            <input type="text" id="ann-title" placeholder="Announcement title" maxlength="200">
+          </div>
+          <div class="field">
+            <label>Type</label>
+            <select id="ann-type">
+              <option value="info">Info</option>
+              <option value="warning">Warning</option>
+              <option value="success">Success</option>
+              <option value="error">Error</option>
+            </select>
+          </div>
+          <button class="btn btn-primary btn-sm" id="ann-create-btn">Create</button>
+        </div>
+        <div class="field" style="margin-bottom:1rem;">
+          <label style="font-size:0.7rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.25rem;display:block;">Message</label>
+          <textarea id="ann-message" placeholder="Announcement message..." maxlength="2000" style="width:100%;padding:0.5rem 0.75rem;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.84rem;font-family:var(--font-sans);min-height:60px;resize:vertical;outline:none;"></textarea>
+        </div>
+        <table class="admin-table">
+          <thead><tr><th>Title</th><th>Type</th><th>Active</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody id="ann-table-body"><tr><td colspan="5" class="empty-msg">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- Bug Reports -->
+      <div id="tab-bugs" class="tab-panel">
+        <div class="admin-form">
+          <div class="field">
+            <label>Status Filter</label>
+            <select id="bugs-status-filter">
+              <option value="all">All</option>
+              <option value="new" selected>New</option>
+              <option value="acknowledged">Acknowledged</option>
+              <option value="resolved">Resolved</option>
+              <option value="dismissed">Dismissed</option>
+            </select>
+          </div>
+        </div>
+        <table class="admin-table">
+          <thead><tr><th>ID</th><th>Category</th><th>Description</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+          <tbody id="bugs-table-body"><tr><td colspan="6" class="empty-msg">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- Submissions -->
+      <div id="tab-submissions" class="tab-panel">
+        <div class="admin-form">
+          <div class="field">
+            <label>Status Filter</label>
+            <select id="subs-status-filter">
+              <option value="">All</option>
+              <option value="pending" selected>Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </div>
+        </div>
+        <table class="admin-table">
+          <thead><tr><th>ID</th><th>Token</th><th>Type</th><th>Content</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+          <tbody id="subs-table-body"><tr><td colspan="7" class="empty-msg">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- System Health -->
+      <div id="tab-health" class="tab-panel">
+        <div id="health-grid" class="health-grid">
+          <div class="empty-msg">Loading health data...</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-content">
+      <span>CultScreener Admin &copy; 2025-2026</span>
+    </div>
+  </footer>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>

@@ -38,10 +38,6 @@ services:
       - key: COINGECKO_API_KEY
         sync: false
 
-      # Anthropic API key (required for AI token analysis)
-      - key: ANTHROPIC_API_KEY
-        sync: false
-
       # Admin password (required for curated token management)
       - key: ADMIN_PASSWORD
         sync: false
@@ -144,7 +140,6 @@ databases:
 #
 # 1. Set API keys in Render Dashboard (Environment tab):
 #    - HELIUS_API_KEY (required for holder analysis)
-#    - ANTHROPIC_API_KEY (required for AI token analysis)
 #    - ADMIN_PASSWORD (required for curated token management)
 #    - COOKIE_SECRET (required for session persistence)
 #    - COINGECKO_API_KEY (optional — higher rate limits)

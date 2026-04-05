@@ -307,18 +307,6 @@ const tokenDetail = {
     const holdersShareBtn = document.getElementById('holders-share');
     bindHandler(holdersShareBtn, 'click', () => this._shareHolderAnalytics());
 
-    // AI Analysis button
-    const aiAnalysisBtn = document.getElementById('ai-analysis-btn');
-    if (aiAnalysisBtn) {
-      bindHandler(aiAnalysisBtn, 'click', () => this._openAIAnalysis());
-    }
-
-    // Advanced AI Analysis button
-    const aiAdvancedBtn = document.getElementById('ai-advanced-btn');
-    if (aiAdvancedBtn) {
-      bindHandler(aiAdvancedBtn, 'click', () => this._openAdvancedAIAnalysis());
-    }
-
     // Holders expand/collapse button
     const holdersExpandBtn = document.getElementById('holders-expand');
     const holdersExpandHandler = () => {
@@ -659,9 +647,6 @@ const tokenDetail = {
       this._holdTimesLoaded = false;
       this._diamondHandsData = null;
       this._diamondHandsLoaded = false;
-      this._aiAnalysisCache = null;
-      const aiBtn = document.getElementById('ai-analysis-btn');
-      if (aiBtn) { aiBtn.disabled = true; aiBtn.title = 'Waiting for holder data...'; }
       const shareBtn = document.getElementById('holders-share');
       if (shareBtn) { shareBtn.disabled = true; shareBtn.title = 'Waiting for holder data...'; }
       if (refreshBtn) refreshBtn.classList.add('spinning');
@@ -929,8 +914,7 @@ const tokenDetail = {
           this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(attempt + 1), POLL_DELAYS[attempt] || 10000);
         } else {
           this._holdTimesLoaded = true;
-          this._checkAIAnalysisReady();
-        }
+          }
         return;
       }
 
@@ -980,7 +964,6 @@ const tokenDetail = {
           el.classList.remove('hold-time-pending', 'token-hold-pending');
         });
         this._updateAvgHoldTimeMetric();
-        this._checkAIAnalysisReady();
         const totalAvg = this._holdTimesData ? Object.keys(this._holdTimesData).length : 0;
         const totalToken = this._tokenHoldTimesData ? Object.keys(this._tokenHoldTimesData).length : 0;
         console.log(`[HoldTimes] Done: ${totalAvg} avg hold times, ${totalToken} token hold times loaded`);
@@ -993,7 +976,6 @@ const tokenDetail = {
         this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(attempt + 1), POLL_DELAYS[attempt]);
       } else {
         this._holdTimesLoaded = true;
-        this._checkAIAnalysisReady();
         document.querySelectorAll('.hold-time-pending, .token-hold-pending').forEach(el => {
           el.textContent = '--';
           el.classList.remove('hold-time-pending', 'token-hold-pending');
@@ -1156,343 +1138,6 @@ const tokenDetail = {
     }
   },
 
-  // AI analysis cost in BC (loaded from backend, default 25)
-  _aiAnalysisCost: 25,
-
-  // Advanced AI analysis cost in BC (loaded from backend, default 75)
-  _advancedAIAnalysisCost: 75,
-
-  // Enable AI Analysis button once both hold times and diamond hands are loaded
-  _checkAIAnalysisReady() {
-    if (!this._holdTimesLoaded || !this._diamondHandsLoaded) return;
-    const btn = document.getElementById('ai-analysis-btn');
-    if (!btn) return;
-    btn.disabled = false;
-    btn.title = 'AI-powered holder analysis';
-
-    // Enable advanced AI button too
-    const advBtn = document.getElementById('ai-advanced-btn');
-    if (advBtn) {
-      advBtn.disabled = false;
-      advBtn.title = 'Advanced AI analysis with custom prompt';
-    }
-    }
-  },
-
-  // Gather pre-aggregated metrics for AI analysis (minimal token usage)
-  _gatherAIMetrics() {
-    const metrics = {};
-    // Concentration from DOM (already computed)
-    const t5 = document.getElementById('holders-top5');
-    const t10 = document.getElementById('holders-top10');
-    const t20 = document.getElementById('holders-top20');
-    const t1 = document.getElementById('holders-top1');
-    metrics.top5 = t5 ? parseFloat(t5.textContent) || 0 : 0;
-    metrics.top10 = t10 ? parseFloat(t10.textContent) || 0 : 0;
-    metrics.top20 = t20 ? parseFloat(t20.textContent) || 0 : 0;
-    metrics.top1 = t1 ? parseFloat(t1.textContent) || 0 : 0;
-
-    // Avg hold time from DOM
-    const avgEl = document.getElementById('holders-avg-hold-time');
-    metrics.avgHold = avgEl ? avgEl.textContent.trim() : 'N/A';
-
-    // Fresh wallets from DOM
-    const freshEl = document.getElementById('holders-fresh-wallets');
-    metrics.freshWallets = freshEl ? freshEl.textContent.trim() : 'N/A';
-
-    // Risk level from DOM
-    const riskBadge = document.getElementById('holders-risk-badge');
-    metrics.riskLevel = riskBadge ? riskBadge.textContent.trim() : 'N/A';
-
-    // Diamond hands conviction data (defaults to 0 if not available)
-    const dh = this._diamondHandsData;
-    const dist = dh?.distribution || {};
-    metrics.dh6h = dist['6h'] ?? 0;
-    metrics.dh24h = dist['24h'] ?? 0;
-    metrics.dh3d = dist['3d'] ?? 0;
-    metrics.dh1w = dist['1w'] ?? 0;
-    metrics.dh1m = dist['1m'] ?? 0;
-    metrics.dh3m = dist['3m'] ?? 0;
-    metrics.dh6m = dist['6m'] ?? 0;
-    metrics.dh9m = dist['9m'] ?? 0;
-    metrics.sampleSize = dh ? dh.sampleSize || 0 : 0;
-    metrics.analyzed = dh ? dh.analyzed || 0 : 0;
-
-    // Market data from token object
-    if (this.token) {
-      metrics.marketCap = this.token.marketCap || null;
-      metrics.volume24h = this.token.volume24h || null;
-      metrics.holders = this.token.holders || null;
-      metrics.createdAt = this.token.pairCreatedAt || null;
-    }
-
-    // Locked supply from DOM
-    const lockedEl = document.getElementById('holders-locked');
-    metrics.locked = lockedEl ? lockedEl.textContent.trim() : 'N/A';
-
-    return metrics;
-  },
-
-  // Open AI analysis modal and fetch/display results
-  async _openAIAnalysis() {
-    const overlay = document.getElementById('ai-analysis-overlay');
-    const loading = document.getElementById('ai-analysis-loading');
-    const result = document.getElementById('ai-analysis-result');
-    const errorEl = document.getElementById('ai-analysis-error');
-    if (!overlay) return;
-
-    // Check wallet connection
-    if (typeof wallet === 'undefined' || !wallet.connected || !wallet.address) {
-      if (typeof toast !== 'undefined') {
-        toast.info(`Connect your wallet to use AI Analysis (costs ${this._aiAnalysisCost} BC)`);
-      }
-      // Trigger wallet connect
-      const connectBtn = document.getElementById('connect-wallet');
-      if (connectBtn) connectBtn.click();
-      return;
-    }
-
-    // Close handler (stable reference for cleanup)
-    const close = () => {
-      overlay.style.display = 'none';
-      document.removeEventListener('keydown', escHandler);
-    };
-    const escHandler = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', escHandler);
-    document.getElementById('ai-analysis-close').onclick = close;
-    overlay.onclick = (e) => { if (e.target === overlay) close(); };
-
-    // Show cached result immediately (no loading flash, no BC charge)
-    if (this._aiAnalysisCache) {
-      loading.style.display = 'none';
-      result.style.display = 'none';
-      errorEl.style.display = 'none';
-      overlay.style.display = 'flex';
-      this._renderAIResult(this._aiAnalysisCache);
-      return;
-    }
-
-    // Show loading state
-    loading.style.display = 'flex';
-    result.style.display = 'none';
-    errorEl.style.display = 'none';
-    overlay.style.display = 'flex';
-
-    await this._fetchAIAnalysis();
-  },
-
-  // Fetch AI analysis from backend (separated for retry support)
-  async _fetchAIAnalysis() {
-    const loading = document.getElementById('ai-analysis-loading');
-    const errorEl = document.getElementById('ai-analysis-error');
-    loading.style.display = 'flex';
-    errorEl.style.display = 'none';
-
-    try {
-      const metrics = this._gatherAIMetrics();
-      // Include wallet address for BC payment
-      metrics.walletAddress = (typeof wallet !== 'undefined' && wallet.address) ? wallet.address : null;
-
-      const data = await api.request(`/api/tokens/${this.mint}/holders/ai-analysis`, {
-        method: 'POST',
-        body: JSON.stringify(metrics),
-        retries: 1
-      });
-
-      if (data.error) throw new Error(data.error);
-      this._aiAnalysisCache = data;
-      this._renderAIResult(data);
-
-    } catch (err) {
-      loading.style.display = 'none';
-      errorEl.style.display = 'flex';
-
-      if (err.code === 'WALLET_REQUIRED') {
-        errorEl.innerHTML = '<span>Please connect your wallet to use AI Analysis.</span>';
-      } else {
-        errorEl.innerHTML = '<span>' + this.escapeHtml(err.message || 'Analysis unavailable. Try again later.') +
-          '</span><button class="ai-retry-btn" id="ai-retry-btn">Retry</button>';
-        const retryBtn = document.getElementById('ai-retry-btn');
-        if (retryBtn) retryBtn.onclick = () => this._fetchAIAnalysis();
-      }
-    }
-  },
-
-  // Render AI analysis score and text into the modal
-  _renderAIResult(data) {
-    const loading = document.getElementById('ai-analysis-loading');
-    const result = document.getElementById('ai-analysis-result');
-    const scoreVal = document.getElementById('ai-score-value');
-    const scoreCircle = document.getElementById('ai-score-circle');
-    const ratingEl = document.getElementById('ai-score-rating');
-    const textEl = document.getElementById('ai-analysis-text');
-    loading.style.display = 'none';
-    result.style.display = 'flex';
-
-    const score = data.score != null ? data.score : null;
-    scoreVal.textContent = score != null ? score : '--';
-
-    if (score != null) {
-      // Reset dashoffset to full before animating (so reopens animate too)
-      scoreCircle.style.transition = 'none';
-      scoreCircle.style.strokeDashoffset = '326.73';
-      // Force reflow, then animate
-      scoreCircle.getBoundingClientRect();
-      scoreCircle.style.transition = 'stroke-dashoffset 1s ease, stroke 0.5s ease';
-
-      const offset = 326.73 * (1 - score / 100);
-      scoreCircle.style.strokeDashoffset = offset;
-
-      // Color based on score — ring, number, and rating label
-      const color = score >= 70 ? 'var(--success, #10b981)'
-        : score >= 40 ? 'var(--warning, #f59e0b)'
-        : 'var(--error, #ef4444)';
-      scoreCircle.style.stroke = color;
-      scoreVal.style.color = color;
-
-      // Rating label
-      const rating = score >= 80 ? 'Strong' : score >= 60 ? 'Healthy'
-        : score >= 40 ? 'Moderate' : score >= 20 ? 'Weak' : 'Critical';
-      if (ratingEl) { ratingEl.textContent = rating; ratingEl.style.color = color; }
-    }
-
-    textEl.textContent = data.analysis || '';
-  },
-
-  // --- Advanced AI Analysis ---
-
-  // Open the advanced AI analysis modal
-  async _openAdvancedAIAnalysis() {
-    const overlay = document.getElementById('ai-advanced-overlay');
-    if (!overlay) return;
-
-    // Check wallet connection
-    if (typeof wallet === 'undefined' || !wallet.connected || !wallet.address) {
-      if (typeof toast !== 'undefined') {
-        toast.info(`Connect your wallet to use Advanced AI Analysis (costs ${this._advancedAIAnalysisCost} BC)`);
-      }
-      const connectBtn = document.getElementById('connect-wallet');
-      if (connectBtn) connectBtn.click();
-      return;
-    }
-
-    // Close handler
-    const close = () => {
-      overlay.style.display = 'none';
-      document.removeEventListener('keydown', escHandler);
-    };
-    const escHandler = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', escHandler);
-    document.getElementById('ai-advanced-close').onclick = close;
-    overlay.onclick = (e) => { if (e.target === overlay) close(); };
-
-    // Reset to prompt phase
-    const promptPhase = document.getElementById('ai-advanced-prompt-phase');
-    const loading = document.getElementById('ai-advanced-loading');
-    const result = document.getElementById('ai-advanced-result');
-    const errorEl = document.getElementById('ai-advanced-error');
-    const input = document.getElementById('ai-advanced-input');
-    const charCount = document.getElementById('ai-advanced-charcount');
-    const submitBtn = document.getElementById('ai-advanced-submit');
-    const newBtn = document.getElementById('ai-advanced-new');
-
-    promptPhase.style.display = 'block';
-    loading.style.display = 'none';
-    result.style.display = 'none';
-    errorEl.style.display = 'none';
-    input.value = '';
-    charCount.textContent = '0';
-    submitBtn.disabled = true;
-    overlay.style.display = 'flex';
-
-    // Character count + enable/disable submit
-    input.oninput = () => {
-      const len = input.value.trim().length;
-      charCount.textContent = input.value.length;
-      submitBtn.disabled = len < 1;
-    };
-
-    // Submit handler
-    submitBtn.onclick = () => this._submitAdvancedAIAnalysis();
-
-    // "Ask Another" resets to prompt phase
-    if (newBtn) {
-      newBtn.onclick = () => {
-        promptPhase.style.display = 'block';
-        result.style.display = 'none';
-        errorEl.style.display = 'none';
-        input.value = '';
-        charCount.textContent = '0';
-        submitBtn.disabled = true;
-        input.focus();
-      };
-    }
-
-    input.focus();
-  },
-
-  // Submit the advanced analysis request
-  async _submitAdvancedAIAnalysis() {
-    const promptPhase = document.getElementById('ai-advanced-prompt-phase');
-    const loading = document.getElementById('ai-advanced-loading');
-    const errorEl = document.getElementById('ai-advanced-error');
-    const input = document.getElementById('ai-advanced-input');
-    const userPrompt = input.value.trim();
-
-    if (!userPrompt || userPrompt.length > 100) return;
-
-    promptPhase.style.display = 'none';
-    loading.style.display = 'flex';
-    errorEl.style.display = 'none';
-
-    try {
-      const metrics = this._gatherAIMetrics();
-      metrics.walletAddress = (typeof wallet !== 'undefined' && wallet.address) ? wallet.address : null;
-      metrics.userPrompt = userPrompt;
-
-      const data = await api.request(`/api/tokens/${this.mint}/ai-advanced-analysis`, {
-        method: 'POST',
-        body: JSON.stringify(metrics),
-        retries: 1
-      });
-
-      if (data.error) throw new Error(data.error);
-      this._renderAdvancedAIResult(data);
-
-    } catch (err) {
-      loading.style.display = 'none';
-      errorEl.style.display = 'flex';
-
-      if (err.code === 'WALLET_REQUIRED') {
-        errorEl.innerHTML = '<span>Please connect your wallet to use Advanced AI Analysis.</span>';
-      } else {
-        const msg = this.escapeHtml(err.message || 'Analysis unavailable. Try again later.');
-        errorEl.innerHTML = '<span>' + msg + '</span>' +
-          '<button class="ai-retry-btn">Try Again</button>';
-        const retryBtn = errorEl.querySelector('.ai-retry-btn');
-        if (retryBtn) {
-          retryBtn.addEventListener('click', () => {
-            document.getElementById('ai-advanced-prompt-phase').style.display = 'block';
-            errorEl.style.display = 'none';
-          });
-        }
-      }
-    }
-  },
-
-  // Render advanced AI analysis result
-  _renderAdvancedAIResult(data) {
-    const loading = document.getElementById('ai-advanced-loading');
-    const result = document.getElementById('ai-advanced-result');
-    const promptEcho = document.getElementById('ai-advanced-prompt-echo');
-    const textEl = document.getElementById('ai-advanced-text');
-    loading.style.display = 'none';
-    result.style.display = 'flex';
-
-    promptEcho.textContent = data.userPrompt || '';
-    textEl.textContent = data.analysis || '';
-  },
-
   // Load diamond hands distribution with polling
   async _loadDiamondHands(attempt = 0) {
     const MAX_POLLS = 10;
@@ -1512,7 +1157,6 @@ const tokenDetail = {
       if (!data) {
         console.log(`[DiamondHands] No response`);
         this._diamondHandsLoaded = true;
-        this._checkAIAnalysisReady();
         return;
       }
 
@@ -1533,7 +1177,6 @@ const tokenDetail = {
           this._diamondHandsData = data;
         }
         this._diamondHandsLoaded = true;
-        this._checkAIAnalysisReady();
         console.log(`[DiamondHands] Done: sample=${data.sampleSize}, analyzed=${data.analyzed}`);
       }
     } catch (error) {

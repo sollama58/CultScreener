@@ -26,7 +26,6 @@
   "author": "The Sol Penguin",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
     "@solana/web3.js": "^1.87.0",
     "axios": "^1.6.0",
     "bs58": "^5.0.0",
