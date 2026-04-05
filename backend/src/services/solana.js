@@ -283,23 +283,34 @@ async function checkHealth() {
  * @returns {Promise<number|null>} - Token account count (approximate holders) or null if unavailable
  */
 /**
- * Get total holder count from Solscan public API.
- * Uses public-api.solscan.io (no API key required).
- * The /token/meta endpoint returns holder count in the response.
+ * Get total holder count from Solscan Pro API.
+ * Requires SOLSCAN_API_KEY env var.
  */
+const SOLSCAN_API_KEY = process.env.SOLSCAN_API_KEY || '';
+
 async function getTokenHolderCount(mintAddress) {
+  if (!SOLSCAN_API_KEY) {
+    console.log('[Solana] SOLSCAN_API_KEY not configured, skipping holder count');
+    return null;
+  }
+
   try {
     const response = await axios.get(
-      `https://public-api.solscan.io/token/meta?tokenAddress=${encodeURIComponent(mintAddress)}`,
+      `https://pro-api.solscan.io/v2.0/token/holder/count?address=${encodeURIComponent(mintAddress)}`,
       {
         timeout: 10000,
         httpsAgent,
-        headers: { 'Accept': 'application/json' }
+        headers: {
+          'Accept': 'application/json',
+          'token': SOLSCAN_API_KEY
+        }
       }
     );
 
-    const data = response.data;
-    const count = data?.holder ?? data?.holderCount ?? data?.holders;
+    const count = response.data?.data?.holder_count
+      ?? response.data?.data?.count
+      ?? response.data?.data?.total
+      ?? response.data?.data;
     if (typeof count === 'number' && count > 0) {
       console.log(`[Solana] Solscan holder count for ${mintAddress.slice(0, 8)}...: ${count}`);
       return count;

@@ -2547,7 +2547,7 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  justify-content: center;
+  justify-content: flex-start;
   padding-top: 0.75rem;
   color: var(--text-dim);
   font-size: 0.7rem;

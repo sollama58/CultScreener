@@ -37,6 +37,8 @@ services:
         sync: false
       - key: COINGECKO_API_KEY
         sync: false
+      - key: SOLSCAN_API_KEY
+        sync: false
 
       # Admin password (required for curated token management)
       - key: ADMIN_PASSWORD

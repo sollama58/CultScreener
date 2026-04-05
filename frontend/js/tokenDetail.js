@@ -1115,9 +1115,12 @@ const tokenDetail = {
       graphic.insertBefore(sectionTitle, header.nextSibling);
       injected.push(sectionTitle);
 
-      // 3. Boost watermark opacity
+      // 3. Show watermark for screenshot (hidden on normal page)
       const watermark = graphic.querySelector('.holders-watermark');
-      if (watermark) watermark.style.opacity = '0.8';
+      if (watermark) {
+        watermark.style.display = 'flex';
+        watermark.style.opacity = '0.8';
+      }
 
       const canvas = await html2canvas(graphic, {
         backgroundColor: '#060607',
@@ -1131,7 +1134,7 @@ const tokenDetail = {
       // Clean up injected elements
       injected.forEach(el => el.remove());
       graphic.style.padding = '';
-      if (watermark) watermark.style.opacity = '';
+      if (watermark) { watermark.style.display = 'none'; watermark.style.opacity = ''; }
 
       const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
       const filename = `${(tokenSymbol || tokenName || 'token').toLowerCase()}-conviction.png`;
@@ -1174,7 +1177,7 @@ const tokenDetail = {
       injected.forEach(el => { if (el.parentNode) el.remove(); });
       graphic.style.padding = '';
       const watermark = document.querySelector('#holders-graphic .holders-watermark');
-      if (watermark) watermark.style.opacity = '';
+      if (watermark) { watermark.style.display = 'none'; watermark.style.opacity = ''; }
       if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
     }
   },
