@@ -344,7 +344,7 @@ const jobProcessors = {
 
     console.log(`[Worker] Computing holder metrics for ${wallets.length} wallets (token ${mint})`);
 
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 5;
     let computed = 0;
     let skipped = 0;
 
@@ -364,8 +364,8 @@ const jobProcessors = {
 
       for (const [wallet, holdTime] of batchResults) {
         const val = holdTime ?? -1;
-        await cache.set(`wallet-hold-time:${wallet}`, val, TTL.DAY);
-        await cache.set(`wallet-token-hold:${wallet}:${mint}`, val, TTL.DAY);
+        await cache.set(`wallet-hold-time:${wallet}`, val, 2 * TTL.DAY);
+        await cache.set(`wallet-token-hold:${wallet}:${mint}`, val, 2 * TTL.DAY);
         if (val > 0) computed++; else skipped++;
       }
     }

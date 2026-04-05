@@ -727,15 +727,20 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
 
     // Deduplicate by owner wallet, keep ATA address for cheap hold-time lookups
     const seen = new Set();
-    const holders = [];
+    const allHolders = [];
     for (const a of accounts) {
       if (!a.owner || !a.amount || a.amount === '0' || a.amount === 0) continue;
       if (seen.has(a.owner)) continue;
       if (excludeAddresses && excludeAddresses.has(a.owner)) continue;
       seen.add(a.owner);
-      holders.push({ wallet: a.owner, ata: a.address || null });
-      if (holders.length >= count) break;
+      allHolders.push({ wallet: a.owner, ata: a.address || null, amount: parseFloat(a.amount) || 0 });
     }
+
+    // Sort by balance descending and skip dust wallets (bottom 10% by balance)
+    allHolders.sort((a, b) => b.amount - a.amount);
+    const cutoff = Math.floor(allHolders.length * 0.9);
+    const holders = allHolders.slice(0, Math.min(count, cutoff || allHolders.length))
+      .map(({ wallet, ata }) => ({ wallet, ata }));
 
     console.log(`[Solana] getTokenHolderSample: ${holders.length} holders from ${accounts.length} accounts for ${mintAddress.slice(0, 8)}...`);
     return holders;

@@ -543,7 +543,11 @@ const tokenDetail = {
     const liqEl = document.getElementById('stat-liquidity');
     if (liqEl) liqEl.textContent = utils.formatNumber(token.liquidity);
     const holdersEl = document.getElementById('stat-holders');
-    if (holdersEl) holdersEl.textContent = typeof token.holders === 'number' ? token.holders.toLocaleString() : 'N/A';
+    const holdersCount = typeof token.holders === 'number' ? token.holders : null;
+    if (holdersEl) holdersEl.textContent = holdersCount ? holdersCount.toLocaleString() : 'N/A';
+    // Also populate conviction metrics holder count
+    const holdersTotalEl = document.getElementById('holders-total-count');
+    if (holdersTotalEl && holdersCount) holdersTotalEl.textContent = holdersCount.toLocaleString();
 
     const supplyEl = document.getElementById('stat-supply');
     if (supplyEl) supplyEl.textContent = token.supply ? utils.formatNumber(token.supply, '') : '--';
@@ -713,12 +717,15 @@ const tokenDetail = {
             : 'N/A';
         }
 
-        // Update holder count stat if it was N/A
+        // Update holder count in both Token Statistics and Conviction Metrics
         if (metrics.holderCount) {
+          const count = metrics.holderCount.toLocaleString();
           const holdersStatEl = document.getElementById('stat-holders');
           if (holdersStatEl && (holdersStatEl.textContent === 'N/A' || holdersStatEl.textContent === '--')) {
-            holdersStatEl.textContent = metrics.holderCount.toLocaleString();
+            holdersStatEl.textContent = count;
           }
+          const holdersTotalEl = document.getElementById('holders-total-count');
+          if (holdersTotalEl) holdersTotalEl.textContent = count;
         }
 
         // Color-code percentage metrics (green = distributed, red = concentrated)

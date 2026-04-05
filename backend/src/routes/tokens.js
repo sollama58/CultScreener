@@ -2134,7 +2134,7 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
     const staleWallets = [];
     let freshWalletCount = 0;
     let walletAgeChecked = 0;
-    const DAY_MS = 86400000;
+    const HOLD_CACHE_MS = 172800000; // 48h — hold times don't change fast
 
     await Promise.all(wallets.map(async (wallet) => {
       const [avgCached, tokenCached, ageCached] = await Promise.all([
@@ -2153,7 +2153,7 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
       // Count fresh wallets (age < 24h). ageCached: positive ms = known age, -1 = unknown
       if (ageCached != null && ageCached > 0) {
         walletAgeChecked++;
-        if (ageCached < DAY_MS) freshWalletCount++;
+        if (ageCached < 86400000) freshWalletCount++; // < 24h = fresh wallet
       } else if (ageCached === -1) {
         walletAgeChecked++; // age unknown (100+ txs) — not fresh
       }
@@ -2207,7 +2207,7 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
 
         if (useInline) {
           const bgMint = mint;
-          const DAY_MS = 86400000;
+          const HOLD_CACHE_MS = 172800000; // 48h — hold times don't change fast
 
           // Compute top 10 wallets synchronously (1 RPC call each with ATA)
           const syncWallets = staleWallets.slice(0, 10);
@@ -2226,8 +2226,8 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
 
           for (const [wallet, holdTime] of syncResults) {
             const val = holdTime ?? -1;
-            await cache.set(`wallet-hold-time:${wallet}`, val, DAY_MS);
-            await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, val, DAY_MS);
+            await cache.set(`wallet-hold-time:${wallet}`, val, HOLD_CACHE_MS);
+            await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, val, HOLD_CACHE_MS);
             if (val > 0) { holdTimes[wallet] = val; tokenHoldTimes[wallet] = val; }
           }
 
@@ -2235,7 +2235,7 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
           if (asyncWallets.length > 0) {
             setImmediate(() => {
               (async () => {
-                const BATCH_SIZE = 10;
+                const BATCH_SIZE = 5;
                 let ok = 0, fail = 0;
                 try {
                   for (let i = 0; i < asyncWallets.length; i += BATCH_SIZE) {
@@ -2249,8 +2249,8 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
                     );
                     for (const [w, ht] of results) {
                       const val = ht ?? -1;
-                      await cache.set(`wallet-hold-time:${w}`, val, DAY_MS);
-                      await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, DAY_MS);
+                      await cache.set(`wallet-hold-time:${w}`, val, HOLD_CACHE_MS);
+                      await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, HOLD_CACHE_MS);
                       if (val > 0) ok++; else fail++;
                     }
                   }
@@ -2400,7 +2400,7 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
           (async () => {
             console.log(`[DiamondHands] Inline: ${bgWallets.length} wallets for ${bgMint.slice(0, 8)}...`);
             const BATCH_SIZE = 10;
-            const DAY_MS = 86400000;
+            const HOLD_CACHE_MS = 172800000; // 48h — hold times don't change fast
             let ok = 0;
             try {
               for (let i = 0; i < bgWallets.length; i += BATCH_SIZE) {
@@ -2415,8 +2415,8 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
                 );
                 for (const [w, ht] of results) {
                   const val = ht ?? -1;
-                  await cache.set(`wallet-hold-time:${w}`, val, DAY_MS);
-                  await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, DAY_MS);
+                  await cache.set(`wallet-hold-time:${w}`, val, HOLD_CACHE_MS);
+                  await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, HOLD_CACHE_MS);
                   if (val > 0) ok++;
                 }
               }
