@@ -16,6 +16,7 @@ const convictionPage = {
     this.bindFilters();
     this.bindQuickFilters();
     this.bindSortHeaders();
+    this.bindFiltersToggle();
     this.loadData();
 
     // If user connects wallet while on watchlist filter, reload
@@ -33,6 +34,18 @@ const convictionPage = {
         }
         this.loadData();
       }
+    });
+  },
+
+  bindFiltersToggle() {
+    const btn = document.getElementById('filters-toggle');
+    const panel = document.getElementById('filters-panel');
+    if (!btn || !panel) return;
+
+    btn.addEventListener('click', () => {
+      const isOpen = panel.style.display !== 'none';
+      panel.style.display = isOpen ? 'none' : '';
+      btn.classList.toggle('active', !isOpen);
     });
   },
 

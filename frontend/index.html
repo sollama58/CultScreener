@@ -62,68 +62,48 @@
   </header>
 
   <main class="main conviction-page terminal-page">
-    <!-- Terminal Header -->
-    <div class="terminal-header">
-      <div class="terminal-title-row">
-        <div class="terminal-title">
-          <span class="terminal-diamond">&#x25C6;</span>
-          <span class="terminal-name">DIAMOND HANDS</span>
-          <span class="terminal-tag">TERMINAL</span>
-        </div>
-        <div class="terminal-status">
-          <span class="terminal-dot"></span>
-          <span id="terminal-status-text">CONNECTING...</span>
-        </div>
-      </div>
-      <div class="terminal-stats" id="terminal-stats">
-        <div class="terminal-stat">
-          <span class="terminal-stat-label">TOKENS</span>
-          <span class="terminal-stat-value" id="stat-total">--</span>
-        </div>
-        <div class="terminal-stat">
-          <span class="terminal-stat-label">AVG CONVICTION</span>
-          <span class="terminal-stat-value" id="stat-avg-conviction">--</span>
-        </div>
-        <div class="terminal-stat">
-          <span class="terminal-stat-label">PAGE</span>
-          <span class="terminal-stat-value" id="stat-page">--</span>
-        </div>
-        <div class="terminal-stat">
-          <span class="terminal-stat-label">SHOWING</span>
-          <span class="terminal-stat-value" id="stat-showing">--</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Terminal Controls -->
     <section class="community-section conviction-section terminal-section">
-      <!-- Quick Filter Pills -->
-      <div class="terminal-quick-filters" id="terminal-quick-filters">
-        <button class="terminal-pill active" data-tier="all">ALL</button>
-        <button class="terminal-pill pill-watchlist" data-tier="watchlist" title="Connect wallet to view">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          WATCHLIST
-        </button>
-        <div class="terminal-pill-separator"></div>
-        <button class="terminal-pill pill-elite" data-tier="elite">ELITE 75%+</button>
-        <button class="terminal-pill pill-high" data-tier="high">HIGH 50%+</button>
-        <button class="terminal-pill pill-mid" data-tier="mid">MID 25%+</button>
-        <button class="terminal-pill pill-low" data-tier="low">LOW &lt;25%</button>
-        <div class="terminal-pill-separator"></div>
-        <button class="terminal-pill pill-mcap" data-mcap="micro">MICRO &lt;$100K</button>
-        <button class="terminal-pill pill-mcap" data-mcap="small">SMALL $100K-$1M</button>
-        <button class="terminal-pill pill-mcap" data-mcap="mid">MID $1M-$10M</button>
-        <button class="terminal-pill pill-mcap" data-mcap="large">LARGE $10M+</button>
-      </div>
-
-      <!-- Search + Filters Row -->
-      <div class="terminal-controls">
+      <!-- Toolbar: Search + Filters toggle + Status -->
+      <div class="terminal-toolbar">
         <div class="terminal-search-wrap">
           <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"/>
             <path d="m21 21-4.35-4.35"/>
           </svg>
-          <input type="text" id="conviction-search" placeholder="Search by name or symbol..." maxlength="100" autocomplete="off" class="terminal-search">
+          <input type="text" id="conviction-search" placeholder="" maxlength="100" autocomplete="off" class="terminal-search">
+        </div>
+        <button class="terminal-filters-toggle" id="filters-toggle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+          Filters
+        </button>
+        <button class="terminal-clear-btn" id="conviction-filter-reset" style="display:none;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          CLEAR
+        </button>
+        <div class="terminal-status-inline">
+          <span class="terminal-dot"></span>
+          <span id="terminal-status-text">CONNECTING...</span>
+        </div>
+      </div>
+
+      <!-- Collapsible Filters Panel -->
+      <div class="terminal-filters-panel" id="filters-panel" style="display:none;">
+        <div class="terminal-quick-filters" id="terminal-quick-filters">
+          <button class="terminal-pill active" data-tier="all">ALL</button>
+          <button class="terminal-pill pill-watchlist" data-tier="watchlist" title="Connect wallet to view">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            WATCHLIST
+          </button>
+          <div class="terminal-pill-separator"></div>
+          <button class="terminal-pill pill-elite" data-tier="elite">ELITE 75%+</button>
+          <button class="terminal-pill pill-high" data-tier="high">HIGH 50%+</button>
+          <button class="terminal-pill pill-mid" data-tier="mid">MID 25%+</button>
+          <button class="terminal-pill pill-low" data-tier="low">LOW &lt;25%</button>
+          <div class="terminal-pill-separator"></div>
+          <button class="terminal-pill pill-mcap" data-mcap="micro">MICRO &lt;$100K</button>
+          <button class="terminal-pill pill-mcap" data-mcap="small">SMALL $100K-$1M</button>
+          <button class="terminal-pill pill-mcap" data-mcap="mid">MID $1M-$10M</button>
+          <button class="terminal-pill pill-mcap" data-mcap="large">LARGE $10M+</button>
         </div>
         <div class="terminal-filter-group">
           <label>MIN CONVICTION</label>
@@ -132,18 +112,10 @@
             <span id="conviction-min-pct-val" class="terminal-range-val">0%</span>
           </div>
         </div>
-        <button class="terminal-clear-btn" id="conviction-filter-reset" style="display:none;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 6L6 18M6 6l12 12"/>
-          </svg>
-          CLEAR
-        </button>
       </div>
 
       <!-- Hidden elements used by JS -->
       <select id="conviction-min-sample" style="display:none;"><option value="">Any</option></select>
-
-      <!-- Hidden select for mcap (used by JS) -->
       <select id="conviction-mcap" style="display:none;">
         <option value="">Any</option>
         <option value="0-100000">Under $100K</option>

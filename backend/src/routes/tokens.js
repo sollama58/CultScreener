@@ -1310,13 +1310,7 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
     const result = await cache.getOrSetWithFreshness(cacheKey, async () => {
       // Fetch holder count from cache first (cached for 24 hours)
       // This is a separate cache key so it doesn't get invalidated with price data
-      const holderCacheKey = keys.holderCount(mint);
-      let holders = await cache.get(holderCacheKey);
-
-      // Fetch data in parallel
-      // Strategy: Use Helius for metadata (name, symbol, decimals, supply, basic price)
-      // Use GeckoTerminal only for market data Helius can't provide (volume, price change, liquidity)
-      // GeckoTerminal token info provides coingeckoId (needed for social links lookup)
+      // Fetch data in parallel — always include holder count from DAS
       const fetchPromises = [
         // Helius provides: metadata, supply, price (for top 10k tokens)
         solanaService.isHeliusConfigured()
@@ -1326,25 +1320,26 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         geckoService.getTokenOverview(mint),
         db.getApprovedSubmissions(mint).catch(() => []),
         // GeckoTerminal token endpoint: provides coingeckoId for social links lookup
-        // Deduplicated — if getTokenOverview falls back to this internally, only one HTTP call
-        geckoService.getTokenInfo(mint).catch(() => null)
+        geckoService.getTokenInfo(mint).catch(() => null),
+        // Holder count: always fetch from DAS (cheap, 1 call, returns accurate total)
+        solanaService.isHeliusConfigured()
+          ? solanaService.getTokenHolderCount(mint).catch(() => null)
+          : Promise.resolve(null)
       ];
-
-      // If holder count not cached, fetch from Helius DAS (accurate on-chain count)
-      if (holders == null && solanaService.isHeliusConfigured()) {
-        fetchPromises.push(
-          solanaService.getTokenHolderCount(mint).catch(catchUnlessOverloaded(null))
-        );
-      }
 
       const results = await Promise.all(fetchPromises);
       const [heliusMetadata, geckoOverview, submissions, geckoTokenInfo, fetchedHolders] = results;
 
-      // Only accept holder counts > 1 (a count of 0 or 1 is always stale/wrong)
+      // Use DAS holder count (accurate), fall back to cache
+      let holders = null;
       if (typeof fetchedHolders === 'number' && fetchedHolders > 1) {
         holders = fetchedHolders;
-        await cache.set(holderCacheKey, holders, TTL.DAY);
+        await cache.set(keys.holderCount(mint), holders, TTL.DAY);
         await cache.set(`holder-total:${mint}`, holders, TTL.DAY);
+      } else {
+        // Fall back to cached value, but only if it's reasonable (> 20)
+        const cached = await cache.get(`holder-total:${mint}`) || await cache.get(keys.holderCount(mint));
+        if (cached && cached > 20) holders = cached;
       }
 
       // Privacy: Don't log API response details
