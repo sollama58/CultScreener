@@ -995,28 +995,39 @@ const utils = {
     const nav = document.querySelector('.nav');
     if (!hamburger || !nav) return;
 
+    // Helper to close mobile nav and unlock body scroll
+    const closeMobileNav = () => {
+      nav.classList.remove('open');
+      hamburger.classList.remove('active');
+      hamburger.setAttribute('aria-expanded', 'false');
+      document.body.classList.remove('nav-open');
+    };
+
     hamburger.addEventListener('click', () => {
       const isOpen = nav.classList.toggle('open');
       hamburger.classList.toggle('active', isOpen);
       hamburger.setAttribute('aria-expanded', String(isOpen));
+      document.body.classList.toggle('nav-open', isOpen);
     });
 
     // Close menu when a nav link is clicked
     nav.querySelectorAll('.nav-link:not(.nav-dropdown-toggle)').forEach(link => {
-      link.addEventListener('click', () => {
-        nav.classList.remove('open');
-        hamburger.classList.remove('active');
-        hamburger.setAttribute('aria-expanded', 'false');
-      });
+      link.addEventListener('click', closeMobileNav);
     });
+
+    // Close menu when wallet connect button is clicked (on mobile)
+    const walletBtn = document.getElementById('connect-wallet');
+    if (walletBtn) {
+      walletBtn.addEventListener('click', () => {
+        if (nav.classList.contains('open')) closeMobileNav();
+      });
+    }
 
     // Close menu when clicking outside
     document.addEventListener('click', (e) => {
       if (!nav.classList.contains('open')) return;
       if (!nav.contains(e.target) && !hamburger.contains(e.target)) {
-        nav.classList.remove('open');
-        hamburger.classList.remove('active');
-        hamburger.setAttribute('aria-expanded', 'false');
+        closeMobileNav();
       }
     });
 
