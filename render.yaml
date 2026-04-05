@@ -58,7 +58,7 @@ services:
 
       # CORS - Update this to your actual frontend URL after creating the static site
       - key: CORS_ORIGIN
-        value: https://cultscreener-frontend.onrender.com
+        value: https://cultscreener-frontend.onrender.com,https://cultscreener.com,https://www.cultscreener.com
 
       # Rate limiting configuration
       - key: RATE_LIMIT_WINDOW_MS
