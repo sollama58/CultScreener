@@ -3,17 +3,22 @@
 const admin = {
   token: null,
   activeTab: 'dashboard',
+  _boundTabs: false,
 
   init() {
     this.token = localStorage.getItem('cultscreener_admin_session');
+    this.bindLogin();
+    this.bindTabs();
+    this.bindCuratedActions();
+    this.bindAnnouncementActions();
+    this.bindFilterActions();
+    document.getElementById('logout-btn').addEventListener('click', () => this.logout());
+
     if (this.token) {
       this.verifySession();
     } else {
       this.showLogin();
     }
-    this.bindLogin();
-    this.bindTabs();
-    document.getElementById('logout-btn').addEventListener('click', () => this.logout());
   },
 
   // ── Auth ──────────────────────────────────────
@@ -28,10 +33,13 @@ const admin = {
   async login() {
     const input = document.getElementById('login-password');
     const errEl = document.getElementById('login-error');
+    const btn = document.getElementById('login-btn');
     const password = input.value.trim();
     if (!password) return;
 
     errEl.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Signing in...';
     try {
       const data = await this.request('/api/admin/login', {
         method: 'POST',
@@ -46,6 +54,9 @@ const admin = {
     } catch (err) {
       errEl.textContent = err.message || 'Login failed';
       errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
     }
   },
 
@@ -71,7 +82,7 @@ const admin = {
   showLogin() {
     document.getElementById('login-section').style.display = 'flex';
     document.getElementById('admin-panel').style.display = 'none';
-    document.getElementById('login-password').focus();
+    setTimeout(() => document.getElementById('login-password').focus(), 100);
   },
 
   showPanel() {
@@ -95,6 +106,11 @@ const admin = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 401 && !opts.noAuth) {
+        this.token = null;
+        localStorage.removeItem('cultscreener_admin_session');
+        this.showLogin();
+      }
       const err = new Error(data.error || `HTTP ${res.status}`);
       err.status = res.status;
       throw err;
@@ -131,6 +147,27 @@ const admin = {
     }
   },
 
+  // ── One-time action bindings ──────────────────
+  // These are bound once at init, not re-bound on every tab load
+
+  bindCuratedActions() {
+    document.getElementById('curated-add-btn').addEventListener('click', () => this.addCuratedToken());
+    document.getElementById('curated-refresh-btn').addEventListener('click', () => this.refreshAllCurated());
+    // Allow Enter key on mint input
+    document.getElementById('curated-mint-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.addCuratedToken();
+    });
+  },
+
+  bindAnnouncementActions() {
+    document.getElementById('ann-create-btn').addEventListener('click', () => this.createAnnouncement());
+  },
+
+  bindFilterActions() {
+    document.getElementById('bugs-status-filter').addEventListener('change', () => this.loadBugReports());
+    document.getElementById('subs-status-filter').addEventListener('change', () => this.loadSubmissions());
+  },
+
   // ── Dashboard ─────────────────────────────────
 
   async loadStats() {
@@ -153,70 +190,88 @@ const admin = {
 
   async loadCurated() {
     const tbody = document.getElementById('curated-table-body');
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">Loading...</td></tr>';
     try {
-      const { tokens } = await this.request('/api/admin/curated');
-      if (!tokens || tokens.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No curated tokens</td></tr>';
+      const data = await this.request('/api/admin/curated');
+      const tokens = data.tokens || [];
+      if (tokens.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No curated tokens yet. Add one above.</td></tr>';
         return;
       }
       tbody.innerHTML = tokens.map(t => {
         const mint = this.esc(t.mintAddress || '');
-        const name = this.esc(t.name || t.symbol || mint.slice(0, 8));
+        const name = this.esc(t.name || t.symbol || '');
+        const displayName = name || `${mint.slice(0, 6)}...${mint.slice(-4)}`;
         const socials = t.socials || {};
         const socialLinks = Object.entries(socials).filter(([, v]) => v).map(([k]) => k).join(', ') || '--';
         const added = t.addedAt ? new Date(t.addedAt).toLocaleDateString() : '--';
         return `<tr>
-          <td>${name}</td>
+          <td title="${name}">${displayName}</td>
           <td class="mono truncate" title="${mint}">${mint.slice(0, 6)}...${mint.slice(-4)}</td>
           <td>${socialLinks}</td>
           <td>${added}</td>
-          <td><button class="action-btn danger" onclick="admin.removeCurated('${mint}')">Remove</button></td>
+          <td><button class="action-btn danger" data-remove-mint="${mint}">Remove</button></td>
         </tr>`;
       }).join('');
+
+      // Bind remove buttons via delegation
+      tbody.querySelectorAll('[data-remove-mint]').forEach(btn => {
+        btn.addEventListener('click', () => this.removeCurated(btn.dataset.removeMint));
+      });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="5" class="empty-msg">${this.esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+    }
+  },
+
+  async addCuratedToken() {
+    const input = document.getElementById('curated-mint-input');
+    const btn = document.getElementById('curated-add-btn');
+    const mint = input.value.trim();
+    if (!mint) return;
+
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
+      if (typeof toast !== 'undefined') toast.error('Invalid Solana address format');
+      return;
     }
 
-    // Bind add button
-    const addBtn = document.getElementById('curated-add-btn');
-    addBtn.onclick = async () => {
-      const input = document.getElementById('curated-mint-input');
-      const mint = input.value.trim();
-      if (!mint) return;
-      try {
-        await this.request('/api/admin/curated', { method: 'POST', body: JSON.stringify({ mintAddress: mint }) });
-        input.value = '';
-        this.loadCurated();
-        if (typeof toast !== 'undefined') toast.success('Token added');
-      } catch (err) {
-        if (typeof toast !== 'undefined') toast.error(err.message);
-      }
-    };
+    btn.disabled = true;
+    btn.textContent = 'Adding...';
+    try {
+      await this.request('/api/admin/curated', {
+        method: 'POST',
+        body: JSON.stringify({ mintAddress: mint })
+      });
+      input.value = '';
+      this.loadCurated();
+      if (typeof toast !== 'undefined') toast.success('Token added to curated list');
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to add token');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Add Token';
+    }
+  },
 
-    // Bind refresh all
-    const refreshBtn = document.getElementById('curated-refresh-btn');
-    refreshBtn.onclick = async () => {
-      refreshBtn.disabled = true;
-      refreshBtn.textContent = 'Refreshing...';
-      try {
-        // Use the existing curated refresh endpoint (needs X-Admin-Password)
-        // Since we're session-based, just reload curated data
-        await this.request('/api/admin/curated'); // Reload
-        this.loadCurated();
-        if (typeof toast !== 'undefined') toast.success('Refreshed');
-      } catch (err) {
-        if (typeof toast !== 'undefined') toast.error(err.message);
-      } finally {
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = 'Refresh All DexScreener';
-      }
-    };
+  async refreshAllCurated() {
+    const btn = document.getElementById('curated-refresh-btn');
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+    try {
+      await this.request('/api/admin/curated/refresh', { method: 'POST' });
+      this.loadCurated();
+      if (typeof toast !== 'undefined') toast.success('DexScreener data refreshed');
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message || 'Refresh failed');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Refresh All DexScreener';
+    }
   },
 
   async removeCurated(mint) {
     if (!confirm('Remove this token from curated list?')) return;
     try {
-      await this.request(`/api/admin/curated/${mint}`, { method: 'DELETE' });
+      await this.request(`/api/admin/curated/${encodeURIComponent(mint)}`, { method: 'DELETE' });
       this.loadCurated();
       if (typeof toast !== 'undefined') toast.success('Token removed');
     } catch (err) {
@@ -228,51 +283,71 @@ const admin = {
 
   async loadAnnouncements() {
     const tbody = document.getElementById('ann-table-body');
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">Loading...</td></tr>';
     try {
-      const { announcements } = await this.request('/api/admin/announcements');
-      if (!announcements || announcements.length === 0) {
+      const data = await this.request('/api/admin/announcements');
+      const announcements = data.announcements || [];
+      if (announcements.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No announcements</td></tr>';
         return;
       }
       tbody.innerHTML = announcements.map(a => {
         const typeBadge = { info: 'badge-blue', warning: 'badge-yellow', success: 'badge-green', error: 'badge-red' };
-        const activeClass = a.is_active || a.isActive ? 'badge-green' : 'badge-gray';
+        const isActive = !!(a.is_active ?? a.isActive);
         return `<tr>
           <td>${this.esc(a.title)}</td>
           <td><span class="badge ${typeBadge[a.type] || 'badge-blue'}">${a.type}</span></td>
-          <td><span class="badge ${activeClass}">${(a.is_active || a.isActive) ? 'Active' : 'Inactive'}</span></td>
+          <td><span class="badge ${isActive ? 'badge-green' : 'badge-gray'}">${isActive ? 'Active' : 'Inactive'}</span></td>
           <td>${a.created_at ? new Date(a.created_at).toLocaleDateString() : '--'}</td>
           <td class="actions-cell">
-            <button class="action-btn" onclick="admin.toggleAnnouncement(${a.id}, ${!(a.is_active || a.isActive)})">${(a.is_active || a.isActive) ? 'Disable' : 'Enable'}</button>
-            <button class="action-btn danger" onclick="admin.deleteAnnouncement(${a.id})">Delete</button>
+            <button class="action-btn" data-toggle-ann="${a.id}" data-active="${isActive}">${isActive ? 'Disable' : 'Enable'}</button>
+            <button class="action-btn danger" data-delete-ann="${a.id}">Delete</button>
           </td>
         </tr>`;
       }).join('');
-    } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="5" class="empty-msg">${this.esc(err.message)}</td></tr>`;
-    }
 
-    // Bind create
-    document.getElementById('ann-create-btn').onclick = async () => {
-      const title = document.getElementById('ann-title').value.trim();
-      const message = document.getElementById('ann-message').value.trim();
-      const type = document.getElementById('ann-type').value;
-      if (!title || !message) { if (typeof toast !== 'undefined') toast.error('Title and message required'); return; }
-      try {
-        await this.request('/api/admin/announcements', { method: 'POST', body: JSON.stringify({ title, message, type }) });
-        document.getElementById('ann-title').value = '';
-        document.getElementById('ann-message').value = '';
-        this.loadAnnouncements();
-        if (typeof toast !== 'undefined') toast.success('Announcement created');
-      } catch (err) {
-        if (typeof toast !== 'undefined') toast.error(err.message);
-      }
-    };
+      tbody.querySelectorAll('[data-toggle-ann]').forEach(btn => {
+        btn.addEventListener('click', () => this.toggleAnnouncement(
+          parseInt(btn.dataset.toggleAnn),
+          btn.dataset.active !== 'true'
+        ));
+      });
+      tbody.querySelectorAll('[data-delete-ann]').forEach(btn => {
+        btn.addEventListener('click', () => this.deleteAnnouncement(parseInt(btn.dataset.deleteAnn)));
+      });
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+    }
+  },
+
+  async createAnnouncement() {
+    const title = document.getElementById('ann-title').value.trim();
+    const message = document.getElementById('ann-message').value.trim();
+    const type = document.getElementById('ann-type').value;
+    if (!title || !message) {
+      if (typeof toast !== 'undefined') toast.error('Title and message required');
+      return;
+    }
+    try {
+      await this.request('/api/admin/announcements', {
+        method: 'POST',
+        body: JSON.stringify({ title, message, type })
+      });
+      document.getElementById('ann-title').value = '';
+      document.getElementById('ann-message').value = '';
+      this.loadAnnouncements();
+      if (typeof toast !== 'undefined') toast.success('Announcement created');
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    }
   },
 
   async toggleAnnouncement(id, isActive) {
     try {
-      await this.request(`/api/admin/announcements/${id}`, { method: 'PATCH', body: JSON.stringify({ isActive }) });
+      await this.request(`/api/admin/announcements/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive })
+      });
       this.loadAnnouncements();
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
@@ -294,12 +369,10 @@ const admin = {
   async loadBugReports() {
     const tbody = document.getElementById('bugs-table-body');
     const status = document.getElementById('bugs-status-filter').value;
-
-    // Bind filter change
-    document.getElementById('bugs-status-filter').onchange = () => this.loadBugReports();
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">Loading...</td></tr>';
 
     try {
-      const data = await this.request(`/api/admin/bug-reports?status=${status}&limit=50`);
+      const data = await this.request(`/api/admin/bug-reports?status=${encodeURIComponent(status)}&limit=50`);
       const reports = data.reports || [];
       if (reports.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No bug reports</td></tr>';
@@ -309,24 +382,34 @@ const admin = {
       tbody.innerHTML = reports.map(r => `<tr>
         <td class="mono">${r.id}</td>
         <td>${this.esc(r.category)}</td>
-        <td class="truncate" title="${this.esc(r.description)}">${this.esc(r.description?.slice(0, 60))}</td>
+        <td class="truncate" title="${this.esc(r.description)}">${this.esc((r.description || '').slice(0, 60))}</td>
         <td><span class="badge ${statusBadge[r.status] || 'badge-gray'}">${r.status}</span></td>
         <td>${r.created_at ? new Date(r.created_at).toLocaleDateString() : '--'}</td>
         <td class="actions-cell">
-          <select class="action-btn" onchange="admin.updateBugStatus(${r.id}, this.value)" style="background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:var(--radius-xs);padding:0.2rem 0.4rem;font-size:0.72rem;">
+          <select class="action-btn" data-bug-status="${r.id}" style="background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:var(--radius-xs);padding:0.2rem 0.4rem;font-size:0.72rem;">
             ${['new', 'acknowledged', 'resolved', 'dismissed'].map(s => `<option value="${s}" ${s === r.status ? 'selected' : ''}>${s}</option>`).join('')}
           </select>
-          <button class="action-btn danger" onclick="admin.deleteBugReport(${r.id})">Delete</button>
+          <button class="action-btn danger" data-delete-bug="${r.id}">Delete</button>
         </td>
       </tr>`).join('');
+
+      tbody.querySelectorAll('[data-bug-status]').forEach(sel => {
+        sel.addEventListener('change', () => this.updateBugStatus(parseInt(sel.dataset.bugStatus), sel.value));
+      });
+      tbody.querySelectorAll('[data-delete-bug]').forEach(btn => {
+        btn.addEventListener('click', () => this.deleteBugReport(parseInt(btn.dataset.deleteBug)));
+      });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="6" class="empty-msg">${this.esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
     }
   },
 
   async updateBugStatus(id, status) {
     try {
-      await this.request(`/api/admin/bug-reports/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      await this.request(`/api/admin/bug-reports/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status })
+      });
       if (typeof toast !== 'undefined') toast.success('Status updated');
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
@@ -349,11 +432,10 @@ const admin = {
   async loadSubmissions() {
     const tbody = document.getElementById('subs-table-body');
     const status = document.getElementById('subs-status-filter').value;
-
-    document.getElementById('subs-status-filter').onchange = () => this.loadSubmissions();
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">Loading...</td></tr>';
 
     try {
-      const data = await this.request(`/api/admin/submissions?status=${status}&limit=50`);
+      const data = await this.request(`/api/admin/submissions?status=${encodeURIComponent(status)}&limit=50`);
       const submissions = data.submissions || [];
       if (submissions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">No submissions</td></tr>';
@@ -365,25 +447,35 @@ const admin = {
         const isPending = (s.status === 'pending');
         return `<tr>
           <td class="mono">${s.id}</td>
-          <td class="mono truncate" title="${this.esc(mint)}">${mint.slice(0, 6)}...${mint.slice(-4)}</td>
+          <td class="mono truncate" title="${this.esc(mint)}">${mint ? mint.slice(0, 6) + '...' + mint.slice(-4) : '--'}</td>
           <td>${this.esc(s.type || s.submission_type || '--')}</td>
           <td class="truncate" title="${this.esc(s.content || s.url || '')}">${this.esc((s.content || s.url || '').slice(0, 40))}</td>
           <td><span class="badge ${statusBadge[s.status] || 'badge-gray'}">${s.status}</span></td>
           <td>${s.created_at ? new Date(s.created_at).toLocaleDateString() : '--'}</td>
           <td class="actions-cell">
-            ${isPending ? `<button class="action-btn success" onclick="admin.reviewSubmission(${s.id}, 'approved')">Approve</button>
-            <button class="action-btn danger" onclick="admin.reviewSubmission(${s.id}, 'rejected')">Reject</button>` : '--'}
+            ${isPending ? `<button class="action-btn success" data-approve-sub="${s.id}">Approve</button>
+            <button class="action-btn danger" data-reject-sub="${s.id}">Reject</button>` : '--'}
           </td>
         </tr>`;
       }).join('');
+
+      tbody.querySelectorAll('[data-approve-sub]').forEach(btn => {
+        btn.addEventListener('click', () => this.reviewSubmission(parseInt(btn.dataset.approveSub), 'approved'));
+      });
+      tbody.querySelectorAll('[data-reject-sub]').forEach(btn => {
+        btn.addEventListener('click', () => this.reviewSubmission(parseInt(btn.dataset.rejectSub), 'rejected'));
+      });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="7" class="empty-msg">${this.esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
     }
   },
 
   async reviewSubmission(id, status) {
     try {
-      await this.request(`/api/admin/submissions/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      await this.request(`/api/admin/submissions/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status })
+      });
       this.loadSubmissions();
       this.loadStats();
       if (typeof toast !== 'undefined') toast.success(`Submission ${status}`);
@@ -396,6 +488,7 @@ const admin = {
 
   async loadHealth() {
     const grid = document.getElementById('health-grid');
+    grid.innerHTML = '<div class="empty-msg">Loading health data...</div>';
     try {
       const h = await this.request('/health/detailed');
       const checks = h.checks || {};
@@ -403,7 +496,7 @@ const admin = {
       const card = (title, status, details) => {
         const dot = status === 'ok' ? 'ok' : status === 'warning' || status === 'degraded' ? 'warn' : 'err';
         return `<div class="health-card">
-          <h3><span class="health-dot ${dot}"></span>${title}</h3>
+          <h3><span class="health-dot ${dot}"></span>${this.esc(title)}</h3>
           <div class="health-detail">${details}</div>
         </div>`;
       };
@@ -411,18 +504,21 @@ const admin = {
       const uptime = h.uptime ? `${Math.floor(h.uptime / 3600)}h ${Math.floor((h.uptime % 3600) / 60)}m` : '--';
 
       grid.innerHTML = [
-        card('Overview', h.status, `Status: <strong>${h.status}</strong><br>Uptime: ${uptime}<br>Version: ${h.version || '--'}`),
+        card('Overview', h.status, `Status: <strong>${this.esc(h.status)}</strong><br>Uptime: ${uptime}<br>Version: ${this.esc(h.version || '--')}`),
         card('Database', checks.database?.status, `Healthy: ${checks.database?.healthy}<br>Latency: ${checks.database?.connectionTime || '--'}`),
         card('Solana RPC', checks.solana_rpc?.status, `Healthy: ${checks.solana_rpc?.healthy}<br>Endpoint: ${checks.solana_rpc?.currentEndpoint || '--'}/${checks.solana_rpc?.totalEndpoints || '--'}<br>Fallback: ${checks.solana_rpc?.usingFallback ? 'Yes' : 'No'}`),
         card('Cache', checks.cache?.status, `Type: ${checks.cache?.type || '--'}<br>Healthy: ${checks.cache?.healthy}`),
         card('Job Queue', checks.job_queue?.status, `Initialized: ${checks.job_queue?.initialized}<br>Worker Active: ${checks.job_queue?.workerActive}<br>Buffer: ${checks.job_queue?.viewBufferSize || 0}`),
         card('Memory', checks.memory?.status, `Heap: ${checks.memory?.heapUsedMB || '--'} / ${checks.memory?.heapTotalMB || '--'} MB<br>RSS: ${checks.memory?.rssMB || '--'} MB`),
         card('Circuit Breakers', checks.circuit_breakers?.status,
-          checks.circuit_breakers ? Object.entries(checks.circuit_breakers).filter(([k]) => k !== 'status').map(([k, v]) => `${k}: ${v?.state || '--'} (${v?.failures || 0} failures)`).join('<br>') : '--'
+          checks.circuit_breakers ? Object.entries(checks.circuit_breakers)
+            .filter(([k]) => k !== 'status')
+            .map(([k, v]) => `${this.esc(k)}: ${this.esc(v?.state || '--')} (${v?.failures || 0} failures)`)
+            .join('<br>') : '--'
         ),
       ].join('');
     } catch (err) {
-      grid.innerHTML = `<div class="empty-msg">${this.esc(err.message)}</div>`;
+      grid.innerHTML = `<div class="empty-msg">Error: ${this.esc(err.message)}</div>`;
     }
   },
 

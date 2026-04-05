@@ -392,6 +392,24 @@ async function initializeDatabase() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_curated_tokens_mint ON curated_tokens(mint_address);
+
+      -- Bug reports table
+      CREATE TABLE IF NOT EXISTS bug_reports (
+        id SERIAL PRIMARY KEY,
+        category VARCHAR(50) NOT NULL,
+        description TEXT NOT NULL,
+        contact_info VARCHAR(255),
+        page_url TEXT,
+        ip_address VARCHAR(45),
+        user_agent TEXT,
+        status VARCHAR(20) DEFAULT 'new' CHECK (status IN ('new', 'acknowledged', 'resolved', 'dismissed')),
+        admin_notes TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_bug_reports_status ON bug_reports(status);
+      CREATE INDEX IF NOT EXISTS idx_bug_reports_created ON bug_reports(created_at DESC);
     `);
 
     await client.query('COMMIT');
@@ -1469,52 +1487,45 @@ async function getAdminStats() {
 
   const stats = {};
 
-  // Use a single optimized query to reduce database round-trips
-  // This combines multiple COUNT(*) queries into one for efficiency
-  const combinedStats = await pool.query(`
-    SELECT
-      (SELECT COUNT(*) FROM submissions WHERE status = 'pending') as pending_submissions,
-      (SELECT COUNT(*) FROM submissions WHERE status = 'approved') as approved_submissions,
-      (SELECT COUNT(*) FROM submissions WHERE status = 'rejected') as rejected_submissions,
-      (SELECT COUNT(*) FROM submissions) as total_submissions,
-      (SELECT COUNT(*) FROM votes) as total_votes,
-      (SELECT COUNT(*) FROM tokens) as total_tokens,
-      (SELECT COUNT(*) FROM api_keys) as total_api_keys,
-      (SELECT COUNT(*) FROM api_keys WHERE is_active = true) as active_api_keys,
-      (SELECT COUNT(*) FROM watchlist) as watchlist_entries,
-      (SELECT COUNT(*) FROM submissions WHERE created_at > NOW() - INTERVAL '24 hours') as recent_submissions,
-      (SELECT COUNT(*) FROM votes WHERE created_at > NOW() - INTERVAL '24 hours') as recent_votes,
-      (SELECT COUNT(*) FROM bug_reports WHERE status = 'new') as new_bug_reports
-  `);
-
-  const row = combinedStats.rows[0];
-
-  stats.submissions = {
-    pending: parseInt(row.pending_submissions),
-    approved: parseInt(row.approved_submissions),
-    rejected: parseInt(row.rejected_submissions),
-    total: parseInt(row.total_submissions)
+  // Helper: count rows from a table, returning 0 if the table doesn't exist
+  const safeCount = async (query) => {
+    try {
+      const r = await pool.query(query);
+      return parseInt(r.rows[0].count) || 0;
+    } catch { return 0; }
   };
 
-  stats.votes = parseInt(row.total_votes);
-  stats.tokens = parseInt(row.total_tokens);
+  // Run all counts in parallel — each is independent and handles missing tables
+  const [
+    pendingSubs, approvedSubs, rejectedSubs, totalSubs,
+    totalVotes, totalTokens, totalApiKeys, activeApiKeys,
+    watchlistEntries, recentSubs, recentVotes, newBugs
+  ] = await Promise.all([
+    safeCount("SELECT COUNT(*) as count FROM submissions WHERE status = 'pending'"),
+    safeCount("SELECT COUNT(*) as count FROM submissions WHERE status = 'approved'"),
+    safeCount("SELECT COUNT(*) as count FROM submissions WHERE status = 'rejected'"),
+    safeCount("SELECT COUNT(*) as count FROM submissions"),
+    safeCount("SELECT COUNT(*) as count FROM votes"),
+    safeCount("SELECT COUNT(*) as count FROM tokens"),
+    safeCount("SELECT COUNT(*) as count FROM api_keys"),
+    safeCount("SELECT COUNT(*) as count FROM api_keys WHERE is_active = true"),
+    safeCount("SELECT COUNT(*) as count FROM watchlist"),
+    safeCount("SELECT COUNT(*) as count FROM submissions WHERE created_at > NOW() - INTERVAL '24 hours'"),
+    safeCount("SELECT COUNT(*) as count FROM votes WHERE created_at > NOW() - INTERVAL '24 hours'"),
+    safeCount("SELECT COUNT(*) as count FROM bug_reports WHERE status = 'new'")
+  ]);
 
-  stats.apiKeys = {
-    total: parseInt(row.total_api_keys),
-    active: parseInt(row.active_api_keys)
-  };
-
-  stats.watchlistEntries = parseInt(row.watchlist_entries);
-  stats.recentSubmissions = parseInt(row.recent_submissions);
-  stats.recentVotes = parseInt(row.recent_votes);
-  stats.bugReports = parseInt(row.new_bug_reports);
+  stats.submissions = { pending: pendingSubs, approved: approvedSubs, rejected: rejectedSubs, total: totalSubs };
+  stats.votes = totalVotes;
+  stats.tokens = totalTokens;
+  stats.apiKeys = { total: totalApiKeys, active: activeApiKeys };
+  stats.watchlistEntries = watchlistEntries;
+  stats.recentSubmissions = recentSubs;
+  stats.recentVotes = recentVotes;
+  stats.bugReports = newBugs;
 
   // Update cache
-  adminStatsCache = {
-    data: stats,
-    cachedAt: now
-  };
-
+  adminStatsCache = { data: stats, cachedAt: now };
   return { ...stats, cached: false };
 }
 

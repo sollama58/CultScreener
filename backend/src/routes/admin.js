@@ -118,13 +118,52 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   res.json({ success: true });
 }));
 
+router.post('/curated/refresh', strictLimiter, asyncHandler(async (req, res) => {
+  const tokens = await db.getCuratedTokens();
+  const results = { updated: 0, failed: 0, total: tokens.length };
+  const axios = require('axios');
+
+  for (let i = 0; i < tokens.length; i++) {
+    const mint = tokens[i].mintAddress || tokens[i].mint_address;
+    try {
+      const response = await axios.get(
+        `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
+        { timeout: 10000 }
+      );
+      const pairs = response.data;
+      if (Array.isArray(pairs) && pairs.length > 0) {
+        const info = pairs[0].info || {};
+        const socials = Array.isArray(info.socials) ? info.socials : [];
+        const websites = Array.isArray(info.websites) ? info.websites : [];
+        const findSocial = (type) => { const e = socials.find(s => s.type === type); return e ? e.url : null; };
+        await db.updateCuratedTokenDexScreener(mint, {
+          bannerUrl: info.header || null,
+          socials: { twitter: findSocial('twitter'), telegram: findSocial('telegram'), discord: findSocial('discord'), website: websites.length > 0 ? websites[0].url : null }
+        });
+        results.updated++;
+      } else {
+        results.failed++;
+      }
+    } catch {
+      results.failed++;
+    }
+    // Rate limit: 1 second between DexScreener calls
+    if (i < tokens.length - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+  res.json({ success: true, ...results });
+}));
+
 // ==========================================
 // Announcements
 // ==========================================
 
 router.get('/announcements', asyncHandler(async (req, res) => {
-  const announcements = await db.getAllAnnouncements();
-  res.json({ announcements });
+  try {
+    const announcements = await db.getAllAnnouncements();
+    res.json({ announcements });
+  } catch {
+    res.json({ announcements: [] });
+  }
 }));
 
 router.post('/announcements', strictLimiter, asyncHandler(async (req, res) => {
@@ -174,11 +213,15 @@ router.get('/bug-reports', asyncHandler(async (req, res) => {
   const limit = Math.min(100, parseInt(req.query.limit) || 50);
   const offset = parseInt(req.query.offset) || 0;
 
-  const [reports, counts] = await Promise.all([
-    db.getAllBugReports({ status, limit, offset }),
-    db.getBugReportCounts()
-  ]);
-  res.json({ ...reports, counts });
+  try {
+    const [reports, counts] = await Promise.all([
+      db.getAllBugReports({ status, limit, offset }),
+      db.getBugReportCounts()
+    ]);
+    res.json({ ...reports, counts });
+  } catch {
+    res.json({ reports: [], total: 0, counts: {} });
+  }
 }));
 
 router.patch('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) => {
@@ -216,8 +259,12 @@ router.get('/submissions', asyncHandler(async (req, res) => {
   const sortOrder = req.query.sortOrder === 'ASC' ? 'ASC' : 'DESC';
   const tokenMint = req.query.tokenMint || undefined;
 
-  const result = await db.getAllSubmissions({ status, tokenMint, limit, offset, sortBy, sortOrder });
-  res.json(result);
+  try {
+    const result = await db.getAllSubmissions({ status, tokenMint, limit, offset, sortBy, sortOrder });
+    res.json(result);
+  } catch {
+    res.json({ submissions: [], total: 0 });
+  }
 }));
 
 router.patch('/submissions/:id', strictLimiter, asyncHandler(async (req, res) => {
