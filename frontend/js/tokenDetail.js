@@ -1118,13 +1118,6 @@ const tokenDetail = {
       const watermark = graphic.querySelector('.holders-watermark');
       if (watermark) watermark.style.opacity = '0.8';
 
-      // 4. Ticker badge — bottom right
-      const tickerBadge = document.createElement('div');
-      tickerBadge.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:0.4rem;padding-top:0.65rem;margin-top:0.5rem;';
-      tickerBadge.innerHTML = `<span style="font-size:1.1rem;font-weight:900;color:#ff5722;background:rgba(255,87,34,0.1);padding:0.25rem 0.75rem;border-radius:4px;font-family:'JetBrains Mono',monospace;letter-spacing:0.03em;border:1px solid rgba(255,87,34,0.2);">$${esc(tokenSymbol || tokenName)}</span>`;
-      graphic.appendChild(tickerBadge);
-      injected.push(tickerBadge);
-
       const canvas = await html2canvas(graphic, {
         backgroundColor: '#060607',
         scale: 2,
