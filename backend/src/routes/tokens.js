@@ -1330,39 +1330,21 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         geckoService.getTokenInfo(mint).catch(() => null)
       ];
 
-      // If holder count not cached, try sources sequentially with early return
-      // Priority: Jupiter (fastest, includes holderCount in search) > Helius > Birdeye
-      if (holders == null) {
+      // If holder count not cached, fetch from Helius DAS (accurate on-chain count)
+      if (holders == null && solanaService.isHeliusConfigured()) {
         fetchPromises.push(
-          (async () => {
-            const jupiterCount = await jupiterService.getTokenHolderCount(mint).catch(catchUnlessOverloaded(null));
-            if (jupiterCount != null && jupiterCount > 1) return jupiterCount;
-
-            if (solanaService.isHeliusConfigured()) {
-              const heliusCount = await solanaService.getTokenHolderCount(mint).catch(catchUnlessOverloaded(null));
-              if (heliusCount != null && heliusCount > 1) return heliusCount;
-            }
-
-            return jupiterCount ?? null;
-          })()
+          solanaService.getTokenHolderCount(mint).catch(catchUnlessOverloaded(null))
         );
       }
 
       const results = await Promise.all(fetchPromises);
       const [heliusMetadata, geckoOverview, submissions, geckoTokenInfo, fetchedHolders] = results;
 
-      let finalHolders = fetchedHolders;
-
-      // Cache holder count for 24 hours if we have a valid count
-      // If the count is suspiciously low (<=1), cache for only 1 hour
-      if (finalHolders !== undefined && finalHolders !== null) {
-        holders = finalHolders;
-        const holderTTL = finalHolders <= 1 ? TTL.HOUR : TTL.DAY;
-        await cache.set(holderCacheKey, holders, holderTTL);
-        // Also cache as holder-total for the conviction metrics section
-        if (holders > 1) {
-          await cache.set(`holder-total:${mint}`, holders, TTL.DAY);
-        }
+      // Only accept holder counts > 1 (a count of 0 or 1 is always stale/wrong)
+      if (typeof fetchedHolders === 'number' && fetchedHolders > 1) {
+        holders = fetchedHolders;
+        await cache.set(holderCacheKey, holders, TTL.DAY);
+        await cache.set(`holder-total:${mint}`, holders, TTL.DAY);
       }
 
       // Privacy: Don't log API response details
