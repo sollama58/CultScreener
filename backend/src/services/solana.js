@@ -290,7 +290,7 @@ async function checkHealth() {
 async function getTokenHolderCount(mintAddress) {
   try {
     const response = await axios.get(
-      `https://api.solscan.io/v2/token/holder/count?token=${encodeURIComponent(mintAddress)}`,
+      `https://api-v2.solscan.io/v2/token/holder/count?token=${encodeURIComponent(mintAddress)}`,
       {
         timeout: 10000,
         httpsAgent,
@@ -306,7 +306,7 @@ async function getTokenHolderCount(mintAddress) {
 
     // Fallback: try the token meta endpoint
     const metaResponse = await axios.get(
-      `https://api.solscan.io/v2/token/meta?token=${encodeURIComponent(mintAddress)}`,
+      `https://api-v2.solscan.io/v2/token/meta?token=${encodeURIComponent(mintAddress)}`,
       {
         timeout: 10000,
         httpsAgent,
