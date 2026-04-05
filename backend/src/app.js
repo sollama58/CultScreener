@@ -526,6 +526,57 @@ async function warmConviction() {
   }
 }
 
+// Trigger conviction analysis for all curated tokens.
+// Runs on startup (after delay) and every hour.
+// Processes tokens that have no conviction data or stale data (>1 hour).
+async function warmCuratedConviction() {
+  try {
+    const { cache } = require('./services/cache');
+    const curatedTokens = await db.getCuratedTokens();
+    if (!curatedTokens || curatedTokens.length === 0) return;
+
+    let triggered = 0;
+    const STALE_MS = 60 * 60 * 1000; // 1 hour
+
+    for (const token of curatedTokens) {
+      const mint = token.mintAddress || token.mint_address;
+      if (!mint) continue;
+
+      // Skip if already pending
+      const pending = await cache.get(`holder-metrics-pending:${mint}`);
+      if (pending) continue;
+
+      // Skip if conviction was computed recently
+      const dbRow = await db.getToken(mint).catch(() => null);
+      if (dbRow && dbRow.conviction_computed_at) {
+        const age = Date.now() - new Date(dbRow.conviction_computed_at).getTime();
+        if (age < STALE_MS) continue;
+      }
+
+      // Trigger diamond-hands computation via internal request
+      try {
+        const http = require('http');
+        const url = `http://127.0.0.1:${PORT}/api/tokens/${encodeURIComponent(mint)}/holders/diamond-hands`;
+        const req = http.get(url, (res) => { res.resume(); });
+        req.on('error', () => {});
+        req.setTimeout(15000, () => req.destroy());
+        triggered++;
+      } catch { /* non-critical */ }
+
+      // Stagger requests to avoid overloading Helius API
+      if (triggered > 0 && triggered % 3 === 0) {
+        await new Promise(r => setTimeout(r, 10000));
+      }
+    }
+
+    if (triggered > 0) {
+      console.log(`[CuratedConviction] Triggered diamond-hands for ${triggered}/${curatedTokens.length} curated tokens`);
+    }
+  } catch (err) {
+    console.error('[CuratedConviction] Failed (non-critical):', err.message);
+  }
+}
+
 // Start server
 httpServer = app.listen(PORT, () => {
   console.log(`
@@ -546,6 +597,12 @@ httpServer = app.listen(PORT, () => {
     warmConviction();
     setInterval(warmConviction, 10 * 60 * 1000);
   }, 2 * 60 * 1000);
+
+  // Start curated token conviction warmer — first run after 30s, then every hour
+  setTimeout(() => {
+    warmCuratedConviction();
+    setInterval(warmCuratedConviction, 60 * 60 * 1000);
+  }, 30 * 1000);
 });
 
 module.exports = app;

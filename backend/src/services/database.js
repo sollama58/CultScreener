@@ -551,51 +551,76 @@ async function upsertConviction(mintAddress, distribution, sampleSize, analyzed)
 async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
   if (!pool) return { tokens: [], total: 0 };
 
-  const conditions = ['conviction_1m IS NOT NULL', 'conviction_1m > 0'];
+  // Build a unified view: tokens with conviction data UNION curated tokens
+  // that may not have conviction data yet. Curated tokens without data appear
+  // with conviction_1m = 0 so they're visible while analysis runs.
+  const filterConditions = [];
   const params = [];
   let paramIndex = 1;
 
   if (filters.minConviction != null) {
-    conditions.push(`conviction_1m >= $${paramIndex}`);
+    filterConditions.push(`conviction_1m >= $${paramIndex}`);
     params.push(filters.minConviction);
     paramIndex++;
   }
   if (filters.minMcap != null) {
-    conditions.push(`market_cap >= $${paramIndex}`);
+    filterConditions.push(`market_cap >= $${paramIndex}`);
     params.push(filters.minMcap);
     paramIndex++;
   }
   if (filters.maxMcap != null) {
-    conditions.push(`market_cap <= $${paramIndex}`);
+    filterConditions.push(`market_cap <= $${paramIndex}`);
     params.push(filters.maxMcap);
     paramIndex++;
   }
   if (filters.minSample != null) {
-    conditions.push(`conviction_sample_size >= $${paramIndex}`);
+    filterConditions.push(`conviction_sample_size >= $${paramIndex}`);
     params.push(filters.minSample);
     paramIndex++;
   }
   if (filters.search) {
-    conditions.push(`(LOWER(name) LIKE $${paramIndex} OR LOWER(symbol) LIKE $${paramIndex})`);
+    filterConditions.push(`(LOWER(name) LIKE $${paramIndex} OR LOWER(symbol) LIKE $${paramIndex})`);
     const escaped = filters.search.replace(/[%_\\]/g, '\\$&');
     params.push(`%${escaped.toLowerCase()}%`);
     paramIndex++;
   }
 
-  const whereClause = conditions.join(' AND ');
+  // Base CTE: merge tokens-with-conviction and curated tokens into one set.
+  // Curated tokens that already have conviction data appear once (from tokens table).
+  // Curated tokens WITHOUT conviction data get a row with conviction_1m = 0.
+  const baseCte = `
+    WITH combined AS (
+      SELECT mint_address, name, symbol, logo_uri, price, market_cap, volume_24h, price_change_24h,
+             conviction_1m, conviction_data, conviction_sample_size, conviction_computed_at
+      FROM tokens
+      WHERE conviction_1m IS NOT NULL AND conviction_1m > 0
+
+      UNION ALL
+
+      SELECT c.mint_address, COALESCE(t.name, NULL) AS name, COALESCE(t.symbol, NULL) AS symbol,
+             COALESCE(t.logo_uri, NULL) AS logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
+             COALESCE(t.conviction_1m, 0) AS conviction_1m,
+             t.conviction_data, t.conviction_sample_size, t.conviction_computed_at
+      FROM curated_tokens c
+      LEFT JOIN tokens t ON t.mint_address = c.mint_address
+      WHERE t.conviction_1m IS NULL OR t.conviction_1m = 0 OR t.mint_address IS NULL
+    )`;
+
+  const outerConditions = filterConditions.length > 0
+    ? 'WHERE ' + filterConditions.join(' AND ')
+    : '';
 
   const countResult = await pool.query(
-    `SELECT COUNT(*) FROM tokens WHERE ${whereClause}`,
+    `${baseCte} SELECT COUNT(*) FROM combined ${outerConditions}`,
     params
   );
   const total = parseInt(countResult.rows[0].count) || 0;
 
   const result = await pool.query(
-    `SELECT mint_address, name, symbol, logo_uri, price, market_cap, volume_24h, price_change_24h,
-            conviction_1m, conviction_data, conviction_sample_size, conviction_computed_at
-     FROM tokens
-     WHERE ${whereClause}
-     ORDER BY conviction_1m DESC
+    `${baseCte}
+     SELECT * FROM combined
+     ${outerConditions}
+     ORDER BY conviction_1m DESC NULLS LAST
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     [...params, limit, offset]
   );

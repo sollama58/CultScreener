@@ -104,6 +104,17 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
     }
   } catch (_) { /* DexScreener enrichment is non-critical */ }
 
+  // Trigger conviction analysis in the background so the token
+  // appears on the main leaderboard after holder data is computed
+  try {
+    const http = require('http');
+    const PORT = process.env.PORT || 3000;
+    const url = `http://127.0.0.1:${PORT}/api/tokens/${encodeURIComponent(mintAddress)}/holders/diamond-hands`;
+    const triggerReq = http.get(url, (r) => { r.resume(); });
+    triggerReq.on('error', () => {});
+    triggerReq.setTimeout(15000, () => triggerReq.destroy());
+  } catch (_) { /* non-critical */ }
+
   const token = await db.getCuratedToken(mintAddress);
   res.status(201).json({ success: true, token });
 }));
