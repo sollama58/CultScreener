@@ -1531,10 +1531,13 @@ select:focus {
   justify-content: space-between;
   align-items: flex-start;
   gap: 2rem;
-  padding-bottom: 1.5rem;
+  padding: 1.25rem 1.5rem;
   margin-bottom: 1.5rem;
-  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
   flex-wrap: wrap;
+  box-shadow: var(--shadow-sm);
 }
 
 .token-header-left {
@@ -1546,13 +1549,14 @@ select:focus {
 }
 
 .token-logo-large {
-  width: 56px;
-  height: 56px;
+  width: 52px;
+  height: 52px;
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
   flex-shrink: 0;
   object-fit: cover;
   border: 2px solid var(--border-color);
+  box-shadow: 0 0 16px rgba(255, 87, 34, 0.08);
 }
 
 .token-info-header {
@@ -1570,22 +1574,23 @@ select:focus {
 }
 
 .token-name-row h1 {
-  font-size: 1.5rem;
-  font-weight: 700;
+  font-size: 1.35rem;
+  font-weight: 800;
   color: var(--text-primary);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 .token-symbol-badge {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 600;
   font-family: var(--font-mono);
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
+  color: var(--fire-primary);
+  background: rgba(255, 87, 34, 0.08);
+  border: 1px solid rgba(255, 87, 34, 0.15);
   padding: 0.15rem 0.5rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 
 .bags-badge {
@@ -1647,7 +1652,7 @@ select:focus {
 
 .token-price-large {
   font-family: var(--font-mono);
-  font-size: 2rem;
+  font-size: 1.85rem;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.03em;
@@ -1656,20 +1661,22 @@ select:focus {
 
 .price-change-badge {
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  padding: 0.2rem 0.5rem;
-  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-xs);
 }
 
 .price-change-badge.positive {
   color: var(--green);
   background: var(--green-light);
+  border: 1px solid rgba(16, 185, 129, 0.15);
 }
 
 .price-change-badge.negative {
   color: var(--red);
   background: var(--red-light);
+  border: 1px solid rgba(239, 68, 68, 0.15);
 }
 
 .price-freshness {
@@ -1739,8 +1746,8 @@ select:focus {
 
 .token-content-grid {
   display: grid;
-  grid-template-columns: 1fr 380px;
-  gap: 1.5rem;
+  grid-template-columns: 1fr 360px;
+  gap: 1.25rem;
   align-items: start;
 }
 
@@ -1748,10 +1755,10 @@ select:focus {
 .token-col-right {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
-/* Cards */
+/* Cards — fire terminal panels */
 .chart-section,
 .holders-section,
 .community-section,
@@ -1761,6 +1768,56 @@ select:focus {
   border-radius: var(--radius-lg);
   padding: 1.25rem 1.5rem;
   box-shadow: var(--shadow-sm);
+  position: relative;
+}
+
+/* Subtle fire accent on section headers */
+.chart-section h2,
+.holders-section h2,
+.stats-section h2,
+.trade-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.25rem;
+}
+
+.trade-section h2 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.trade-section a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: linear-gradient(135deg, var(--fire-primary), var(--fire-dim));
+  border: none;
+  border-radius: var(--radius-md);
+  color: #fff;
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all var(--transition-fast);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.trade-section a:hover {
+  background: linear-gradient(135deg, var(--fire-secondary), var(--fire-primary));
+  box-shadow: 0 2px 12px rgba(255, 87, 34, 0.25);
+  color: #fff;
+}
+
+.chart-section h2 svg,
+.holders-section h2 svg {
+  color: var(--fire-primary);
+  opacity: 0.7;
 }
 
 /* Section headers */
@@ -1992,9 +2049,10 @@ select:focus {
 /* Chart stats */
 .chart-stats {
   display: flex;
-  gap: 1rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border-subtle);
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
   margin-top: 0.5rem;
   flex-wrap: wrap;
 }
@@ -2003,19 +2061,23 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  flex: 1;
+  min-width: 65px;
 }
 
 .chart-stat .label {
-  font-size: 0.65rem;
-  color: var(--text-muted);
+  font-size: 0.6rem;
+  color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
+  font-weight: 600;
 }
 
 .chart-stat .value {
   font-family: var(--font-mono);
-  font-size: 0.82rem;
-  color: var(--text-secondary);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 .chart-change-up {
@@ -2100,9 +2162,10 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  padding: 0.6rem;
+  padding: 0.6rem 0.75rem;
   background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
   border: 1px solid var(--border-subtle);
 }
 
@@ -2198,13 +2261,16 @@ select:focus {
 
 .holders-table thead th {
   padding: 0.5rem 0.65rem;
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   text-align: left;
   border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  position: sticky;
+  top: 0;
 }
 
 .holders-table tbody td {
@@ -2281,8 +2347,10 @@ select:focus {
 
 .diamond-hands-section {
   margin-top: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border-subtle);
+  padding: 1rem;
+  background: rgba(255, 87, 34, 0.02);
+  border: 1px solid rgba(255, 87, 34, 0.08);
+  border-radius: var(--radius-md);
 }
 
 .diamond-hands-header {
@@ -2293,9 +2361,11 @@ select:focus {
 }
 
 .diamond-hands-title {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--fire-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .diamond-hands-sample {
@@ -2327,30 +2397,30 @@ select:focus {
 
 .diamond-bar-track {
   flex: 1;
-  height: 8px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .diamond-bar-fill {
   height: 100%;
-  border-radius: 4px;
-  transition: width 0.5s var(--ease-out-expo);
+  border-radius: 3px;
+  transition: width 0.6s var(--ease-out-expo);
   min-width: 0;
 }
 
 .diamond-bar-fill.dh-high {
-  background: linear-gradient(90deg, var(--fire-dim), var(--fire-primary));
-  box-shadow: 0 0 6px rgba(255, 69, 0, 0.3);
+  background: linear-gradient(90deg, var(--fire-dim), var(--fire-primary), var(--ember));
+  box-shadow: 0 0 8px rgba(255, 87, 34, 0.25);
 }
 
 .diamond-bar-fill.dh-mid {
-  background: linear-gradient(90deg, var(--fire-dim), var(--ember));
+  background: linear-gradient(90deg, rgba(255, 87, 34, 0.4), var(--ember));
 }
 
 .diamond-bar-fill.dh-low {
-  background: var(--text-dim);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .diamond-bar-pct {
@@ -3367,12 +3437,42 @@ select:focus {
 }
 
 /* Pool cards */
+.pools-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.25rem;
+}
+
+.pools-section h2 {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.pools-loading,
+.pools-empty {
+  text-align: center;
+  padding: 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
 .pool-card {
-  padding: 0.75rem;
+  padding: 0.75rem 0.85rem;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   margin-bottom: 0.5rem;
+  transition: border-color var(--transition-fast);
+}
+
+.pool-card:hover {
+  border-color: var(--border-color);
 }
 
 .pool-pair {
