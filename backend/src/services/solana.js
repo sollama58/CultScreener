@@ -285,12 +285,12 @@ async function checkHealth() {
 /**
  * Get total holder count from Solscan public API.
  * Uses public-api.solscan.io (no API key required).
- * Returns the exact number of holders for any Solana token.
+ * The /token/meta endpoint returns holder count in the response.
  */
 async function getTokenHolderCount(mintAddress) {
   try {
     const response = await axios.get(
-      `https://public-api.solscan.io/token/holders?tokenAddress=${encodeURIComponent(mintAddress)}&offset=0&limit=1`,
+      `https://public-api.solscan.io/token/meta?tokenAddress=${encodeURIComponent(mintAddress)}`,
       {
         timeout: 10000,
         httpsAgent,
@@ -298,11 +298,11 @@ async function getTokenHolderCount(mintAddress) {
       }
     );
 
-    // The response has { total, result[] } — we only need the total
-    const total = response.data?.total;
-    if (typeof total === 'number' && total > 0) {
-      console.log(`[Solana] Solscan holder count for ${mintAddress.slice(0, 8)}...: ${total}`);
-      return total;
+    const data = response.data;
+    const count = data?.holder ?? data?.holderCount ?? data?.holders;
+    if (typeof count === 'number' && count > 0) {
+      console.log(`[Solana] Solscan holder count for ${mintAddress.slice(0, 8)}...: ${count}`);
+      return count;
     }
 
     return null;
