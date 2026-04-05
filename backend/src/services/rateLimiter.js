@@ -361,9 +361,9 @@ async function processQueue(apiName) {
   }
 
   // Drain safety net: items may have been pushed between the while-loop exit
-  // and isProcessing=false. Re-check and restart if needed.
+  // and isProcessing=false. Re-check and restart if needed (via setImmediate to avoid stack growth).
   if (queue && queue.length > 0) {
-    processQueue(apiName);
+    setImmediate(() => processQueue(apiName));
   }
 }
 

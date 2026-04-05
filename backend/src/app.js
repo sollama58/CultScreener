@@ -10,6 +10,7 @@ const watchlistRoutes = require('./routes/watchlist');
 const healthRoutes = require('./routes/health');
 const curatedRoutes = require('./routes/curated');
 const adminRoutes = require('./routes/admin');
+const sentimentRoutes = require('./routes/sentiment');
 
 // Import middleware
 const { defaultLimiter } = require('./middleware/rateLimit');
@@ -60,6 +61,7 @@ function startFallbackCleanup() {
     }
 
     try {
+      await db.cleanupExpiredAdminSessions();
       cleanupFailureCount = 0; // Reset on success
     } catch (err) {
       cleanupFailureCount++;
@@ -235,6 +237,7 @@ app.use('/api/tokens', tokenRoutes);
 app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/curated', curatedRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/sentiment', sentimentRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -571,7 +574,7 @@ httpServer = app.listen(PORT, () => {
   `);
 
   // Warm cache after server is ready (non-blocking)
-  warmCache();
+  warmCache().catch(err => console.error('[CacheWarm] Startup error:', err.message));
 
   // Start conviction warmer — first run after 2 min, then every 10 min
   setTimeout(() => {

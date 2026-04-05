@@ -107,8 +107,8 @@ if (pool) {
     isConnected = false;
   });
 
-  // Periodically check connection recovery
-  setInterval(async () => {
+  // Periodically check connection recovery (unref so it doesn't prevent process exit)
+  const connectionRecoveryInterval = setInterval(async () => {
     if (!isConnected && pool) {
       try {
         await pool.query('SELECT 1');
@@ -119,6 +119,7 @@ if (pool) {
       }
     }
   }, 30000);
+  connectionRecoveryInterval.unref();
 }
 
 // Initialize database tables with retry logic
@@ -2242,7 +2243,7 @@ async function deleteUserData(walletAddress) {
              COUNT(*) FILTER (WHERE v.vote_type = 'up') AS up_count,
              COUNT(*) FILTER (WHERE v.vote_type = 'down') AS down_count,
              COALESCE(SUM(CASE WHEN v.vote_type = 'up' THEN v.vote_weight ELSE -v.vote_weight END), 0) AS w_score
-           FROM unnest($1::uuid[]) AS u(id)
+           FROM unnest($1::int[]) AS u(id)
            LEFT JOIN votes v ON v.submission_id = u.id
            GROUP BY u.id
          ) s
@@ -2988,6 +2989,7 @@ async function removeFolioToken(folioId, tokenMint) {
 // =====================================================
 
 async function getCuratedTokens() {
+  if (!pool) return [];
   const result = await pool.query(`
     SELECT c.mint_address, c.banner_url, c.socials, c.dexscreener_updated_at, c.added_at,
            t.name, t.symbol, t.logo_uri
@@ -3008,6 +3010,7 @@ async function getCuratedTokens() {
 }
 
 async function getCuratedToken(mintAddress) {
+  if (!pool) return null;
   const result = await pool.query(`
     SELECT c.mint_address, c.banner_url, c.socials, c.dexscreener_updated_at, c.added_at,
            t.name, t.symbol, t.logo_uri

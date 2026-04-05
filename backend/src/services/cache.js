@@ -124,23 +124,30 @@ class MemoryCache {
     // Escape regex special chars, then convert glob * to .*
     const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
     const regex = new RegExp('^' + escaped + '$');
+    const toDelete = [];
     for (const key of this.cache.keys()) {
       if (regex.test(key)) {
-        this.cache.delete(key);
+        toDelete.push(key);
       }
+    }
+    for (const key of toDelete) {
+      this.cache.delete(key);
     }
   }
 
   cleanup() {
     const now = Date.now();
-    let removed = 0;
+    const toDelete = [];
 
     for (const [key, entry] of this.cache.entries()) {
       if (now > entry.expiry) {
-        this.cache.delete(key);
-        removed++;
+        toDelete.push(key);
       }
     }
+    for (const key of toDelete) {
+      this.cache.delete(key);
+    }
+    const removed = toDelete.length;
 
     if (removed > 0) {
       console.log(`[MemoryCache] Cleanup: removed ${removed} expired entries`);

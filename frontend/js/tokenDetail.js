@@ -1226,7 +1226,7 @@ const tokenDetail = {
     } catch (error) {
       console.warn('[DiamondHands] Failed:', error.message);
       this._diamondHandsLoaded = true;
-      this._checkAIAnalysisReady();
+      // _checkAIAnalysisReady removed — method was never defined
     }
   },
 
@@ -1447,8 +1447,8 @@ const tokenDetail = {
     const lowValues = allData.map(d => d.low || d.price || 0).filter(v => v > 0);
 
     // Guard against empty arrays which would cause Math.max/min to return Infinity/-Infinity
-    let high = highValues.length > 0 ? Math.max(...highValues) : 0;
-    let low = lowValues.length > 0 ? Math.min(...lowValues) : 0;
+    let high = highValues.length > 0 ? highValues.reduce((a, b) => Math.max(a, b), 0) : 0;
+    let low = lowValues.length > 0 ? lowValues.reduce((a, b) => Math.min(a, b), Infinity) : 0;
     let open = allData[0]?.open || allData[0]?.price || 0;
     let close = lastCandle?.close || lastCandle?.price || 0;
     const totalVolume = allData.reduce((sum, d) => sum + (d.volume || 0), 0);
@@ -2453,8 +2453,8 @@ const tokenDetail = {
 
     const highValues = allData.map(d => d.high || d.price || 0).filter(v => v > 0);
     const lowValues = allData.map(d => d.low || d.price || 0).filter(v => v > 0);
-    let high = highValues.length > 0 ? Math.max(...highValues) : 0;
-    let low = lowValues.length > 0 ? Math.min(...lowValues) : 0;
+    let high = highValues.length > 0 ? highValues.reduce((a, b) => Math.max(a, b), 0) : 0;
+    let low = lowValues.length > 0 ? lowValues.reduce((a, b) => Math.min(a, b), Infinity) : 0;
     let open = allData[0]?.open || allData[0]?.price || 0;
     let close = lastCandle?.close || lastCandle?.price || 0;
     const totalVolume = allData.reduce((sum, d) => sum + (d.volume || 0), 0);

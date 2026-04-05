@@ -32,7 +32,7 @@ router.post('/login', veryStrictLimiter, asyncHandler(async (req, res) => {
 
   res.cookie('admin_session', token, {
     maxAge: ADMIN_SESSION_DURATION_MS,
-    httpOnly: false,
+    httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/'
@@ -316,7 +316,31 @@ router.patch('/announcements/:id', strictLimiter, asyncHandler(async (req, res) 
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-  const result = await db.updateAnnouncement(id, req.body);
+  // Validate fields consistent with POST endpoint
+  const updates = {};
+  if (req.body.title !== undefined) {
+    if (typeof req.body.title !== 'string' || req.body.title.length === 0 || req.body.title.length > 200) {
+      return res.status(400).json({ error: 'Title must be 1-200 characters' });
+    }
+    updates.title = req.body.title.trim();
+  }
+  if (req.body.message !== undefined) {
+    if (typeof req.body.message !== 'string' || req.body.message.length === 0 || req.body.message.length > 2000) {
+      return res.status(400).json({ error: 'Message must be 1-2000 characters' });
+    }
+    updates.message = req.body.message.trim();
+  }
+  if (req.body.type !== undefined) {
+    const validTypes = ['info', 'warning', 'success', 'error'];
+    if (!validTypes.includes(req.body.type)) {
+      return res.status(400).json({ error: `Type must be one of: ${validTypes.join(', ')}` });
+    }
+    updates.type = req.body.type;
+  }
+  if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
+  if (req.body.expiresAt !== undefined) updates.expiresAt = req.body.expiresAt;
+
+  const result = await db.updateAnnouncement(id, updates);
   if (!result) return res.status(404).json({ error: 'Announcement not found' });
   res.json({ success: true, announcement: result });
 }));

@@ -5,9 +5,12 @@ const geckoService = require('../services/geckoTerminal');
 const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
-const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded } = require('../middleware/validation');
+const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase } = require('../middleware/validation');
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
 const axios = require('axios');
+
+// Require database for all token routes
+router.use(requireDatabase);
 
 // Names that indicate missing/placeholder metadata
 const PLACEHOLDER_NAMES = new Set(['unknown token', 'unknown', '']);
@@ -1812,7 +1815,7 @@ router.get('/:mint/holder/:wallet', validateMint, asyncHandler(async (req, res) 
   } catch (error) {
     // Privacy: Don't log error details
     // Signal that verification failed (not that user doesn't hold)
-    res.json({
+    res.status(502).json({
       wallet,
       mint,
       balance: 0,
@@ -2096,11 +2099,11 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
         let sample = await cache.get(sampleCacheKey);
         if (!sample) {
           const excludeSet = new Set([...BURN_WALLETS, ...LP_PROGRAMS]);
-          sample = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
-          if (sample && sample.length > 0) {
-            // Cache the total holder count separately (array props don't survive JSON)
-            if (sample.totalHolders) {
-              await cache.set(`holder-total:${mint}`, sample.totalHolders, TTL.DAY);
+          const sampleResult = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
+          if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
+            sample = sampleResult.holders;
+            if (sampleResult.totalHolders) {
+              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
             }
             await cache.set(sampleCacheKey, sample, TTL.HOUR);
           }
@@ -2316,12 +2319,13 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
     if (!wallets) {
       // Combine burn + LP addresses into a single exclusion set
       const excludeSet = new Set([...BURN_WALLETS, ...LP_PROGRAMS]);
-      wallets = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
-      if (!wallets || wallets.length === 0) {
+      const sampleResult = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
+      if (!sampleResult || !sampleResult.holders || sampleResult.holders.length === 0) {
         return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
       }
-      if (wallets.totalHolders) {
-        await cache.set(`holder-total:${mint}`, wallets.totalHolders, TTL.DAY);
+      wallets = sampleResult.holders;
+      if (sampleResult.totalHolders) {
+        await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
       }
       await cache.set(walletsCacheKey, wallets, 3 * TTL.HOUR);
     }
@@ -2501,7 +2505,7 @@ router.get('/:mint/similar', validateMint, asyncHandler(async (req, res) => {
   try {
     // Check cache first — worker writes enriched results here
     const cached = await cache.get(cacheKey);
-    if (cached !== undefined) {
+    if (cached != null) {
       return res.json(cached);
     }
 

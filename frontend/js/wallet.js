@@ -629,13 +629,8 @@ const wallet = {
   // Initialize BroadcastChannel for cross-tab sync
   initBroadcastChannel() {
     if (typeof BroadcastChannel === 'undefined') {
-      // Fallback for browsers without BroadcastChannel (older Safari)
-      // Use storage event instead
-      window.addEventListener('storage', (e) => {
-        if (e.key === this._getStorageKey('walletConnection')) {
-          this.handleStorageChange(e.newValue);
-        }
-      });
+      // Cross-tab sync unavailable on older browsers without BroadcastChannel.
+      // Note: sessionStorage doesn't fire 'storage' events across tabs, so no fallback is possible.
       return;
     }
 

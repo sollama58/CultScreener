@@ -484,6 +484,11 @@ async function getTokenPrice(mintAddress) {
       timestamp: now
     };
 
+    // Enforce size cap before adding to prevent unbounded growth between cleanups
+    if (cache.prices.size >= MAX_CACHE_SIZE) {
+      const oldest = cache.prices.keys().next().value;
+      cache.prices.delete(oldest);
+    }
     cache.prices.set(cacheKey, {
       data: result,
       expiry: now + cache.CACHE_DURATION

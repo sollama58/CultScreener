@@ -292,6 +292,7 @@ async function getTokenHolderCount(mintAddress) {
   if (!HELIUS_DAS_URL) return null;
 
   try {
+    return await circuitBreakers.helius.execute(async () => {
     let totalCount = 0;
     let page = 1;
     const MAX_PAGES = 50; // Safety cap: 50,000 holders max
@@ -331,6 +332,7 @@ async function getTokenHolderCount(mintAddress) {
       console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} (${page} pages)`);
     }
     return totalCount > 0 ? totalCount : null;
+    }); // end circuitBreakers.helius.execute
   } catch (error) {
     console.error('[Solana] Helius holder count error:', error.message);
     return null;
@@ -483,6 +485,20 @@ async function getTokenMetadata(mintAddress) {
  */
 async function fetchOffchainLinks(jsonUri) {
   if (!jsonUri) return null;
+
+  // SSRF protection: only allow https URLs and block private/internal IPs
+  try {
+    const parsed = new URL(jsonUri);
+    if (parsed.protocol !== 'https:') return null;
+    const host = parsed.hostname.toLowerCase();
+    // Block private/internal ranges
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0'
+      || host.startsWith('10.') || host.startsWith('192.168.')
+      || host.startsWith('169.254.') || host.startsWith('172.')
+      || host.endsWith('.internal') || host.endsWith('.local')) {
+      return null;
+    }
+  } catch { return null; }
 
   try {
     const jsonRes = await axios.get(jsonUri, { timeout: 5000, httpsAgent });
@@ -746,12 +762,8 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
     const holders = allHolders.slice(0, Math.min(count, cutoff || allHolders.length))
       .map(({ wallet, ata }) => ({ wallet, ata }));
 
-    // Attach totalHolders as a non-enumerable property so callers can read it
-    // before the array is JSON-serialized (JSON.stringify strips array properties)
-    Object.defineProperty(holders, 'totalHolders', { value: totalHolders, enumerable: false });
-
     console.log(`[Solana] getTokenHolderSample: ${holders.length} holders (${totalHolders} total) from ${accounts.length} accounts for ${mintAddress.slice(0, 8)}...`);
-    return holders;
+    return { holders, totalHolders };
   } catch (error) {
     console.error('[Solana] getTokenHolderSample error:', error.message);
     return null;

@@ -456,11 +456,11 @@ function createWorker(queueName, redisConfig) {
     },
     {
       connection: redisConfig,
-      concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 50, // Handle higher throughput under concurrent load
+      concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 10, // Default to modest concurrency to avoid overwhelming APIs
       lockDuration: 60000, // 60s lock — prevents stalled job false positives on slow jobs
       stalledInterval: 30000, // Check for stalled jobs every 30s
       limiter: {
-        max: parseInt(process.env.WORKER_LIMITER_MAX) || 50, // Max jobs per second (matched to concurrency)
+        max: parseInt(process.env.WORKER_LIMITER_MAX) || 10, // Max jobs per second (matched to concurrency)
         duration: 1000 // Per second
       }
     }

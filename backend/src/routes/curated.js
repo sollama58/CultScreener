@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
 const axios = require('axios');
 const db = require('../services/database');
 const { asyncHandler, requireDatabase, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
@@ -11,16 +10,9 @@ router.use(requireDatabase);
 
 const isValidMint = (mint) => mint && SOLANA_ADDRESS_REGEX.test(mint);
 
-// Admin auth middleware (timing-safe comparison to prevent side-channel attacks)
-const requireAdmin = (req, res, next) => {
-  const password = req.headers['x-admin-password'];
-  const expected = process.env.ADMIN_PASSWORD;
-  if (!password || !expected || password.length !== expected.length
-      || !crypto.timingSafeEqual(Buffer.from(password), Buffer.from(expected))) {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-  next();
-};
+// Admin auth middleware — uses session-based auth (consistent with admin.js)
+const { validateAdminSession } = require('../middleware/validation');
+const requireAdmin = validateAdminSession;
 
 /**
  * Fetch banner image and social links from DexScreener for a given mint.

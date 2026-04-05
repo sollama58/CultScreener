@@ -185,9 +185,11 @@ async function deduplicatedRequest(key, requestFn) {
  * Includes 429 retry logic with exponential backoff
  */
 async function geckoRequest(requestFn, context = 'geckoRequest') {
-  return withRetry(
-    () => rateLimitedRequest('geckoTerminal', requestFn),
-    context
+  return circuitBreakers.geckoTerminal.execute(() =>
+    withRetry(
+      () => rateLimitedRequest('geckoTerminal', requestFn),
+      context
+    )
   );
 }
 

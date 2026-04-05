@@ -51,3 +51,11 @@ temp/
 *.sqlite
 *.db
 # telegram-bot/data/ (removed)
+
+# Frontend env
+frontend/.env
+
+# Certificates / keys
+*.pem
+*.key
+*.cert

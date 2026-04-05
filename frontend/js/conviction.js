@@ -189,7 +189,7 @@ const convictionPage = {
     this.tokens.sort((a, b) => {
       let va, vb;
       switch (field) {
-        case 'rank': return 0; // Server-sorted, use original order
+        case 'rank': return (a._originalIndex - b._originalIndex) * dir; // Preserve or reverse server order
         case 'price': va = a.price || 0; vb = b.price || 0; break;
         case 'mcap': va = a.marketCap || 0; vb = b.marketCap || 0; break;
         case 'conviction': va = a.conviction1m || 0; vb = b.conviction1m || 0; break;
@@ -345,6 +345,9 @@ const convictionPage = {
           this.tokens = this.tokens.filter(t => (t.conviction1m || 0) < 25);
         }
       }
+
+      // Tag original index for rank-based sorting
+      this.tokens.forEach((t, i) => { t._originalIndex = i; });
 
       this.updateTerminalStats();
       this.sortAndRender();

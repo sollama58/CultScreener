@@ -6,7 +6,7 @@ const admin = {
   _boundTabs: false,
 
   init() {
-    this.token = localStorage.getItem('cultscreener_admin_session');
+    this.token = sessionStorage.getItem('cultscreener_admin_session');
     this.bindLogin();
     this.bindTabs();
     this.bindCuratedActions();
@@ -48,7 +48,7 @@ const admin = {
         noAuth: true
       });
       this.token = data.token;
-      localStorage.setItem('cultscreener_admin_session', data.token);
+      sessionStorage.setItem('cultscreener_admin_session', data.token);
       input.value = '';
       this.showPanel();
       this.loadTab('dashboard');
@@ -64,7 +64,7 @@ const admin = {
   async logout() {
     try { await this.request('/api/admin/logout', { method: 'POST' }); } catch (_) {}
     this.token = null;
-    localStorage.removeItem('cultscreener_admin_session');
+    sessionStorage.removeItem('cultscreener_admin_session');
     this.showLogin();
   },
 
@@ -75,7 +75,7 @@ const admin = {
       this.loadTab('dashboard');
     } catch {
       this.token = null;
-      localStorage.removeItem('cultscreener_admin_session');
+      sessionStorage.removeItem('cultscreener_admin_session');
       this.showLogin();
     }
   },
@@ -109,7 +109,7 @@ const admin = {
     if (!res.ok) {
       if (res.status === 401 && !opts.noAuth) {
         this.token = null;
-        localStorage.removeItem('cultscreener_admin_session');
+        sessionStorage.removeItem('cultscreener_admin_session');
         this.showLogin();
       }
       const err = new Error(data.error || `HTTP ${res.status}`);

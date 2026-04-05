@@ -2,6 +2,10 @@
 
 const communityPage = {
   init() {
+    // Bind connect wallet button (replaces inline onclick for CSP compliance)
+    const connectBtn = document.getElementById('watchlist-connect-btn');
+    if (connectBtn) connectBtn.addEventListener('click', () => { if (typeof wallet !== 'undefined') wallet.connect(); });
+
     this.loadMyWatchlist();
     this.loadWatchlistLeaderboard();
 

@@ -694,9 +694,13 @@ async function validateWalletSignature(req, res, next) {
 async function validateVoteSignature(req, res, next) {
   const { submissionId, voterWallet, voteType, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   // Validate signature timestamp (must be within expiry window)
@@ -858,9 +862,13 @@ function validateBatchVotes(req, res, next) {
 async function validateBatchVoteSignature(req, res, next) {
   const { votes, voterWallet, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   // Validate signature timestamp (must be within expiry window)
@@ -940,9 +948,13 @@ async function validateBatchVoteSignature(req, res, next) {
 async function validateSubmissionSignature(req, res, next) {
   const { tokenMint, submissionType, submitterWallet, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   // Validate submitter wallet format
@@ -1162,9 +1174,13 @@ function validateBatchSubmissions(req, res, next) {
 async function validateBatchSubmissionSignature(req, res, next) {
   const { tokenMint, submissions, submitterWallet, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   // Validate signature timestamp (must be within expiry window)
@@ -1293,9 +1309,13 @@ async function validateWatchlistSignature(req, res, next) {
   if (!req.body) return next();
   const { wallet, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   if (!wallet || !SOLANA_ADDRESS_REGEX.test(wallet)) {
@@ -1358,9 +1378,13 @@ async function validateWatchlistSignature(req, res, next) {
 async function validateSentimentSignature(req, res, next) {
   const { voterWallet, sentiment, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   if (!voterWallet || !SOLANA_ADDRESS_REGEX.test(voterWallet)) {
@@ -1422,9 +1446,13 @@ async function validateSentimentSignature(req, res, next) {
 async function validateCallSignature(req, res, next) {
   const { callerWallet, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   if (!callerWallet || !SOLANA_ADDRESS_REGEX.test(callerWallet)) {
@@ -1485,9 +1513,13 @@ async function validateCallSignature(req, res, next) {
 async function validateApiKeySignature(req, res, next) {
   const { wallet, signature, signatureTimestamp } = req.body;
 
-  // Signature is optional - if not provided, skip validation
+  // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
-    return next();
+    return res.status(400).json({
+      error: 'Wallet signature required',
+      message: 'Please sign with your wallet to verify ownership',
+      code: 'SIGNATURE_REQUIRED'
+    });
   }
 
   if (!wallet || !SOLANA_ADDRESS_REGEX.test(wallet)) {

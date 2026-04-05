@@ -230,7 +230,19 @@ async function incrementViewCount(tokenMint) {
 }
 
 async function flushViewCounts() {
-  if (viewCountBuffer.size === 0 || isFlushing) return;
+  if (viewCountBuffer.size === 0) return;
+  if (isFlushing) {
+    // A flush is already in progress — schedule a re-flush after it completes
+    if (!viewFlushScheduled) {
+      viewFlushScheduled = true;
+      viewFlushTimer = setTimeout(async () => {
+        await flushViewCounts();
+        viewFlushScheduled = false;
+        viewFlushTimer = null;
+      }, VIEW_FLUSH_INTERVAL_MS);
+    }
+    return;
+  }
   isFlushing = true;
 
   try {

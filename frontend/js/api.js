@@ -600,6 +600,20 @@ const api = {
     }
   },
 
+  // Sentiment endpoints
+  sentiment: {
+    async get(mint, wallet) {
+      const query = wallet ? `?wallet=${wallet}` : '';
+      return api.request(`/api/sentiment/${mint}${query}`);
+    },
+    async cast(mint, sentimentType, wallet) {
+      return api.request(`/api/sentiment/${mint}`, {
+        method: 'POST',
+        body: JSON.stringify({ wallet, sentimentType })
+      });
+    }
+  },
+
   // Curated token list endpoints
   curated: {
     async list() {
