@@ -8,7 +8,6 @@ const crypto = require('crypto');
 const tokenRoutes = require('./routes/tokens');
 const watchlistRoutes = require('./routes/watchlist');
 const healthRoutes = require('./routes/health');
-const sentimentRoutes = require('./routes/sentiment');
 const curatedRoutes = require('./routes/curated');
 const adminRoutes = require('./routes/admin');
 
@@ -234,7 +233,6 @@ app.use('/health', healthRoutes);
 // API Routes
 app.use('/api/tokens', tokenRoutes);
 app.use('/api/watchlist', watchlistRoutes);
-app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/curated', curatedRoutes);
 app.use('/api/admin', adminRoutes);
 

@@ -1071,9 +1071,19 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       conviction1m: parseFloat(row.conviction_1m) || 0,
       sampleSize: row.conviction_sample_size || 0,
       analyzed: row.conviction_sample_size || 0,
-      convictionUpdatedAt: row.conviction_computed_at || null
+      convictionUpdatedAt: row.conviction_computed_at || null,
+      holders: null
     };
   });
+
+  // Batch-fetch holder counts from cache
+  if (tokens.length > 0) {
+    await Promise.all(tokens.map(async (t) => {
+      const count = await cache.get(`holder-total:${t.mintAddress}`)
+        || await cache.get(keys.holderCount(t.mintAddress));
+      if (count && count > 0) t.holders = count;
+    }));
+  }
 
   const result = { tokens, total };
   await cache.set(resultCacheKey, result, TTL.MEDIUM);
@@ -1349,6 +1359,10 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         holders = finalHolders;
         const holderTTL = finalHolders <= 1 ? TTL.HOUR : TTL.DAY;
         await cache.set(holderCacheKey, holders, holderTTL);
+        // Also cache as holder-total for the conviction metrics section
+        if (holders > 1) {
+          await cache.set(`holder-total:${mint}`, holders, TTL.DAY);
+        }
       }
 
       // Privacy: Don't log API response details
@@ -2052,16 +2066,23 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
         holderCount: realHolders.length
       };
 
-      // Get real total holder count from cached DAS total or dedicated holder count
+      // Get real total holder count — try all sources
       try {
-        const dasTotal = await cache.get(`holder-total:${mint}`);
-        if (dasTotal && dasTotal > realHolders.length) {
-          metrics.holderCount = dasTotal;
-        } else {
-          const cachedCount = await cache.get(keys.holderCount(mint));
-          if (cachedCount && cachedCount > metrics.holderCount) {
-            metrics.holderCount = cachedCount;
+        let totalCount = await cache.get(`holder-total:${mint}`)
+          || await cache.get(keys.holderCount(mint));
+
+        // If no cached count, fetch it live from Helius DAS (1 cheap call)
+        if (!totalCount || totalCount <= realHolders.length) {
+          const dasCount = await solanaService.getTokenHolderCount(mint).catch(() => null);
+          if (dasCount && dasCount > 0) {
+            totalCount = dasCount;
+            await cache.set(`holder-total:${mint}`, dasCount, TTL.DAY);
+            await cache.set(keys.holderCount(mint), dasCount, TTL.DAY);
           }
+        }
+
+        if (totalCount && totalCount > realHolders.length) {
+          metrics.holderCount = totalCount;
         }
       } catch (_) {}
     }

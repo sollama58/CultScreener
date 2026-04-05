@@ -549,17 +549,6 @@ const api = {
       );
     },
 
-    async leaderboardSentiment(params = {}) {
-      const query = new URLSearchParams(params).toString();
-      const cacheKey = `tokens:leaderboard:sentiment:${query}`;
-      return apiCache.getOrFetch(
-        cacheKey,
-        () => api.request(`/api/tokens/leaderboard/sentiment?${query}`),
-        apiCache.TTL.tokenList,
-        true
-      );
-    },
-
     async leaderboardConviction(params = {}) {
       const query = new URLSearchParams(params).toString();
       const cacheKey = `tokens:leaderboard:conviction:${query}`;
@@ -608,29 +597,6 @@ const api = {
 
     async getCount(wallet) {
       return api.request(`/api/watchlist/${wallet}/count`);
-    }
-  },
-
-  // Sentiment voting endpoints
-  sentiment: {
-    async get(tokenMint, wallet) {
-      const params = wallet ? `?wallet=${encodeURIComponent(wallet)}` : '';
-      const cacheKey = `sentiment:${tokenMint}:${wallet || 'anon'}`;
-      const cached = apiCache.get(cacheKey);
-      if (cached) return cached.data;
-
-      const data = await api.request(`/api/sentiment/${tokenMint}${params}`);
-      if (data) apiCache.set(cacheKey, data, 60000); // 60s cache
-      return data;
-    },
-
-    async cast(tokenMint, sentimentType, voterWallet) {
-      // Invalidate cached sentiment so re-fetch gets server-confirmed tally
-      apiCache.clearPattern(`sentiment:${tokenMint}`);
-      return api.request(`/api/sentiment/${tokenMint}`, {
-        method: 'POST',
-        body: JSON.stringify({ sentiment: sentimentType, voterWallet })
-      });
     }
   },
 

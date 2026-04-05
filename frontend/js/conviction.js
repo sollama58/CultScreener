@@ -180,7 +180,7 @@ const convictionPage = {
         case 'price': va = a.price || 0; vb = b.price || 0; break;
         case 'mcap': va = a.marketCap || 0; vb = b.marketCap || 0; break;
         case 'conviction': va = a.conviction1m || 0; vb = b.conviction1m || 0; break;
-        case 'sample': va = a.analyzed || a.sampleSize || 0; vb = b.analyzed || b.sampleSize || 0; break;
+        case 'holders': va = a.holders || 0; vb = b.holders || 0; break;
         default: return 0;
       }
       return (va - vb) * dir;
@@ -431,21 +431,10 @@ const convictionPage = {
       const dist = token.conviction || {};
       const barsHtml = this.renderMiniBars(dist);
 
-      // Sample info
-      let sampleHtml = '--';
-      if (token.convictionUpdatedAt) {
-        const agoMs = Date.now() - new Date(token.convictionUpdatedAt).getTime();
-        const ago = Math.max(0, agoMs);
-        const hours = Math.floor(ago / 3600000);
-        const days = Math.floor(hours / 24);
-        const timeStr = days > 0 ? `${days}d` : hours > 0 ? `${hours}h` : 'now';
-        const wallets = token.analyzed || token.sampleSize || 0;
-        let titleDate = '';
-        try { titleDate = new Date(token.convictionUpdatedAt).toLocaleString(); } catch { /* */ }
-        sampleHtml = `<span class="terminal-sample" title="${utils.escapeHtml(titleDate)}"><span class="sample-count">${wallets}</span> <span class="sample-time">${timeStr}</span></span>`;
-      } else if (token.sampleSize) {
-        sampleHtml = `<span class="terminal-sample"><span class="sample-count">${token.analyzed || token.sampleSize}</span></span>`;
-      }
+      // Holders count
+      const holdersHtml = token.holders
+        ? `<span class="mono-num">${token.holders.toLocaleString()}</span>`
+        : '<span style="color:var(--text-dim)">--</span>';
 
       // Format price with color
       const priceStr = utils.formatPrice(token.price, 6);
@@ -472,7 +461,7 @@ const convictionPage = {
             </div>
           </td>
           <td class="cell-conviction-bars" data-navigate="${safeAddress}">${barsHtml}</td>
-          <td class="cell-updated" data-navigate="${safeAddress}">${sampleHtml}</td>
+          <td class="cell-updated" data-navigate="${safeAddress}">${holdersHtml}</td>
         </tr>
       `;
     }).join('');

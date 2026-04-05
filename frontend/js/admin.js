@@ -171,6 +171,7 @@ const admin = {
 
   bindMaintenanceActions() {
     document.getElementById('admin-flush-wallets').addEventListener('click', () => this.flushFailedWallets());
+    document.getElementById('admin-refresh-holders').addEventListener('click', () => this.refreshHolderCounts());
   },
 
   async flushFailedWallets() {
@@ -192,6 +193,28 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Flush Failed Wallet Caches';
+    }
+  },
+
+  async refreshHolderCounts() {
+    const btn = document.getElementById('admin-refresh-holders');
+    const status = document.getElementById('admin-flush-status');
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+    status.textContent = '';
+
+    try {
+      const data = await this.request('/api/admin/refresh-holder-counts', { method: 'POST' });
+      status.textContent = `Done: ${data.updated} updated, ${data.failed} failed out of ${data.total} tokens.`;
+      status.style.color = 'var(--green)';
+      if (typeof toast !== 'undefined') toast.success(`Refreshed ${data.updated} holder counts`);
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Refresh All Holder Counts';
     }
   },
 

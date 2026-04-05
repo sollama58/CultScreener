@@ -62,7 +62,6 @@ const tokenDetail = {
       // Load additional data in parallel
       await Promise.all([
         this.loadPools(),
-        sentiment.loadForToken(this.mint), // Load community sentiment
         this.loadHolderAnalytics(), // Load holder concentration data
         this.loadCuratedData() // Load DexScreener curated data (banner + socials)
       ]);

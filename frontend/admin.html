@@ -362,9 +362,10 @@
           <h3 style="font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Conviction Maintenance</h3>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
             <button class="btn btn-sm" id="admin-flush-wallets">Flush Failed Wallet Caches</button>
+            <button class="btn btn-sm" id="admin-refresh-holders">Refresh All Holder Counts</button>
             <span id="admin-flush-status" style="font-size:0.78rem;color:var(--text-muted);align-self:center;"></span>
           </div>
-          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Clears cached -1 sentinel values for wallets where hold time computation failed. Next conviction refresh will re-attempt these wallets with the improved ATA lookup.</p>
+          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Flush: Clears failed wallet caches so conviction re-computes. Refresh: Re-fetches total holder counts for all curated and leaderboard tokens from Helius DAS.</p>
         </div>
       </div>
 

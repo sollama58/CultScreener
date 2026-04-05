@@ -113,6 +113,59 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
   }
 }));
 
+router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
+  const { cache } = require('../services/cache');
+  const solanaService = require('../services/solana');
+
+  // Get all curated tokens + any tokens with cached conviction data
+  let mints = [];
+  try {
+    const curated = await db.getCuratedTokens();
+    mints = curated.map(t => t.mintAddress || t.mint_address).filter(Boolean);
+  } catch (_) {}
+
+  // Also get tokens from conviction leaderboard
+  try {
+    const { tokens } = await db.getTopConvictionTokens(100, 0, {});
+    for (const t of tokens) {
+      if (t.mint_address && !mints.includes(t.mint_address)) {
+        mints.push(t.mint_address);
+      }
+    }
+  } catch (_) {}
+
+  let updated = 0;
+  let failed = 0;
+
+  for (const mint of mints) {
+    try {
+      const count = await solanaService.getTokenHolderCount(mint);
+      if (count && count > 0) {
+        await cache.set(`holder-total:${mint}`, count, 86400000); // 24h
+        await cache.set(`holders:${mint}`, count, 86400000);
+        updated++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+    // Rate limit: brief pause between calls
+    if (updated + failed < mints.length) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  // Clear leaderboard cache so new counts appear immediately
+  try {
+    const lbKeys = await cache.scanKeys('leaderboard:conviction:*');
+    for (const key of lbKeys) await cache.delete(key);
+  } catch (_) {}
+
+  console.log(`[Admin] Refreshed holder counts: ${updated} updated, ${failed} failed, ${mints.length} total`);
+  res.json({ success: true, updated, failed, total: mints.length });
+}));
+
 // ==========================================
 // Curated Tokens (session-based proxy)
 // ==========================================
