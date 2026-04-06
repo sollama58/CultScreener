@@ -95,12 +95,41 @@
   padding: 0;
 }
 
+/* Normalize form controls across browsers */
+button,
+input[type="text"],
+input[type="url"],
+input[type="email"],
+input[type="search"],
+input[type="password"],
+input[type="number"],
+select,
+textarea {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
 html {
   font-size: 16px;
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  color-scheme: dark;
 }
 
 body {
@@ -934,6 +963,9 @@ img {
   font-family: var(--font-sans);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   outline: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
 }
 
 .terminal-search:focus {
@@ -941,8 +973,12 @@ img {
   box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.1);
 }
 
-.terminal-search:focus + .terminal-search-icon,
-.terminal-search:not(:placeholder-shown) + .terminal-search-icon {
+/* Icon highlights when search input is focused or has text */
+.terminal-search-wrap:focus-within .terminal-search-icon {
+  color: var(--text-muted);
+}
+/* :has() for non-empty input (supported in modern browsers) */
+.terminal-search-wrap:has(.terminal-search:not(:placeholder-shown)) .terminal-search-icon {
   color: var(--text-muted);
 }
 
