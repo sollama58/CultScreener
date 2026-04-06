@@ -11,6 +11,7 @@ const healthRoutes = require('./routes/health');
 const curatedRoutes = require('./routes/curated');
 const adminRoutes = require('./routes/admin');
 const sentimentRoutes = require('./routes/sentiment');
+const shareRoutes = require('./routes/share');
 
 // Import middleware
 const { defaultLimiter } = require('./middleware/rateLimit');
@@ -239,6 +240,9 @@ app.use('/api/curated', curatedRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/sentiment', sentimentRoutes);
 
+// Social media share routes (OG meta tags + OG image)
+app.use('/share', shareRoutes);
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
@@ -251,7 +255,8 @@ app.get('/', (req, res) => {
       watchlist: '/api/watchlist',
       sentiment: '/api/sentiment',
       curated: '/api/curated',
-      health: '/health'
+      health: '/health',
+      share: '/share/:mint'
     }
   });
 });

@@ -147,11 +147,13 @@ const tokenDetail = {
     const addressEl = document.getElementById('token-address');
     bindHandler(addressEl, 'click', copyHandler);
 
-    // Share button
+    // Share button — copies a share URL with rich social media previews
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      const copied = await utils.copyToClipboard(window.location.href);
-      if (copied) toast.success('Link copied to clipboard');
+      const apiBase = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
+      const shareUrl = apiBase ? `${apiBase}/share/${this.mint}` : window.location.href;
+      const copied = await utils.copyToClipboard(shareUrl);
+      if (copied) toast.success('Share link copied to clipboard');
     };
     bindHandler(shareBtn, 'click', shareHandler);
 
@@ -457,6 +459,46 @@ const tokenDetail = {
     }
   },
 
+  // Update OG meta tags for social media previews (JS-capable crawlers)
+  _updateMetaTags(token) {
+    const name = token.name || token.symbol || 'Token';
+    const symbol = token.symbol || '';
+    const title = `${name}${symbol ? ` (${symbol})` : ''} - CultScreener`;
+
+    const parts = [];
+    if (token.price) parts.push(utils.formatPrice(token.price));
+    const change = token.priceChange24h;
+    if (change != null) parts.push(`${change >= 0 ? '+' : ''}${change.toFixed(2)}% 24h`);
+    if (token.marketCap) parts.push(`MCap ${utils.formatNumber(token.marketCap)}`);
+    const desc = parts.length > 0
+      ? parts.join(' | ') + ' | CultScreener'
+      : 'View token details, charts, and diamond hands conviction data on CultScreener.';
+
+    const apiBase = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
+    const ogImage = `${apiBase}/share/${encodeURIComponent(this.mint)}/og-image`;
+    const pageUrl = window.location.href;
+
+    const updates = {
+      'og:title': title, 'og:description': desc, 'og:image': ogImage, 'og:url': pageUrl,
+      'twitter:title': title, 'twitter:description': desc, 'twitter:image': ogImage
+    };
+
+    for (const [key, value] of Object.entries(updates)) {
+      const attr = key.startsWith('og:') ? 'property' : 'name';
+      let el = document.querySelector(`meta[${attr}="${key}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute(attr, key);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', value);
+    }
+
+    // Also update description meta
+    const descMeta = document.querySelector('meta[name="description"]');
+    if (descMeta) descMeta.setAttribute('content', desc);
+  },
+
   // Update price display only
   updatePriceDisplay() {
     // Price is now always a direct number from the API
@@ -493,8 +535,9 @@ const tokenDetail = {
   renderToken() {
     const token = this.token;
 
-    // Update page title
+    // Update page title and social media meta tags
     document.title = `${token.name} (${token.symbol}) - CultScreener`;
+    this._updateMetaTags(token);
 
     // Header info - handle different property names from various API responses
     const logoEl = document.getElementById('token-logo');
