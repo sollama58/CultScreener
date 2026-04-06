@@ -980,15 +980,18 @@ const tokenDetail = {
     // Elements we hide during the screenshot and restore after
     const hidden = [];
 
-    const hideForScreenshot = (el) => {
+    const hideEl = (el) => {
       if (!el) return;
       el._prevDisplay = el.style.display;
       el.style.display = 'none';
       hidden.push(el);
     };
-    const restoreHidden = () => {
+    const restoreAll = () => {
       hidden.forEach(el => { el.style.display = el._prevDisplay || ''; delete el._prevDisplay; });
       hidden.length = 0;
+      injected.forEach(el => { if (el.parentNode) el.remove(); });
+      injected.length = 0;
+      graphic.style.padding = '';
     };
 
     try {
@@ -999,7 +1002,7 @@ const tokenDetail = {
           script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
           script.crossOrigin = 'anonymous';
           script.onload = resolve;
-          script.onerror = () => reject(new Error('Failed to load html2canvas'));
+          script.onerror = () => reject(new Error('Failed to load screenshot library'));
           document.head.appendChild(script);
         });
       }
@@ -1011,12 +1014,36 @@ const tokenDetail = {
       const priceChange = this.token?.priceChange24h;
       const priceChangeStr = typeof priceChange === 'number' ? `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%` : '';
       const priceColor = priceChange >= 0 ? '#10b981' : '#ef4444';
-      const logoSrc = document.getElementById('token-logo')?.src || '';
 
-      // Hide the share button, refresh button, and updated timestamp from screenshot
-      hideForScreenshot(document.getElementById('holders-share'));
-      hideForScreenshot(document.getElementById('holders-refresh'));
-      hideForScreenshot(document.getElementById('holders-updated'));
+      // Pre-load logo as a data URL to avoid CORS issues with html2canvas
+      let logoDataUrl = '';
+      const logoEl = document.getElementById('token-logo');
+      if (logoEl && logoEl.src && !logoEl.src.startsWith('data:')) {
+        try {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = resolve; // don't fail if logo can't load
+            img.src = logoEl.src;
+            setTimeout(resolve, 2000); // 2s timeout
+          });
+          if (img.naturalWidth > 0) {
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth;
+            c.height = img.naturalHeight;
+            c.getContext('2d').drawImage(img, 0, 0);
+            try { logoDataUrl = c.toDataURL('image/png'); } catch (_) {}
+          }
+        } catch (_) {}
+      } else if (logoEl) {
+        logoDataUrl = logoEl.src; // already a data URL
+      }
+
+      // Hide share button, refresh button, and timestamp from the screenshot
+      hideEl(document.getElementById('holders-share'));
+      hideEl(document.getElementById('holders-refresh'));
+      hideEl(document.getElementById('holders-updated'));
 
       // Add padding to the graphic container for the screenshot
       graphic.style.padding = '1.25rem';
@@ -1026,7 +1053,7 @@ const tokenDetail = {
       header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:0.85rem;margin-bottom:0.85rem;border-bottom:1px solid rgba(255,255,255,0.06);';
       header.innerHTML = `
         <div style="display:flex;align-items:center;gap:0.6rem;">
-          ${logoSrc ? `<img src="${esc(logoSrc)}" style="width:32px;height:32px;border-radius:50%;background:#161719;">` : ''}
+          ${logoDataUrl ? `<img src="${logoDataUrl}" style="width:32px;height:32px;border-radius:50%;background:#161719;">` : ''}
           <div>
             <div style="font-size:1rem;font-weight:800;color:#f0f0f2;letter-spacing:-0.02em;line-height:1.2;">${esc(tokenName)}</div>
             <div style="font-size:0.7rem;font-family:'JetBrains Mono',monospace;color:#6b6b74;text-transform:uppercase;letter-spacing:0.04em;">${esc(tokenSymbol)}</div>
@@ -1046,30 +1073,31 @@ const tokenDetail = {
       graphic.insertBefore(sectionTitle, header.nextSibling);
       injected.push(sectionTitle);
 
-      // 3. Show watermark for screenshot (hidden on normal page)
+      // 3. Show watermark for screenshot (hidden on normal page via CSS)
       const watermark = graphic.querySelector('.diamond-hands-watermark');
+      let watermarkWasHidden = false;
       if (watermark) {
-        watermark.style.display = 'flex';
-        watermark.style.opacity = '0.8';
+        const cs = getComputedStyle(watermark);
+        watermarkWasHidden = cs.display === 'none';
+        if (watermarkWasHidden) {
+          watermark.style.display = 'inline-flex';
+        }
       }
 
       const canvas = await html2canvas(graphic, {
         backgroundColor: '#060607',
         scale: 2,
-        useCORS: true,
         allowTaint: true,
         logging: false,
-        scrollY: -window.scrollY,
-        windowHeight: graphic.scrollHeight,
       });
 
-      // Clean up injected elements
-      injected.forEach(el => el.remove());
-      graphic.style.padding = '';
-      if (watermark) { watermark.style.display = ''; watermark.style.opacity = ''; }
-      restoreHidden();
+      // Restore DOM state
+      if (watermark && watermarkWasHidden) { watermark.style.display = ''; }
+      restoreAll();
 
-      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png');
+      });
       const filename = `${(tokenSymbol || tokenName || 'token').toLowerCase()}-conviction.png`;
 
       // Try native share (mobile)
@@ -1106,12 +1134,9 @@ const tokenDetail = {
       console.error('Share conviction stats error:', err);
       if (typeof toast !== 'undefined') toast.error('Failed to capture screenshot');
     } finally {
-      // Always clean up
-      injected.forEach(el => { if (el.parentNode) el.remove(); });
-      graphic.style.padding = '';
+      restoreAll();
       const watermark = document.querySelector('#holders-graphic .diamond-hands-watermark');
-      if (watermark) { watermark.style.display = ''; watermark.style.opacity = ''; }
-      restoreHidden();
+      if (watermark) watermark.style.display = '';
       if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
     }
   },
