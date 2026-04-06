@@ -742,19 +742,21 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
     const accounts = result?.token_accounts;
     if (!accounts || accounts.length === 0) return null;
 
-    // Total holder count from DAS response (may not be present in all responses)
-    let totalHolders = typeof result.total === 'number' ? result.total : null;
+    // Determine total holder count.
+    // IMPORTANT: Do NOT trust result.total from Helius DAS — it can return the
+    // page size (1000) instead of the true total across all pages. Always use
+    // paginated getTokenHolderCount() when we got a full page.
+    let totalHolders = null;
 
-    // If DAS didn't return a total and we got a full page (1000), the real count
-    // is higher. Fetch the accurate count via paginated getTokenHolderCount.
-    if (totalHolders === null && accounts.length >= 1000) {
+    if (accounts.length >= 1000) {
+      // Full page returned — there are more holders beyond this page.
+      // Paginate to get the real count.
       try {
         const paginatedCount = await getTokenHolderCount(mintAddress);
         if (paginatedCount) totalHolders = paginatedCount;
       } catch (_) {}
-    }
-    // If we got fewer than 1000 accounts, the page count IS the total
-    if (totalHolders === null && accounts.length < 1000) {
+    } else {
+      // Fewer than 1000 accounts — this is the complete set
       totalHolders = accounts.length;
     }
 
