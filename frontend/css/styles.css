@@ -752,10 +752,16 @@ img {
   font-family: var(--font-mono);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
   border: 1px solid var(--border-color);
+  border-color: #1e1f22;
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
+  background-color: #161719;
   color: var(--text-muted);
+  color: #6b6b74;
   cursor: pointer;
   transition: all var(--transition-fast);
   white-space: nowrap;
@@ -840,16 +846,25 @@ img {
   margin-bottom: 0.75rem;
 }
 
-/* Filters toggle button */
+/* Filters toggle button
+   IMPORTANT: Chrome desktop can ignore background on <button> if appearance
+   isn't fully stripped. We double-declare with background-color as a fallback
+   and ensure appearance: none is set directly on this element. */
 .terminal-filters-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
   padding: 0.45rem 0.8rem;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
   background: var(--bg-tertiary);
+  background-color: #161719;
   border: 1px solid var(--border-color);
+  border-color: #1e1f22;
   border-radius: var(--radius-full);
   color: var(--text-muted);
+  color: #6b6b74;
   font-size: 0.76rem;
   font-weight: 600;
   font-family: var(--font-sans);
@@ -893,12 +908,13 @@ img {
   margin-left: auto;
   padding: 0.3rem 0.7rem;
   background: rgba(16, 185, 129, 0.06);
+  background-color: rgba(16, 185, 129, 0.06);
   border: 1px solid rgba(16, 185, 129, 0.15);
-  border-radius: var(--radius-full);
+  border-radius: 9999px;
   font-size: 0.65rem;
   font-family: var(--font-mono);
   font-weight: 700;
-  color: var(--green);
+  color: #10b981;
   letter-spacing: 0.06em;
   flex-shrink: 0;
   text-transform: uppercase;
@@ -955,17 +971,21 @@ img {
 .terminal-search {
   width: 100%;
   padding: 0.5rem 0.85rem 0.5rem 2.5rem;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
   background: var(--bg-tertiary);
+  background-color: #161719;
   border: 1px solid var(--border-color);
+  border-color: #1e1f22;
   border-radius: var(--radius-md);
+  border-radius: 10px;
   color: var(--text-primary);
+  color: #f0f0f2;
   font-size: 0.82rem;
   font-family: var(--font-sans);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   outline: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
 }
 
 .terminal-search:focus {
@@ -1104,10 +1124,16 @@ select:focus {
   align-items: center;
   gap: 0.3rem;
   padding: 0.45rem 0.75rem;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
   background: transparent;
+  background-color: transparent;
   border: 1px solid var(--border-color);
+  border-color: #1e1f22;
   border-radius: var(--radius-md);
   color: var(--text-muted);
+  color: #6b6b74;
   font-size: 0.72rem;
   font-weight: 600;
   font-family: var(--font-mono);
