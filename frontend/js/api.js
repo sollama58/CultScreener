@@ -8,6 +8,7 @@ const API_BASE_URL = (typeof config !== 'undefined' && config.api?.baseUrl)
 const apiCache = {
   cache: new Map(),
   accessOrder: new Map(), // LRU via Map insertion order (O(1) delete + re-insert)
+  inFlight: new Map(),    // Deduplication for background refreshes
   maxSize: 500,    // Increased from 100 for better cache hit rates
 
   // Cache TTLs in milliseconds - pulled from config.js with fallback defaults
@@ -90,7 +91,6 @@ const apiCache = {
     // If stale cache exists and allowStale, return it and refresh in background
     if (cached && allowStale) {
       // Deduplicate background refreshes — skip if one is already in-flight
-      if (!this.inFlight) this.inFlight = new Map();
       if (!this.inFlight.has(key)) {
         const refreshPromise = fetchFn().then(data => {
           if (data) this.set(key, data, ttl);

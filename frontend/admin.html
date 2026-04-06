@@ -323,9 +323,10 @@
     <!-- Login Section -->
     <section id="login-section" class="admin-login">
       <div class="login-card">
-        <h1>Admin Panel</h1>
+        <h2>Admin Panel</h2>
         <p>Enter the admin password to continue.</p>
         <div id="login-error" class="login-error"></div>
+        <label for="login-password" class="sr-only">Password</label>
         <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
         <button class="btn btn-primary" id="login-btn">Sign In</button>
       </div>
@@ -374,7 +375,7 @@
       <div id="tab-curated" class="tab-panel">
         <div class="admin-form">
           <div class="field" style="flex:1;min-width:250px;">
-            <label>Mint Address</label>
+            <label for="curated-mint-input">Mint Address</label>
             <input type="text" id="curated-mint-input" placeholder="Token mint address..." maxlength="44">
           </div>
           <button class="btn btn-primary btn-sm" id="curated-add-btn">Add Token</button>
@@ -390,11 +391,11 @@
       <div id="tab-announcements" class="tab-panel">
         <div class="admin-form" id="announcement-form">
           <div class="field" style="flex:1;min-width:200px;">
-            <label>Title</label>
+            <label for="ann-title">Title</label>
             <input type="text" id="ann-title" placeholder="Announcement title" maxlength="200">
           </div>
           <div class="field">
-            <label>Type</label>
+            <label for="ann-type">Type</label>
             <select id="ann-type">
               <option value="info">Info</option>
               <option value="warning">Warning</option>
@@ -405,7 +406,7 @@
           <button class="btn btn-primary btn-sm" id="ann-create-btn">Create</button>
         </div>
         <div class="field" style="margin-bottom:1rem;">
-          <label style="font-size:0.7rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.25rem;display:block;">Message</label>
+          <label for="ann-message" style="font-size:0.7rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.25rem;display:block;">Message</label>
           <textarea id="ann-message" placeholder="Announcement message..." maxlength="2000" style="width:100%;padding:0.5rem 0.75rem;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.84rem;font-family:var(--font-sans);min-height:60px;resize:vertical;outline:none;"></textarea>
         </div>
         <table class="admin-table">
@@ -418,7 +419,7 @@
       <div id="tab-bugs" class="tab-panel">
         <div class="admin-form">
           <div class="field">
-            <label>Status Filter</label>
+            <label for="bugs-status-filter">Status Filter</label>
             <select id="bugs-status-filter">
               <option value="all">All</option>
               <option value="new" selected>New</option>
@@ -438,7 +439,7 @@
       <div id="tab-submissions" class="tab-panel">
         <div class="admin-form">
           <div class="field">
-            <label>Status Filter</label>
+            <label for="subs-status-filter">Status Filter</label>
             <select id="subs-status-filter">
               <option value="">All</option>
               <option value="pending" selected>Pending</option>

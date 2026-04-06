@@ -13,7 +13,8 @@ const admin = {
     this.bindAnnouncementActions();
     this.bindFilterActions();
     this.bindMaintenanceActions();
-    document.getElementById('logout-btn').addEventListener('click', () => this.logout());
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
     if (this.token) {
       this.verifySession();
@@ -152,26 +153,33 @@ const admin = {
   // These are bound once at init, not re-bound on every tab load
 
   bindCuratedActions() {
-    document.getElementById('curated-add-btn').addEventListener('click', () => this.addCuratedToken());
-    document.getElementById('curated-refresh-btn').addEventListener('click', () => this.refreshAllCurated());
-    // Allow Enter key on mint input
-    document.getElementById('curated-mint-input').addEventListener('keydown', (e) => {
+    const addBtn = document.getElementById('curated-add-btn');
+    const refreshBtn = document.getElementById('curated-refresh-btn');
+    const mintInput = document.getElementById('curated-mint-input');
+    if (addBtn) addBtn.addEventListener('click', () => this.addCuratedToken());
+    if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshAllCurated());
+    if (mintInput) mintInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.addCuratedToken();
     });
   },
 
   bindAnnouncementActions() {
-    document.getElementById('ann-create-btn').addEventListener('click', () => this.createAnnouncement());
+    const btn = document.getElementById('ann-create-btn');
+    if (btn) btn.addEventListener('click', () => this.createAnnouncement());
   },
 
   bindFilterActions() {
-    document.getElementById('bugs-status-filter').addEventListener('change', () => this.loadBugReports());
-    document.getElementById('subs-status-filter').addEventListener('change', () => this.loadSubmissions());
+    const bugsFilter = document.getElementById('bugs-status-filter');
+    const subsFilter = document.getElementById('subs-status-filter');
+    if (bugsFilter) bugsFilter.addEventListener('change', () => this.loadBugReports());
+    if (subsFilter) subsFilter.addEventListener('change', () => this.loadSubmissions());
   },
 
   bindMaintenanceActions() {
-    document.getElementById('admin-flush-wallets').addEventListener('click', () => this.flushFailedWallets());
-    document.getElementById('admin-refresh-holders').addEventListener('click', () => this.refreshHolderCounts());
+    const flushBtn = document.getElementById('admin-flush-wallets');
+    const refreshBtn = document.getElementById('admin-refresh-holders');
+    if (flushBtn) flushBtn.addEventListener('click', () => this.flushFailedWallets());
+    if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshHolderCounts());
   },
 
   async flushFailedWallets() {

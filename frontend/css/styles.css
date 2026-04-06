@@ -208,8 +208,8 @@ img {
   position: sticky;
   top: 0;
   background: rgba(9, 9, 11, 0.82);
-  backdrop-filter: blur(24px) saturate(1.4);
   -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
   z-index: 1200;
 }
@@ -755,13 +755,10 @@ img {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  border: 1px solid var(--border-color);
-  border-color: #1e1f22;
-  border-radius: var(--radius-sm);
-  background: var(--bg-tertiary);
-  background-color: #161719;
-  color: var(--text-muted);
-  color: #6b6b74;
+  border: 1px solid var(--border-color, #1e1f22);
+  border-radius: var(--radius-sm, 6px);
+  background-color: var(--bg-tertiary, #161719);
+  color: var(--text-muted, #6b6b74);
   cursor: pointer;
   transition: all var(--transition-fast);
   white-space: nowrap;
@@ -858,13 +855,10 @@ img {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  background: var(--bg-tertiary);
-  background-color: #161719;
-  border: 1px solid var(--border-color);
-  border-color: #1e1f22;
-  border-radius: var(--radius-full);
-  color: var(--text-muted);
-  color: #6b6b74;
+  background-color: var(--bg-tertiary, #161719);
+  border: 1px solid var(--border-color, #1e1f22);
+  border-radius: var(--radius-full, 9999px);
+  color: var(--text-muted, #6b6b74);
   font-size: 0.76rem;
   font-weight: 600;
   font-family: var(--font-sans);
@@ -907,10 +901,9 @@ img {
   gap: 0.4rem;
   margin-left: auto;
   padding: 0.3rem 0.7rem;
-  background: rgba(16, 185, 129, 0.06);
   background-color: rgba(16, 185, 129, 0.06);
   border: 1px solid rgba(16, 185, 129, 0.15);
-  border-radius: 9999px;
+  border-radius: var(--radius-full, 9999px);
   font-size: 0.65rem;
   font-family: var(--font-mono);
   font-weight: 700;
@@ -974,14 +967,10 @@ img {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  background: var(--bg-tertiary);
-  background-color: #161719;
-  border: 1px solid var(--border-color);
-  border-color: #1e1f22;
-  border-radius: var(--radius-md);
-  border-radius: 10px;
-  color: var(--text-primary);
-  color: #f0f0f2;
+  background-color: var(--bg-tertiary, #161719);
+  border: 1px solid var(--border-color, #1e1f22);
+  border-radius: var(--radius-md, 10px);
+  color: var(--text-primary, #f0f0f2);
   font-size: 0.82rem;
   font-family: var(--font-sans);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -1127,13 +1116,10 @@ select:focus {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  background: transparent;
   background-color: transparent;
-  border: 1px solid var(--border-color);
-  border-color: #1e1f22;
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  color: #6b6b74;
+  border: 1px solid var(--border-color, #1e1f22);
+  border-radius: var(--radius-md, 10px);
+  color: var(--text-muted, #6b6b74);
   font-size: 0.72rem;
   font-weight: 600;
   font-family: var(--font-mono);
@@ -2023,10 +2009,10 @@ select:focus {
   position: relative;
 }
 
-/* Subtle fire accent on section headers */
-.chart-section h2,
-.holders-section h2,
-.stats-section h2,
+/* Section container styles */
+.chart-section,
+.holders-section,
+.stats-section,
 .trade-section {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -2417,7 +2403,6 @@ select:focus {
   padding: 0.6rem 0.75rem;
   background: var(--bg-tertiary);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
   border: 1px solid var(--border-subtle);
 }
 
@@ -2866,6 +2851,7 @@ select:focus {
   gap: 0.25rem;
   padding: 0.25rem 0.5rem;
   background: rgba(10, 10, 10, 0.8);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);

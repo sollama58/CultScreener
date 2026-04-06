@@ -754,13 +754,6 @@ const wallet = {
     const savedConnection = this.loadSavedConnection();
     if (!savedConnection || !savedConnection.connected) return;
 
-    // Check if saved connection is recent (within 7 days)
-    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
-    if (savedConnection.timestamp && Date.now() - savedConnection.timestamp > maxAge) {
-      this.clearConnection();
-      return;
-    }
-
     // If we know which wallet was used, try to reconnect
     if (savedConnection.wallet) {
       const provider = this.getProviderFor(savedConnection.wallet);

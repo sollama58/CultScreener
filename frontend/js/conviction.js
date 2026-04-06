@@ -340,9 +340,10 @@ const convictionPage = {
         this.tokens = result.tokens || [];
         this.totalItems = result.total || 0;
 
-        // Client-side filter for "low" tier (< 25%)
+        // Client-side filter for "low" tier (< 25%) — adjust totalItems to match
         if (this._activeTier === 'low') {
           this.tokens = this.tokens.filter(t => (t.conviction1m || 0) < 25);
+          this.totalItems = this.tokens.length;
         }
       }
 

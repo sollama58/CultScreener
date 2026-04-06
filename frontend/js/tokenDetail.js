@@ -56,8 +56,11 @@ const tokenDetail = {
       this.lastPriceUpdate = Date.now();
       this.updateFreshnessDisplay();
 
-      // Record page view (fire-and-forget, non-blocking)
-      this.recordView();
+      // Record page view (fire-and-forget, non-blocking, skip on bfcache restore)
+      if (!this._viewRecorded) {
+        this._viewRecorded = true;
+        this.recordView();
+      }
 
       // Load additional data in parallel
       await Promise.all([
@@ -73,9 +76,10 @@ const tokenDetail = {
       // Update watchlist button once watchlist finishes loading (may still be in-flight)
       this.updateWatchlistButton();
       window.addEventListener('watchlistReady', () => this.updateWatchlistButton(), { once: true });
-      window.addEventListener('walletConnected', () => {
+      this._walletConnectedHandler = () => {
         setTimeout(() => this.updateWatchlistButton(), 500);
-      });
+      };
+      window.addEventListener('walletConnected', this._walletConnectedHandler);
     } catch (error) {
       console.error('Failed to initialize token page:', error);
       this.showError('Failed to load token data. Please try again.');
@@ -430,10 +434,10 @@ const tokenDetail = {
     const _t0 = performance.now();
     let _ok = true;
     try {
-      if (config.app.debug) console.log('[TokenDetail] Loading token:', this.mint);
+      if (typeof config !== 'undefined' && config.app?.debug) console.log('[TokenDetail] Loading token:', this.mint);
       this.token = await api.tokens.get(this.mint);
 
-      if (config.app.debug) console.log('[TokenDetail] Token data received:', JSON.stringify(this.token, null, 2));
+      if (typeof config !== 'undefined' && config.app?.debug) console.log('[TokenDetail] Token data received:', JSON.stringify(this.token, null, 2));
 
       if (!this.token) {
         throw new Error('Token not found');
@@ -505,7 +509,7 @@ const tokenDetail = {
     const price = this.token.price || 0;
     const change = this.token.priceChange24h || 0;
 
-    if (config.app.debug) console.log('[TokenDetail] Price display:', { price, change, token: this.token });
+    if (typeof config !== 'undefined' && config.app?.debug) console.log('[TokenDetail] Price display:', { price, change, token: this.token });
 
     const changeEl = document.getElementById('price-change');
     const priceEl = document.getElementById('token-price');
@@ -869,7 +873,9 @@ const tokenDetail = {
     const tbody = document.getElementById('holders-tbody');
     if (!tbody) return;
     const price = this.token && this.token.price ? this.token.price : 0;
+    const esc = (s) => utils.escapeHtml(s);
     tbody.innerHTML = holders.slice(0, limit).map(h => {
+      const addr = esc(h.address);
       const shortAddr = h.address.slice(0, 4) + '...' + h.address.slice(-4);
       const pct = h.percentage != null ? h.percentage.toFixed(2) + '%' : '--';
       const bal = h.balance >= 1e9 ? (h.balance / 1e9).toFixed(2) + 'B'
@@ -886,22 +892,19 @@ const tokenDetail = {
         : h.isBurnt ? ' <span class="holder-label burnt-label" title="Burn Wallet">🔥Burn</span>'
         : '';
       const rowClass = h.isLP || h.isBurnt ? ' class="holder-excluded"' : '';
-      // Show avg hold time if available. If loading is done (_holdTimesLoaded), show "--" for
-      // wallets without data instead of a pulsing placeholder (prevents expand/collapse reverting).
       const holdTimeStr = (h.isLP || h.isBurnt) ? '--'
         : (this._holdTimesData && this._holdTimesData[h.address])
           ? this._formatHoldTime(this._holdTimesData[h.address])
           : this._holdTimesLoaded ? '--'
-          : '<span class="hold-time-pending" data-wallet="' + h.address + '">...</span>';
-      // Show token-specific hold time (how long they've held THIS token)
+          : `<span class="hold-time-pending" data-wallet="${addr}">...</span>`;
       const tokenHoldStr = (h.isLP || h.isBurnt) ? '--'
         : (this._tokenHoldTimesData && this._tokenHoldTimesData[h.address])
           ? this._formatHoldTime(this._tokenHoldTimesData[h.address])
           : this._holdTimesLoaded ? '--'
-          : '<span class="token-hold-pending" data-wallet="' + h.address + '">...</span>';
+          : `<span class="token-hold-pending" data-wallet="${addr}">...</span>`;
       return `<tr${rowClass}>
         <td>${h.rank}</td>
-        <td><a href="https://solscan.io/account/${h.address}" target="_blank" rel="noopener" class="holder-address" title="${h.address}">${shortAddr}</a>${label}</td>
+        <td><a href="https://solscan.io/account/${addr}" target="_blank" rel="noopener" class="holder-address" title="${addr}">${shortAddr}</a>${label}</td>
         <td class="text-right mono">${bal}</td>
         <td class="text-right mono">${valStr}</td>
         <td class="text-right mono">${pct}</td>
@@ -1115,6 +1118,8 @@ const tokenDetail = {
         await new Promise((resolve, reject) => {
           const script = document.createElement('script');
           script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+          script.integrity = 'sha512-s/XK4vYVKcaIiQKMJCfR/fMzwEh3c21e6BRoeR6pqKFPNAIjMrGXFEV2QG7GC2tL6ND7FhiemSHkTSnXv1KMg==';
+          script.crossOrigin = 'anonymous';
           script.onload = resolve;
           script.onerror = reject;
           document.head.appendChild(script);
@@ -2082,6 +2087,12 @@ const tokenDetail = {
     // Clear polling timers
     if (this._holdTimesTimer) { clearTimeout(this._holdTimesTimer); this._holdTimesTimer = null; }
     if (this._diamondHandsTimer) { clearTimeout(this._diamondHandsTimer); this._diamondHandsTimer = null; }
+
+    // Remove window-level listeners to prevent accumulation on bfcache restore
+    if (this._walletConnectedHandler) {
+      window.removeEventListener('walletConnected', this._walletConnectedHandler);
+      this._walletConnectedHandler = null;
+    }
 
     // Stop chart auto-refresh
     this._stopChartRefresh();
