@@ -2,6 +2,7 @@ const axios = require('axios');
 const { rateLimitedRequest, sleep } = require('./rateLimiter');
 const { circuitBreakers } = require('./circuitBreaker');
 const { httpsAgent } = require('./httpAgent');
+const { cache: redisCache, TTL } = require('./cache');
 
 // GeckoTerminal / CoinGecko Onchain API
 // Free tier: https://api.geckoterminal.com/api/v2 (30 req/min, no key)
@@ -117,7 +118,7 @@ const POOL_CACHE_TTL = 2 * 60 * 60 * 1000; // 2 hours
  * TTL: 1 minute
  */
 const errorCache = new Map();
-const ERROR_CACHE_TTL = 60 * 1000;
+const ERROR_CACHE_TTL = 5 * 60 * 1000; // 5 minutes — avoid re-fetching known-missing tokens
 
 // Periodic cache cleanup for all local caches
 const MAX_POOL_ADDRESS_CACHE_SIZE = 2000;
@@ -372,13 +373,15 @@ async function getMultiPoolInfo(poolAddresses) {
  * Caches null responses for 1 minute to prevent repeated failed lookups
  */
 async function getTokenOverview(mintAddress) {
-  console.log(`[GeckoTerminal] getTokenOverview: ${mintAddress}`);
+  // Check Redis cache first (2 min TTL — price data needs freshness)
+  const overviewCacheKey = `gecko-overview:${mintAddress}`;
+  const redisCached = await redisCache.get(overviewCacheKey);
+  if (redisCached) return redisCached;
 
-  // Check error cache first
+  // Check error cache (avoid re-fetching known failures)
   const errorCacheKey = `overview:${mintAddress}`;
   const cachedError = errorCache.get(errorCacheKey);
   if (cachedError && Date.now() < cachedError.expiry) {
-    console.log(`[GeckoTerminal] Returning cached null for overview ${mintAddress} (error cached)`);
     return null;
   }
 
@@ -426,7 +429,7 @@ async function getTokenOverview(mintAddress) {
       (p.relationships?.dex?.data?.id || '').toLowerCase()
     ).filter(Boolean))];
 
-    return {
+    const overviewResult = {
       mintAddress: tokenAddress,
       address: tokenAddress,
       name: symbol, // Basic name from pool, Helius provides better metadata
@@ -445,6 +448,9 @@ async function getTokenOverview(mintAddress) {
       pairCreatedAt: topPool.pool_created_at || null,
       dexIds
     };
+    // Cache for 2 minutes (price data needs reasonable freshness)
+    await redisCache.set(overviewCacheKey, overviewResult, TTL.OHLCV || 120000);
+    return overviewResult;
   } catch (error) {
     console.error('[GeckoTerminal] getTokenOverview error:', error.message);
     // Cache the error (but not 429 errors - those should retry)

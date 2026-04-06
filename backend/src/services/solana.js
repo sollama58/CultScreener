@@ -2,6 +2,7 @@ const axios = require('axios');
 const { httpsAgent } = require('./httpAgent');
 const { circuitBreakers } = require('./circuitBreaker');
 const { rateLimitedRequest } = require('./rateLimiter');
+const { cache, TTL } = require('./cache');
 
 // RPC endpoint configuration with failover
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
@@ -359,8 +360,13 @@ async function getTokenMetadata(mintAddress) {
     return null;
   }
 
+  // Check cache first (1hr TTL — metadata rarely changes)
+  const metaCacheKey = `helius-meta:${mintAddress}`;
+  const cached = await cache.get(metaCacheKey);
+  if (cached) return cached;
+
   try {
-    console.log(`[Solana] Fetching token metadata for ${mintAddress}`);
+    // Fetching from Helius DAS (cache miss)
 
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.post(HELIUS_DAS_URL, {
@@ -459,13 +465,11 @@ async function getTokenMetadata(mintAddress) {
       onchainLinks: Object.keys(onchainLinks).length > 0 ? onchainLinks : null
     };
 
-    console.log(`[Solana] Token metadata for ${mintAddress}:`, {
-      name: result.name,
-      symbol: result.symbol,
-      hasPriceData: result.hasPriceData,
-      logoUri: result.logoUri
-    });
+    // Debug: uncomment to trace metadata fetches
+    // console.log(`[Solana] Token metadata for ${mintAddress}: ${result.name} (${result.symbol})`);
 
+    // Cache for 1 hour (metadata rarely changes)
+    await cache.set(metaCacheKey, result, TTL.HOUR);
     return result;
   } catch (error) {
     console.error('[Solana] getTokenMetadata error:', error.message);
@@ -837,6 +841,12 @@ async function getTokenHoldTime(walletAddress, tokenMint, ataAddress = null) {
  */
 async function getTokenAuthorities(mintAddress) {
   if (!HELIUS_DAS_URL) return null;
+
+  // Check cache first (1hr TTL — authorities never change after mint)
+  const authCacheKey = `token-auth:${mintAddress}`;
+  const cached = await cache.get(authCacheKey);
+  if (cached) return cached;
+
   try {
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.post(HELIUS_DAS_URL, {
@@ -849,10 +859,12 @@ async function getTokenAuthorities(mintAddress) {
 
     if (response.data.error || !response.data.result) return null;
     const asset = response.data.result;
-    return {
+    const result = {
       authorities: asset.authorities || [],
       creators: asset.creators || []
     };
+    await cache.set(authCacheKey, result, TTL.DAY); // Authorities never change
+    return result;
   } catch (error) {
     return null;
   }

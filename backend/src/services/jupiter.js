@@ -555,18 +555,10 @@ async function getTokenPrices(mintAddresses) {
 }
 
 /**
- * Get price history (placeholder - Jupiter doesn't provide historical data)
- * Use Birdeye API for historical price data
+ * Get price history (stub — Jupiter doesn't provide historical data)
  */
-async function getPriceHistory(mintAddress, { interval = '1h', limit = 100 }) {
-  console.log(`Price history requested for ${mintAddress}, interval: ${interval}`);
-
-  return {
-    mintAddress,
-    interval,
-    data: [],
-    message: 'Historical price data requires Birdeye API integration'
-  };
+async function getPriceHistory(mintAddress, { interval = '1h', limit = 100 } = {}) {
+  return { mintAddress, interval, data: [] };
 }
 
 /**

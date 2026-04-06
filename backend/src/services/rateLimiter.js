@@ -49,15 +49,6 @@ const queueMetrics = {
 
 // Rate limit configurations per API (requests per second)
 const RATE_LIMITS = {
-  birdeye: {
-    minInterval: 200,    // Minimum 200ms between requests (5 req/sec max)
-    maxJitter: 100,      // Add up to 100ms random jitter
-    burstLimit: 3,       // Allow up to 3 requests in quick succession
-    burstWindow: 1000,   // Within 1 second
-    useQueue: true,      // Queue-based processing for ordered rate limiting
-    maxQueueSize: 500,   // Queue capacity
-    queueTimeout: 15000  // 15s timeout
-  },
   geckoTerminal: {
     // CoinGecko paid plan: 250 requests/minute ≈ 1 request every 240ms
     // Use 250ms minimum with modest safety margin

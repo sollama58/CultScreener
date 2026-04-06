@@ -271,16 +271,6 @@ const circuitBreakers = {
       if (error.response?.status === 429) return false;
       return error.response?.status >= 500 || !error.response;
     }
-  }),
-
-  birdeye: new CircuitBreaker({
-    name: 'birdeye',
-    failureThreshold: 5,
-    resetTimeout: 30000,
-    isFailure: (error) => {
-      if (error.response?.status === 429) return false;
-      return error.response?.status >= 500 || !error.response;
-    }
   })
 };
 
