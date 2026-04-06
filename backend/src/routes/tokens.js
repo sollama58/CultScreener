@@ -2038,23 +2038,23 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
         avgBalance: avgBalance,
         avgPct: Math.round(avgPct * 100) / 100,
         riskLevel: riskLevel,
-        holderCount: realHolders.length
+        holderCount: null // populated below from cache or background fetch
       };
 
-      // Use cached holder count, or fetch via paginated DAS if missing
+      // Use cached holder count — never block response on paginated DAS call
       try {
-        let totalCount = await cache.get(`holder-total:${mint}`)
+        const totalCount = await cache.get(`holder-total:${mint}`)
           || await cache.get(keys.holderCount(mint));
-        // If no cached count, fetch the real count (non-blocking for response but cache it)
-        if (!totalCount && solanaService.isHeliusConfigured()) {
-          totalCount = await solanaService.getTokenHolderCount(mint).catch(() => null);
-          if (totalCount && totalCount > 0) {
-            await cache.set(`holder-total:${mint}`, totalCount, TTL.DAY);
-            await cache.set(keys.holderCount(mint), totalCount, TTL.DAY);
-          }
-        }
         if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
+        } else if (solanaService.isHeliusConfigured()) {
+          // Fire-and-forget: populate cache for next request without blocking response
+          solanaService.getTokenHolderCount(mint).then(count => {
+            if (count && count > 0) {
+              cache.set(`holder-total:${mint}`, count, TTL.DAY);
+              cache.set(keys.holderCount(mint), count, TTL.DAY);
+            }
+          }).catch(() => {});
         }
       } catch (_) {}
     }

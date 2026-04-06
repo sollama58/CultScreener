@@ -19,7 +19,6 @@ const apiCache = {
       tokenList: c.tokenListTTL || 120000,
       tokenDetail: c.tokenDetailTTL || 300000,
       search: c.searchTTL || 120000,
-      chart: c.chartTTL || 300000,
       pools: c.poolsTTL || 300000,
       submissions: c.submissionsTTL || 30000,
       price: c.priceTTL || 300000
@@ -361,30 +360,6 @@ const api = {
         cacheKey,
         () => api.request(`/api/tokens/${mint}/price`),
         apiCache.TTL.price,
-        true
-      );
-    },
-
-    async getChart(mint, params = {}) {
-      const query = new URLSearchParams(params).toString();
-      const cacheKey = apiCache.key(`tokens:chart:${mint}`, params);
-
-      return apiCache.getOrFetch(
-        cacheKey,
-        () => api.request(`/api/tokens/${mint}/chart${query ? `?${query}` : ''}`),
-        apiCache.TTL.chart,
-        true
-      );
-    },
-
-    async getOHLCV(mint, params = {}) {
-      const query = new URLSearchParams(params).toString();
-      const cacheKey = apiCache.key(`tokens:ohlcv:${mint}`, params);
-
-      return apiCache.getOrFetch(
-        cacheKey,
-        () => api.request(`/api/tokens/${mint}/ohlcv${query ? `?${query}` : ''}`),
-        apiCache.TTL.chart,
         true
       );
     },

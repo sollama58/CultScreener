@@ -109,6 +109,34 @@
       margin: 0 auto;
       line-height: 1.6;
     }
+    .powered-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      padding: 0.85rem 1.5rem;
+      margin-bottom: 1.25rem;
+      background: linear-gradient(135deg, rgba(255,69,0,0.10) 0%, rgba(255,140,0,0.08) 50%, rgba(255,69,0,0.05) 100%);
+      border: 1px solid rgba(255,87,34,0.25);
+      border-radius: var(--radius-lg);
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+      box-shadow: 0 0 20px rgba(255,69,0,0.06), inset 0 0 20px rgba(255,69,0,0.03);
+      animation: fireGlow 4s ease-in-out infinite;
+    }
+    .powered-banner .flame-icon {
+      flex-shrink: 0;
+    }
+    .powered-banner a {
+      color: var(--fire-primary);
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .powered-banner a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
@@ -141,6 +169,12 @@
       <div class="about-hero">
         <h1>CultScreener</h1>
         <p>A Solana token conviction analyzer. Track diamond hands, measure holder commitment, and discover tokens with the strongest communities.</p>
+      </div>
+
+      <!-- Powered By Banner -->
+      <div class="powered-banner">
+        <svg class="flame-icon" width="18" height="18" viewBox="0 0 24 24" fill="url(#flameGradAbout)"><defs><linearGradient id="flameGradAbout" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#ff4500"/><stop offset="100%" stop-color="#ff8c00"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
+        Powered by <a href="token.html?mint=9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump">$ASDFASDFA</a>, Take the Pill! &#x1F48A;
       </div>
 
       <!-- How It Works -->

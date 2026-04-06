@@ -3774,7 +3774,17 @@ select:focus {
   margin-bottom: 0.75rem;
 }
 
-.pools-loading,
+.pools-loading {
+  padding: 0;
+}
+.pools-loading .skel-pool-card {
+  height: 64px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
+}
+.pools-loading .skel-pool-card:last-child {
+  margin-bottom: 0;
+}
 .pools-empty {
   text-align: center;
   padding: 1.5rem;
@@ -3789,6 +3799,7 @@ select:focus {
   border-radius: var(--radius-sm);
   margin-bottom: 0.5rem;
   transition: border-color var(--transition-fast);
+  animation: fadeIn 0.25s ease-out;
 }
 
 .pool-card:hover {
@@ -4809,6 +4820,140 @@ strong {
   background-size: 400px 100%;
   animation: shimmer 1.5s infinite;
   border-radius: var(--radius-sm);
+}
+
+/* ── Token Page Skeleton ── */
+.token-skeleton {
+  animation: fadeIn 0.2s ease-out;
+}
+.token-skeleton .skel-header {
+  margin-bottom: 1.25rem;
+}
+.token-skeleton .skel-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 1.5rem 1rem;
+}
+.token-skeleton .skel-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+.token-skeleton .skel-name {
+  width: 160px;
+  height: 22px;
+  margin-bottom: 0.4rem;
+}
+.token-skeleton .skel-address {
+  width: 110px;
+  height: 14px;
+}
+.token-skeleton .skel-price {
+  width: 120px;
+  height: 28px;
+  margin-bottom: 0.35rem;
+  margin-left: auto;
+}
+.token-skeleton .skel-change {
+  width: 60px;
+  height: 16px;
+  margin-left: auto;
+}
+.token-skeleton .skel-chip {
+  width: 80px;
+  height: 30px;
+  border-radius: var(--radius-md);
+}
+.token-skeleton .skel-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.token-skeleton .skel-section-title {
+  width: 140px;
+  height: 18px;
+  margin-bottom: 1rem;
+}
+.token-skeleton .skel-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1.25rem;
+}
+.token-skeleton .skel-metric {
+  height: 52px;
+  border-radius: var(--radius-md);
+}
+.token-skeleton .skel-table-row {
+  height: 36px;
+  margin-bottom: 0.4rem;
+  border-radius: var(--radius-sm);
+}
+.token-skeleton .skel-table-row:last-child {
+  margin-bottom: 0;
+}
+.token-skeleton .skel-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+.token-skeleton .skel-stat {
+  height: 58px;
+  border-radius: var(--radius-md);
+}
+.token-skeleton .skel-pool {
+  height: 68px;
+  border-radius: var(--radius-md);
+  margin-bottom: 0.6rem;
+}
+.token-skeleton .skel-pool:last-child {
+  margin-bottom: 0;
+}
+
+/* Stat placeholder pulse while loading */
+.stat-placeholder {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+/* Holder table skeleton rows */
+.skel-holder-row td {
+  padding: 0.35rem 0.5rem;
+  border: none;
+}
+.skel-row-bar {
+  height: 28px;
+  border-radius: var(--radius-sm);
+}
+
+/* Content reveal animation */
+#token-content {
+  animation: tokenReveal 0.35s ease-out;
+}
+@keyframes tokenReveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Holders section reveal */
+.holders-section {
+  animation: tokenReveal 0.3s ease-out;
+}
+
+/* Stat values fade in when populated */
+.stat-value-loaded {
+  animation: fadeIn 0.25s ease-out;
+}
+
+@media (max-width: 600px) {
+  .token-skeleton .skel-name { width: 120px; height: 18px; }
+  .token-skeleton .skel-price { width: 90px; height: 22px; }
+  .token-skeleton .skel-actions { padding: 0 0.75rem 0.75rem; }
+  .token-skeleton .skel-section { padding: 0.85rem 0.9rem; }
+  .token-skeleton .skel-metrics-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* Install app button */

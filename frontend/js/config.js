@@ -41,12 +41,6 @@ const config = {
 
   // UI Configuration
   ui: {
-    // Chart default settings
-    chart: {
-      defaultInterval: '1h',
-      defaultType: 'line'
-    },
-
     // Pagination
     itemsPerPage: 50,
 
@@ -80,9 +74,6 @@ const config = {
 
     // Search results cache (ms)
     searchTTL: 120000,             // 2 minutes
-
-    // Chart/OHLCV data cache (ms)
-    chartTTL: 300000,              // 5 minutes
 
     // Pool data cache (ms)
     poolsTTL: 300000,              // 5 minutes
@@ -122,7 +113,6 @@ Object.freeze(config);
 Object.freeze(config.api);
 Object.freeze(config.app);
 Object.freeze(config.features);
-Object.freeze(config.ui.chart);
 Object.freeze(config.ui);
 Object.freeze(config.cache);
 Object.freeze(config.links);

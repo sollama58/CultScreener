@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Token Details - CultScreener</title>
-  <meta name="description" content="View token details, price charts, holder analytics, and diamond hands conviction data on CultScreener.">
+  <meta name="description" content="View token details, holder analytics, and diamond hands conviction data on CultScreener.">
   <meta name="theme-color" content="#07080a">
   <meta name="color-scheme" content="dark">
 
@@ -12,14 +12,14 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="CultScreener">
   <meta property="og:title" content="Token Details - CultScreener">
-  <meta property="og:description" content="View token details, price charts, holder analytics, and diamond hands conviction data on CultScreener.">
+  <meta property="og:description" content="View token details, holder analytics, and diamond hands conviction data on CultScreener.">
   <meta property="og:image" content="https://cultscreener.com/CultScreenerBanner.jpg">
   <meta property="og:url" content="https://cultscreener.com/token.html">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Token Details - CultScreener">
-  <meta name="twitter:description" content="View token details, price charts, holder analytics, and diamond hands conviction data on CultScreener.">
+  <meta name="twitter:description" content="View token details, holder analytics, and diamond hands conviction data on CultScreener.">
   <meta name="twitter:image" content="https://cultscreener.com/CultScreenerBanner.jpg">
 
   <!-- Fonts -->
@@ -28,7 +28,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="css/styles.css">
-  <link rel="dns-prefetch" href="https://api.geckoterminal.com">
   <link rel="dns-prefetch" href="https://api.jup.ag">
 </head>
 <body>
@@ -64,10 +63,72 @@
   </header>
 
   <main class="main token-page">
-    <!-- Loading State -->
-    <div id="loading-state" class="loading-state">
-      <div class="loading-spinner large"></div>
-      <p>Loading token data...</p>
+    <!-- Skeleton Loading State -->
+    <div id="loading-state" class="token-skeleton">
+      <!-- Skeleton Header -->
+      <div class="token-header skel-header">
+        <div class="token-header-top">
+          <div class="token-identity">
+            <div class="skeleton skel-logo"></div>
+            <div>
+              <div class="skeleton skel-name"></div>
+              <div class="skeleton skel-address"></div>
+            </div>
+          </div>
+          <div class="token-header-right">
+            <div class="skeleton skel-price"></div>
+            <div class="skeleton skel-change"></div>
+          </div>
+        </div>
+        <div class="skel-actions">
+          <div class="skeleton skel-chip"></div>
+          <div class="skeleton skel-chip"></div>
+          <div class="skeleton skel-chip"></div>
+        </div>
+      </div>
+      <!-- Skeleton Content Grid -->
+      <div class="token-content-grid">
+        <div class="token-col-left">
+          <div class="skel-section">
+            <div class="skeleton skel-section-title"></div>
+            <div class="skel-metrics-grid">
+              <div class="skeleton skel-metric"></div>
+              <div class="skeleton skel-metric"></div>
+              <div class="skeleton skel-metric"></div>
+              <div class="skeleton skel-metric"></div>
+              <div class="skeleton skel-metric"></div>
+              <div class="skeleton skel-metric"></div>
+            </div>
+            <div class="skel-table">
+              <div class="skeleton skel-table-row"></div>
+              <div class="skeleton skel-table-row"></div>
+              <div class="skeleton skel-table-row"></div>
+              <div class="skeleton skel-table-row"></div>
+              <div class="skeleton skel-table-row"></div>
+            </div>
+          </div>
+        </div>
+        <div class="token-col-right">
+          <div class="skel-section">
+            <div class="skeleton skel-section-title"></div>
+            <div class="skel-stats-grid">
+              <div class="skeleton skel-stat"></div>
+              <div class="skeleton skel-stat"></div>
+              <div class="skeleton skel-stat"></div>
+              <div class="skeleton skel-stat"></div>
+              <div class="skeleton skel-stat"></div>
+              <div class="skeleton skel-stat"></div>
+              <div class="skeleton skel-stat"></div>
+              <div class="skeleton skel-stat"></div>
+            </div>
+          </div>
+          <div class="skel-section">
+            <div class="skeleton skel-section-title"></div>
+            <div class="skeleton skel-pool"></div>
+            <div class="skeleton skel-pool"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Error State -->
@@ -146,7 +207,7 @@
         <!-- Left Column -->
         <div class="token-col-left">
         <!-- Conviction Metrics -->
-        <section class="holders-section" id="holders-section" style="display:none;">
+        <section class="holders-section" id="holders-section">
           <div class="holders-header">
             <h2>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -278,7 +339,13 @@
                   <th class="text-right holders-share-col">Hold Time</th>
                 </tr>
               </thead>
-              <tbody id="holders-tbody"></tbody>
+              <tbody id="holders-tbody">
+                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
+                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
+                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
+                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
+                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
+              </tbody>
             </table>
           </div>
           <button class="holders-expand-btn" id="holders-expand" style="display:none;">
@@ -296,35 +363,35 @@
             <div class="stats-grid">
               <div class="stat-card">
                 <span class="stat-label">Market Cap</span>
-                <span id="stat-mcap" class="stat-value">--</span>
+                <span id="stat-mcap" class="stat-value stat-placeholder">--</span>
               </div>
               <div class="stat-card">
                 <span class="stat-label">24h Volume</span>
-                <span id="stat-volume" class="stat-value">--</span>
+                <span id="stat-volume" class="stat-value stat-placeholder">--</span>
               </div>
               <div class="stat-card">
                 <span class="stat-label">Total Liquidity</span>
-                <span id="stat-liquidity" class="stat-value">--</span>
+                <span id="stat-liquidity" class="stat-value stat-placeholder">--</span>
               </div>
               <div class="stat-card">
                 <span class="stat-label">Holders</span>
-                <span id="stat-holders" class="stat-value">--</span>
+                <span id="stat-holders" class="stat-value stat-placeholder">--</span>
               </div>
               <div class="stat-card">
                 <span class="stat-label">Total Supply</span>
-                <span id="stat-supply" class="stat-value">--</span>
+                <span id="stat-supply" class="stat-value stat-placeholder">--</span>
               </div>
               <div class="stat-card">
                 <span class="stat-label">Circulating</span>
-                <span id="stat-circulating" class="stat-value">--</span>
+                <span id="stat-circulating" class="stat-value stat-placeholder">--</span>
               </div>
               <div class="stat-card">
                 <span class="stat-label">Token Age</span>
-                <span id="stat-age" class="stat-value">--</span>
+                <span id="stat-age" class="stat-value stat-placeholder">--</span>
               </div>
               <div class="stat-card">
                 <span class="stat-label">Page Views</span>
-                <span id="stat-views" class="stat-value">--</span>
+                <span id="stat-views" class="stat-value stat-placeholder">--</span>
               </div>
             </div>
           </section>
@@ -333,8 +400,8 @@
           <section class="pools-section">
             <h2>Liquidity Pools</h2>
             <div id="pools-loading" class="pools-loading">
-              <div class="loading-spinner"></div>
-              <span>Loading pools...</span>
+              <div class="skeleton skel-pool-card"></div>
+              <div class="skeleton skel-pool-card"></div>
             </div>
             <div id="pools-list" class="pools-list" style="display: none;"></div>
             <p id="pools-empty" class="pools-empty" style="display: none;">No liquidity pools found for this token.</p>
