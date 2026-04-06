@@ -329,33 +329,20 @@
             </div>
           </section>
 
-          <!-- Trade Section -->
-        <section class="trade-section">
-          <h2>Trade</h2>
-          <div class="trade-links">
-            <a id="jupiter-link" href="#" target="_blank" rel="noopener" class="trade-btn jupiter">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="12" r="10"/>
-              </svg>
-              Trade on Jupiter
-            </a>
-          </div>
-        </section>
+          <!-- Pools Section (moved inline) -->
+          <section class="pools-section">
+            <h2>Liquidity Pools</h2>
+            <div id="pools-loading" class="pools-loading">
+              <div class="loading-spinner"></div>
+              <span>Loading pools...</span>
+            </div>
+            <div id="pools-list" class="pools-list" style="display: none;"></div>
+            <p id="pools-empty" class="pools-empty" style="display: none;">No liquidity pools found for this token.</p>
+          </section>
 
         </div>
 
       </div>
-
-      <!-- Pools Section -->
-      <section class="pools-section">
-        <h2>Liquidity Pools</h2>
-        <div id="pools-loading" class="pools-loading">
-          <div class="loading-spinner"></div>
-          <span>Loading pools...</span>
-        </div>
-        <div id="pools-list" class="pools-list" style="display: none;"></div>
-        <p id="pools-empty" class="pools-empty" style="display: none;">No liquidity pools found for this token.</p>
-      </section>
     </div>
 
   </main>

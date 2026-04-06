@@ -1462,11 +1462,10 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
       return tokenResult;
     }); // Use standard caching with stampede prevention (was requireFresh=true)
 
-    res.json(result);
+    if (!res.headersSent) res.json(result);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
-    // Privacy: Don't log error details or stack traces
-    res.status(500).json({ error: 'Failed to fetch token details' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch token details' });
   }
 }));
 
@@ -1499,11 +1498,10 @@ router.get('/:mint/price', validateMint, asyncHandler(async (req, res) => {
       return data;
     });
 
-    res.json(priceData);
+    if (!res.headersSent) res.json(priceData);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
-    // Privacy: Don't log error details
-    res.status(500).json({ error: 'Failed to fetch price data' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch price data' });
   }
 }));
 
@@ -1553,11 +1551,10 @@ router.get('/:mint/chart', validateMint, asyncHandler(async (req, res) => {
       return data;
     }, cacheTTL);
 
-    res.json(chartData);
+    if (!res.headersSent) res.json(chartData);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
-    // Privacy: Don't log error details
-    res.status(500).json({ error: 'Failed to fetch chart data' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch chart data' });
   }
 }));
 
@@ -1583,11 +1580,10 @@ router.get('/:mint/ohlcv', validateMint, asyncHandler(async (req, res) => {
       return geckoService.getOHLCV(mint, { interval: normalizedInterval });
     }, TTL.OHLCV);
 
-    res.json(ohlcvData);
+    if (!res.headersSent) res.json(ohlcvData);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
-    // Privacy: Don't log error details
-    res.status(500).json({ error: 'Failed to fetch OHLCV data' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch OHLCV data' });
   }
 }));
 
@@ -2065,10 +2061,10 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
 
     const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
     await cache.set(cacheKey, result, TTL.HOUR);
-    res.json(result);
+    if (!res.headersSent) res.json(result);
   } catch (error) {
     console.error('[Tokens] Holder analytics error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch holder data' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch holder data' });
   }
 }));
 
@@ -2286,10 +2282,10 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
     }
 
     console.log(`[HoldTimes] Response for ${mint}: ${Object.keys(holdTimes).length} avg, ${Object.keys(tokenHoldTimes).length} token, computed=${computed}, stale=${staleWallets.length}, fresh=${freshWalletCount}/${walletAgeChecked}`);
-    res.json({ holdTimes, tokenHoldTimes, computed, freshWallets: { count: freshWalletCount, checked: walletAgeChecked, total: wallets.length } });
+    if (!res.headersSent) res.json({ holdTimes, tokenHoldTimes, computed, freshWallets: { count: freshWalletCount, checked: walletAgeChecked, total: wallets.length } });
   } catch (error) {
     console.error('[Tokens] Hold times error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch hold times' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch hold times' });
   }
 }));
 
@@ -2475,10 +2471,10 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
     partial.computed = false;
     partial.totalCount = wallets.length;
     console.log(`[DiamondHands] Partial: ${partial.analyzed}/${partial.totalCount} analyzed for ${mint.slice(0, 8)}...`);
-    res.json(partial);
+    if (!res.headersSent) res.json(partial);
   } catch (error) {
     console.error('[DiamondHands] Error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch diamond hands data' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch diamond hands data' });
   }
 }));
 
