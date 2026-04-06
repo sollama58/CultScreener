@@ -1311,35 +1311,33 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
     // Use getOrSetWithFreshness for stampede prevention
     // If multiple requests come in for the same token, they share one API fetch
     const result = await cache.getOrSetWithFreshness(cacheKey, async () => {
-      // Fetch holder count from cache first (cached for 24 hours)
-      // This is a separate cache key so it doesn't get invalidated with price data
-      // Fetch data in parallel — always include holder count from DAS
+      // Fetch core data in parallel — holder count uses cache-first to avoid
+      // blocking on paginated Helius DAS calls (which can take 2-30s for popular tokens).
       const fetchPromises = [
         // Helius provides: metadata, supply, price (for top 10k tokens)
         solanaService.isHeliusConfigured()
           ? solanaService.getTokenMetadata(mint).catch(catchUnlessOverloaded(null))
           : Promise.resolve(null),
-        // GeckoTerminal pools: volume, price change, liquidity
+        // GeckoTerminal pools: volume, price change, liquidity + coingeckoId
         geckoService.getTokenOverview(mint),
         db.getApprovedSubmissions(mint).catch(() => []),
-        // GeckoTerminal token endpoint: provides coingeckoId for social links lookup
-        geckoService.getTokenInfo(mint).catch(() => null),
-        // Holder count from Solscan (always, no dependency on Helius)
-        solanaService.getTokenHolderCount(mint).catch(() => null)
+        // Holder count: use cache (24h TTL) — never block on paginated DAS call
+        cache.get(`holder-total:${mint}`).then(c => c || cache.get(keys.holderCount(mint)))
       ];
 
       const results = await Promise.all(fetchPromises);
-      const [heliusMetadata, geckoOverview, submissions, geckoTokenInfo, fetchedHolders] = results;
+      const [heliusMetadata, geckoOverview, submissions, cachedHolders] = results;
 
-      // Use Solscan holder count, fall back to cache
-      let holders = null;
-      if (typeof fetchedHolders === 'number' && fetchedHolders > 0) {
-        holders = fetchedHolders;
-        await cache.set(keys.holderCount(mint), holders, TTL.DAY);
-        await cache.set(`holder-total:${mint}`, holders, TTL.DAY);
-      } else {
-        const cached = await cache.get(`holder-total:${mint}`) || await cache.get(keys.holderCount(mint));
-        if (cached && cached > 0) holders = cached;
+      // Use cached holder count; if missing, fire-and-forget a background fetch
+      let holders = (typeof cachedHolders === 'number' && cachedHolders > 0) ? cachedHolders : null;
+      if (!holders && solanaService.isHeliusConfigured()) {
+        // Don't await — let it populate the cache for the next request
+        solanaService.getTokenHolderCount(mint).then(count => {
+          if (count && count > 0) {
+            cache.set(keys.holderCount(mint), count, TTL.DAY);
+            cache.set(`holder-total:${mint}`, count, TTL.DAY);
+          }
+        }).catch(() => {});
       }
 
       // Privacy: Don't log API response details
@@ -1361,11 +1359,8 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         circulatingSupply = supply;
       }
 
-      // Second pass: fetch off-chain metadata links + Jupiter name fallback in parallel.
-      // Off-chain JSON (json_uri) is where most tokens store social links (pump.fun, etc.).
-      // Links are cached separately for 24h since they rarely change — avoids re-fetching
-      // json_uri on every price refresh (which happens every 1-10 minutes).
-      const coingeckoId = (geckoTokenInfo || {}).coingeckoId || null;
+      // Resolve social links and Jupiter name fallback in parallel (non-blocking).
+      // Links are cached for 24h since they rarely change.
       const linksCacheKey = `default-links:${mint}`;
       const [cachedLinks, jupiterMeta] = await Promise.all([
         cache.get(linksCacheKey),
@@ -1375,24 +1370,29 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
       ]);
       const jup = jupiterMeta || {};
 
-      // Resolve default links: use 24h cache if available, otherwise fetch + merge + cache.
-      // Only non-empty results are cached — empty results could be transient failures
-      // (IPFS timeout, etc.) and should be retried on the next token detail request.
+      // Use cached links if available; otherwise fetch off-chain metadata in the background.
+      // Don't block the response on IPFS/Arweave fetches (can take 1-5s).
       let mergedDefaultLinks = {};
       if (cachedLinks && Object.keys(cachedLinks).length > 0) {
         mergedDefaultLinks = cachedLinks;
-      } else if (!cachedLinks) {
-        // No cache entry — fetch off-chain metadata
-        const offchainLinks = await solanaService.fetchOffchainLinks(helius.jsonUri).catch(() => null);
+      } else if (!cachedLinks && helius.jsonUri) {
+        // Fire-and-forget: fetch off-chain links and cache for next request
+        solanaService.fetchOffchainLinks(helius.jsonUri).then(offchainLinks => {
+          const onchain = helius.onchainLinks || {};
+          const links = {};
+          for (const key of ['website', 'twitter', 'telegram', 'discord']) {
+            if (offchainLinks && offchainLinks[key]) links[key] = offchainLinks[key];
+            else if (onchain[key]) links[key] = onchain[key];
+          }
+          if (Object.keys(links).length > 0) {
+            cache.set(linksCacheKey, links, TTL.DAY);
+          }
+        }).catch(() => {});
+        // Use on-chain links as immediate fallback
         const onchain = helius.onchainLinks || {};
         for (const key of ['website', 'twitter', 'telegram', 'discord']) {
-          if (offchainLinks && offchainLinks[key]) mergedDefaultLinks[key] = offchainLinks[key];
-          else if (onchain[key]) mergedDefaultLinks[key] = onchain[key];
+          if (onchain[key]) mergedDefaultLinks[key] = onchain[key];
         }
-        if (Object.keys(mergedDefaultLinks).length > 0) {
-          await cache.set(linksCacheKey, mergedDefaultLinks, TTL.DAY);
-        }
-        // Don't cache empty — could be transient IPFS/network failure
       }
 
       const tokenResult = {
@@ -1420,8 +1420,6 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         holders: holders || null,
         // Token age (first pool creation timestamp from GeckoTerminal)
         pairCreatedAt: gecko.pairCreatedAt || null,
-        // Additional metadata
-        coingeckoId: coingeckoId,
         // Default social links from token metadata (not community-submitted)
         defaultLinks: Object.keys(mergedDefaultLinks).length > 0 ? mergedDefaultLinks : null,
         // Submissions
@@ -1881,6 +1879,13 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
     let lockedAmount = 0;
     const lpIndices = new Set();
     const burntIndices = new Set();
+
+    // Start Streamflow lock detection in parallel with account classification below
+    const streamflowPromise = solanaService.getStreamflowLockedAmount(mint, decimals).catch(err => {
+      console.warn('[Tokens] Failed to check Streamflow locks:', err.message);
+      return 0;
+    });
+
     // DAS fallback provides wallet addresses directly (via `wallet` field);
     // standard RPC provides token account addresses that need resolution.
     const usedDAS = !rpcAccounts;
@@ -1937,12 +1942,9 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
     } catch (err) {
       console.warn('[Tokens] Failed to classify holder accounts:', err.message);
     }
-    try {
-      // Locked detection: query Streamflow program accounts filtered by token mint
-      lockedAmount = await solanaService.getStreamflowLockedAmount(mint, decimals);
-    } catch (err) {
-      console.warn('[Tokens] Failed to check Streamflow locks:', err.message);
-    }
+
+    // Await Streamflow result (started above, ran in parallel with account classification)
+    lockedAmount = await streamflowPromise;
 
     // SPL burn detection — only reliable for pump.fun tokens where the initial supply
     // is known (exactly 1,000,000,000 with 6 decimals). For other tokens, the initial

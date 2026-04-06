@@ -944,7 +944,15 @@ async function getWalletHoldMetrics(walletAddress, tokenMint, ataAddress = null)
  * @param {number} decimals - Token decimals for converting raw amounts
  * @returns {Promise<number>} - Total locked amount in UI units (0 if none found)
  */
+// Cache Streamflow results — vesting schedules change slowly (1h TTL)
+const streamflowCache = new Map();
+const STREAMFLOW_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
 async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
+  // Check local cache first
+  const cached = streamflowCache.get(mintAddress);
+  if (cached && Date.now() < cached.expiry) return cached.value;
+
   const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
   const STREAM_ACC_SIZE = 1104;
   const MINT_OFFSET = 177;
@@ -984,9 +992,12 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
     }
 
     console.log(`[Solana] Streamflow locked for ${mintAddress}: ${totalLocked} (${result.length} contracts found)`);
+    streamflowCache.set(mintAddress, { value: totalLocked, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
     return totalLocked;
   } catch (error) {
     console.error('[Solana] getStreamflowLockedAmount error:', error.message);
+    // Cache zeros briefly (5 min) to avoid hammering RPC on repeated failures
+    streamflowCache.set(mintAddress, { value: 0, expiry: Date.now() + 5 * 60 * 1000 });
     return 0;
   }
 }

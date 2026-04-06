@@ -45,12 +45,18 @@ const tokenDetail = {
     this.bindEvents();
 
     try {
+      // Start Phase 2 loads early — don't wait for token detail to finish.
+      // These hit independent endpoints and can run in parallel with loadToken().
+      const phase2 = Promise.all([
+        this.loadPools(),
+        this.loadHolderAnalytics(),
+        this.loadCuratedData()
+      ]).catch(() => {});
+
       await this.loadToken();
       this.hideLoading();
 
       // Yield to the browser so it can reflow the just-shown #token-content.
-      // Without this, chart containers may still report 0 dimensions and LWCV
-      // throws "Value is null" on createChart().
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
       this.lastPriceUpdate = Date.now();
@@ -62,12 +68,8 @@ const tokenDetail = {
         this.recordView();
       }
 
-      // Load additional data in parallel
-      await Promise.all([
-        this.loadPools(),
-        this.loadHolderAnalytics(), // Load holder concentration data
-        this.loadCuratedData() // Load DexScreener curated data (banner + socials)
-      ]);
+      // Wait for Phase 2 to finish (likely already done since it started early)
+      await phase2;
 
       // Start price refresh and freshness timer
       this.startPriceRefresh();
