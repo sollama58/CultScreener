@@ -977,16 +977,29 @@ const tokenDetail = {
 
     // Elements we inject for the screenshot and remove after
     const injected = [];
+    // Elements we hide during the screenshot and restore after
+    const hidden = [];
+
+    const hideForScreenshot = (el) => {
+      if (!el) return;
+      el._prevDisplay = el.style.display;
+      el.style.display = 'none';
+      hidden.push(el);
+    };
+    const restoreHidden = () => {
+      hidden.forEach(el => { el.style.display = el._prevDisplay || ''; delete el._prevDisplay; });
+      hidden.length = 0;
+    };
+
     try {
       // Dynamically load html2canvas if not already loaded
       if (typeof html2canvas === 'undefined') {
         await new Promise((resolve, reject) => {
           const script = document.createElement('script');
           script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-          script.integrity = 'sha512-s/XK4vYVKcaIiQKMJCfR/fMzwEh3c21e6BRoeR6pqKFPNAIjMrGXFEV2QG7GC2tL6ND7FhiemSHkTSnXv1KMg==';
           script.crossOrigin = 'anonymous';
           script.onload = resolve;
-          script.onerror = reject;
+          script.onerror = () => reject(new Error('Failed to load html2canvas'));
           document.head.appendChild(script);
         });
       }
@@ -1000,6 +1013,11 @@ const tokenDetail = {
       const priceColor = priceChange >= 0 ? '#10b981' : '#ef4444';
       const logoSrc = document.getElementById('token-logo')?.src || '';
 
+      // Hide the share button, refresh button, and updated timestamp from screenshot
+      hideForScreenshot(document.getElementById('holders-share'));
+      hideForScreenshot(document.getElementById('holders-refresh'));
+      hideForScreenshot(document.getElementById('holders-updated'));
+
       // Add padding to the graphic container for the screenshot
       graphic.style.padding = '1.25rem';
 
@@ -1008,7 +1026,7 @@ const tokenDetail = {
       header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:0.85rem;margin-bottom:0.85rem;border-bottom:1px solid rgba(255,255,255,0.06);';
       header.innerHTML = `
         <div style="display:flex;align-items:center;gap:0.6rem;">
-          ${logoSrc ? `<img src="${esc(logoSrc)}" style="width:32px;height:32px;border-radius:50%;background:#161719;" crossorigin="anonymous">` : ''}
+          ${logoSrc ? `<img src="${esc(logoSrc)}" style="width:32px;height:32px;border-radius:50%;background:#161719;">` : ''}
           <div>
             <div style="font-size:1rem;font-weight:800;color:#f0f0f2;letter-spacing:-0.02em;line-height:1.2;">${esc(tokenName)}</div>
             <div style="font-size:0.7rem;font-family:'JetBrains Mono',monospace;color:#6b6b74;text-transform:uppercase;letter-spacing:0.04em;">${esc(tokenSymbol)}</div>
@@ -1029,7 +1047,7 @@ const tokenDetail = {
       injected.push(sectionTitle);
 
       // 3. Show watermark for screenshot (hidden on normal page)
-      const watermark = graphic.querySelector('.holders-watermark');
+      const watermark = graphic.querySelector('.diamond-hands-watermark');
       if (watermark) {
         watermark.style.display = 'flex';
         watermark.style.opacity = '0.8';
@@ -1039,6 +1057,7 @@ const tokenDetail = {
         backgroundColor: '#060607',
         scale: 2,
         useCORS: true,
+        allowTaint: true,
         logging: false,
         scrollY: -window.scrollY,
         windowHeight: graphic.scrollHeight,
@@ -1047,12 +1066,13 @@ const tokenDetail = {
       // Clean up injected elements
       injected.forEach(el => el.remove());
       graphic.style.padding = '';
-      if (watermark) { watermark.style.display = 'none'; watermark.style.opacity = ''; }
+      if (watermark) { watermark.style.display = ''; watermark.style.opacity = ''; }
+      restoreHidden();
 
       const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
       const filename = `${(tokenSymbol || tokenName || 'token').toLowerCase()}-conviction.png`;
 
-      // Try native share
+      // Try native share (mobile)
       if (navigator.share && navigator.canShare) {
         const file = new File([blob], filename, { type: 'image/png' });
         const shareData = { files: [file] };
@@ -1089,8 +1109,9 @@ const tokenDetail = {
       // Always clean up
       injected.forEach(el => { if (el.parentNode) el.remove(); });
       graphic.style.padding = '';
-      const watermark = document.querySelector('#holders-graphic .holders-watermark');
-      if (watermark) { watermark.style.display = 'none'; watermark.style.opacity = ''; }
+      const watermark = document.querySelector('#holders-graphic .diamond-hands-watermark');
+      if (watermark) { watermark.style.display = ''; watermark.style.opacity = ''; }
+      restoreHidden();
       if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
     }
   },
