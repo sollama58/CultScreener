@@ -338,7 +338,7 @@ const wallet = {
 
       return true;
     } catch (error) {
-      console.error('Wallet connection error:', error);
+      console.error('Wallet connection error:', error.message);
       if (error.code === 4001 || error.message?.includes('User rejected')) {
         if (typeof toast !== 'undefined') {
           toast.warning('Connection cancelled');
@@ -372,7 +372,7 @@ const wallet = {
       try {
         await this.provider.disconnect();
       } catch (error) {
-        console.error('Disconnect error:', error);
+        console.error('Disconnect error:', error.message);
       }
     }
 
@@ -411,7 +411,7 @@ const wallet = {
         address: this.address
       };
     } catch (error) {
-      console.error('Sign message error:', error);
+      console.error('Sign message error:', error.message);
       if (error.code === 4001 || error.message?.includes('User rejected')) {
         throw new Error('Signature request was cancelled');
       }

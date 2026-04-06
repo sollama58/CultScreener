@@ -360,7 +360,7 @@ const convictionPage = {
       }
     } catch (error) {
       _ok = false;
-      console.error('Conviction load error:', error);
+      console.error('Conviction load error:', error.message);
       if (statusEl) {
         statusEl.textContent = 'ERROR';
         statusEl.parentElement.classList.remove('loading');

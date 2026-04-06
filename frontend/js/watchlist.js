@@ -38,7 +38,7 @@ const watchlist = {
       // Notify any waiting code that watchlist is ready
       window.dispatchEvent(new CustomEvent('watchlistReady', { detail: { count: this.items.size } }));
     } catch (error) {
-      console.error('Failed to load watchlist:', error);
+      console.error('Failed to load watchlist:', error.message);
       this._loadFailed = true;
       this.isLoaded = true; // Prevent infinite retries on hard errors
     } finally {
@@ -85,7 +85,7 @@ const watchlist = {
       if (error.message?.includes('WATCHLIST_LIMIT')) {
         if (typeof toast !== 'undefined') toast.error('Watchlist limit reached (max 100 tokens)');
       } else {
-        console.error('Watchlist add error:', error);
+        console.error('Watchlist add error:', error.message);
         if (typeof toast !== 'undefined') toast.error('Failed to add to watchlist');
       }
       return false;
@@ -104,7 +104,7 @@ const watchlist = {
       this.updateWatchlistCount();
       return true;
     } catch (error) {
-      console.error('Watchlist remove error:', error);
+      console.error('Watchlist remove error:', error.message);
       if (typeof toast !== 'undefined') toast.error('Failed to remove from watchlist');
       return false;
     }
@@ -191,7 +191,7 @@ const watchlist = {
       const response = await api.watchlist.get(wallet.address);
       return response?.tokens || [];
     } catch (error) {
-      console.error('Failed to get watchlist:', error);
+      console.error('Failed to get watchlist:', error.message);
       return [];
     }
   },
@@ -209,7 +209,7 @@ const watchlist = {
       });
       return response?.watchlist || {};
     } catch (error) {
-      console.error('Failed to batch check watchlist:', error);
+      console.error('Failed to batch check watchlist:', error.message);
       return {};
     }
   }

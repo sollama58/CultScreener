@@ -69,7 +69,7 @@ const tokenDetail = {
       };
       window.addEventListener('walletConnected', this._walletConnectedHandler);
     } catch (error) {
-      console.error('Failed to initialize token page:', error);
+      console.error('Failed to initialize token page:', error.message);
       this.showError('Failed to load token data. Please try again.');
     }
   },
@@ -289,7 +289,7 @@ const tokenDetail = {
         this.startPriceRefresh();
       }
     } catch (error) {
-      console.error('Price refresh failed:', error);
+      console.error('Price refresh failed:', error.message);
       this._consecutivePriceErrors++;
       if (this._consecutivePriceErrors >= 3) {
         this.startPriceRefresh(); // Restart with backed-off interval
@@ -499,6 +499,31 @@ const tokenDetail = {
       jupiterLink.href = `https://jup.ag/swap?sell=So11111111111111111111111111111111111111112&buy=${this.mint}`;
     }
 
+    // Render banner — try community submissions first, curated data will override if available
+    if (token.submissions && token.submissions.banners && token.submissions.banners.length > 0) {
+      const topBanner = token.submissions.banners[0];
+      if (topBanner.content_url) {
+        this.renderCuratedBanner({ bannerUrl: topBanner.content_url });
+      }
+    }
+
+    // Render social links from on-chain metadata (defaultLinks) or community submissions
+    if (token.defaultLinks) {
+      this.renderCuratedSocials({ socials: token.defaultLinks });
+    }
+    if (token.submissions && token.submissions.socials && token.submissions.socials.length > 0) {
+      // Build socials map from community submissions (overrides defaultLinks)
+      const socials = {};
+      for (const s of token.submissions.socials) {
+        if (s.submission_type && s.content_url) {
+          socials[s.submission_type] = s.content_url;
+        }
+      }
+      if (Object.keys(socials).length > 0) {
+        this.renderCuratedSocials({ socials });
+      }
+    }
+
   },
 
   // Load pools
@@ -542,7 +567,7 @@ const tokenDetail = {
       }
     } catch (error) {
       _ok = false;
-      console.error('Failed to load pools:', error);
+      console.error('Failed to load pools:', error.message);
       if (loadingEl) loadingEl.style.display = 'none';
       if (emptyEl) {
         emptyEl.textContent = 'Failed to load pool data.';
@@ -1131,7 +1156,7 @@ const tokenDetail = {
         if (typeof toast !== 'undefined') toast.success('Screenshot downloaded!');
       }
     } catch (err) {
-      console.error('Share conviction stats error:', err);
+      console.error('Share conviction stats error:', err.message);
       if (typeof toast !== 'undefined') toast.error('Failed to capture screenshot');
     } finally {
       restoreAll();
@@ -1266,8 +1291,17 @@ const tokenDetail = {
     if (!token.bannerUrl) return;
     const container = document.getElementById('token-banner');
     if (!container) return;
-    container.innerHTML = `<img src="${utils.escapeHtml(token.bannerUrl)}" alt="Token banner" class="token-banner-img">`;
-    container.style.display = '';
+    // Use an Image object to verify the URL loads before showing the banner
+    const img = new Image();
+    img.onload = () => {
+      container.innerHTML = `<img src="${utils.escapeHtml(token.bannerUrl)}" alt="Token banner" class="token-banner-img">`;
+      container.style.display = '';
+    };
+    img.onerror = () => {
+      // Banner URL is broken — hide the container
+      container.style.display = 'none';
+    };
+    img.src = token.bannerUrl;
   },
 
   renderCuratedSocials(token) {

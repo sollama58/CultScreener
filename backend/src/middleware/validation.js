@@ -351,16 +351,16 @@ function validatePagination(req, res, next) {
 
   if (offset) {
     const offsetNum = parseInt(offset);
-    if (isNaN(offsetNum) || offsetNum < 0) {
-      return res.status(400).json({ error: 'Offset must be 0 or greater' });
+    if (isNaN(offsetNum) || offsetNum < 0 || offsetNum > 10000) {
+      return res.status(400).json({ error: 'Offset must be between 0 and 10000' });
     }
     req.query.offset = offsetNum;
   }
 
   if (page) {
     const pageNum = parseInt(page);
-    if (isNaN(pageNum) || pageNum < 1) {
-      return res.status(400).json({ error: 'Page must be 1 or greater' });
+    if (isNaN(pageNum) || pageNum < 1 || pageNum > 1000) {
+      return res.status(400).json({ error: 'Page must be between 1 and 1000' });
     }
     req.query.page = pageNum;
   }

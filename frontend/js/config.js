@@ -265,7 +265,8 @@ Object.freeze(config.storageKeys);
   document.head.appendChild(style);
 })();
 
-// Export for debugging
+// Export for debugging (localhost only)
 if (config.app.debug) {
+  // Intentionally behind debug flag — only logs on localhost
   console.log('CultScreener Config:', config);
 }

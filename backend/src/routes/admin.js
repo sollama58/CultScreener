@@ -33,7 +33,7 @@ router.post('/login', veryStrictLimiter, asyncHandler(async (req, res) => {
   res.cookie('admin_session', token, {
     maxAge: ADMIN_SESSION_DURATION_MS,
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     sameSite: 'strict',
     path: '/'
   });
@@ -314,7 +314,7 @@ router.post('/announcements', strictLimiter, asyncHandler(async (req, res) => {
 
 router.patch('/announcements/:id', strictLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
   // Validate fields consistent with POST endpoint
   const updates = {};
@@ -347,7 +347,7 @@ router.patch('/announcements/:id', strictLimiter, asyncHandler(async (req, res) 
 
 router.delete('/announcements/:id', strictLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
   const result = await db.deleteAnnouncement(id);
   if (!result) return res.status(404).json({ error: 'Announcement not found' });
@@ -376,7 +376,7 @@ router.get('/bug-reports', asyncHandler(async (req, res) => {
 
 router.patch('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
   const validStatuses = ['new', 'acknowledged', 'resolved', 'dismissed'];
   if (req.body.status && !validStatuses.includes(req.body.status)) {
@@ -390,7 +390,7 @@ router.patch('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) =>
 
 router.delete('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
   const result = await db.deleteBugReport(id);
   if (!result) return res.status(404).json({ error: 'Bug report not found' });
@@ -419,7 +419,7 @@ router.get('/submissions', asyncHandler(async (req, res) => {
 
 router.patch('/submissions/:id', strictLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
   const validStatuses = ['approved', 'rejected', 'pending'];
   if (!req.body.status || !validStatuses.includes(req.body.status)) {

@@ -91,7 +91,7 @@ const communityPage = {
         });
       });
     } catch (err) {
-      console.error('My watchlist error:', err);
+      console.error('My watchlist error:', err.message);
       tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state">Failed to load watchlist</div></td></tr>';
     }
   },
@@ -143,7 +143,7 @@ const communityPage = {
 
       this.bindRowClicks(tbody);
     } catch (err) {
-      console.error('Watchlist leaderboard error:', err);
+      console.error('Watchlist leaderboard error:', err.message);
       tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state">Failed to load leaderboard</div></td></tr>';
     }
   },

@@ -240,7 +240,7 @@ const admin = {
       this.setText('stat-recent-subs', s.recentSubmissions);
       this.setText('stat-recent-votes', s.recentVotes);
     } catch (err) {
-      console.error('Stats load error:', err);
+      console.error('Stats load error:', err.message);
     }
   },
 
