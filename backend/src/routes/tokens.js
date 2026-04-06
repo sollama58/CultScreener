@@ -1821,7 +1821,9 @@ router.get('/:mint/holder/:wallet', validateMint, asyncHandler(async (req, res) 
 }));
 
 // GET /api/tokens/:mint/holders - Top holder analytics
-// Returns the 20 largest token accounts with concentration metrics
+// Phase 1 (inline): Fetch largest accounts + supply (2 fast RPC calls)
+// Phase 2 (worker): Classify LP/burn/lock, resolve wallets (6+ slow RPC calls)
+// If the worker result is cached, returns full data immediately.
 router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const cacheKey = `holder-analytics:${mint}`;
@@ -1833,25 +1835,20 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
       if (cached) return res.json(cached);
     }
 
-    // Get largest accounts, supply, mint account info, and token authorities in parallel.
-    // Try standard RPC first (fast, pre-sorted), fall back to Helius DAS if it fails.
-    const [rpcAccounts, supplyResult, mintAccount, tokenAuth] = await Promise.all([
+    // Phase 1: Fast inline — only the 2 cheapest RPC calls
+    const [rpcAccounts, supplyResult] = await Promise.all([
       solanaService.getTokenLargestAccounts(mint),
-      solanaService.getTokenSupply(mint).catch(catchUnlessOverloaded(null)),
-      solanaService.getAccountInfo(mint).catch(catchUnlessOverloaded(null)),
-      solanaService.getTokenAuthorities(mint).catch(catchUnlessOverloaded(null))
+      solanaService.getTokenSupply(mint).catch(catchUnlessOverloaded(null))
     ]);
 
     // If standard RPC failed, try Helius DAS API as fallback
     let largestAccounts = rpcAccounts;
     if (!largestAccounts) {
-      const decimals = supplyResult?.value?.decimals || mintAccount?.value?.data?.parsed?.info?.decimals || 0;
-      console.log(`[Tokens] Standard RPC failed for ${mint}, trying Helius DAS fallback (decimals=${decimals})`);
+      const decimals = supplyResult?.value?.decimals || 0;
       largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, decimals);
     }
 
     if (!largestAccounts || largestAccounts.length === 0) {
-      // Both methods failed — don't cache the failure
       return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: !rpcAccounts ? 'rpc_unavailable' : null });
     }
 
@@ -1859,171 +1856,24 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
       ? parseFloat(supplyResult.value.uiAmountString || supplyResult.value.uiAmount || 0)
       : null;
 
-    // Parse supply details + check for locked/burnt tokens among top holders
-    let supply = null;
-    const mintData = mintAccount?.value?.data?.parsed?.info;
-    const decimals = mintData?.decimals || supplyResult?.value?.decimals || 0;
-    const currentSupply = mintData
-      ? parseFloat(mintData.supply) / Math.pow(10, decimals)
-      : totalSupply;
-
-    // Classify top holder accounts:
-    // - Burnt: tokens sent to known dead/burn wallet addresses
-    // - LP: tokens held by liquidity pool programs (Raydium, Orca, Meteora, etc.)
-    // - Locked: Streamflow vesting contracts (queried by mint address)
-    let deadWalletBurnt = 0;
-    let lockedAmount = 0;
-    const lpIndices = new Set();
-    const burntIndices = new Set();
-
-    // Start Streamflow lock detection in parallel with account classification below
-    const streamflowPromise = solanaService.getStreamflowLockedAmount(mint, decimals).catch(err => {
-      console.warn('[Tokens] Failed to check Streamflow locks:', err.message);
-      return 0;
-    });
-
-    // DAS fallback provides wallet addresses directly (via `wallet` field);
-    // standard RPC provides token account addresses that need resolution.
-    const usedDAS = !rpcAccounts;
-    try {
-      const walletToIndices = new Map();
-      if (usedDAS) {
-        // DAS path: largestAccounts[].wallet is already the wallet owner
-        largestAccounts.slice(0, 20).forEach((a, i) => {
-          if (!a.wallet) return;
-          if (BURN_WALLETS.has(a.wallet)) {
-            deadWalletBurnt += a.uiAmount;
-            burntIndices.add(i);
-            return;
-          }
-          if (!walletToIndices.has(a.wallet)) walletToIndices.set(a.wallet, []);
-          walletToIndices.get(a.wallet).push(i);
-        });
-      } else {
-        // Standard RPC path: resolve token account addresses → wallet owners
-        const accountAddresses = largestAccounts.slice(0, 20).map(a => a.address);
-        const tokenAccounts = await solanaService.getMultipleAccounts(accountAddresses);
-        if (tokenAccounts?.value) {
-          tokenAccounts.value.forEach((acct, i) => {
-            const wallet = acct?.data?.parsed?.info?.owner;
-            if (!wallet) return;
-            largestAccounts[i].wallet = wallet; // Store for display
-            if (BURN_WALLETS.has(wallet)) {
-              deadWalletBurnt += largestAccounts[i].uiAmount;
-              burntIndices.add(i);
-              return;
-            }
-            if (!walletToIndices.has(wallet)) walletToIndices.set(wallet, []);
-            walletToIndices.get(wallet).push(i);
-          });
-        }
-      }
-
-      // Check wallet accounts' on-chain owner to detect LP programs
-      const wallets = [...walletToIndices.keys()];
-      if (wallets.length > 0) {
-        const walletAccounts = await solanaService.getMultipleAccounts(wallets);
-        if (walletAccounts?.value) {
-          walletAccounts.value.forEach((acct, wi) => {
-            if (!acct) return;
-            if (LP_PROGRAMS.has(acct.owner)) {
-              const indices = walletToIndices.get(wallets[wi]);
-              if (indices) {
-                for (const idx of indices) lpIndices.add(idx);
-              }
-            }
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('[Tokens] Failed to classify holder accounts:', err.message);
-    }
-
-    // Await Streamflow result (started above, ran in parallel with account classification)
-    lockedAmount = await streamflowPromise;
-
-    // SPL burn detection — only reliable for pump.fun tokens where the initial supply
-    // is known (exactly 1,000,000,000 with 6 decimals). For other tokens, the initial
-    // supply is unknown so we can't calculate SPL burns accurately.
-    // Dead wallet burns (tokens sent to incinerator etc.) are detected for all tokens
-    // via the top-holder scan above.
-    const PUMP_FUN_AUTHORITIES = new Set([
-      'TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM',  // pump.fun metadata authority
-      '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',  // pump.fun program
-      '39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg', // pump.fun fee account
-    ]);
-
-    let splBurnt = 0;
-    let isPumpFun = false;
-
-    if (currentSupply && currentSupply > 0) {
-      // Pump.fun detection — check Helius authorities first
-      const isPumpFunAuth = tokenAuth?.authorities?.some(a => PUMP_FUN_AUTHORITIES.has(a.address));
-
-      // Fallback: detect via mint account pattern (6 decimals, both authorities revoked,
-      // supply <= 1B). Catches tokens when Helius DAS doesn't return authority data.
-      const isPumpFunMint = !isPumpFunAuth && decimals === 6 && mintData
-        && mintData.mintAuthority === null
-        && mintData.freezeAuthority === null
-        && currentSupply > 0 && currentSupply <= 1000000000;
-
-      isPumpFun = !!(isPumpFunAuth || isPumpFunMint);
-
-      if (isPumpFun && decimals === 6) {
-        const initialSupply = 1000000000; // 1 billion — all pump.fun tokens
-        if (initialSupply > currentSupply) {
-          splBurnt = initialSupply - currentSupply;
-        }
-      }
-    }
-
-    const burntAmount = splBurnt + deadWalletBurnt;
-    // For pump.fun, denominator is the known 1B initial supply.
-    // For dead-wallet-only burns, use currentSupply (tokens still exist on-chain).
-    const supplyDenominator = isPumpFun ? 1000000000 : currentSupply;
-
-    supply = {
-      total: currentSupply,
-      burnt: burntAmount,
-      burntPct: supplyDenominator > 0 && burntAmount > 0 ? (burntAmount / supplyDenominator) * 100 : 0,
-      locked: lockedAmount,
-      lockedPct: currentSupply > 0 && lockedAmount > 0 ? (lockedAmount / currentSupply) * 100 : 0,
-      splBurnt,
-      deadWalletBurnt,
-      isPumpFun
-    };
-
-    // Build holders list with LP/burnt flags
-    // Prefer wallet address (meaningful to users) over token account address
+    // Build basic holders list (no LP/burn flags yet — those come from the worker)
     const holders = largestAccounts.map((a, i) => ({
       rank: i + 1,
       address: a.wallet || a.address,
       balance: a.uiAmount,
-      percentage: (totalSupply || currentSupply) > 0 ? (a.uiAmount / (totalSupply || currentSupply)) * 100 : null,
-      isLP: lpIndices.has(i),
-      isBurnt: burntIndices.has(i)
+      percentage: totalSupply > 0 ? (a.uiAmount / totalSupply) * 100 : null,
+      isLP: false,
+      isBurnt: false
     })).filter(h => h.balance > 0);
 
-    // Concentration metrics — exclude LP and burnt wallets
-    const realHolders = holders.filter(h => !h.isLP && !h.isBurnt);
+    // Basic concentration metrics (will be refined by worker once LP/burn flags are set)
     let metrics = null;
-    if (totalSupply > 0 && realHolders.length > 0) {
-      const top5Pct = realHolders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top10Pct = realHolders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top20Pct = realHolders.reduce((s, h) => s + (h.percentage || 0), 0);
+    if (totalSupply > 0 && holders.length > 0) {
+      const top5Pct = holders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
+      const top10Pct = holders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
+      const top20Pct = holders.slice(0, 20).reduce((s, h) => s + (h.percentage || 0), 0);
+      const top1Pct = holders[0]?.percentage || 0;
 
-      // Herfindahl-Hirschman Index (0-10000 scale) — higher = more concentrated
-      const herfindahl = realHolders.reduce((s, h) => s + Math.pow(h.percentage || 0, 2), 0);
-
-      // #1 holder dominance — what % of top-20 holdings belong to the single largest holder
-      const top1Pct = realHolders[0]?.percentage || 0;
-      const dominance = top20Pct > 0 ? (top1Pct / top20Pct) * 100 : 0;
-
-      // Average holding among real holders (excl LP/burnt)
-      const avgBalance = realHolders.reduce((s, h) => s + h.balance, 0) / realHolders.length;
-      const avgPct = top20Pct / realHolders.length;
-
-      // Concentration risk rating
       let riskLevel = 'low';
       if (top10Pct > 70 || top1Pct > 30) riskLevel = 'high';
       else if (top10Pct > 40 || top1Pct > 15) riskLevel = 'medium';
@@ -2032,23 +1882,22 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
         top5Pct: Math.round(top5Pct * 100) / 100,
         top10Pct: Math.round(top10Pct * 100) / 100,
         top20Pct: Math.round(top20Pct * 100) / 100,
-        herfindahl: Math.round(herfindahl),
+        herfindahl: Math.round(holders.slice(0, 20).reduce((s, h) => s + Math.pow(h.percentage || 0, 2), 0)),
         top1Pct: Math.round(top1Pct * 100) / 100,
-        dominance: Math.round(dominance * 100) / 100,
-        avgBalance: avgBalance,
-        avgPct: Math.round(avgPct * 100) / 100,
-        riskLevel: riskLevel,
-        holderCount: null // populated below from cache or background fetch
+        dominance: top20Pct > 0 ? Math.round((top1Pct / top20Pct) * 10000) / 100 : 0,
+        avgBalance: holders.reduce((s, h) => s + h.balance, 0) / holders.length,
+        avgPct: Math.round((top20Pct / Math.min(holders.length, 20)) * 100) / 100,
+        riskLevel,
+        holderCount: null
       };
 
-      // Use cached holder count — never block response on paginated DAS call
+      // Use cached holder count
       try {
         const totalCount = await cache.get(`holder-total:${mint}`)
           || await cache.get(keys.holderCount(mint));
         if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
         } else if (solanaService.isHeliusConfigured()) {
-          // Fire-and-forget: populate cache for next request without blocking response
           solanaService.getTokenHolderCount(mint).then(count => {
             if (count && count > 0) {
               cache.set(`holder-total:${mint}`, count, TTL.DAY);
@@ -2059,14 +1908,174 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
       } catch (_) {}
     }
 
-    const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
-    await cache.set(cacheKey, result, TTL.HOUR);
-    if (!res.headersSent) res.json(result);
+    // Build fast result and cache briefly (worker will overwrite with full data)
+    const fastResult = { holders, totalSupply, metrics, supply: null, fetchedAt: Date.now() };
+    // Only cache if we don't already have a full result being computed
+    const pendingKey = `holder-classify-pending:${mint}`;
+    const alreadyPending = await cache.get(pendingKey);
+    if (!alreadyPending) {
+      // Cache fast result with short TTL — worker will replace it with full data
+      await cache.set(cacheKey, fastResult, 120000); // 2 min
+
+      // Phase 2: Queue heavy classification to worker
+      await cache.set(pendingKey, Date.now(), 120000);
+      const rawAccounts = largestAccounts.slice(0, 20).map(a => ({
+        address: a.address,
+        wallet: a.wallet || null,
+        uiAmount: a.uiAmount
+      }));
+      const job = await jobQueue.addAnalyticsJob('compute-holder-analytics', {
+        mint,
+        rawAccounts,
+        totalSupply,
+        usedDAS: !rpcAccounts,
+        supplyDecimals: supplyResult?.value?.decimals || 0
+      });
+      if (!job) {
+        // No worker available — do classification inline as fallback
+        await cache.delete(pendingKey);
+        await _classifyHoldersInline(mint, rawAccounts, totalSupply, !rpcAccounts, supplyResult, cacheKey);
+      }
+    }
+
+    if (!res.headersSent) res.json(fastResult);
   } catch (error) {
     console.error('[Tokens] Holder analytics error:', error.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch holder data' });
   }
 }));
+
+// Inline fallback for holder classification when worker is unavailable.
+// Still runs in the API process but AFTER the response is sent (fire-and-forget).
+async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, supplyResult, cacheKey) {
+  setImmediate(() => {
+    (async () => {
+      try {
+        const [mintAccount, tokenAuth] = await Promise.all([
+          solanaService.getAccountInfo(mint).catch(() => null),
+          solanaService.getTokenAuthorities(mint).catch(() => null)
+        ]);
+
+        const mintData = mintAccount?.value?.data?.parsed?.info;
+        const decimals = mintData?.decimals || supplyResult?.value?.decimals || 0;
+        const currentSupply = mintData
+          ? parseFloat(mintData.supply) / Math.pow(10, decimals)
+          : totalSupply;
+
+        let deadWalletBurnt = 0;
+        const lpIndices = new Set();
+        const burntIndices = new Set();
+
+        const streamflowPromise = solanaService.getStreamflowLockedAmount(mint, decimals).catch(() => 0);
+
+        const walletToIndices = new Map();
+        if (usedDAS) {
+          rawAccounts.forEach((a, i) => {
+            if (!a.wallet) return;
+            if (BURN_WALLETS.has(a.wallet)) { deadWalletBurnt += a.uiAmount; burntIndices.add(i); return; }
+            if (!walletToIndices.has(a.wallet)) walletToIndices.set(a.wallet, []);
+            walletToIndices.get(a.wallet).push(i);
+          });
+        } else {
+          const accts = await solanaService.getMultipleAccounts(rawAccounts.map(a => a.address));
+          if (accts?.value) {
+            accts.value.forEach((acct, i) => {
+              const wallet = acct?.data?.parsed?.info?.owner;
+              if (!wallet) return;
+              rawAccounts[i].wallet = wallet;
+              if (BURN_WALLETS.has(wallet)) { deadWalletBurnt += rawAccounts[i].uiAmount; burntIndices.add(i); return; }
+              if (!walletToIndices.has(wallet)) walletToIndices.set(wallet, []);
+              walletToIndices.get(wallet).push(i);
+            });
+          }
+        }
+
+        const wallets = [...walletToIndices.keys()];
+        if (wallets.length > 0) {
+          const walletAccounts = await solanaService.getMultipleAccounts(wallets);
+          if (walletAccounts?.value) {
+            walletAccounts.value.forEach((acct, wi) => {
+              if (acct && LP_PROGRAMS.has(acct.owner)) {
+                const indices = walletToIndices.get(wallets[wi]);
+                if (indices) for (const idx of indices) lpIndices.add(idx);
+              }
+            });
+          }
+        }
+
+        const lockedAmount = await streamflowPromise;
+        const result = _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintData, tokenAuth, lpIndices, burntIndices, deadWalletBurnt, lockedAmount, decimals, mint);
+        await cache.set(cacheKey, result, TTL.HOUR);
+      } catch (err) {
+        console.error('[Tokens] Inline holder classify failed:', err.message);
+      }
+    })();
+  });
+}
+
+// Shared logic to build the full holder analytics result with LP/burn/lock flags
+function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintData, tokenAuth, lpIndices, burntIndices, deadWalletBurnt, lockedAmount, decimals, mint) {
+  // SPL burn detection (pump.fun only)
+  const PUMP_FUN_AUTHORITIES = new Set([
+    'TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM',
+    '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
+    '39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg',
+  ]);
+
+  let splBurnt = 0;
+  let isPumpFun = false;
+  if (currentSupply && currentSupply > 0) {
+    const isPumpFunAuth = tokenAuth?.authorities?.some(a => PUMP_FUN_AUTHORITIES.has(a.address));
+    const isPumpFunMint = !isPumpFunAuth && decimals === 6 && mintData
+      && mintData.mintAuthority === null && mintData.freezeAuthority === null
+      && currentSupply > 0 && currentSupply <= 1000000000;
+    isPumpFun = !!(isPumpFunAuth || isPumpFunMint);
+    if (isPumpFun && decimals === 6) {
+      const diff = 1000000000 - currentSupply;
+      if (diff > 0) splBurnt = diff;
+    }
+  }
+
+  const burntAmount = splBurnt + deadWalletBurnt;
+  const supplyDenominator = isPumpFun ? 1000000000 : currentSupply;
+  const supply = {
+    total: currentSupply, burnt: burntAmount,
+    burntPct: supplyDenominator > 0 && burntAmount > 0 ? (burntAmount / supplyDenominator) * 100 : 0,
+    locked: lockedAmount, lockedPct: currentSupply > 0 && lockedAmount > 0 ? (lockedAmount / currentSupply) * 100 : 0,
+    splBurnt, deadWalletBurnt, isPumpFun
+  };
+
+  const holders = rawAccounts.map((a, i) => ({
+    rank: i + 1, address: a.wallet || a.address, balance: a.uiAmount,
+    percentage: (totalSupply || currentSupply) > 0 ? (a.uiAmount / (totalSupply || currentSupply)) * 100 : null,
+    isLP: lpIndices.has(i), isBurnt: burntIndices.has(i)
+  })).filter(h => h.balance > 0);
+
+  const realHolders = holders.filter(h => !h.isLP && !h.isBurnt);
+  let metrics = null;
+  if ((totalSupply || currentSupply) > 0 && realHolders.length > 0) {
+    const top5Pct = realHolders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
+    const top10Pct = realHolders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
+    const top20Pct = realHolders.reduce((s, h) => s + (h.percentage || 0), 0);
+    const top1Pct = realHolders[0]?.percentage || 0;
+    let riskLevel = 'low';
+    if (top10Pct > 70 || top1Pct > 30) riskLevel = 'high';
+    else if (top10Pct > 40 || top1Pct > 15) riskLevel = 'medium';
+
+    metrics = {
+      top5Pct: Math.round(top5Pct * 100) / 100, top10Pct: Math.round(top10Pct * 100) / 100,
+      top20Pct: Math.round(top20Pct * 100) / 100,
+      herfindahl: Math.round(realHolders.reduce((s, h) => s + Math.pow(h.percentage || 0, 2), 0)),
+      top1Pct: Math.round(top1Pct * 100) / 100,
+      dominance: top20Pct > 0 ? Math.round((top1Pct / top20Pct) * 10000) / 100 : 0,
+      avgBalance: realHolders.reduce((s, h) => s + h.balance, 0) / realHolders.length,
+      avgPct: Math.round((top20Pct / realHolders.length) * 100) / 100,
+      riskLevel, holderCount: null
+    };
+  }
+
+  return { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
+}
 
 // GET /api/tokens/:mint/holders/hold-times - Average hold time per holder wallet
 // Returns cached per-wallet hold times immediately. If any wallets are stale
@@ -2096,40 +2105,24 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
       .filter(h => !h.isLP && !h.isBurnt && h.address)
       .map(h => h.address);
 
-    // Use shared sample cache (wallet + ATA pairs) for efficient hold-time lookups
+    // Use shared sample cache (wallet + ATA pairs) for efficient hold-time lookups.
+    // The sample is pre-fetched by the compute-holder-analytics worker job.
+    // If it's not cached yet, return computed: false so the frontend keeps polling.
     let wallets = top20Wallets;
-    let ataMap = {}; // wallet → ATA address (saves 1 RPC call per wallet)
-    if (solanaService.isHeliusConfigured()) {
-      try {
-        const sampleCacheKey = `diamond-hands-wallets:${mint}`;
-        let sample = await cache.get(sampleCacheKey);
-        if (!sample) {
-          const excludeSet = new Set([...BURN_WALLETS, ...LP_PROGRAMS]);
-          const sampleResult = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
-          if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
-            sample = sampleResult.holders;
-            if (sampleResult.totalHolders) {
-              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
-            }
-            await cache.set(sampleCacheKey, sample, TTL.HOUR);
-          }
+    let ataMap = {};
+    const sampleCacheKey = `diamond-hands-wallets:${mint}`;
+    const sample = await cache.get(sampleCacheKey);
+    if (Array.isArray(sample)) {
+      for (const entry of sample) {
+        if (typeof entry === 'object' && entry.wallet) {
+          ataMap[entry.wallet] = entry.ata;
         }
-        // Build ATA map from sample (new format: [{wallet, ata}])
-        if (Array.isArray(sample)) {
-          for (const entry of sample) {
-            if (typeof entry === 'object' && entry.wallet) {
-              ataMap[entry.wallet] = entry.ata;
-            }
-          }
-          const sampleWallets = sample.map(e => typeof e === 'object' ? e.wallet : e);
-          if (sampleWallets.length > top20Wallets.length) {
-            const top20Set = new Set(top20Wallets);
-            const extra = sampleWallets.filter(w => !top20Set.has(w));
-            wallets = [...top20Wallets, ...extra];
-          }
-        }
-      } catch (err) {
-        console.warn('[HoldTimes] Failed to expand holder sample:', err.message);
+      }
+      const sampleWallets = sample.map(e => typeof e === 'object' ? e.wallet : e);
+      if (sampleWallets.length > top20Wallets.length) {
+        const top20Set = new Set(top20Wallets);
+        const extra = sampleWallets.filter(w => !top20Set.has(w));
+        wallets = [...top20Wallets, ...extra];
       }
     }
 
@@ -2174,107 +2167,23 @@ router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, r
       }
     }));
 
-    // Dispatch computation for stale wallets — try worker, fall back to inline.
+    // Dispatch computation for stale wallets to the worker.
     // Uses a unified pending key shared with diamond-hands so only ONE computation
     // runs per token, even when both endpoints are called simultaneously.
     let computed = true;
     if (staleWallets.length > 0) {
       const pendingKey = `holder-metrics-pending:${mint}`;
       const pending = await cache.get(pendingKey);
-      let needsComputation = false;
 
       if (!pending) {
-        needsComputation = true;
-      } else if (typeof pending === 'number' && (Date.now() - pending) > 30000) {
-        console.log(`[HolderMetrics] Pending for ${Math.round((Date.now() - pending) / 1000)}s, stale wallets remain — forcing inline fallback`);
-        await cache.delete(pendingKey);
-        needsComputation = true;
-      } else {
-        console.log(`[HolderMetrics] Already pending (${typeof pending === 'number' ? Math.round((Date.now() - pending) / 1000) + 's ago' : 'flag'}), ${staleWallets.length} stale wallets — waiting`);
-      }
-
-      if (needsComputation) {
         await cache.set(pendingKey, Date.now(), 120000);
-        let useInline = false;
-
         const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
           mint,
           wallets: staleWallets
         });
-
-        if (job) {
-          const workerActive = await jobQueue.isWorkerActive();
-          if (!workerActive) {
-            console.log(`[HolderMetrics] Job queued but no active worker — using inline fallback`);
-            useInline = true;
-          } else {
-            console.log(`[HolderMetrics] Job queued to worker for ${staleWallets.length} wallets`);
-          }
-        } else {
-          console.log(`[HolderMetrics] Job queue unavailable — using inline fallback`);
-          useInline = true;
-        }
-
-        if (useInline) {
-          const bgMint = mint;
-          const HOLD_CACHE_MS = 172800000; // 48h — hold times don't change fast
-
-          // Compute top 10 wallets synchronously (1 RPC call each with ATA)
-          const syncWallets = staleWallets.slice(0, 10);
-          const asyncWallets = staleWallets.slice(10);
-
-          console.log(`[HolderMetrics] Inline: ${syncWallets.length} sync, ${asyncWallets.length} async for ${bgMint}`);
-
-          const syncResults = await Promise.all(
-            syncWallets.map(async (wallet) => {
-              try {
-                const holdTime = await solanaService.getTokenHoldTime(wallet, bgMint, ataMap[wallet] || null);
-                return [wallet, holdTime];
-              } catch { return [wallet, null]; }
-            })
-          );
-
-          for (const [wallet, holdTime] of syncResults) {
-            const val = holdTime ?? -1;
-            await cache.set(`wallet-hold-time:${wallet}`, val, HOLD_CACHE_MS);
-            await cache.set(`wallet-token-hold:${wallet}:${bgMint}`, val, HOLD_CACHE_MS);
-            if (val > 0) { holdTimes[wallet] = val; tokenHoldTimes[wallet] = val; }
-          }
-
-          // Remaining wallets in background
-          if (asyncWallets.length > 0) {
-            setImmediate(() => {
-              (async () => {
-                const BATCH_SIZE = 5;
-                let ok = 0, fail = 0;
-                try {
-                  for (let i = 0; i < asyncWallets.length; i += BATCH_SIZE) {
-                    const batch = asyncWallets.slice(i, i + BATCH_SIZE);
-                    const results = await Promise.all(
-                      batch.map(async (w) => {
-                        try {
-                          return [w, await solanaService.getTokenHoldTime(w, bgMint, ataMap[w] || null)];
-                        } catch { return [w, null]; }
-                      })
-                    );
-                    for (const [w, ht] of results) {
-                      const val = ht ?? -1;
-                      await cache.set(`wallet-hold-time:${w}`, val, HOLD_CACHE_MS);
-                      await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, HOLD_CACHE_MS);
-                      if (val > 0) ok++; else fail++;
-                    }
-                  }
-                  console.log(`[HolderMetrics] Async done for ${bgMint}: ${ok} ok, ${fail} fail`);
-                } catch (err) {
-                  console.error(`[HolderMetrics] Async failed for ${bgMint}:`, err.message);
-                } finally {
-                  await cache.delete(`holder-metrics-pending:${bgMint}`);
-                }
-              })();
-            });
-          } else {
-            await cache.delete(`holder-metrics-pending:${bgMint}`);
-          }
+        if (!job) {
+          // Queue unavailable — clear pending so next poll retries
+          await cache.delete(pendingKey);
         }
       }
 
@@ -2319,21 +2228,12 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
       return res.json(cached);
     }
 
-    // Get holder sample — filter out burn wallets and LP programs
+    // Get holder sample from cache — pre-fetched by the compute-holder-analytics worker.
+    // If not cached yet, return computed: false so the frontend keeps polling.
     const walletsCacheKey = `diamond-hands-wallets:${mint}`;
-    let wallets = await cache.get(walletsCacheKey);
-    if (!wallets) {
-      // Combine burn + LP addresses into a single exclusion set
-      const excludeSet = new Set([...BURN_WALLETS, ...LP_PROGRAMS]);
-      const sampleResult = await solanaService.getTokenHolderSample(mint, 250, excludeSet);
-      if (!sampleResult || !sampleResult.holders || sampleResult.holders.length === 0) {
-        return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
-      }
-      wallets = sampleResult.holders;
-      if (sampleResult.totalHolders) {
-        await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
-      }
-      await cache.set(walletsCacheKey, wallets, 3 * TTL.HOUR);
+    const wallets = await cache.get(walletsCacheKey);
+    if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
+      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
     }
 
     // Extract wallet addresses (new format: [{wallet, ata}], backwards-compat with old [string])
@@ -2386,84 +2286,14 @@ router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req
 
     if (!isStillPending) {
       await cache.set(pendingKey, Date.now(), 300000); // 5 min dedup
-
       const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
         mint,
         wallets: uncached
       });
-
-      let useInline = false;
-      if (job) {
-        const workerActive = await jobQueue.isWorkerActive();
-        if (!workerActive) {
-          console.log(`[DiamondHands] No worker — inline for ${uncached.length} wallets`);
-          useInline = true;
-        } else {
-          console.log(`[DiamondHands] Job queued for ${uncached.length} wallets`);
-        }
-      } else {
-        console.log(`[DiamondHands] Queue unavailable — inline for ${uncached.length} wallets`);
-        useInline = true;
+      if (!job) {
+        // Queue unavailable — clear pending so next poll retries
+        await cache.delete(pendingKey);
       }
-
-      if (useInline) {
-        const bgWallets = [...uncached];
-        const bgMint = mint;
-
-        setImmediate(() => {
-          (async () => {
-            console.log(`[DiamondHands] Inline: ${bgWallets.length} wallets for ${bgMint.slice(0, 8)}...`);
-            const BATCH_SIZE = 10;
-            const HOLD_CACHE_MS = 172800000; // 48h — hold times don't change fast
-            let ok = 0;
-            try {
-              for (let i = 0; i < bgWallets.length; i += BATCH_SIZE) {
-                const batch = bgWallets.slice(i, i + BATCH_SIZE);
-                const results = await Promise.all(
-                  batch.map(async (w) => {
-                    try {
-                      const ht = await solanaService.getTokenHoldTime(w, bgMint, ataMap[w] || null);
-                      return [w, ht];
-                    } catch { return [w, null]; }
-                  })
-                );
-                for (const [w, ht] of results) {
-                  const val = ht ?? -1;
-                  await cache.set(`wallet-hold-time:${w}`, val, HOLD_CACHE_MS);
-                  await cache.set(`wallet-token-hold:${w}:${bgMint}`, val, HOLD_CACHE_MS);
-                  if (val > 0) ok++;
-                }
-              }
-              console.log(`[DiamondHands] Inline done: ${ok}/${bgWallets.length} for ${bgMint.slice(0, 8)}`);
-              // Rebuild and persist
-              try {
-                const allHoldTimes = {};
-                let totalAnalyzed = 0;
-                const allSample = await cache.get(`diamond-hands-wallets:${bgMint}`) || [];
-                const allWalletList = allSample.map(e => typeof e === 'object' ? e.wallet : e);
-                for (const w of allWalletList) {
-                  const val = await cache.get(`wallet-token-hold:${w}:${bgMint}`);
-                  if (val != null) {
-                    totalAnalyzed++;
-                    if (val > 0) allHoldTimes[w] = val;
-                  }
-                }
-                if (totalAnalyzed === allWalletList.length && allWalletList.length > 0) {
-                  const finalResult = buildDiamondHandsResult(allHoldTimes, allWalletList.length, totalAnalyzed);
-                  await cache.set(`diamond-hands:${bgMint}`, finalResult, 3 * TTL.HOUR);
-                  db.upsertConviction(bgMint, finalResult.distribution, finalResult.sampleSize, finalResult.analyzed).catch(() => {});
-                }
-              } catch (_) {}
-            } catch (err) {
-              console.error(`[DiamondHands] Inline failed:`, err.message);
-            } finally {
-              await cache.delete(`holder-metrics-pending:${bgMint}`);
-            }
-          })();
-        });
-      }
-    } else {
-      console.log(`[DiamondHands] Computation already pending for ${mint.slice(0, 8)}..., waiting for shared result`);
     }
 
     // Return partial distribution from cached data so far
