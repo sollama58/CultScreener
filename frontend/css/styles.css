@@ -2725,15 +2725,7 @@ select:focus {
   border: 1px solid rgba(255, 87, 34, 0.12);
   border-radius: var(--radius-full);
   background: rgba(255, 87, 34, 0.03);
-  text-decoration: none;
-  transition: all 0.25s ease;
-  cursor: pointer;
-}
 
-.diamond-hands-watermark:hover {
-  border-color: rgba(255, 87, 34, 0.3);
-  background: rgba(255, 87, 34, 0.06);
-  box-shadow: 0 0 12px rgba(255, 87, 34, 0.06);
 }
 
 .dh-watermark-flame {
@@ -2749,9 +2741,6 @@ select:focus {
   color: var(--text-secondary);
 }
 
-.diamond-hands-watermark:hover .dh-watermark-text {
-  color: var(--text-primary);
-}
 
 .dh-watermark-sep {
   width: 1px;
@@ -2767,9 +2756,6 @@ select:focus {
   color: var(--text-dim);
 }
 
-.diamond-hands-watermark:hover .dh-watermark-powered {
-  color: var(--text-muted);
-}
 
 
 /* =============================================

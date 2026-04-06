@@ -2043,10 +2043,18 @@ router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
         holderCount: realHolders.length
       };
 
-      // Use cached Solscan holder count (set by token detail endpoint or admin refresh)
+      // Use cached holder count, or fetch via paginated DAS if missing
       try {
-        const totalCount = await cache.get(`holder-total:${mint}`)
+        let totalCount = await cache.get(`holder-total:${mint}`)
           || await cache.get(keys.holderCount(mint));
+        // If no cached count, fetch the real count (non-blocking for response but cache it)
+        if (!totalCount && solanaService.isHeliusConfigured()) {
+          totalCount = await solanaService.getTokenHolderCount(mint).catch(() => null);
+          if (totalCount && totalCount > 0) {
+            await cache.set(`holder-total:${mint}`, totalCount, TTL.DAY);
+            await cache.set(keys.holderCount(mint), totalCount, TTL.DAY);
+          }
+        }
         if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
         }
