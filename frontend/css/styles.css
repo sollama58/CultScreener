@@ -4360,11 +4360,11 @@ select:focus {
   }
   .token-actions-bar::-webkit-scrollbar { display: none; }
 
-  .token-action-chip { font-size: 0.68rem; padding: 0.2rem 0.5rem; }
+  .token-action-chip { font-size: 0.72rem; padding: 0.35rem 0.6rem; }
 
   /* Token socials wrap */
   .token-socials { gap: 0.3rem; flex-wrap: nowrap; }
-  .social-chip { font-size: 0.68rem; padding: 0.2rem 0.5rem; }
+  .social-chip { font-size: 0.72rem; padding: 0.35rem 0.6rem; }
 
   /* Hide hold time column on tablets (table too wide) */
   .holders-share-col { display: none; }
@@ -4455,7 +4455,7 @@ select:focus {
   .terminal-search-icon { left: 0.6rem; width: 12px; height: 12px; }
   .terminal-filters-toggle { padding: 0.35rem 0.55rem; font-size: 0.68rem; gap: 0.25rem; }
   .terminal-filters-toggle svg { width: 12px; height: 12px; }
-  .terminal-status-inline { padding: 0.2rem 0.45rem; font-size: 0.56rem; gap: 0.25rem; }
+  .terminal-status-inline { padding: 0.2rem 0.45rem; font-size: 0.62rem; gap: 0.25rem; }
   .terminal-dot { width: 5px; height: 5px; }
   .terminal-clear-btn { padding: 0.3rem 0.5rem; font-size: 0.65rem; }
 
@@ -4487,7 +4487,7 @@ select:focus {
   .token-logo { width: 22px; height: 22px; }
   .token-cell { gap: 0.4rem; }
 
-  .tier-badge { font-size: 0.54rem; padding: 0.1rem 0.35rem; }
+  .tier-badge { font-size: 0.62rem; padding: 0.12rem 0.35rem; }
   .conviction-pct { font-size: 0.78rem; }
 
   /* Token detail page */
@@ -4503,11 +4503,11 @@ select:focus {
   .price-change-badge { font-size: 0.72rem; padding: 0.15rem 0.4rem; }
 
   .token-actions-bar { padding: 0.4rem 0.75rem; gap: 0.25rem; flex-wrap: nowrap; }
-  .token-action-chip { font-size: 0.64rem; padding: 0.18rem 0.4rem; gap: 0.2rem; }
+  .token-action-chip { font-size: 0.68rem; padding: 0.3rem 0.5rem; gap: 0.2rem; }
   .token-action-chip svg { width: 12px; height: 12px; }
 
   .token-socials { gap: 0.2rem; }
-  .social-chip { font-size: 0.64rem; padding: 0.18rem 0.4rem; }
+  .social-chip { font-size: 0.68rem; padding: 0.3rem 0.5rem; }
 
   .token-content-grid { gap: 0.75rem; }
 
@@ -4540,11 +4540,14 @@ select:focus {
   .diamond-bar-track { height: 16px; }
   .diamond-bar-pct { font-size: 0.64rem; min-width: 32px; }
 
-  .holders-table { font-size: 0.72rem; }
-  .holders-table thead th { font-size: 0.58rem; padding: 0.35rem 0.4rem; }
+  .holders-table { font-size: 0.75rem; }
+  .holders-table thead th { font-size: 0.62rem; padding: 0.35rem 0.4rem; }
   .holders-table tbody td { padding: 0.3rem 0.4rem; }
-  .holder-address { font-size: 0.65rem; }
-  .holders-expand-btn { font-size: 0.72rem; padding: 0.45rem; }
+  /* Hide Value column on small screens — too many columns */
+  .holders-table thead th:nth-child(4),
+  .holders-table tbody td:nth-child(4) { display: none; }
+  .holder-address { font-size: 0.68rem; }
+  .holders-expand-btn { font-size: 0.75rem; padding: 0.5rem; }
 
   /* Token banner */
   .token-banner-wrap { max-height: 100px; border-radius: var(--radius-sm); margin-bottom: 0.6rem; }
@@ -4954,6 +4957,23 @@ strong {
   .token-skeleton .skel-actions { padding: 0 0.75rem 0.75rem; }
   .token-skeleton .skel-section { padding: 0.85rem 0.9rem; }
   .token-skeleton .skel-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+  .token-skeleton .skel-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .token-skeleton .skel-logo { width: 36px; height: 36px; }
+  .token-skeleton .skel-chip { width: 64px; height: 28px; }
+}
+
+@media (max-width: 480px) {
+  .token-skeleton .skel-name { width: 100px; height: 16px; }
+  .token-skeleton .skel-address { width: 80px; height: 12px; }
+  .token-skeleton .skel-price { width: 80px; height: 20px; }
+  .token-skeleton .skel-change { width: 48px; height: 14px; }
+  .token-skeleton .skel-actions { gap: 0.3rem; padding: 0 0.6rem 0.6rem; }
+  .token-skeleton .skel-chip { width: 56px; height: 26px; }
+  .token-skeleton .skel-section { padding: 0.65rem 0.7rem; margin-bottom: 0.75rem; }
+  .token-skeleton .skel-metric { height: 44px; }
+  .token-skeleton .skel-stat { height: 48px; }
+  .token-skeleton .skel-table-row { height: 30px; margin-bottom: 0.3rem; }
+  .token-skeleton .skel-pool { height: 54px; margin-bottom: 0.4rem; }
 }
 
 /* Install app button */

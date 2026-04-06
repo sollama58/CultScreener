@@ -783,7 +783,7 @@ const wallet = {
           }
         } catch (e) {
           // Silent connect failed - normal if user hasn't approved this site recently
-          console.log('Auto-connect failed:', e.message);
+          if (typeof config !== 'undefined' && config.app?.debug) console.log('Auto-connect failed:', e.message);
         }
       }
     }

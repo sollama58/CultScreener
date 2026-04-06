@@ -137,6 +137,16 @@
     .powered-banner a:hover {
       text-decoration: underline;
     }
+    @media (max-width: 480px) {
+      .powered-banner { font-size: 0.8rem; padding: 0.7rem 1rem; }
+      .about-hero h1 { font-size: 1.25rem; }
+      .about-hero p { font-size: 0.82rem; }
+      .about-section { padding: 1rem 1.15rem; }
+      .about-section h2 { font-size: 0.76rem; }
+      .about-section p, .about-section li { font-size: 0.8rem; }
+      .about-table { font-size: 0.76rem; }
+      .about-table th { font-size: 0.64rem; }
+    }
   </style>
 </head>
 <body>
@@ -263,7 +273,7 @@
             <tr><td>Token list page</td><td><code>2 min</code></td><td>Auto-refreshes every 2 minutes</td></tr>
             <tr><td>Token detail page</td><td><code>5 min</code></td><td>Price refreshes every 5 minutes with freshness indicator</td></tr>
             <tr><td>Search results</td><td><code>2 min</code></td><td>Cached to avoid redundant API calls on re-search</td></tr>
-            <tr><td>Chart/OHLCV data</td><td><code>5 min</code></td><td>Per interval (1h, 4h, 1d, etc.)</td></tr>
+            <tr><td>Pool data</td><td><code>5 min</code></td><td>Liquidity pool information</td></tr>
           </tbody>
         </table>
 
