@@ -970,6 +970,15 @@ const utils = {
     const nav = document.querySelector('.nav');
     if (!hamburger || !nav) return;
 
+    // Move wallet button into dropdown on mobile
+    const walletBtn = document.getElementById('connect-wallet');
+    if (walletBtn && window.matchMedia('(max-width: 768px)').matches) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'nav-wallet-item';
+      wrapper.appendChild(walletBtn);
+      nav.appendChild(wrapper);
+    }
+
     // Helper to close mobile nav dropdown
     const closeMobileNav = () => {
       nav.classList.remove('open');
@@ -977,7 +986,8 @@ const utils = {
       hamburger.setAttribute('aria-expanded', 'false');
     };
 
-    hamburger.addEventListener('click', () => {
+    hamburger.addEventListener('click', (e) => {
+      e.stopPropagation();
       const isOpen = nav.classList.toggle('open');
       hamburger.classList.toggle('active', isOpen);
       hamburger.setAttribute('aria-expanded', String(isOpen));
@@ -988,18 +998,17 @@ const utils = {
       link.addEventListener('click', closeMobileNav);
     });
 
-    // Close menu when wallet connect button is clicked (on mobile)
-    const walletBtn = document.getElementById('connect-wallet');
-    if (walletBtn) {
-      walletBtn.addEventListener('click', () => {
-        if (nav.classList.contains('open')) closeMobileNav();
-      });
-    }
-
     // Close menu when clicking outside
     document.addEventListener('click', (e) => {
       if (!nav.classList.contains('open')) return;
       if (!nav.contains(e.target) && !hamburger.contains(e.target)) {
+        closeMobileNav();
+      }
+    });
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && nav.classList.contains('open')) {
         closeMobileNav();
       }
     });

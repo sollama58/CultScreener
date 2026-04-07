@@ -4238,11 +4238,19 @@ select:focus {
 
   .powered-badge { display: none; }
 
-  .nav-hamburger {
-    display: flex;
-    order: 3;
+  /* Hide header-actions on mobile — wallet moves into dropdown */
+  .header-actions {
+    display: none;
   }
 
+  /* Hamburger sits at the far right */
+  .nav-hamburger {
+    display: flex;
+    order: 99;
+    margin-left: auto;
+  }
+
+  /* Dropdown menu anchored to top-right of header */
   .nav {
     display: none;
     position: absolute;
@@ -4250,7 +4258,7 @@ select:focus {
     right: 0.85rem;
     left: auto;
     bottom: auto;
-    width: 200px;
+    width: 210px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -4288,19 +4296,27 @@ select:focus {
     padding: 0 0 0 1rem;
   }
 
+  /* Connect Wallet inside dropdown */
+  .nav-wallet-item {
+    display: flex;
+    margin-top: 0.25rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border-color);
+  }
+
+  .nav-wallet-item .btn-wallet,
+  .nav-wallet-item #connect-wallet {
+    width: 100%;
+    justify-content: center;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.82rem;
+    border-radius: var(--radius-sm);
+    max-width: none;
+  }
+
   /* Install App link — only visible on mobile when installable */
   .nav-install-item.installable {
     display: flex;
-  }
-
-  #connect-wallet,
-  .btn-wallet {
-    padding: 0.35rem 0.65rem;
-    font-size: 0.75rem;
-    min-width: 0;
-    max-width: 160px;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   /* Wallet menu aligns to smaller header */
@@ -4455,7 +4471,7 @@ select:focus {
   .logo-text { font-size: 1.05rem; }
   .logo-badge, .powered-badge { display: none; }
 
-  .nav { right: 0.6rem; }
+  .nav { right: 0.6rem; width: 190px; }
 
   .main { padding: 0.5rem 0.6rem 2rem; }
 
@@ -5001,7 +5017,7 @@ strong {
    PWA — Install Banner, Update Banner, Standalone
    ============================================= */
 
-/* Install App — nav item (hidden by default, shown by JS) */
+/* Install App — nav item (hidden by default, shown via .installable on mobile) */
 .nav-install-item {
   display: none;
   align-items: center;
@@ -5017,12 +5033,14 @@ strong {
   font-family: inherit;
   text-decoration: none;
   transition: background var(--transition-fast), color var(--transition-fast);
-  border-top: 1px solid var(--border-color);
-  margin-top: 0.25rem;
-  padding-top: 0.75rem;
   -webkit-tap-highlight-color: transparent;
   width: 100%;
   text-align: left;
+}
+
+/* Wallet wrapper inside mobile dropdown (hidden on desktop) */
+.nav-wallet-item {
+  display: none;
 }
 
 .nav-install-item:hover {
