@@ -2657,6 +2657,29 @@ select:focus {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* Diamond Hands loading shimmer */
+.diamond-bar-fill.dh-loading {
+  width: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  background-size: 200% 100%;
+  animation: dhShimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes dhShimmer {
+  0% { width: 15%; background-position: 200% 0; }
+  50% { width: 45%; }
+  100% { width: 15%; background-position: -200% 0; }
+}
+
+/* Risk badge */
+.holders-risk-badge {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.holders-risk-badge.risk-low { color: var(--green); }
+.holders-risk-badge.risk-medium { color: var(--yellow); }
+.holders-risk-badge.risk-high { color: var(--red); }
+
 .diamond-bar-pct {
   font-size: 0.74rem;
   font-family: var(--font-mono);

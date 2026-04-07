@@ -269,8 +269,16 @@
               <span class="holder-metric-value" id="holders-token-age">--</span>
             </div>
             <div class="holder-metric">
+              <span class="holder-metric-label">Avg Hold Time</span>
+              <span class="holder-metric-value" id="holders-avg-hold-time">...</span>
+            </div>
+            <div class="holder-metric">
               <span class="holder-metric-label">Fresh Wallets</span>
               <span class="holder-metric-value" id="holders-fresh-wallets">--</span>
+            </div>
+            <div class="holder-metric" id="holders-risk-row" style="display:none;">
+              <span class="holder-metric-label">Risk Level</span>
+              <span class="holder-metric-value holders-risk-badge" id="holders-risk-badge">--</span>
             </div>
             <div class="holder-metric">
               <span class="holder-metric-label">Locked</span>
@@ -282,30 +290,30 @@
             </div>
           </div>
           <!-- Diamond Hands Distribution -->
-          <div class="diamond-hands-section" id="diamond-hands-section" style="display:none;">
+          <div class="diamond-hands-section" id="diamond-hands-section">
             <div class="diamond-hands-header">
               <span class="diamond-hands-title">Diamond Hands</span>
-              <span class="diamond-hands-sample" id="diamond-hands-sample"></span>
+              <span class="diamond-hands-sample" id="diamond-hands-sample">Analyzing holders...</span>
             </div>
             <div class="diamond-hands-bars" id="diamond-hands-bars">
               <div class="diamond-bar" data-bucket="24h">
                 <span class="diamond-bar-label">&gt;24h</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-24h"></div></div>
+                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-24h"></div></div>
                 <span class="diamond-bar-pct" id="dh-pct-24h">...</span>
               </div>
               <div class="diamond-bar" data-bucket="3d">
                 <span class="diamond-bar-label">&gt;3d</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-3d"></div></div>
+                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-3d"></div></div>
                 <span class="diamond-bar-pct" id="dh-pct-3d">...</span>
               </div>
               <div class="diamond-bar" data-bucket="1w">
                 <span class="diamond-bar-label">&gt;1w</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-1w"></div></div>
+                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-1w"></div></div>
                 <span class="diamond-bar-pct" id="dh-pct-1w">...</span>
               </div>
               <div class="diamond-bar" data-bucket="1m">
                 <span class="diamond-bar-label">&gt;1M</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-1m"></div></div>
+                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-1m"></div></div>
                 <span class="diamond-bar-pct" id="dh-pct-1m">...</span>
               </div>
               <div class="diamond-bar" data-bucket="3m" id="dh-row-3m" style="display:none;">

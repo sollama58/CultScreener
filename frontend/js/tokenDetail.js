@@ -526,7 +526,10 @@ const tokenDetail = {
 
       if (listEl) {
         listEl.style.display = 'block';
-        listEl.innerHTML = this.pools.slice(0, 5).map(pool => `
+        listEl.innerHTML = this.pools.slice(0, 5).map(pool => {
+          const tvl = pool.tvl != null ? utils.formatNumber(pool.tvl) : '--';
+          const vol = pool.volume24h != null ? utils.formatNumber(pool.volume24h) : '--';
+          return `
           <div class="pool-card">
             <div class="pool-pair">
               <span class="pool-symbols">${this.escapeHtml(pool.symbolA || '?')}/${this.escapeHtml(pool.symbolB || '?')}</span>
@@ -535,15 +538,15 @@ const tokenDetail = {
             <div class="pool-stats">
               <div class="pool-stat">
                 <span class="label">TVL</span>
-                <span class="value">${utils.formatNumber(pool.tvl)}</span>
+                <span class="value">${tvl}</span>
               </div>
               <div class="pool-stat">
                 <span class="label">24h Volume</span>
-                <span class="value">${utils.formatNumber(pool.volume24h)}</span>
+                <span class="value">${vol}</span>
               </div>
             </div>
-          </div>
-        `).join('');
+          </div>`;
+        }).join('');
       }
     } catch (error) {
       _ok = false;
@@ -574,6 +577,8 @@ const tokenDetail = {
       const shareBtn = document.getElementById('holders-share');
       if (shareBtn) { shareBtn.disabled = true; shareBtn.title = 'Waiting for holder data...'; }
       if (refreshBtn) refreshBtn.classList.add('spinning');
+      // Reset Diamond Hands bars back to loading shimmer
+      this._resetDiamondHandsToLoading();
     }
 
     try {
@@ -601,9 +606,8 @@ const tokenDetail = {
         if (data.error === 'rpc_unavailable') {
           apiCache.clearPattern(`tokens:holders:${this.mint}`);
         }
-        // Hide diamond hands section if it was visible from a prior load
-        const dhSection = document.getElementById('diamond-hands-section');
-        if (dhSection) dhSection.style.display = 'none';
+        // Show diamond hands as unavailable
+        this._showDiamondHandsUnavailable();
         return;
       }
 
@@ -747,6 +751,10 @@ const tokenDetail = {
   _renderHoldersTable(holders, limit) {
     const tbody = document.getElementById('holders-tbody');
     if (!tbody) return;
+    if (!holders || holders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text-muted);">No holder data available.</td></tr>';
+      return;
+    }
     const price = this.token && this.token.price ? this.token.price : 0;
     const esc = (s) => utils.escapeHtml(s);
     tbody.innerHTML = holders.slice(0, limit).map(h => {
@@ -1152,9 +1160,12 @@ const tokenDetail = {
     const POLL_DELAYS = [5000, 5000, 6000, 8000, 8000, 10000, 12000, 16000, 20000, 24000]; // 250 wallets at batch 25 ≈ 20-30s
 
     // Cancel any in-flight polling from a previous load
-    if (attempt === 0 && this._diamondHandsTimer) {
-      clearTimeout(this._diamondHandsTimer);
-      this._diamondHandsTimer = null;
+    if (attempt === 0) {
+      if (this._diamondHandsTimer) {
+        clearTimeout(this._diamondHandsTimer);
+        this._diamondHandsTimer = null;
+      }
+      this._diamondHandsLoaded = false;
     }
 
     try {
@@ -1177,12 +1188,9 @@ const tokenDetail = {
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] ${data.analyzed || 0}/${data.totalCount || data.sampleSize} analyzed, re-polling in ${POLL_DELAYS[attempt]}ms`);
         this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), POLL_DELAYS[attempt]);
       } else {
-        // Final state — if still no data, hide section
+        // Final state — if still no data, show unavailable message
         if (!data.distribution || !data.analyzed) {
-          const section = document.getElementById('diamond-hands-section');
-          if (section) section.style.display = 'none';
-        } else {
-          this._diamondHandsData = data;
+          this._showDiamondHandsUnavailable();
         }
         this._diamondHandsLoaded = true;
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Done: sample=${data.sampleSize}, analyzed=${data.analyzed}`);
@@ -1190,7 +1198,7 @@ const tokenDetail = {
     } catch (error) {
       console.warn('[DiamondHands] Failed:', error.message);
       this._diamondHandsLoaded = true;
-      // _checkAIAnalysisReady removed — method was never defined
+      this._showDiamondHandsUnavailable();
     }
   },
 
@@ -1199,6 +1207,9 @@ const tokenDetail = {
     if (!section || !data.distribution) return;
 
     section.style.display = '';
+
+    // Store data on every successful render (not just final poll)
+    this._diamondHandsData = data;
 
     // Update sample size label
     const sampleEl = document.getElementById('diamond-hands-sample');
@@ -1242,21 +1253,65 @@ const tokenDetail = {
       }
 
       if (fillEl) {
+        // Remove loading shimmer and set real width + color
+        fillEl.classList.remove('dh-loading');
         fillEl.style.width = pct + '%';
-        // Color gradient: higher % = greener (more diamond hands)
         if (pct >= 50) fillEl.className = 'diamond-bar-fill dh-high';
         else if (pct >= 20) fillEl.className = 'diamond-bar-fill dh-mid';
         else fillEl.className = 'diamond-bar-fill dh-low';
       }
       if (pctEl) {
         pctEl.textContent = pct + '%';
-        // Color the percentage text to match
         pctEl.classList.remove('dh-text-high', 'dh-text-mid', 'dh-text-low');
         if (pct >= 50) pctEl.classList.add('dh-text-high');
         else if (pct >= 20) pctEl.classList.add('dh-text-mid');
         else if (pct > 0) pctEl.classList.add('dh-text-low');
       }
     }
+  },
+
+  // Reset Diamond Hands bars back to loading shimmer state
+  _resetDiamondHandsToLoading() {
+    const section = document.getElementById('diamond-hands-section');
+    if (!section) return;
+    section.style.display = '';
+    const sampleEl = document.getElementById('diamond-hands-sample');
+    if (sampleEl) sampleEl.textContent = 'Analyzing holders...';
+    const buckets = ['24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    for (const key of buckets) {
+      const fillEl = document.getElementById(`dh-fill-${key}`);
+      const pctEl = document.getElementById(`dh-pct-${key}`);
+      if (fillEl) {
+        fillEl.className = 'diamond-bar-fill dh-loading';
+        fillEl.style.width = '';
+      }
+      if (pctEl) {
+        pctEl.textContent = '...';
+        pctEl.classList.remove('dh-text-high', 'dh-text-mid', 'dh-text-low');
+      }
+    }
+    // Re-hide age-gated rows
+    ['3m', '6m', '9m'].forEach(k => {
+      const row = document.getElementById(`dh-row-${k}`);
+      if (row) row.style.display = 'none';
+    });
+  },
+
+  // Show unavailable state for Diamond Hands (replaces loading shimmer with message)
+  _showDiamondHandsUnavailable() {
+    const section = document.getElementById('diamond-hands-section');
+    if (!section) return;
+    const sampleEl = document.getElementById('diamond-hands-sample');
+    if (sampleEl) sampleEl.textContent = 'Unavailable';
+    // Remove shimmer from all bars and show 0%
+    document.querySelectorAll('.diamond-bar-fill.dh-loading').forEach(el => {
+      el.classList.remove('dh-loading');
+      el.style.width = '0';
+      el.classList.add('dh-low');
+    });
+    document.querySelectorAll('.diamond-bar-pct').forEach(el => {
+      if (el.textContent === '...') el.textContent = '--';
+    });
   },
 
   // ── Banner & Social Links (client-side DexScreener fetch) ──
