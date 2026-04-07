@@ -259,6 +259,76 @@
     .concentration-medium { color: var(--ember); }
     .concentration-high { color: #ef4444; }
 
+    /* My analyzed tokens list */
+    .cultify-my-tokens {
+      max-width: 560px;
+      margin: 0 auto 1.25rem;
+      padding: 0 1rem;
+      display: none;
+    }
+    .cultify-my-tokens.visible { display: block; }
+
+    .cultify-my-tokens-header {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      margin-bottom: 0.5rem;
+    }
+    .cultify-my-tokens-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .cultify-my-token {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.55rem 0.75rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      text-decoration: none;
+    }
+    .cultify-my-token:hover {
+      border-color: var(--fire-primary);
+      background: var(--bg-tertiary);
+    }
+    .cultify-my-token-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: var(--bg-tertiary);
+      flex-shrink: 0;
+    }
+    .cultify-my-token-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .cultify-my-token-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cultify-my-token-addr {
+      font-size: 0.68rem;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+    }
+    .cultify-my-token-expires {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
     /* Token preview card */
     .cultify-preview {
       max-width: 560px;
@@ -414,6 +484,9 @@
       </div>
     </div>
 
+    <!-- My analyzed tokens (shown when wallet connected) -->
+    <div id="cultify-my-tokens" class="cultify-my-tokens"></div>
+
     <!-- Token preview (shown after pasting a valid CA) -->
     <div id="cultify-preview" class="cultify-preview"></div>
 
@@ -428,7 +501,7 @@
   <script src="js/api.js"></script>
   <script src="js/wallet.js"></script>
   <script src="https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js"></script>
-  <script src="js/cultify.js?v=6"></script>
+  <script src="js/cultify.js?v=7"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

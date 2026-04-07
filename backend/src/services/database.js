@@ -3113,6 +3113,17 @@ async function hasCultifyAccess(walletAddress, tokenMint) {
   return result.rows.length > 0;
 }
 
+async function getCultifyBurnsByWallet(walletAddress) {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT token_mint, created_at FROM cultify_burns
+     WHERE wallet_address = $1 AND created_at > NOW() - INTERVAL '12 hours'
+     ORDER BY created_at DESC`,
+    [walletAddress]
+  );
+  return result.rows.map(r => ({ mint: r.token_mint, createdAt: r.created_at }));
+}
+
 async function isCultifySignatureUsed(signature) {
   if (!pool) throw new Error('Database not available');
   const result = await pool.query(
@@ -3260,5 +3271,6 @@ module.exports = {
   // Cultify burns
   recordCultifyBurn,
   hasCultifyAccess,
+  getCultifyBurnsByWallet,
   isCultifySignatureUsed
 };

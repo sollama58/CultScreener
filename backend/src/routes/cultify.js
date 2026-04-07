@@ -340,6 +340,22 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
   }
 }));
 
+// GET /api/cultify/my-tokens/:wallet — list tokens the wallet has active access to
+router.get('/my-tokens/:wallet', asyncHandler(async (req, res) => {
+  const { wallet: walletAddress } = req.params;
+  if (!SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+
+  try {
+    const burns = await db.getCultifyBurnsByWallet(walletAddress);
+    res.json({ tokens: burns });
+  } catch (err) {
+    console.error('[Cultify] My tokens error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch tokens' });
+  }
+}));
+
 // ── RPC proxy endpoints (keeps Helius API key on the server) ──────────
 
 // GET /api/cultify/balance/:wallet — get ASDFASDFA balance for a wallet

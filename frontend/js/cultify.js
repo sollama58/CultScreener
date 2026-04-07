@@ -122,6 +122,86 @@
     }
   }
 
+  // ── My analyzed tokens ─────────────────────────────
+
+  const myTokensEl = document.getElementById('cultify-my-tokens');
+
+  async function loadMyTokens() {
+    if (typeof wallet === 'undefined' || !wallet.connected || !myTokensEl) return;
+
+    const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
+    try {
+      const resp = await fetch(`${baseUrl}/api/cultify/my-tokens/${wallet.address}`);
+      if (!resp.ok) return;
+      const { tokens } = await resp.json();
+      if (!tokens || tokens.length === 0) {
+        myTokensEl.classList.remove('visible');
+        return;
+      }
+
+      // Fetch DexScreener metadata for all mints in parallel
+      const metaMap = {};
+      await Promise.all(tokens.map(async (t) => {
+        try {
+          const r = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(t.mint)}`,
+            { signal: AbortSignal.timeout(5000) });
+          if (r.ok) {
+            const pairs = await r.json();
+            if (Array.isArray(pairs) && pairs.length > 0) {
+              metaMap[t.mint] = {
+                name: pairs[0].baseToken?.name || null,
+                symbol: pairs[0].baseToken?.symbol || null,
+                logo: pairs[0].info?.imageUrl || null,
+              };
+            }
+          }
+        } catch { /* skip */ }
+      }));
+
+      let html = '<div class="cultify-my-tokens-header">Your Analyzed Tokens (12hr access)</div>';
+      html += '<div class="cultify-my-tokens-list">';
+      tokens.forEach(t => {
+        const meta = metaMap[t.mint] || {};
+        const name = escapeHtml(meta.name || t.mint.slice(0, 6) + '...' + t.mint.slice(-4));
+        const symbol = meta.symbol ? '$' + escapeHtml(meta.symbol) : '';
+        const logo = meta.logo || defaultLogo;
+        const short = t.mint.slice(0, 4) + '...' + t.mint.slice(-4);
+
+        // Calculate time remaining
+        const expiresAt = new Date(t.createdAt).getTime() + 12 * 60 * 60 * 1000;
+        const remaining = expiresAt - Date.now();
+        const hoursLeft = Math.max(0, Math.floor(remaining / 3600000));
+        const minsLeft = Math.max(0, Math.floor((remaining % 3600000) / 60000));
+        const timeStr = hoursLeft > 0 ? `${hoursLeft}h ${minsLeft}m left` : `${minsLeft}m left`;
+
+        html += `<div class="cultify-my-token" data-mint="${escapeHtml(t.mint)}">
+          <img class="cultify-my-token-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'">
+          <div class="cultify-my-token-info">
+            <div class="cultify-my-token-name">${name} ${symbol ? '<span style="color:var(--text-dim);font-weight:500;">' + symbol + '</span>' : ''}</div>
+            <div class="cultify-my-token-addr">${short}</div>
+          </div>
+          <div class="cultify-my-token-expires">${timeStr}</div>
+        </div>`;
+      });
+      html += '</div>';
+
+      myTokensEl.innerHTML = html;
+      myTokensEl.classList.add('visible');
+
+      // Click to analyze
+      myTokensEl.querySelectorAll('.cultify-my-token').forEach(el => {
+        el.addEventListener('click', () => {
+          const m = el.dataset.mint;
+          mintInput.value = m;
+          handleInputChange();
+          handleCultify();
+        });
+      });
+    } catch (err) {
+      console.error('[Cultify] Failed to load my tokens:', err);
+    }
+  }
+
   // ── Main flow ─────────────────────────────────────
 
   async function handleCultify() {
@@ -647,5 +727,9 @@
 
   // On page load, recover any pending burns that failed verification
   recoverPendingBurn();
+
+  // Load analyzed tokens list if wallet is connected
+  loadMyTokens();
+  window.addEventListener('walletConnected', () => loadMyTokens());
 
 })();
