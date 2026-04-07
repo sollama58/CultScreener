@@ -104,7 +104,8 @@ const admin = {
       method: opts.method || 'GET',
       headers,
       body: opts.body || undefined,
-      credentials: 'include'
+      credentials: 'include',
+      cache: 'no-store'
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -329,11 +330,25 @@ const admin = {
   async removeCurated(mint) {
     if (!confirm('Remove this token from curated list?')) return;
     try {
-      await this.request(`/api/admin/curated/${encodeURIComponent(mint)}`, { method: 'DELETE' });
-      this.loadCurated();
-      if (typeof toast !== 'undefined') toast.success('Token removed');
+      // Optimistic UI: immediately remove the row
+      const btn = document.querySelector(`[data-remove-mint="${CSS.escape(mint)}"]`);
+      if (btn) {
+        const row = btn.closest('tr');
+        if (row) row.remove();
+      }
+
+      const result = await this.request(`/api/admin/curated/${encodeURIComponent(mint)}`, { method: 'DELETE' });
+      if (result.success) {
+        if (typeof toast !== 'undefined') toast.success('Token removed');
+      } else {
+        if (typeof toast !== 'undefined') toast.error('Failed to remove token');
+      }
+      // Always reload the full list from the server to sync state
+      await this.loadCurated();
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
+      // Reload on error too in case the row was optimistically removed
+      await this.loadCurated();
     }
   },
 

@@ -184,6 +184,7 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
 
 router.get('/curated', asyncHandler(async (req, res) => {
   const tokens = await db.getCuratedTokens();
+  res.set('Cache-Control', 'no-store');
   res.json({ tokens });
 }));
 
@@ -237,25 +238,28 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
 
 router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
+  console.log(`[Admin] DELETE /curated/${mint ? mint.slice(0, 8) + '...' : 'null'}`);
   if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
     return res.status(400).json({ error: 'Invalid mint address' });
   }
   const result = await db.removeCuratedToken(mint);
+  console.log(`[Admin] removeCuratedToken result:`, result ? 'deleted' : 'not found');
   if (!result) return res.status(404).json({ error: 'Token not found in curated list' });
 
   // Invalidate all caches that could contain this token
   try {
-    await Promise.all([
-      cache.clearPattern('list:*'),
-      cache.clearPattern('search:*'),
-      cache.delete(`token:${mint}`),
-      cache.delete(`price:${mint}`),
-      cache.delete(`pools:${mint}`),
-      cache.delete(`holders:${mint}`),
-      cache.delete(`batch:${mint}`),
-      cache.clearPattern(`*${mint}*`),
-    ]);
-  } catch (_) { /* cache clear is non-critical */ }
+    await cache.clearPattern('list:*');
+    await cache.clearPattern('search:*');
+    await cache.delete(`token:${mint}`);
+    await cache.delete(`price:${mint}`);
+    await cache.delete(`pools:${mint}`);
+    await cache.delete(`holders:${mint}`);
+    await cache.delete(`batch:${mint}`);
+    await cache.clearPattern(`*${mint}*`);
+    console.log(`[Admin] Cache cleared for ${mint.slice(0, 8)}...`);
+  } catch (cacheErr) {
+    console.error(`[Admin] Cache clear failed:`, cacheErr.message);
+  }
 
   res.json({ success: true });
 }));

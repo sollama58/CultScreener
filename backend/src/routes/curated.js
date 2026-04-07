@@ -156,17 +156,18 @@ router.delete('/:mint', strictLimiter, requireAdmin, asyncHandler(async (req, re
 
   // Invalidate all caches that could contain this token
   try {
-    await Promise.all([
-      cache.clearPattern('list:*'),
-      cache.clearPattern('search:*'),
-      cache.delete(`token:${mint}`),
-      cache.delete(`price:${mint}`),
-      cache.delete(`pools:${mint}`),
-      cache.delete(`holders:${mint}`),
-      cache.delete(`batch:${mint}`),
-      cache.clearPattern(`*${mint}*`),
-    ]);
-  } catch (_) { /* cache clear is non-critical */ }
+    await cache.clearPattern('list:*');
+    await cache.clearPattern('search:*');
+    await cache.delete(`token:${mint}`);
+    await cache.delete(`price:${mint}`);
+    await cache.delete(`pools:${mint}`);
+    await cache.delete(`holders:${mint}`);
+    await cache.delete(`batch:${mint}`);
+    await cache.clearPattern(`*${mint}*`);
+    console.log(`[Curated] Cache cleared for ${mint.slice(0, 8)}...`);
+  } catch (cacheErr) {
+    console.error(`[Curated] Cache clear failed:`, cacheErr.message);
+  }
 
   res.json({
     success: true,
