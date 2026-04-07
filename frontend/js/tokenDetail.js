@@ -31,14 +31,7 @@ const tokenDetail = {
     this.bindEvents();
 
     try {
-      // Start Phase 2 loads early — don't wait for token detail to finish.
-      // These hit independent endpoints and can run in parallel with loadToken().
-      // Banner and social links come from DexScreener via the token detail response (24hr cache).
-      const phase2 = Promise.all([
-        this.loadPools(),
-        this.loadHolderAnalytics()
-      ]).catch(() => {});
-
+      // Load token data first — everything else depends on this.token being populated
       await this.loadToken();
       this.hideLoading();
 
@@ -54,7 +47,14 @@ const tokenDetail = {
         this.recordView();
       }
 
-      // Wait for Phase 2 to finish (likely already done since it started early)
+      // Phase 2: Load dependent data now that this.token is populated and content is visible.
+      // These run in parallel — holder analytics needs this.token.pairCreatedAt for age-gated rows.
+      const phase2 = Promise.all([
+        this.loadPools(),
+        this.loadHolderAnalytics(),
+        this.loadDexScreenerData()
+      ]).catch(() => {});
+
       await phase2;
 
       // Start price refresh and freshness timer
@@ -318,13 +318,15 @@ const tokenDetail = {
       this.renderToken();
 
       // If initial data came from list-page preview (sessionStorage seed), fetch full detail
+      // before Phase 2 starts so this.token.pairCreatedAt is available for diamond hands
       if (isPreview) {
-        const mint = this.mint;
-        api.tokens.get(mint, { fresh: true }).then(fullData => {
-          if (this.mint !== mint || !fullData) return;
-          this.token = fullData;
-          this.renderToken();
-        }).catch(() => {});
+        try {
+          const fullData = await api.tokens.get(this.mint, { fresh: true });
+          if (fullData && this.mint === this.mint) {
+            this.token = fullData;
+            this.renderToken();
+          }
+        } catch { /* Full fetch failed, continue with preview data */ }
       }
     } catch (err) {
       _ok = false;
@@ -499,29 +501,8 @@ const tokenDetail = {
       jupiterLink.href = `https://jup.ag/swap?sell=So11111111111111111111111111111111111111112&buy=${this.mint}`;
     }
 
-    // Banner and social links — DexScreener is the authoritative source (24hr cache).
-    // Falls back to community submissions if DexScreener data isn't available yet.
-    if (token.dexScreener) {
-      if (token.dexScreener.bannerUrl) {
-        this.renderBanner(token.dexScreener.bannerUrl);
-      }
-      if (token.dexScreener.socials) {
-        this.renderSocials(token.dexScreener.socials);
-      }
-    } else {
-      // Fallback: community-submitted banner
-      if (token.submissions?.banners?.length > 0 && token.submissions.banners[0].content_url) {
-        this.renderBanner(token.submissions.banners[0].content_url);
-      }
-      // Fallback: community-submitted socials
-      if (token.submissions?.socials?.length > 0) {
-        const socials = {};
-        for (const s of token.submissions.socials) {
-          if (s.submission_type && s.content_url) socials[s.submission_type] = s.content_url;
-        }
-        if (Object.keys(socials).length > 0) this.renderSocials(socials);
-      }
-    }
+    // Banner and social links are loaded client-side via loadDexScreenerData()
+    // which runs in Phase 2 after this.token is populated.
 
   },
 
@@ -1229,12 +1210,13 @@ const tokenDetail = {
       }
     }
 
-    // Determine token age in ms to conditionally show long-term buckets
+    // Determine token age in ms to conditionally show long-term buckets.
+    // If pairCreatedAt is unknown, show all buckets that have data (non-zero %).
     const tokenAgeMs = this.token?.pairCreatedAt
       ? Date.now() - new Date(this.token.pairCreatedAt).getTime()
-      : 0;
+      : null;
 
-    // Age-gated buckets: only show if token is old enough
+    // Age-gated buckets: show if token is old enough OR if age is unknown but data exists
     const AGE_GATED = {
       '3m': 90 * 86400000,
       '6m': 180 * 86400000,
@@ -1252,7 +1234,10 @@ const tokenDetail = {
       if (AGE_GATED[key]) {
         const rowEl = document.getElementById(`dh-row-${key}`);
         if (rowEl) {
-          rowEl.style.display = tokenAgeMs >= AGE_GATED[key] ? '' : 'none';
+          const ageKnown = tokenAgeMs !== null;
+          const oldEnough = ageKnown && tokenAgeMs >= AGE_GATED[key];
+          const hasData = pct > 0;
+          rowEl.style.display = (oldEnough || (!ageKnown && hasData)) ? '' : 'none';
         }
       }
 
@@ -1274,13 +1259,46 @@ const tokenDetail = {
     }
   },
 
-  // ── Banner & Social Links ──
+  // ── Banner & Social Links (client-side DexScreener fetch) ──
 
-  renderBanner(url) {
+  // Fetch banner and social links directly from DexScreener API (client-side).
+  // Avoids backend round-trip and fire-and-forget cache miss on first visit.
+  async loadDexScreenerData() {
+    if (!this.mint) return;
+    try {
+      const resp = await fetch(
+        `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(this.mint)}`,
+        { signal: AbortSignal.timeout(8000) }
+      );
+      if (!resp.ok) return;
+      const pairs = await resp.json();
+      if (!Array.isArray(pairs) || pairs.length === 0) return;
+
+      const info = pairs[0].info || {};
+      const socials = Array.isArray(info.socials) ? info.socials : [];
+      const websites = Array.isArray(info.websites) ? info.websites : [];
+
+      // Render banner
+      if (info.header) {
+        this._renderBanner(info.header);
+      }
+
+      // Render social links
+      const socialMap = {};
+      for (const s of socials) { if (s.type && s.url) socialMap[s.type] = s.url; }
+      if (websites.length > 0 && websites[0].url) socialMap.website = websites[0].url;
+      if (Object.keys(socialMap).length > 0) {
+        this._renderSocials(socialMap);
+      }
+    } catch {
+      // DexScreener unavailable — silent fail, non-critical
+    }
+  },
+
+  _renderBanner(url) {
     if (!url) return;
     const container = document.getElementById('token-banner');
     if (!container) return;
-    // Verify the image loads before showing the banner
     const img = new Image();
     img.onload = () => {
       container.innerHTML = `<img src="${utils.escapeHtml(url)}" alt="Token banner" class="token-banner-img">`;
@@ -1290,7 +1308,7 @@ const tokenDetail = {
     img.src = url;
   },
 
-  renderSocials(socials) {
+  _renderSocials(socials) {
     if (!socials) return;
     const container = document.getElementById('token-socials');
     if (!container) return;

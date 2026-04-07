@@ -46,37 +46,6 @@ const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tik
 const VALID_SUBMISSION_STATUSES = ['pending', 'approved', 'rejected', 'all'];
 const jobQueue = require('../services/jobQueue');
 
-// Fetch banner image and social links from DexScreener for a token.
-// Returns { bannerUrl, socials } or null if the API call fails.
-async function _fetchDexScreenerData(mint) {
-  try {
-    const response = await axios.get(
-      `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
-      { timeout: 8000 }
-    );
-    const pairs = response.data;
-    if (!Array.isArray(pairs) || pairs.length === 0) return null;
-
-    const info = pairs[0].info || {};
-    const socials = Array.isArray(info.socials) ? info.socials : [];
-    const websites = Array.isArray(info.websites) ? info.websites : [];
-    const findSocial = (type) => { const e = socials.find(s => s.type === type); return e ? e.url : null; };
-
-    return {
-      bannerUrl: info.header || null,
-      socials: {
-        twitter: findSocial('twitter'),
-        telegram: findSocial('telegram'),
-        discord: findSocial('discord'),
-        tiktok: findSocial('tiktok'),
-        website: websites.length > 0 ? websites[0].url : null
-      }
-    };
-  } catch {
-    return null;
-  }
-}
-
 // Merge DB view counts with any buffered (unflushed) counts from the job queue
 // so the token list always reflects the latest views, even before a flush cycle
 function mergeViewCounts(dbCounts, addresses) {
@@ -1390,30 +1359,11 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         circulatingSupply = supply;
       }
 
-      // Fetch DexScreener banner/socials (24hr cache) and Jupiter name fallback in parallel.
-      // DexScreener is the authoritative source for banner images and social links.
-      const dexScreenerCacheKey = `dexscreener:${mint}`;
-      const [cachedDexScreener, jupiterMeta] = await Promise.all([
-        cache.get(dexScreenerCacheKey),
-        (!helius.name && !gecko.name)
-          ? jupiterService.getTokenInfo(mint).catch(() => null)
-          : Promise.resolve(null)
-      ]);
+      // Jupiter name fallback (only when Helius and GeckoTerminal both lack name)
+      const jupiterMeta = (!helius.name && !gecko.name)
+        ? await jupiterService.getTokenInfo(mint).catch(() => null)
+        : null;
       const jup = jupiterMeta || {};
-
-      // Use cached DexScreener data if available; otherwise fire-and-forget fetch for next request
-      let dexScreener = cachedDexScreener || null;
-      if (!dexScreener) {
-        // Fire-and-forget: fetch from DexScreener API and cache for 24h
-        _fetchDexScreenerData(mint).then(data => {
-          if (data) {
-            cache.set(dexScreenerCacheKey, data, TTL.DAY);
-          } else {
-            // Cache empty result briefly to avoid hammering DexScreener for unknown tokens
-            cache.set(dexScreenerCacheKey, { _empty: true }, TTL.HOUR);
-          }
-        }).catch(() => {});
-      }
 
       const tokenResult = {
         mintAddress: mint,
@@ -1440,11 +1390,6 @@ router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
         holders: holders || null,
         // Token age (first pool creation timestamp from GeckoTerminal)
         pairCreatedAt: gecko.pairCreatedAt || null,
-        // DexScreener banner and social links (24hr cache, authoritative source)
-        dexScreener: dexScreener && !dexScreener._empty ? {
-          bannerUrl: dexScreener.bannerUrl || null,
-          socials: dexScreener.socials || null
-        } : null,
         // Submissions
         submissions: {
           banners: submissions.filter(s => s.submission_type === 'banner'),
