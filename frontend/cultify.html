@@ -190,75 +190,6 @@
       letter-spacing: 0.04em;
     }
 
-    .cultify-metrics {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 0.75rem;
-      margin-bottom: 1.25rem;
-    }
-    .cultify-metric {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-md);
-      padding: 0.85rem;
-      text-align: center;
-    }
-    .cultify-metric-value {
-      font-size: 1.15rem;
-      font-weight: 700;
-      color: var(--text-primary);
-      font-family: var(--font-mono);
-    }
-    .cultify-metric-label {
-      font-size: 0.68rem;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-top: 0.2rem;
-    }
-
-    .cultify-holders-table {
-      width: 100%;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-    }
-    .cultify-holders-table table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.82rem;
-    }
-    .cultify-holders-table th {
-      text-align: left;
-      padding: 0.6rem 0.85rem;
-      font-size: 0.68rem;
-      font-weight: 600;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      border-bottom: 1px solid var(--border-color);
-    }
-    .cultify-holders-table td {
-      padding: 0.55rem 0.85rem;
-      border-bottom: 1px solid var(--border-subtle);
-      color: var(--text-secondary);
-    }
-    .cultify-holders-table tr:last-child td { border-bottom: none; }
-    .cultify-holders-table .text-right { text-align: right; }
-    .cultify-holders-table .mono { font-family: var(--font-mono); }
-    .cultify-holders-table .holder-address {
-      color: var(--text-secondary);
-      text-decoration: none;
-      font-family: var(--font-mono);
-      font-size: 0.78rem;
-    }
-    .cultify-holders-table .holder-address:hover { color: var(--fire-primary); }
-
-    .concentration-low { color: #22c55e; }
-    .concentration-medium { color: var(--ember); }
-    .concentration-high { color: #ef4444; }
-
     /* My analyzed tokens list */
     .cultify-my-tokens {
       max-width: 560px;
@@ -380,64 +311,6 @@
       padding: 0.5rem 0;
     }
 
-    /* Diamond hands bars */
-    .cultify-diamond-section {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      padding: 1rem 1.25rem;
-      margin-top: 1.25rem;
-    }
-    .cultify-dh-row {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 0.4rem;
-    }
-    .cultify-dh-label {
-      width: 36px;
-      font-size: 0.72rem;
-      font-weight: 600;
-      color: var(--text-dim);
-      text-align: right;
-      flex-shrink: 0;
-    }
-    .cultify-dh-track {
-      flex: 1;
-      height: 14px;
-      background: var(--bg-tertiary);
-      border-radius: var(--radius-sm);
-      overflow: hidden;
-    }
-    .cultify-dh-fill {
-      height: 100%;
-      border-radius: var(--radius-sm);
-      transition: width 0.4s ease;
-      width: 0;
-    }
-    .cultify-dh-high { background: linear-gradient(90deg, #22c55e, #16a34a); }
-    .cultify-dh-mid { background: linear-gradient(90deg, var(--ember), var(--fire-primary)); }
-    .cultify-dh-low { background: linear-gradient(90deg, #ef4444, #dc2626); }
-    .cultify-dh-loading {
-      width: 60% !important;
-      background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-hover) 50%, var(--bg-tertiary) 75%);
-      background-size: 200% 100%;
-      animation: shimmer 1.5s infinite;
-    }
-    @keyframes shimmer {
-      0% { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
-    }
-    .cultify-dh-pct {
-      width: 36px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      font-family: var(--font-mono);
-      color: var(--text-secondary);
-      text-align: right;
-      flex-shrink: 0;
-    }
-
     @media (max-width: 480px) {
       .cultify-input-wrap { flex-direction: column; }
       .cultify-hero h1 { font-size: 1.25rem; }
@@ -501,7 +374,7 @@
   <script src="js/api.js"></script>
   <script src="js/wallet.js"></script>
   <script src="https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js"></script>
-  <script src="js/cultify.js?v=7"></script>
+  <script src="js/cultify.js?v=9"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

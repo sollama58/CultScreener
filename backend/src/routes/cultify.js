@@ -263,15 +263,23 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
   ];
 
   try {
-    // Check for cached final result
     const resultCacheKey = `cultify:diamond-hands:${mint}`;
-    const cached = await cache.get(resultCacheKey);
-    if (cached) return res.json(cached);
+    const fresh = req.query.fresh === 'true';
 
-    // For curated tokens, check if the main worker already computed it
-    if (curated) {
-      const mainCached = await cache.get(`diamond-hands:${mint}`);
-      if (mainCached) return res.json(mainCached);
+    // Check for cached final result (skip if fresh requested)
+    if (!fresh) {
+      const cached = await cache.get(resultCacheKey);
+      if (cached) return res.json(cached);
+
+      // For curated tokens, check if the main worker already computed it
+      if (curated) {
+        const mainCached = await cache.get(`diamond-hands:${mint}`);
+        if (mainCached) return res.json(mainCached);
+      }
+    } else {
+      // Clear stale caches when fresh is requested
+      await cache.delete(resultCacheKey);
+      await cache.delete(`cultify:dh-progress:${mint}`);
     }
 
     if (!solanaService.isHeliusConfigured()) {
@@ -334,13 +342,13 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
     const totalWallets = progress.wallets.length;
 
     // Build distribution from current data
-    const now = Date.now();
-    const holdTimeValues = Object.values(progress.holdTimes).filter(t => t > 0);
+    // holdTimes values are DURATIONS in ms (e.g. 86400000 = held for 1 day)
+    // Use analyzedCount as denominator (not just successful lookups) for accurate %
     const distribution = {};
     for (const b of BUCKETS) {
-      const count = holdTimeValues.filter(t => (now - t) >= b.ms).length;
-      distribution[b.key] = holdTimeValues.length > 0
-        ? Math.round(count / holdTimeValues.length * 100) : 0;
+      const count = Object.values(progress.holdTimes).filter(t => t > 0 && t >= b.ms).length;
+      distribution[b.key] = analyzedCount > 0
+        ? Math.round(count / analyzedCount * 100) : 0;
     }
 
     const allDone = analyzedCount >= totalWallets;

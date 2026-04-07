@@ -582,45 +582,49 @@
     if (isCurated) html += '<span class="cultify-free-badge">Curated - Free</span>';
     html += '</div>';
 
-    // Metrics
+    // Conviction metrics section — uses same classes as token page
+    html += '<section class="holders-section">';
+    html += '<div class="holders-graphic">';
+
+    // Metrics grid — same as token page
     if (metrics) {
       const safeRisk = ['high', 'medium', 'low'].includes(metrics.riskLevel) ? metrics.riskLevel : 'low';
-      const riskColor = safeRisk === 'high' ? '#ef4444'
-        : safeRisk === 'medium' ? 'var(--ember)' : '#22c55e';
-
-      html += '<div class="cultify-metrics">';
-      html += metricCard(metrics.top5Pct.toFixed(1) + '%', 'Top 5 Holders', metrics.top5Pct);
-      html += metricCard(metrics.top10Pct.toFixed(1) + '%', 'Top 10 Holders', metrics.top10Pct);
-      html += metricCard(metrics.top20Pct.toFixed(1) + '%', 'Top 20 Holders', metrics.top20Pct);
-      html += `<div class="cultify-metric">
-        <div class="cultify-metric-value" style="color:${riskColor}">${safeRisk.toUpperCase()}</div>
-        <div class="cultify-metric-label">Risk Level</div>
+      html += '<div class="holders-metrics">';
+      html += holderMetric('Total Holders', metrics.holderCount ? metrics.holderCount.toLocaleString() : '--');
+      html += holderMetric('Top 5 Holders', metrics.top5Pct.toFixed(1) + '%', metrics.top5Pct);
+      html += holderMetric('Top 10 Holders', metrics.top10Pct.toFixed(1) + '%', metrics.top10Pct);
+      html += holderMetric('Top 20 Holders', metrics.top20Pct.toFixed(1) + '%', metrics.top20Pct);
+      html += `<div class="holder-metric" style="display:flex;">
+        <span class="holder-metric-label">Risk Level</span>
+        <span class="holder-metric-value holders-risk-badge risk-${safeRisk}">${safeRisk.charAt(0).toUpperCase() + safeRisk.slice(1)}</span>
       </div>`;
       html += '</div>';
     }
 
-    // Diamond hands section — above holders table, starts as loading skeleton
-    html += '<div class="cultify-diamond-section" id="cultify-diamond">';
-    html += '<h3 style="font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Diamond Hands Distribution</h3>';
-    html += '<div id="cultify-diamond-bars">';
+    // Diamond Hands — uses same classes as token page
+    html += '<div class="diamond-hands-section" id="diamond-hands-section">';
+    html += '<div class="diamond-hands-header">';
+    html += '<span class="diamond-hands-title">Diamond Hands</span>';
+    html += '<span class="diamond-hands-sample" id="diamond-hands-sample">Analyzing holders...</span>';
+    html += '</div>';
+    html += '<div class="diamond-hands-bars" id="diamond-hands-bars">';
     const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
-    const labels = ['>6h', '>24h', '>3d', '>1w', '>1m', '>3m', '>6m', '>9m'];
+    const labels = ['&gt;6h', '&gt;24h', '&gt;3d', '&gt;1w', '&gt;1m', '&gt;3m', '&gt;6m', '&gt;9m'];
     buckets.forEach((key, i) => {
-      html += `<div class="cultify-dh-row" id="cultify-dh-row-${key}">
-        <span class="cultify-dh-label">${labels[i]}</span>
-        <div class="cultify-dh-track">
-          <div class="cultify-dh-fill cultify-dh-loading" id="cultify-dh-fill-${key}"></div>
-        </div>
-        <span class="cultify-dh-pct" id="cultify-dh-pct-${key}">...</span>
+      html += `<div class="diamond-bar" data-bucket="${key}">
+        <span class="diamond-bar-label">${labels[i]}</span>
+        <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-${key}"></div></div>
+        <span class="diamond-bar-pct" id="dh-pct-${key}">...</span>
       </div>`;
     });
-    html += '</div>';
-    html += '<p id="cultify-diamond-status" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Loading diamond hands data...</p>';
-    html += '</div>';
+    html += '</div></div>';
+    html += '</div></section>';
 
-    // Holders table
+    // Holders table — uses same classes as token page
     if (holders && holders.length > 0) {
-      html += '<div class="cultify-holders-table"><table>';
+      html += '<section class="holders-section" style="margin-top:1rem;">';
+      html += '<div class="holders-header"><h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Top Holders</h2></div>';
+      html += '<div class="holders-table-wrap"><table class="holders-table">';
       html += '<thead><tr><th>#</th><th>Address</th><th class="text-right">Balance</th><th class="text-right">%</th></tr></thead>';
       html += '<tbody>';
       holders.forEach(h => {
@@ -633,83 +637,143 @@
         const pct = h.percentage.toFixed(2) + '%';
         html += `<tr>
           <td>${h.rank}</td>
-          <td><a href="https://solscan.io/account/${addr}" target="_blank" rel="noopener" class="holder-address">${short}</a></td>
+          <td><a href="https://solscan.io/account/${addr}" target="_blank" rel="noopener" class="holder-address" title="${addr}">${short}</a></td>
           <td class="text-right mono">${bal}</td>
           <td class="text-right mono">${pct}</td>
         </tr>`;
       });
-      html += '</tbody></table></div>';
+      html += '</tbody></table></div></section>';
     }
 
     showResults(html);
 
-    // Start polling for diamond hands data
+    // Start polling for diamond hands data (fresh=true on first poll to clear stale data)
+    diamondPollCount = 0;
+    diamondFreshRequested = true;
     pollDiamondHands(mint);
   }
 
+  function holderMetric(label, value, concentrationPct) {
+    let cls = '';
+    if (concentrationPct != null) {
+      cls = concentrationPct > 80 ? 'concentration-high' : concentrationPct > 50 ? 'concentration-medium' : 'concentration-low';
+    }
+    return `<div class="holder-metric">
+      <span class="holder-metric-label">${label}</span>
+      <span class="holder-metric-value ${cls}">${value}</span>
+    </div>`;
+  }
+
   let diamondPollTimer = null;
+  let diamondPollCount = 0;
+  let diamondFreshRequested = false;
+  const MAX_DIAMOND_POLLS = 60; // ~3 minutes at 3s intervals
 
   async function pollDiamondHands(mint) {
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
+    diamondPollCount++;
+
+    const sampleEl = document.getElementById('diamond-hands-sample');
+
+    // Safety: stop polling after too many attempts
+    if (diamondPollCount > MAX_DIAMOND_POLLS) {
+      if (sampleEl) sampleEl.textContent = 'Analysis timed out. Showing partial results.';
+      finalizeDiamondBars();
+      return;
+    }
 
     const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
     const tokenParam = currentAccessToken ? `?token=${currentAccessToken}` : '';
+    const freshParam = diamondFreshRequested ? '&fresh=true' : '';
+    diamondFreshRequested = false;
 
     try {
-      const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${tokenParam}`);
+      const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${tokenParam}${freshParam}`);
+
+      // Stop polling on auth errors (403) — won't resolve with retries
+      if (resp.status === 403) {
+        if (sampleEl) sampleEl.textContent = 'Access expired. Re-analyze to refresh.';
+        finalizeDiamondBars();
+        return;
+      }
+
       if (!resp.ok) {
-        // Retry on server error
         diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
         return;
       }
+
       const data = await resp.json();
 
-      const statusEl = document.getElementById('cultify-diamond-status');
+      // Terminal state: computed with no distribution (no holders / RPC unavailable)
+      if (data.computed && !data.distribution) {
+        if (sampleEl) sampleEl.textContent = 'Diamond hands data unavailable.';
+        finalizeDiamondBars();
+        return;
+      }
 
       if (data.distribution) {
-        const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
-        buckets.forEach(key => {
-          const pct = data.distribution[key] || 0;
-          const fillEl = document.getElementById(`cultify-dh-fill-${key}`);
-          const pctEl = document.getElementById(`cultify-dh-pct-${key}`);
-          if (fillEl) {
-            fillEl.classList.remove('cultify-dh-loading');
-            fillEl.style.width = pct + '%';
-            fillEl.className = 'cultify-dh-fill' +
-              (pct >= 50 ? ' cultify-dh-high' : pct >= 20 ? ' cultify-dh-mid' : ' cultify-dh-low');
-          }
-          if (pctEl) pctEl.textContent = pct + '%';
-        });
+        updateDiamondBars(data.distribution);
 
-        if (statusEl) {
+        if (sampleEl) {
           if (data.computed) {
-            statusEl.textContent = `${data.analyzed} of ${data.sampleSize} holders analyzed`;
+            sampleEl.textContent = `${data.analyzed} of ${data.sampleSize} holders analyzed`;
           } else {
-            statusEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} holders`;
+            sampleEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} holders`;
           }
         }
       } else {
-        // No distribution yet — still loading
-        if (statusEl) statusEl.textContent = 'Computing hold times...';
+        if (sampleEl) sampleEl.textContent = 'Computing hold times...';
       }
 
-      // Keep polling if not fully computed
+      // Keep polling if not done
       if (!data.computed) {
         diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 3000);
+      } else {
+        finalizeDiamondBars();
       }
     } catch {
-      // Retry on network error
       diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
     }
   }
 
-  function metricCard(value, label, pct) {
-    const cls = pct > 80 ? 'concentration-high' : pct > 50 ? 'concentration-medium' : 'concentration-low';
-    return `<div class="cultify-metric">
-      <div class="cultify-metric-value ${cls}">${value}</div>
-      <div class="cultify-metric-label">${label}</div>
-    </div>`;
+  function updateDiamondBars(distribution) {
+    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    buckets.forEach(key => {
+      const pct = distribution[key] || 0;
+      const fillEl = document.getElementById(`dh-fill-${key}`);
+      const pctEl = document.getElementById(`dh-pct-${key}`);
+      if (fillEl) {
+        fillEl.classList.remove('dh-loading');
+        fillEl.style.width = pct + '%';
+        fillEl.className = 'diamond-bar-fill' +
+          (pct >= 50 ? ' dh-high' : pct >= 20 ? ' dh-mid' : ' dh-low');
+      }
+      if (pctEl) {
+        pctEl.textContent = pct + '%';
+        pctEl.classList.remove('dh-text-high', 'dh-text-mid', 'dh-text-low');
+        if (pct >= 50) pctEl.classList.add('dh-text-high');
+        else if (pct >= 20) pctEl.classList.add('dh-text-mid');
+        else if (pct > 0) pctEl.classList.add('dh-text-low');
+      }
+    });
   }
+
+  // Remove loading shimmers from any bars that haven't received data
+  function finalizeDiamondBars() {
+    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    buckets.forEach(key => {
+      const fillEl = document.getElementById(`dh-fill-${key}`);
+      const pctEl = document.getElementById(`dh-pct-${key}`);
+      if (fillEl && fillEl.classList.contains('dh-loading')) {
+        fillEl.classList.remove('dh-loading');
+        fillEl.style.width = '0%';
+      }
+      if (pctEl && pctEl.textContent === '...') {
+        pctEl.textContent = '0%';
+      }
+    });
+  }
+
 
   // ── Event listeners ───────────────────────────────
 
