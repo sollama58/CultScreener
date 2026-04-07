@@ -4980,7 +4980,9 @@ strong {
    regardless of z-index or stacking contexts.
    ============================================== */
 
-/* The <dialog> itself: transparent wrapper, no default browser chrome */
+/* The <dialog> itself: transparent wrapper, no default browser chrome.
+   Must override UA defaults for max-width, max-height, and overflow
+   which clip content on most browsers. */
 .mobile-nav-dialog {
   position: fixed;
   top: 52px;
@@ -4988,11 +4990,14 @@ strong {
   left: auto;
   bottom: auto;
   width: 210px;
+  max-width: none;
+  max-height: none;
   margin: 0;
   padding: 0;
   border: none;
   background: transparent;
   overflow: visible;
+  color: inherit;
 }
 
 /* Reset browser default dialog backdrop (non-modal dialogs don't have one,
