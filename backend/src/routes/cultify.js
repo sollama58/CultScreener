@@ -280,7 +280,7 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
 
     // Check partial progress from a previous request
     const progressKey = `cultify:dh-progress:${mint}`;
-    let progress = await cache.get(progressKey) || { holdTimes: {}, analyzed: 0, wallets: null };
+    let progress = await cache.get(progressKey) || { holdTimes: {}, wallets: null };
 
     // Get holder wallets if we don't have them yet
     if (!progress.wallets) {
@@ -290,7 +290,6 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       }
       progress.wallets = accounts.slice(0, 20).map(a => a.address);
       progress.holdTimes = {};
-      progress.analyzed = 0;
     }
 
     // Compute hold times for unanalyzed wallets (batch of 5 per request to stay fast)
@@ -304,27 +303,30 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       } catch {
         progress.holdTimes[walletAddr] = 0;
       }
-      progress.analyzed++;
     }));
 
     // Save progress for next poll
     await cache.set(progressKey, progress, 600); // 10 min TTL
 
+    // Derive analyzed count from actual holdTimes entries (not a separate counter)
+    const analyzedCount = Object.keys(progress.holdTimes).length;
+    const totalWallets = progress.wallets.length;
+
     // Build distribution from current data
     const now = Date.now();
-    const analyzedWallets = Object.values(progress.holdTimes).filter(t => t > 0);
+    const holdTimeValues = Object.values(progress.holdTimes).filter(t => t > 0);
     const distribution = {};
     for (const b of BUCKETS) {
-      const count = analyzedWallets.filter(t => (now - t) >= b.ms).length;
-      distribution[b.key] = analyzedWallets.length > 0
-        ? Math.round(count / analyzedWallets.length * 100) : 0;
+      const count = holdTimeValues.filter(t => (now - t) >= b.ms).length;
+      distribution[b.key] = holdTimeValues.length > 0
+        ? Math.round(count / holdTimeValues.length * 100) : 0;
     }
 
-    const allDone = progress.analyzed >= progress.wallets.length;
+    const allDone = analyzedCount >= totalWallets;
     const result = {
       distribution,
-      sampleSize: progress.wallets.length,
-      analyzed: progress.analyzed,
+      sampleSize: totalWallets,
+      analyzed: analyzedCount,
       computed: allDone
     };
 
