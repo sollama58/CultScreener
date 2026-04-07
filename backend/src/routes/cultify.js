@@ -282,33 +282,54 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
     const progressKey = `cultify:dh-progress:${mint}`;
     let progress = await cache.get(progressKey) || { holdTimes: {}, wallets: null };
 
-    // Get holder wallets if we don't have them yet
+    // Get holder OWNER wallets if we don't have them yet
     if (!progress.wallets) {
-      const accounts = await solanaService.getTokenLargestAccounts(mint);
-      if (!accounts || accounts.length === 0) {
+      // Step 1: Get largest token accounts (these are ATAs, not wallet addresses)
+      const tokenAccounts = await solanaService.getTokenLargestAccounts(mint);
+      if (!tokenAccounts || tokenAccounts.length === 0) {
         return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
       }
-      progress.wallets = accounts.slice(0, 20).map(a => a.address);
+
+      // Step 2: Resolve token account addresses → owner wallet addresses
+      const ataAddresses = tokenAccounts.slice(0, 20).map(a => a.address);
+      const accountInfos = await solanaService.getMultipleAccounts(ataAddresses);
+      const ownerWallets = [];
+      if (accountInfos && accountInfos.value) {
+        for (const info of accountInfos.value) {
+          const owner = info?.data?.parsed?.info?.owner;
+          if (owner && !ownerWallets.includes(owner)) {
+            ownerWallets.push(owner);
+          }
+        }
+      }
+
+      if (ownerWallets.length === 0) {
+        return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
+      }
+
+      progress.wallets = ownerWallets;
       progress.holdTimes = {};
     }
 
-    // Compute hold times for unanalyzed wallets (batch of 5 per request to stay fast)
+    // Compute hold times for unanalyzed wallets (batch of 3 per request to stay fast)
     const unanalyzed = progress.wallets.filter(w => !(w in progress.holdTimes));
-    const batch = unanalyzed.slice(0, 5);
+    const batch = unanalyzed.slice(0, 3);
 
-    await Promise.all(batch.map(async (walletAddr) => {
-      try {
-        const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint);
-        progress.holdTimes[walletAddr] = metrics.tokenHoldTime || 0;
-      } catch {
-        progress.holdTimes[walletAddr] = 0;
-      }
-    }));
+    if (batch.length > 0) {
+      await Promise.all(batch.map(async (walletAddr) => {
+        try {
+          const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint);
+          progress.holdTimes[walletAddr] = metrics.tokenHoldTime || 0;
+        } catch {
+          progress.holdTimes[walletAddr] = 0;
+        }
+      }));
 
-    // Save progress for next poll
-    await cache.set(progressKey, progress, 600); // 10 min TTL
+      // Save progress for next poll
+      await cache.set(progressKey, progress, 600); // 10 min TTL
+    }
 
-    // Derive analyzed count from actual holdTimes entries (not a separate counter)
+    // Derive analyzed count from actual holdTimes entries
     const analyzedCount = Object.keys(progress.holdTimes).length;
     const totalWallets = progress.wallets.length;
 
