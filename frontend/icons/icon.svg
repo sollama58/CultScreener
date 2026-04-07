@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#111215"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#ff3d00"/>
+      <stop offset="40%" stop-color="#ff5722"/>
+      <stop offset="100%" stop-color="#ff9100"/>
+    </linearGradient>
+    <linearGradient id="innerFlame" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#ff9100"/>
+      <stop offset="100%" stop-color="#ffcc02"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Subtle ring -->
+  <circle cx="256" cy="270" r="160" fill="none" stroke="rgba(255,87,34,0.08)" stroke-width="2"/>
+  <!-- Outer flame -->
+  <g filter="url(#glow)" transform="translate(256,280) scale(2.8)">
+    <path d="M0-72c0 0-28 24-28 52c0 14 6 26 14 34c-4-10-2-22 6-30c0 16 8 28 16 36c2-8 6-18 14-26c-2 12 2 24 8 32c6-8 10-20 12-28c4 10 6 22 2 34c10-8 16-22 16-38c0-26-28-48-28-48c0 16-4 28-10 36c-4-12-12-28-20-44z" fill="url(#flame)"/>
+  </g>
+  <!-- Inner flame -->
+  <g transform="translate(256,300) scale(1.8)">
+    <path d="M0-36c0 0-14 14-14 28c0 10 4 18 10 22c-2-6 0-14 4-18c0 10 6 18 10 22c2-6 4-12 8-16c0 8 2 16 6 20c4-6 6-14 6-22c0-16-16-28-16-28c0 10-4 18-8 22c-2-8-6-18-6-28z" fill="url(#innerFlame)"/>
+  </g>
+  <!-- "CS" text -->
+  <text x="256" y="430" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-weight="800" font-size="64" fill="#f0f0f2" letter-spacing="6">CS</text>
+</svg>

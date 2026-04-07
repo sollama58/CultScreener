@@ -4985,7 +4985,112 @@ strong {
   .token-skeleton .skel-pool { height: 54px; margin-bottom: 0.4rem; }
 }
 
-/* Install app button */
+/* =============================================
+   PWA — Install Banner, Update Banner, Standalone
+   ============================================= */
+
+/* Install Bubble (mobile-only, bottom-right) */
+.pwa-install-bubble {
+  display: none;
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  z-index: 10000;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--fire-primary), var(--hot));
+  color: #fff;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(255, 87, 34, 0.35), 0 2px 6px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.3s ease, transform 0.3s var(--ease-out-expo), box-shadow 0.2s ease;
+  pointer-events: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 768px) {
+  .pwa-install-bubble {
+    display: flex;
+  }
+}
+
+.pwa-install-bubble.visible {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.pwa-install-bubble:active {
+  transform: scale(0.92);
+  box-shadow: 0 2px 8px rgba(255, 87, 34, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Update Banner */
+.pwa-update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10000;
+  transform: translateY(-100%);
+  opacity: 0;
+  transition: transform 0.4s var(--ease-out-expo), opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.pwa-update-banner.visible {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pwa-update-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: linear-gradient(135deg, rgba(255, 87, 34, 0.12), rgba(255, 145, 0, 0.08));
+  border-bottom: 1px solid var(--border-fire);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.pwa-update-btn {
+  background: var(--fire-primary);
+  color: #fff;
+  border: none;
+  padding: 0.4rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.pwa-update-btn:hover {
+  background: var(--fire-secondary);
+}
+
+/* Standalone Mode Tweaks (installed PWA) */
+.pwa-standalone body {
+  /* Extra safe area padding for notch devices */
+  padding-top: env(safe-area-inset-top);
+}
+
+.pwa-standalone .header {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Install app button (legacy) */
 #install-app-btn {
   border-color: var(--border-color);
 }
