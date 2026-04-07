@@ -12,6 +12,7 @@ const curatedRoutes = require('./routes/curated');
 const adminRoutes = require('./routes/admin');
 const sentimentRoutes = require('./routes/sentiment');
 const shareRoutes = require('./routes/share');
+const cultifyRoutes = require('./routes/cultify');
 
 // Import middleware
 const { defaultLimiter } = require('./middleware/rateLimit');
@@ -147,7 +148,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://cdn.jsdelivr.net", "https://unpkg.com"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https:", "blob:"],
@@ -239,6 +240,7 @@ app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/curated', curatedRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/sentiment', sentimentRoutes);
+app.use('/api/cultify', cultifyRoutes);
 
 // Social media share routes (OG meta tags + OG image)
 app.use('/share', shareRoutes);

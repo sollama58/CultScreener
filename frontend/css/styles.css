@@ -128,7 +128,6 @@ html {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
   color-scheme: dark;
 }
 
@@ -138,7 +137,6 @@ body {
   color: var(--text-primary);
   line-height: 1.6;
   min-height: 100vh;
-  overflow-x: hidden;
 }
 
 /* Subtle ambient glow — adds depth without distraction */
@@ -212,7 +210,6 @@ img {
   backdrop-filter: blur(24px) saturate(1.4);
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
   z-index: 1200;
-  overflow: visible;
 }
 
 .header-content {
@@ -4307,6 +4304,8 @@ select:focus {
   /* Controls stack */
   .terminal-toolbar { gap: 0.4rem; }
   .terminal-search-wrap { flex: 1 1 120px; min-width: 100px; max-width: none; }
+  .terminal-search { padding-left: 2.2rem; }
+  .terminal-search-icon { left: 0.7rem; }
   .terminal-filters-toggle { padding: 0.4rem 0.65rem; font-size: 0.74rem; }
   .terminal-status-inline { padding: 0.25rem 0.55rem; font-size: 0.6rem; }
   .terminal-controls { flex-direction: column; align-items: stretch; }
@@ -4446,8 +4445,8 @@ select:focus {
 
   .terminal-toolbar { gap: 0.3rem; }
   .terminal-search-wrap { flex: 1 1 80px; min-width: 80px; }
-  .terminal-search { font-size: 0.78rem; padding: 0.35rem 0.5rem 0.35rem 1.8rem; }
-  .terminal-search-icon { left: 0.6rem; width: 12px; height: 12px; }
+  .terminal-search { font-size: 0.78rem; padding: 0.35rem 0.5rem 0.35rem 2rem; }
+  .terminal-search-icon { left: 0.65rem; width: 12px; height: 12px; }
   .terminal-filters-toggle { padding: 0.35rem 0.55rem; font-size: 0.68rem; gap: 0.25rem; }
   .terminal-filters-toggle svg { width: 12px; height: 12px; }
   .terminal-status-inline { padding: 0.2rem 0.45rem; font-size: 0.62rem; gap: 0.25rem; }
@@ -4972,20 +4971,19 @@ strong {
 }
 
 /* ==============================================
-   Mobile nav dropdown — lives inside <header> and
-   uses position:absolute so it inherits the header's
-   z-index:1200 stacking context (above all page content).
-   Built from scratch by JS with unique class names
-   to avoid any .nav style inheritance.
+   Mobile nav dropdown — appended to <body> by JS.
+   Uses position:fixed + high z-index.
+   (overflow-x:hidden removed from html/body so
+   position:fixed works correctly on mobile.)
    ============================================== */
 .mobile-nav-menu {
   display: none;
   flex-direction: column;
-  position: absolute;
-  top: 100%;
+  position: fixed;
+  top: 52px;
   right: 0.85rem;
   width: 220px;
-  z-index: 9999;
+  z-index: 99999;
   background: var(--bg-elevated);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -5046,6 +5044,7 @@ strong {
 
 @media (max-width: 480px) {
   .mobile-nav-menu {
+    top: 48px;
     right: 0.6rem;
   }
 }

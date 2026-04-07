@@ -965,15 +965,13 @@ const utils = {
   },
 
   // Hamburger menu for mobile navigation.
-  // The dropdown is placed inside <header> and uses position:absolute so it
-  // shares the header's stacking context (z-index:1200, above all page content).
-  // This avoids position:fixed which breaks when html/body have overflow:hidden.
+  // Dropdown is appended to <body> with position:fixed.
+  // (overflow-x:hidden was removed from html/body so position:fixed works.)
   initHamburgerMenu() {
     if (this._hamburgerInitialized) return;
     const hamburger = document.getElementById('nav-hamburger');
     const headerNav = document.getElementById('main-nav');
-    const header = document.querySelector('.header');
-    if (!hamburger || !headerNav || !header) return;
+    if (!hamburger || !headerNav) return;
     this._hamburgerInitialized = true;
 
     // Build dropdown from scratch — avoids .nav class to prevent style conflicts
@@ -1001,9 +999,7 @@ const utils = {
       dropdown.appendChild(wrapper);
     }
 
-    // Append to <header> — the dropdown inherits the header's z-index:1200
-    // stacking context, which is above all page content (main, tables, etc.)
-    header.appendChild(dropdown);
+    document.body.appendChild(dropdown);
 
     const closeMobileNav = () => {
       dropdown.classList.remove('open');

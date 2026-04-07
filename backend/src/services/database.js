@@ -411,6 +411,19 @@ async function initializeDatabase() {
 
       CREATE INDEX IF NOT EXISTS idx_bug_reports_status ON bug_reports(status);
       CREATE INDEX IF NOT EXISTS idx_bug_reports_created ON bug_reports(created_at DESC);
+
+      -- Cultify burn records (gate non-curated token analysis behind token burns)
+      CREATE TABLE IF NOT EXISTS cultify_burns (
+        id SERIAL PRIMARY KEY,
+        wallet_address VARCHAR(44) NOT NULL,
+        token_mint VARCHAR(44) NOT NULL,
+        burn_signature VARCHAR(90) UNIQUE NOT NULL,
+        burn_amount TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cultify_burns_wallet_mint ON cultify_burns(wallet_address, token_mint);
+      CREATE INDEX IF NOT EXISTS idx_cultify_burns_sig ON cultify_burns(burn_signature);
     `);
 
     await client.query('COMMIT');
@@ -3078,6 +3091,34 @@ async function updateCuratedTokenDexScreener(mintAddress, data) {
   return result.rows[0] || null;
 }
 
+// ── Cultify Burns ──────────────────────────────────────
+
+async function recordCultifyBurn(walletAddress, tokenMint, signature, burnAmount) {
+  if (!pool) throw new Error('Database not available');
+  await pool.query(`
+    INSERT INTO cultify_burns (wallet_address, token_mint, burn_signature, burn_amount)
+    VALUES ($1, $2, $3, $4)
+  `, [walletAddress, tokenMint, signature, burnAmount]);
+}
+
+async function hasCultifyAccess(walletAddress, tokenMint) {
+  if (!pool) throw new Error('Database not available');
+  const result = await pool.query(
+    'SELECT 1 FROM cultify_burns WHERE wallet_address = $1 AND token_mint = $2 LIMIT 1',
+    [walletAddress, tokenMint]
+  );
+  return result.rows.length > 0;
+}
+
+async function isCultifySignatureUsed(signature) {
+  if (!pool) throw new Error('Database not available');
+  const result = await pool.query(
+    'SELECT 1 FROM cultify_burns WHERE burn_signature = $1 LIMIT 1',
+    [signature]
+  );
+  return result.rows.length > 0;
+}
+
 module.exports = {
   get pool() { return pool; },
   initializeDatabase,
@@ -3212,5 +3253,9 @@ module.exports = {
   isTokenAllowed,
   addCuratedToken,
   removeCuratedToken,
-  updateCuratedTokenDexScreener
+  updateCuratedTokenDexScreener,
+  // Cultify burns
+  recordCultifyBurn,
+  hasCultifyAccess,
+  isCultifySignatureUsed
 };
