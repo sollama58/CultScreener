@@ -965,8 +965,8 @@ const utils = {
   },
 
   // Hamburger menu for mobile navigation.
-  // Moves the nav out of .header and onto <body> so it is not trapped
-  // inside the header's backdrop-filter stacking context.
+  // Uses a <dialog> element so the dropdown renders in the browser's top layer,
+  // which is above ALL other content regardless of z-index or stacking contexts.
   initHamburgerMenu() {
     if (this._hamburgerInitialized) return;
     const hamburger = document.getElementById('nav-hamburger');
@@ -974,43 +974,42 @@ const utils = {
     if (!hamburger || !headerNav) return;
     this._hamburgerInitialized = true;
 
-    // Build mobile dropdown as a sibling of <body>, outside the header entirely
-    const dropdown = headerNav.cloneNode(true);
-    dropdown.removeAttribute('id');
-    dropdown.classList.add('mobile-dropdown');
-    document.body.appendChild(dropdown);
+    // Create a <dialog> and put the nav links inside it
+    const dialog = document.createElement('dialog');
+    dialog.className = 'mobile-nav-dialog';
+    dialog.setAttribute('aria-label', 'Navigation menu');
 
-    // Move the real wallet button into the mobile dropdown (only on mobile)
+    const navClone = headerNav.cloneNode(true);
+    navClone.removeAttribute('id');
+    navClone.classList.add('mobile-dropdown');
+    dialog.appendChild(navClone);
+
+    // Move the real wallet button into the dropdown (only on mobile)
     const walletBtn = document.getElementById('connect-wallet');
     if (walletBtn && window.matchMedia('(max-width: 768px)').matches) {
       const wrapper = document.createElement('div');
       wrapper.className = 'nav-wallet-item';
       wrapper.appendChild(walletBtn);
-      dropdown.appendChild(wrapper);
+      navClone.appendChild(wrapper);
     }
 
-    // Invisible backdrop to catch outside clicks
-    const backdrop = document.createElement('div');
-    backdrop.className = 'nav-backdrop';
-    document.body.appendChild(backdrop);
+    document.body.appendChild(dialog);
 
     const closeMobileNav = () => {
-      dropdown.classList.remove('open');
+      dialog.close();
       hamburger.classList.remove('active');
       hamburger.setAttribute('aria-expanded', 'false');
-      backdrop.classList.remove('active');
     };
 
     const openMobileNav = () => {
-      dropdown.classList.add('open');
+      dialog.show(); // .show() = non-modal (no backdrop dimming, page still interactive)
       hamburger.classList.add('active');
       hamburger.setAttribute('aria-expanded', 'true');
-      backdrop.classList.add('active');
     };
 
     hamburger.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (dropdown.classList.contains('open')) {
+      if (dialog.open) {
         closeMobileNav();
       } else {
         openMobileNav();
@@ -1018,27 +1017,30 @@ const utils = {
     });
 
     // Close menu when a nav link is clicked
-    dropdown.querySelectorAll('.nav-link:not(.nav-dropdown-toggle)').forEach(link => {
+    navClone.querySelectorAll('.nav-link:not(.nav-dropdown-toggle)').forEach(link => {
       link.addEventListener('click', closeMobileNav);
     });
 
-    // Close when clicking the backdrop
-    backdrop.addEventListener('click', closeMobileNav);
+    // Close on Escape (dialog handles this natively, but sync the hamburger icon)
+    dialog.addEventListener('close', () => {
+      hamburger.classList.remove('active');
+      hamburger.setAttribute('aria-expanded', 'false');
+    });
 
-    // Close on Escape key
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && dropdown.classList.contains('open')) {
+    // Close when clicking outside the dialog
+    document.addEventListener('click', (e) => {
+      if (dialog.open && !dialog.contains(e.target) && !hamburger.contains(e.target)) {
         closeMobileNav();
       }
     });
 
     // Handle mobile dropdown toggles within hamburger menu
-    dropdown.querySelectorAll('.nav-dropdown-toggle').forEach(toggle => {
+    navClone.querySelectorAll('.nav-dropdown-toggle').forEach(toggle => {
       toggle.addEventListener('click', (e) => {
         if (window.innerWidth > 768) return;
         e.preventDefault();
         const dd = toggle.closest('.nav-dropdown');
-        dropdown.querySelectorAll('.nav-dropdown.open').forEach(other => {
+        navClone.querySelectorAll('.nav-dropdown.open').forEach(other => {
           if (other !== dd) other.classList.remove('open');
         });
         dd.classList.toggle('open');
@@ -1046,7 +1048,8 @@ const utils = {
     });
 
     // Store reference for other code that needs to close the menu
-    this._mobileDropdown = dropdown;
+    this._mobileDropdown = navClone;
+    this._mobileDialog = dialog;
     this._closeMobileNav = closeMobileNav;
   },
 
