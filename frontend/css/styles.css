@@ -4273,13 +4273,15 @@ select:focus {
     margin-left: auto;
   }
 
-  /* Dropdown menu — fixed to viewport, below header, right-aligned */
+  /* Dropdown menu — absolute to header-content, below header, right-aligned.
+     Using position: absolute (not fixed) because backdrop-filter on .header
+     creates a containing block that breaks position: fixed on mobile browsers. */
   .nav {
     display: flex;
     flex-direction: column;
-    position: fixed;
-    top: 52px;
-    right: 0.85rem;
+    position: absolute;
+    top: 100%;
+    right: 0;
     left: auto;
     bottom: auto;
     width: 210px;
@@ -4504,7 +4506,7 @@ select:focus {
   .logo-text { font-size: 1.05rem; }
   .logo-badge, .powered-badge { display: none; }
 
-  .nav { top: 48px; right: 0.6rem; }
+  .nav { right: 0; }
 
   .main { padding: 0.5rem 0.6rem 2rem; }
 
