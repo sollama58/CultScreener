@@ -212,6 +212,7 @@ img {
   backdrop-filter: blur(24px) saturate(1.4);
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
   z-index: 1200;
+  overflow: visible;
 }
 
 .header-content {
