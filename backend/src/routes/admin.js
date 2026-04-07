@@ -243,9 +243,18 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   const result = await db.removeCuratedToken(mint);
   if (!result) return res.status(404).json({ error: 'Token not found in curated list' });
 
-  // Invalidate cached token lists so the removed token disappears immediately
+  // Invalidate all caches that could contain this token
   try {
-    await cache.clearPattern('list:*');
+    await Promise.all([
+      cache.clearPattern('list:*'),
+      cache.clearPattern('search:*'),
+      cache.delete(`token:${mint}`),
+      cache.delete(`price:${mint}`),
+      cache.delete(`pools:${mint}`),
+      cache.delete(`holders:${mint}`),
+      cache.delete(`batch:${mint}`),
+      cache.clearPattern(`*${mint}*`),
+    ]);
   } catch (_) { /* cache clear is non-critical */ }
 
   res.json({ success: true });

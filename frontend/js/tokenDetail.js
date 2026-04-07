@@ -70,7 +70,11 @@ const tokenDetail = {
       window.addEventListener('walletConnected', this._walletConnectedHandler);
     } catch (error) {
       console.error('Failed to initialize token page:', error.message);
-      this.showError('Failed to load token data. Please try again.');
+      if (error.code === 'NOT_CURATED') {
+        this.showError('This token is not available on CultScreener. Only curated tokens listed on the leaderboard can be viewed.', 'Token Not Available');
+      } else {
+        this.showError('Failed to load token data. Please try again.');
+      }
     }
   },
 
@@ -95,15 +99,17 @@ const tokenDetail = {
   },
 
   // Show error state
-  showError(message) {
+  showError(message, title) {
     const loading = document.getElementById('loading-state');
     const content = document.getElementById('token-content');
     const error = document.getElementById('error-state');
     const errorMsg = document.getElementById('error-message');
+    const errorTitle = document.getElementById('error-title');
 
     if (loading) loading.style.display = 'none';
     if (content) content.style.display = 'none';
     if (error) error.style.display = 'flex';
+    if (errorTitle && title) errorTitle.textContent = title;
     if (errorMsg) errorMsg.textContent = message;
   },
 

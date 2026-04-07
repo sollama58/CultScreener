@@ -3041,11 +3041,31 @@ async function addCuratedToken(mintAddress) {
   return result.rows[0] || null;
 }
 
+async function isTokenAllowed(mintAddress) {
+  if (!pool) return false;
+  const result = await pool.query(`
+    SELECT 1 FROM curated_tokens WHERE mint_address = $1
+    UNION ALL
+    SELECT 1 FROM tokens WHERE mint_address = $1 AND conviction_1m IS NOT NULL AND conviction_1m > 0
+    LIMIT 1
+  `, [mintAddress]);
+  return result.rows.length > 0;
+}
+
 async function removeCuratedToken(mintAddress) {
   const result = await pool.query(`
     DELETE FROM curated_tokens WHERE mint_address = $1 RETURNING *
   `, [mintAddress]);
-  return result.rows[0] || null;
+  if (result.rows.length === 0) return null;
+
+  // Clear conviction data so the token no longer appears on the leaderboard
+  await pool.query(`
+    UPDATE tokens SET conviction_1m = NULL, conviction_data = NULL,
+      conviction_sample_size = NULL, conviction_computed_at = NULL
+    WHERE mint_address = $1
+  `, [mintAddress]).catch(() => {});
+
+  return result.rows[0];
 }
 
 async function updateCuratedTokenDexScreener(mintAddress, data) {
@@ -3189,6 +3209,7 @@ module.exports = {
   // Curated tokens
   getCuratedTokens,
   getCuratedToken,
+  isTokenAllowed,
   addCuratedToken,
   removeCuratedToken,
   updateCuratedTokenDexScreener

@@ -12,6 +12,18 @@ const axios = require('axios');
 // Require database for all token routes
 router.use(requireDatabase);
 
+// Middleware: reject requests for tokens not in the curated list or leaderboard.
+// Prevents arbitrary tokens from triggering expensive RPC/computation calls.
+const requireAllowedToken = asyncHandler(async (req, res, next) => {
+  const mint = req.params.mint;
+  if (!mint) return next();
+  const allowed = await db.isTokenAllowed(mint);
+  if (!allowed) {
+    return res.status(403).json({ error: 'Token not available. Only curated tokens can be viewed.', code: 'NOT_CURATED' });
+  }
+  next();
+});
+
 // Names that indicate missing/placeholder metadata
 const PLACEHOLDER_NAMES = new Set(['unknown token', 'unknown', '']);
 
@@ -1293,7 +1305,7 @@ router.get('/spikes', searchLimiter, asyncHandler(async (req, res) => {
 // GET /api/tokens/:mint - Get single token details
 // Uses 5-minute cache but requires data < 1 minute old (fresh) for individual token views
 // Optimized: Uses getOrSetWithFreshness for stampede prevention on concurrent requests
-router.get('/:mint', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const cacheKey = keys.tokenInfo(mint);
 
@@ -1557,7 +1569,7 @@ router.get('/:mint/ohlcv', validateMint, asyncHandler(async (req, res) => {
 
 // GET /api/tokens/:mint/pools - Get liquidity pools for a token
 // Uses getOrSet for automatic caching with stampede prevention
-router.get('/:mint/pools', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/pools', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const { limit = 10 } = req.query;
 
@@ -1651,7 +1663,7 @@ router.get('/:mint/views', validateMint, asyncHandler(async (req, res) => {
 
 // GET /api/tokens/:mint/holder/:wallet - Check if wallet holds token and get balance info
 // Used to verify submitter holds the token they want to update
-router.get('/:mint/holder/:wallet', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint, wallet } = req.params;
 
   // Basic wallet address validation
@@ -1792,7 +1804,7 @@ router.get('/:mint/holder/:wallet', validateMint, asyncHandler(async (req, res) 
 // Phase 1 (inline): Fetch largest accounts + supply (2 fast RPC calls)
 // Phase 2 (worker): Classify LP/burn/lock, resolve wallets (6+ slow RPC calls)
 // If the worker result is cached, returns full data immediately.
-router.get('/:mint/holders', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const cacheKey = `holder-analytics:${mint}`;
 
@@ -2050,7 +2062,7 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
 // (>24hr or missing), queues a background worker job to compute them.
 // Response includes `computed: false` when stale wallets are pending so the
 // frontend knows to re-poll.
-router.get('/:mint/holders/hold-times', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   try {
@@ -2181,7 +2193,7 @@ const DIAMOND_HANDS_BUCKETS = [
   { key: '9m',  label: '>9m',  ms: 270 * 86400000 },
 ];
 
-router.get('/:mint/holders/diamond-hands', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   try {
@@ -2301,7 +2313,7 @@ function buildDiamondHandsResult(holdTimes, sampleSize, analyzed) {
 // Anti-spoofing: helps users identify confusing or copycat token names
 // Returns fast DB results inline (~5-20ms), then queues worker for GeckoTerminal enrichment.
 // Response format: { results: [...], enriched: boolean }
-router.get('/:mint/similar', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/similar', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const cacheKey = `similar:${mint}`;
   const pendingKey = `similar-pending:${mint}`;
