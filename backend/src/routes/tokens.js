@@ -1421,6 +1421,15 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         tokenResult.views = 0;
       }
 
+      // Include curated token DexScreener data (banner + socials) if available
+      const curated = await db.getCuratedToken(mint).catch(() => null);
+      if (curated) {
+        if (curated.bannerUrl) tokenResult.bannerUrl = curated.bannerUrl;
+        if (curated.socials && Object.keys(curated.socials).length > 0) {
+          tokenResult.socials = curated.socials;
+        }
+      }
+
       // Also save to database for future reference
       const tokenName = helius.name || gecko.name;
       const tokenSymbol = helius.symbol || gecko.symbol;

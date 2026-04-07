@@ -507,8 +507,14 @@ const tokenDetail = {
       jupiterLink.href = `https://jup.ag/swap?sell=So11111111111111111111111111111111111111112&buy=${this.mint}`;
     }
 
-    // Banner and social links are loaded client-side via loadDexScreenerData()
-    // which runs in Phase 2 after this.token is populated.
+    // Render banner and socials from backend-cached DexScreener data if available.
+    // loadDexScreenerData() in Phase 2 will refresh these from DexScreener directly.
+    if (token.bannerUrl) {
+      this._renderBanner(token.bannerUrl);
+    }
+    if (token.socials && Object.keys(token.socials).length > 0) {
+      this._renderSocials(token.socials);
+    }
 
   },
 
