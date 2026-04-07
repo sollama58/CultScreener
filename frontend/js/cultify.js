@@ -667,7 +667,7 @@
   let diamondPollTimer = null;
   let diamondPollCount = 0;
   let diamondFreshRequested = false;
-  const MAX_DIAMOND_POLLS = 60; // ~3 minutes at 3s intervals
+  const MAX_DIAMOND_POLLS = 40; // ~4 minutes at 6s intervals
 
   async function pollDiamondHands(mint) {
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
@@ -698,7 +698,7 @@
       }
 
       if (!resp.ok) {
-        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
+        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 8000);
         return;
       }
 
@@ -727,7 +727,7 @@
 
       // Keep polling if not done
       if (!data.computed) {
-        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 3000);
+        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 6000);
       } else {
         finalizeDiamondBars();
       }

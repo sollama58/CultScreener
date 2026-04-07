@@ -319,19 +319,19 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       progress.holdTimes = {};
     }
 
-    // Compute hold times for unanalyzed wallets (batch of 3 per request to stay fast)
+    // Compute hold time for ONE wallet per request to avoid Helius 429 rate limits.
+    // Each getWalletHoldMetrics makes 1-3 RPC calls (getTokenAccountsByOwner +
+    // getSignaturesForAddress pages), so processing one at a time stays under limits.
     const unanalyzed = progress.wallets.filter(w => !(w in progress.holdTimes));
-    const batch = unanalyzed.slice(0, 3);
 
-    if (batch.length > 0) {
-      await Promise.all(batch.map(async (walletAddr) => {
-        try {
-          const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint);
-          progress.holdTimes[walletAddr] = metrics.tokenHoldTime || 0;
-        } catch {
-          progress.holdTimes[walletAddr] = 0;
-        }
-      }));
+    if (unanalyzed.length > 0) {
+      const walletAddr = unanalyzed[0];
+      try {
+        const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint);
+        progress.holdTimes[walletAddr] = metrics.tokenHoldTime || 0;
+      } catch {
+        progress.holdTimes[walletAddr] = 0;
+      }
 
       // Save progress for next poll
       await cache.set(progressKey, progress, 600); // 10 min TTL
