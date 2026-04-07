@@ -173,7 +173,8 @@
       const mintPubkey = new PublicKey(BURN_MINT);
 
       // Find ALL token accounts for this mint owned by this wallet
-      const resp = await connection.getTokenAccountsByOwner(ownerPubkey, {
+      // getParsedTokenAccountsByOwner returns jsonParsed data with balances
+      const resp = await connection.getParsedTokenAccountsByOwner(ownerPubkey, {
         mint: mintPubkey
       });
 
@@ -183,22 +184,24 @@
 
       // Use the account with the highest balance
       let bestAccount = null;
-      let bestBalance = BigInt(0);
+      let bestBalance = 0;
+      let bestUiBalance = 0;
 
       for (const item of resp.value) {
-        const data = item.account.data.parsed?.info;
-        if (data) {
-          const amt = BigInt(data.tokenAmount?.amount || '0');
+        const tokenAmount = item.account.data.parsed?.info?.tokenAmount;
+        if (tokenAmount) {
+          const amt = Number(tokenAmount.amount || '0');
           if (amt > bestBalance) {
             bestBalance = amt;
+            bestUiBalance = Number(tokenAmount.uiAmountString || tokenAmount.uiAmount || 0);
             bestAccount = item.pubkey;
           }
         }
       }
 
-      const uiBalance = Number(bestBalance) / (10 ** BURN_DECIMALS);
-      return { balance: Number(bestBalance), uiBalance, tokenAccount: bestAccount };
-    } catch {
+      return { balance: bestBalance, uiBalance: bestUiBalance, tokenAccount: bestAccount };
+    } catch (err) {
+      console.error('[Cultify] Failed to fetch ASDFASDFA balance:', err);
       return { balance: 0, uiBalance: 0, tokenAccount: null };
     }
   }
