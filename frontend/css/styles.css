@@ -4971,19 +4971,20 @@ strong {
 }
 
 /* ==============================================
-   Mobile nav dropdown — built from scratch by JS
-   with unique class names (no .nav inheritance).
-   Uses !important on z-index/position to guarantee
-   it renders above all page content.
+   Mobile nav dropdown — lives inside <header> and
+   uses position:absolute so it inherits the header's
+   z-index:1200 stacking context (above all page content).
+   Built from scratch by JS with unique class names
+   to avoid any .nav style inheritance.
    ============================================== */
 .mobile-nav-menu {
   display: none;
   flex-direction: column;
-  position: fixed !important;
-  top: 52px;
+  position: absolute;
+  top: 100%;
   right: 0.85rem;
   width: 220px;
-  z-index: 2147483647 !important; /* max 32-bit int — nothing can beat this */
+  z-index: 9999;
   background: var(--bg-elevated);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -5044,7 +5045,6 @@ strong {
 
 @media (max-width: 480px) {
   .mobile-nav-menu {
-    top: 48px;
     right: 0.6rem;
   }
 }
