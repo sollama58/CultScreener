@@ -162,7 +162,48 @@
 
   // ── Burn gate UI ──────────────────────────────────
 
-  function showBurnGate(mint) {
+  // Fetch user's ASDFASDFA balance and token account
+  async function fetchBurnTokenBalance() {
+    try {
+      const { Connection, PublicKey } = solanaWeb3;
+      const rpcEndpoint = (typeof config !== 'undefined' && config.solana?.rpcEndpoint)
+        || 'https://api.mainnet-beta.solana.com';
+      const connection = new Connection(rpcEndpoint, 'confirmed');
+      const ownerPubkey = new PublicKey(wallet.address);
+      const mintPubkey = new PublicKey(BURN_MINT);
+
+      // Find ALL token accounts for this mint owned by this wallet
+      const resp = await connection.getTokenAccountsByOwner(ownerPubkey, {
+        mint: mintPubkey
+      });
+
+      if (!resp.value || resp.value.length === 0) {
+        return { balance: 0, uiBalance: 0, tokenAccount: null };
+      }
+
+      // Use the account with the highest balance
+      let bestAccount = null;
+      let bestBalance = BigInt(0);
+
+      for (const item of resp.value) {
+        const data = item.account.data.parsed?.info;
+        if (data) {
+          const amt = BigInt(data.tokenAmount?.amount || '0');
+          if (amt > bestBalance) {
+            bestBalance = amt;
+            bestAccount = item.pubkey;
+          }
+        }
+      }
+
+      const uiBalance = Number(bestBalance) / (10 ** BURN_DECIMALS);
+      return { balance: Number(bestBalance), uiBalance, tokenAccount: bestAccount };
+    } catch {
+      return { balance: 0, uiBalance: 0, tokenAccount: null };
+    }
+  }
+
+  async function showBurnGate(mint) {
     const connected = typeof wallet !== 'undefined' && wallet.connected;
 
     let html = '<div class="cultify-gate">';
@@ -172,8 +213,9 @@
     if (!connected) {
       html += '<button class="cultify-burn-btn" id="cultify-connect-btn">Connect Wallet</button>';
     } else {
-      html += `<p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.75rem;">Wallet: ${wallet.address.slice(0, 4)}...${wallet.address.slice(-4)}</p>`;
-      html += '<button class="cultify-burn-btn" id="cultify-burn-btn">Burn & Analyze</button>';
+      html += `<p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.5rem;">Wallet: ${wallet.address.slice(0, 4)}...${wallet.address.slice(-4)}</p>`;
+      html += '<p id="cultify-balance" style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.75rem;">Loading balance...</p>';
+      html += '<button class="cultify-burn-btn" id="cultify-burn-btn" disabled>Burn & Analyze</button>';
     }
 
     html += '<div id="cultify-burn-error"></div>';
@@ -183,11 +225,36 @@
     if (!connected) {
       document.getElementById('cultify-connect-btn').addEventListener('click', async () => {
         await wallet.connect();
-        // After connection, re-show the gate
         if (wallet.connected) showBurnGate(mint);
       });
     } else {
-      document.getElementById('cultify-burn-btn').addEventListener('click', () => executeBurn(mint));
+      // Fetch and display balance
+      const balData = await fetchBurnTokenBalance();
+      const balEl = document.getElementById('cultify-balance');
+      const burnBtn = document.getElementById('cultify-burn-btn');
+      if (!balEl || !burnBtn) return; // user navigated away
+
+      const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
+
+      if (balData.balance <= 0 || !balData.tokenAccount) {
+        balEl.textContent = 'Your ASDFASDFA balance: 0';
+        balEl.style.color = '#ef4444';
+        burnBtn.disabled = true;
+        const errEl = document.getElementById('cultify-burn-error');
+        if (errEl) errEl.innerHTML = '<p class="cultify-error">You don\'t hold any ASDFASDFA tokens. Buy some first.</p>';
+      } else if (balData.balance < required) {
+        balEl.textContent = `Your ASDFASDFA balance: ${balData.uiBalance.toLocaleString()}`;
+        balEl.style.color = '#ef4444';
+        burnBtn.disabled = true;
+        const errEl = document.getElementById('cultify-burn-error');
+        if (errEl) errEl.innerHTML = `<p class="cultify-error">Insufficient balance. You need ${BURN_AMOUNT.toLocaleString()} ASDFASDFA.</p>`;
+      } else {
+        balEl.textContent = `Your ASDFASDFA balance: ${balData.uiBalance.toLocaleString()}`;
+        balEl.style.color = '#22c55e';
+        burnBtn.disabled = false;
+      }
+
+      burnBtn.addEventListener('click', () => executeBurn(mint, balData.tokenAccount));
     }
 
     // Listen for wallet connection events
@@ -196,7 +263,7 @@
 
   // ── Burn transaction ──────────────────────────────
 
-  async function executeBurn(mint) {
+  async function executeBurn(mint, tokenAccount) {
     const burnBtn = document.getElementById('cultify-burn-btn');
     const errorEl = document.getElementById('cultify-burn-error');
     burnBtn.disabled = true;
@@ -213,37 +280,23 @@
       const mintPubkey = new PublicKey(BURN_MINT);
       const tokenProgramId = new PublicKey(TOKEN_PROGRAM_ID);
 
-      // Find the user's Associated Token Account for ASDFASDFA
-      burnBtn.textContent = 'Finding token account...';
-      const ata = await findAssociatedTokenAddress(ownerPubkey, mintPubkey);
-
-      // Check balance
-      let accountInfo;
-      try {
-        accountInfo = await connection.getTokenAccountBalance(ata);
-      } catch {
-        throw new Error('You don\'t have an ASDFASDFA token account. Buy some first.');
-      }
-
-      const balance = Number(accountInfo.value.amount);
-      const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
-      if (balance < required) {
-        const have = (balance / 10 ** BURN_DECIMALS).toLocaleString();
-        throw new Error(`Insufficient balance. You have ${have} ASDFASDFA, need ${BURN_AMOUNT.toLocaleString()}.`);
+      if (!tokenAccount) {
+        throw new Error('No ASDFASDFA token account found. Buy some first.');
       }
 
       // Build burn instruction (SPL Token Burn)
       // Instruction layout: [u8 instruction_index (8 = Burn), u64 amount]
       burnBtn.textContent = 'Approve in wallet...';
+      const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
       const amountBuffer = Buffer.alloc(8);
       amountBuffer.writeBigUInt64LE(BigInt(required));
       const data = Buffer.concat([Buffer.from([8]), amountBuffer]); // 8 = Burn instruction
 
       const burnIx = new TransactionInstruction({
         keys: [
-          { pubkey: ata, isSigner: false, isWritable: true },          // token account
-          { pubkey: mintPubkey, isSigner: false, isWritable: true },    // mint
-          { pubkey: ownerPubkey, isSigner: true, isWritable: false },   // owner/authority
+          { pubkey: tokenAccount, isSigner: false, isWritable: true },  // token account
+          { pubkey: mintPubkey, isSigner: false, isWritable: true },     // mint
+          { pubkey: ownerPubkey, isSigner: true, isWritable: false },    // owner/authority
         ],
         programId: tokenProgramId,
         data: data,
@@ -292,20 +345,6 @@
       burnBtn.disabled = false;
       burnBtn.textContent = 'Burn & Analyze';
     }
-  }
-
-  // ── Find Associated Token Address ─────────────────
-
-  async function findAssociatedTokenAddress(owner, mint) {
-    const { PublicKey } = solanaWeb3;
-    const ATA_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
-    const TOKEN_PROGRAM = new PublicKey(TOKEN_PROGRAM_ID);
-
-    const [ata] = await PublicKey.findProgramAddress(
-      [owner.toBuffer(), TOKEN_PROGRAM.toBuffer(), mint.toBuffer()],
-      ATA_PROGRAM_ID
-    );
-    return ata;
   }
 
   // ── Load and render analysis ──────────────────────
