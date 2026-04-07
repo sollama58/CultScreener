@@ -233,6 +233,109 @@
     window.addEventListener('walletConnected', () => showBurnGate(mint), { once: true });
   }
 
+  // ── Pending burn recovery ──────────────────────────
+  // Saves burn signature to localStorage so if verification fails (backend down,
+  // network error, tab closed), the user can recover without losing tokens.
+
+  const PENDING_BURN_KEY = 'cultify_pending_burn';
+
+  function savePendingBurn(signature, mint, walletAddress) {
+    try {
+      localStorage.setItem(PENDING_BURN_KEY, JSON.stringify({
+        signature, mint, wallet: walletAddress, ts: Date.now()
+      }));
+    } catch { /* localStorage unavailable */ }
+  }
+
+  function clearPendingBurn() {
+    try { localStorage.removeItem(PENDING_BURN_KEY); } catch {}
+  }
+
+  function getPendingBurn() {
+    try {
+      const raw = localStorage.getItem(PENDING_BURN_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      // Expire after 10 minutes (burn verification window)
+      if (Date.now() - data.ts > 10 * 60 * 1000) {
+        clearPendingBurn();
+        return null;
+      }
+      return data;
+    } catch { return null; }
+  }
+
+  // Try to verify a pending burn on page load
+  async function recoverPendingBurn() {
+    const pending = getPendingBurn();
+    if (!pending) return;
+
+    showStatus(`<div class="cultify-gate">
+      <h3>Recovering Previous Burn</h3>
+      <p class="cultify-loading">Found an unverified burn transaction. Verifying...</p>
+    </div>`);
+
+    const ok = await verifyBurnWithRetry(pending.signature, pending.mint, pending.wallet);
+    if (ok) {
+      mintInput.value = pending.mint;
+      fetchTokenPreview(pending.mint);
+      showStatus('<div class="cultify-gate"><p class="cultify-loading">Burn recovered! Analyzing holders...</p></div>');
+      await loadAnalysis(pending.mint, false);
+    } else {
+      showStatus(`<div class="cultify-gate">
+        <h3>Burn Recovery Failed</h3>
+        <p class="cultify-error">Could not verify your burn. Your signature: <code style="font-size:0.7rem;word-break:break-all;">${escapeHtml(pending.signature)}</code></p>
+        <button class="cultify-burn-btn" id="cultify-retry-btn" style="margin-top:0.75rem;">Retry Verification</button>
+      </div>`);
+      document.getElementById('cultify-retry-btn')?.addEventListener('click', () => recoverPendingBurn());
+    }
+  }
+
+  // Verify burn with retries (up to 3 attempts with backoff)
+  async function verifyBurnWithRetry(signature, mint, walletAddress) {
+    const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
+
+        const resp = await fetch(`${baseUrl}/api/cultify/verify-burn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signature, mint, wallet: walletAddress }),
+        });
+
+        const data = await resp.json();
+
+        if (resp.ok) {
+          currentAccessToken = data.accessToken;
+          clearPendingBurn();
+          return true;
+        }
+
+        // 409 = already claimed — that's fine, it means a previous attempt succeeded
+        if (resp.status === 409) {
+          clearPendingBurn();
+          // Re-check access to get a fresh access token
+          const checkResp = await fetch(`${baseUrl}/api/cultify/check-access/${mint}?token=${currentAccessToken || ''}`);
+          const checkData = await checkResp.json();
+          if (checkData.access) return true;
+        }
+
+        // 400 = bad transaction (wrong mint, too old, etc.) — don't retry
+        if (resp.status === 400) {
+          clearPendingBurn();
+          return false;
+        }
+
+        // 502/500 = backend error — retry
+      } catch {
+        // Network error — retry
+      }
+    }
+    return false;
+  }
+
   // ── Burn transaction ──────────────────────────────
 
   async function executeBurn(mint, tokenAccount) {
@@ -254,14 +357,15 @@
         throw new Error('No ASDFASDFA token account found. Buy some first.');
       }
 
-      // Get blockhash from backend (uses Helius RPC)
-      burnBtn.textContent = 'Preparing transaction...';
-      const bhResp = await fetch(`${baseUrl}/api/cultify/blockhash`);
-      if (!bhResp.ok) throw new Error('Failed to get blockhash');
-      const { blockhash } = await bhResp.json();
+      // Step 1: Pre-flight check — make sure backend is reachable BEFORE burning tokens
+      burnBtn.textContent = 'Checking backend...';
+      const preflight = await fetch(`${baseUrl}/api/cultify/blockhash`).catch(() => null);
+      if (!preflight || !preflight.ok) {
+        throw new Error('Backend is unreachable. Burn aborted to protect your tokens. Try again later.');
+      }
+      const { blockhash } = await preflight.json();
 
-      // Build burn instruction (SPL Token Burn)
-      // Instruction layout: [u8 instruction_index (8 = Burn), u64 amount (little-endian u64)]
+      // Step 2: Build burn instruction
       burnBtn.textContent = 'Approve in wallet...';
       const required = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
       const data = new Uint8Array(9);
@@ -269,7 +373,6 @@
       const view = new DataView(data.buffer);
       view.setBigUint64(1, required, true); // little-endian
 
-      // tokenAccount from balance check may be a string — convert to PublicKey
       const tokenAccountPubkey = typeof tokenAccount === 'string'
         ? new PublicKey(tokenAccount) : tokenAccount;
 
@@ -287,14 +390,14 @@
       tx.feePayer = ownerPubkey;
       tx.recentBlockhash = blockhash;
 
-      // Sign with wallet, then send via backend (uses Helius RPC — no public RPC needed)
+      // Step 3: Sign with wallet
       const signed = await wallet.provider.signTransaction(tx);
       const serialized = signed.serialize();
-      // Convert to base64 without spread operator (avoids max call stack on large arrays)
       let binary = '';
       for (let i = 0; i < serialized.length; i++) binary += String.fromCharCode(serialized[i]);
       const base64Tx = btoa(binary);
 
+      // Step 4: Send transaction via backend
       burnBtn.textContent = 'Sending transaction...';
       const sendResp = await fetch(`${baseUrl}/api/cultify/send-tx`, {
         method: 'POST',
@@ -307,38 +410,39 @@
       }
       const { signature } = await sendResp.json();
 
-      // Poll backend for confirmation (uses Helius RPC)
+      // Step 5: Save pending burn IMMEDIATELY after send — if anything fails from
+      // here on, the user can recover by reloading the page
+      savePendingBurn(signature, mint, wallet.address);
+
+      // Step 6: Poll for confirmation
       burnBtn.textContent = 'Confirming burn...';
+      let confirmed = false;
       for (let i = 0; i < 30; i++) {
         await new Promise(r => setTimeout(r, 2000));
-        const statusResp = await fetch(`${baseUrl}/api/cultify/tx-status/${signature}`);
-        if (statusResp.ok) {
-          const statusData = await statusResp.json();
-          if (statusData.confirmed) {
-            if (statusData.failed) throw new Error('Burn transaction failed on-chain');
-            break;
+        try {
+          const statusResp = await fetch(`${baseUrl}/api/cultify/tx-status/${signature}`);
+          if (statusResp.ok) {
+            const statusData = await statusResp.json();
+            if (statusData.confirmed) {
+              if (statusData.failed) throw new Error('Burn transaction failed on-chain');
+              confirmed = true;
+              break;
+            }
           }
-        }
-        if (i === 29) throw new Error('Transaction confirmation timed out. Try verifying manually.');
+        } catch { /* retry */ }
+      }
+      if (!confirmed) {
+        throw new Error('Confirmation is taking longer than expected. Your burn is saved — reload the page to retry verification.');
       }
 
-      // Verify on backend
+      // Step 7: Verify burn with retries
       burnBtn.textContent = 'Verifying...';
-      const verifyResp = await fetch(`${baseUrl}/api/cultify/verify-burn`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signature, mint, wallet: wallet.address }),
-      });
-
-      const verifyData = await verifyResp.json();
-      if (!verifyResp.ok) {
-        throw new Error(verifyData.error || 'Burn verification failed');
+      const verified = await verifyBurnWithRetry(signature, mint, wallet.address);
+      if (!verified) {
+        throw new Error('Burn verified on-chain but backend verification failed. Reload the page to retry — your burn is safe.');
       }
 
-      // Store the access token for the analyze call
-      currentAccessToken = verifyData.accessToken;
-
-      // Success — load analysis
+      // Success
       showStatus('<div class="cultify-gate"><p class="cultify-loading">Burn verified! Analyzing holders...</p></div>');
       await loadAnalysis(mint, false);
 
@@ -434,7 +538,77 @@
       html += '</tbody></table></div>';
     }
 
+    // Diamond hands section — starts as loading skeleton, polls for data
+    html += '<div class="cultify-diamond-section" id="cultify-diamond">';
+    html += '<h3 style="font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Diamond Hands Distribution</h3>';
+    html += '<div id="cultify-diamond-bars">';
+    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    const labels = ['>6h', '>24h', '>3d', '>1w', '>1m', '>3m', '>6m', '>9m'];
+    buckets.forEach((key, i) => {
+      html += `<div class="cultify-dh-row" id="cultify-dh-row-${key}">
+        <span class="cultify-dh-label">${labels[i]}</span>
+        <div class="cultify-dh-track">
+          <div class="cultify-dh-fill cultify-dh-loading" id="cultify-dh-fill-${key}"></div>
+        </div>
+        <span class="cultify-dh-pct" id="cultify-dh-pct-${key}">...</span>
+      </div>`;
+    });
+    html += '</div>';
+    html += '<p id="cultify-diamond-status" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Loading diamond hands data...</p>';
+    html += '</div>';
+
     showResults(html);
+
+    // Start polling for diamond hands data
+    pollDiamondHands(mint);
+  }
+
+  let diamondPollTimer = null;
+
+  async function pollDiamondHands(mint) {
+    if (diamondPollTimer) clearTimeout(diamondPollTimer);
+
+    const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
+    const tokenParam = currentAccessToken ? `?token=${currentAccessToken}` : '';
+
+    try {
+      const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${tokenParam}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      if (data.distribution) {
+        const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+        buckets.forEach(key => {
+          const pct = data.distribution[key] || 0;
+          const fillEl = document.getElementById(`cultify-dh-fill-${key}`);
+          const pctEl = document.getElementById(`cultify-dh-pct-${key}`);
+          if (fillEl) {
+            fillEl.classList.remove('cultify-dh-loading');
+            fillEl.style.width = pct + '%';
+            fillEl.className = 'cultify-dh-fill' +
+              (pct >= 50 ? ' cultify-dh-high' : pct >= 20 ? ' cultify-dh-mid' : ' cultify-dh-low');
+          }
+          if (pctEl) pctEl.textContent = pct + '%';
+        });
+
+        const statusEl = document.getElementById('cultify-diamond-status');
+        if (statusEl) {
+          if (data.computed) {
+            statusEl.textContent = `${data.analyzed} of ${data.sampleSize} holders analyzed`;
+          } else {
+            statusEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} holders`;
+          }
+        }
+      }
+
+      // Keep polling if not fully computed
+      if (!data.computed) {
+        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 3000);
+      }
+    } catch {
+      // Retry on error
+      diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
+    }
   }
 
   function metricCard(value, label, pct) {
@@ -458,5 +632,8 @@
     // paste event fires before the value updates — defer to next tick
     setTimeout(handleInputChange, 0);
   });
+
+  // On page load, recover any pending burns that failed verification
+  recoverPendingBurn();
 
 })();

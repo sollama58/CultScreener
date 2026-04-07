@@ -310,6 +310,64 @@
       padding: 0.5rem 0;
     }
 
+    /* Diamond hands bars */
+    .cultify-diamond-section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.25rem;
+      margin-top: 1.25rem;
+    }
+    .cultify-dh-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.4rem;
+    }
+    .cultify-dh-label {
+      width: 36px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-align: right;
+      flex-shrink: 0;
+    }
+    .cultify-dh-track {
+      flex: 1;
+      height: 14px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .cultify-dh-fill {
+      height: 100%;
+      border-radius: var(--radius-sm);
+      transition: width 0.4s ease;
+      width: 0;
+    }
+    .cultify-dh-high { background: linear-gradient(90deg, #22c55e, #16a34a); }
+    .cultify-dh-mid { background: linear-gradient(90deg, var(--ember), var(--fire-primary)); }
+    .cultify-dh-low { background: linear-gradient(90deg, #ef4444, #dc2626); }
+    .cultify-dh-loading {
+      width: 60% !important;
+      background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-hover) 50%, var(--bg-tertiary) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .cultify-dh-pct {
+      width: 36px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      text-align: right;
+      flex-shrink: 0;
+    }
+
     @media (max-width: 480px) {
       .cultify-input-wrap { flex-direction: column; }
       .cultify-hero h1 { font-size: 1.25rem; }
@@ -370,7 +428,7 @@
   <script src="js/api.js"></script>
   <script src="js/wallet.js"></script>
   <script src="https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js"></script>
-  <script src="js/cultify.js?v=3"></script>
+  <script src="js/cultify.js?v=5"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -111,9 +111,11 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   try {
     await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString());
   } catch (err) {
-    // Handle duplicate signature (race condition between check and insert)
+    // Handle duplicate signature — idempotent: still grant access so retries work
     if (err.code === '23505') { // PostgreSQL unique violation
-      return res.status(409).json({ error: 'This burn transaction has already been claimed' });
+      const accessToken = generateAccessToken(walletAddress, mint);
+      await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
     throw err;
   }
@@ -221,6 +223,76 @@ router.get('/analyze/:mint', validateMint, asyncHandler(async (req, res) => {
   } catch (error) {
     console.error('[Cultify] Analysis error:', error.message);
     res.status(500).json({ error: 'Analysis failed. Try again later.' });
+  }
+}));
+
+// GET /api/cultify/diamond-hands/:mint — diamond hands distribution (proxies to main logic)
+router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+
+  // Verify access (same as analyze)
+  const curated = await db.isTokenAllowed(mint);
+  if (!curated) {
+    const accessToken = req.query.token;
+    if (!accessToken) return res.status(403).json({ error: 'Access token required' });
+    const accessData = await cache.get(`cultify:access:${accessToken}`);
+    if (!accessData || accessData.mint !== mint) {
+      return res.status(403).json({ error: 'Invalid or expired access token' });
+    }
+  }
+
+  try {
+    // Check for cached result
+    const resultCacheKey = `diamond-hands:${mint}`;
+    const cached = await cache.get(resultCacheKey);
+    if (cached) return res.json(cached);
+
+    // Check if computation is in progress (wallets sampled but not all analyzed)
+    const walletsCacheKey = `diamond-hands-wallets:${mint}`;
+    const wallets = await cache.get(walletsCacheKey);
+    if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
+      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
+    }
+
+    // Check per-wallet caches
+    const walletList = wallets.map(e => typeof e === 'object' ? e.wallet : e);
+    const holdTimes = {};
+    let analyzedCount = 0;
+
+    await Promise.all(walletList.map(async (w) => {
+      const val = await cache.get(`wallet-token-hold:${w}:${mint}`);
+      if (val != null) {
+        analyzedCount++;
+        if (val > 0) holdTimes[w] = val;
+      }
+    }));
+
+    // Build distribution from whatever data we have so far
+    const BUCKETS = [
+      { key: '6h', ms: 6*3600000 }, { key: '24h', ms: 24*3600000 },
+      { key: '3d', ms: 3*86400000 }, { key: '1w', ms: 7*86400000 },
+      { key: '1m', ms: 30*86400000 }, { key: '3m', ms: 90*86400000 },
+      { key: '6m', ms: 180*86400000 }, { key: '9m', ms: 270*86400000 },
+    ];
+
+    const now = Date.now();
+    const distribution = {};
+    for (const b of BUCKETS) {
+      const count = Object.values(holdTimes).filter(t => (now - t) >= b.ms).length;
+      distribution[b.key] = analyzedCount > 0 ? Math.round(count / analyzedCount * 100) : 0;
+    }
+
+    const allDone = analyzedCount >= walletList.length;
+    if (allDone) {
+      const result = { distribution, sampleSize: walletList.length, analyzed: analyzedCount, computed: true };
+      await cache.set(resultCacheKey, result, 3 * 3600);
+      return res.json(result);
+    }
+
+    res.json({ distribution, sampleSize: walletList.length, analyzed: analyzedCount, computed: false });
+  } catch (err) {
+    console.error('[Cultify] Diamond hands error:', err.message);
+    res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
   }
 }));
 
