@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
+const { cache } = require('../services/cache');
 const {
   asyncHandler, requireDatabase, validateAdminSession,
   verifyAdminPassword, generateAdminSessionToken,
@@ -241,6 +242,12 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   }
   const result = await db.removeCuratedToken(mint);
   if (!result) return res.status(404).json({ error: 'Token not found in curated list' });
+
+  // Invalidate cached token lists so the removed token disappears immediately
+  try {
+    await cache.clearPattern('list:*');
+  } catch (_) { /* cache clear is non-critical */ }
+
   res.json({ success: true });
 }));
 

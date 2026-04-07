@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const db = require('../services/database');
+const { cache } = require('../services/cache');
 const { asyncHandler, requireDatabase, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { strictLimiter } = require('../middleware/rateLimit');
 
@@ -152,6 +153,11 @@ router.delete('/:mint', strictLimiter, requireAdmin, asyncHandler(async (req, re
   if (!result) {
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
+
+  // Invalidate cached token lists so the removed token disappears immediately
+  try {
+    await cache.clearPattern('list:*');
+  } catch (_) { /* cache clear is non-critical */ }
 
   res.json({
     success: true,
