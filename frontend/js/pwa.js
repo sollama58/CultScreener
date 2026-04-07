@@ -52,8 +52,8 @@
   // ─── Install Option in Nav Dropdown ─────────────────────
 
   function createInstallButton() {
-    // Target the mobile dropdown (on <body>) if it exists, else fall back to in-header nav
-    const nav = (typeof utils !== 'undefined' && utils._mobileDropdown) || document.getElementById('main-nav');
+    // Only target the mobile dialog dropdown — never the desktop in-header nav
+    const nav = (typeof utils !== 'undefined' && utils._mobileDropdown) || null;
     if (!nav || document.getElementById('pwa-install-nav')) return;
 
     const btn = document.createElement('button');
@@ -74,11 +74,11 @@
   }
 
   function showInstallOption() {
-    // Only show on mobile devices
-    if (!window.matchMedia('(max-width: 768px)').matches) return;
-
     // Don't show if already in standalone mode
     if (window.matchMedia('(display-mode: standalone)').matches) return;
+
+    // Only show on mobile — re-check at display time, not just at event time
+    if (!window.matchMedia('(max-width: 768px)').matches) return;
 
     createInstallButton();
     if (installBtn) installBtn.classList.add('installable');

@@ -5082,11 +5082,11 @@ strong {
   align-items: center;
   gap: 0.5rem;
   padding: 0.65rem 0.85rem;
-  font-size: 0.88rem;
-  font-weight: 500;
-  color: var(--ember);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--fire-primary);
   border: none;
-  background: none;
+  background: rgba(255, 87, 34, 0.06);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
@@ -5095,6 +5095,9 @@ strong {
   -webkit-tap-highlight-color: transparent;
   width: 100%;
   text-align: left;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.75rem;
 }
 
 /* Wallet wrapper inside mobile dropdown (hidden on desktop) */
@@ -5103,12 +5106,21 @@ strong {
 }
 
 .nav-install-item:hover {
-  background: var(--bg-hover);
-  color: var(--fire-primary);
+  background: rgba(255, 87, 34, 0.12);
+  color: var(--ember);
 }
 
 .nav-install-item svg {
   flex-shrink: 0;
+  color: var(--fire-primary);
+}
+
+/* Never show install button on desktop — even if JS creates it */
+@media (min-width: 769px) {
+  .nav-install-item,
+  .nav-install-item.installable {
+    display: none !important;
+  }
 }
 
 /* Update Banner */
