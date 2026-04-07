@@ -288,58 +288,61 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
 
     // Check partial progress from a previous request
     const progressKey = `cultify:dh-progress:${mint}`;
-    let progress = await cache.get(progressKey) || { holdTimes: {}, wallets: null };
+    let progress = await cache.get(progressKey) || { holdTimes: {}, holders: null };
 
-    // Get holder OWNER wallets if we don't have them yet
-    if (!progress.wallets) {
-      // Step 1: Get largest token accounts (these are ATAs, not wallet addresses)
+    // Get holder wallets + their ATAs if we don't have them yet (2 RPC calls total)
+    if (!progress.holders) {
+      // Step 1: Get largest token accounts (ATAs)
       const tokenAccounts = await solanaService.getTokenLargestAccounts(mint);
       if (!tokenAccounts || tokenAccounts.length === 0) {
         return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
       }
 
-      // Step 2: Resolve token account addresses → owner wallet addresses
+      // Step 2: Resolve ATA → owner wallet (1 batch RPC call via getMultipleAccounts)
       const ataAddresses = tokenAccounts.slice(0, 20).map(a => a.address);
       const accountInfos = await solanaService.getMultipleAccounts(ataAddresses);
-      const ownerWallets = [];
+      const holders = []; // { wallet, ata } pairs
+      const seen = new Set();
       if (accountInfos && accountInfos.value) {
-        for (const info of accountInfos.value) {
-          const owner = info?.data?.parsed?.info?.owner;
-          if (owner && !ownerWallets.includes(owner)) {
-            ownerWallets.push(owner);
+        for (let i = 0; i < accountInfos.value.length; i++) {
+          const owner = accountInfos.value[i]?.data?.parsed?.info?.owner;
+          if (owner && !seen.has(owner)) {
+            seen.add(owner);
+            holders.push({ wallet: owner, ata: ataAddresses[i] });
           }
         }
       }
 
-      if (ownerWallets.length === 0) {
+      if (holders.length === 0) {
         return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
       }
 
-      progress.wallets = ownerWallets;
+      progress.holders = holders;
       progress.holdTimes = {};
     }
 
-    // Compute hold time for ONE wallet per request to avoid Helius 429 rate limits.
-    // Each getWalletHoldMetrics makes 1-3 RPC calls (getTokenAccountsByOwner +
-    // getSignaturesForAddress pages), so processing one at a time stays under limits.
-    const unanalyzed = progress.wallets.filter(w => !(w in progress.holdTimes));
+    // Process up to 5 wallets per request in parallel. Each costs ~1 RPC call
+    // (getSignaturesForAddress) since we pass the ATA directly. With a 10 req/s
+    // Helius limit, 5 parallel calls is safe.
+    const unanalyzed = progress.holders.filter(h => !(h.wallet in progress.holdTimes));
+    const batch = unanalyzed.slice(0, 5);
 
-    if (unanalyzed.length > 0) {
-      const walletAddr = unanalyzed[0];
+    await Promise.all(batch.map(async ({ wallet: walletAddr, ata }) => {
       try {
-        const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint);
+        const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint, ata);
         progress.holdTimes[walletAddr] = metrics.tokenHoldTime || 0;
       } catch {
         progress.holdTimes[walletAddr] = 0;
       }
+    }));
 
-      // Save progress for next poll
+    if (batch.length > 0) {
       await cache.set(progressKey, progress, 600); // 10 min TTL
     }
 
     // Derive analyzed count from actual holdTimes entries
     const analyzedCount = Object.keys(progress.holdTimes).length;
-    const totalWallets = progress.wallets.length;
+    const totalWallets = progress.holders.length;
 
     // Build distribution from current data
     // holdTimes values are DURATIONS in ms (e.g. 86400000 = held for 1 day)
