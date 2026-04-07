@@ -966,9 +966,11 @@ const utils = {
 
   // Hamburger menu for mobile navigation
   initHamburgerMenu() {
+    if (this._hamburgerInitialized) return;
     const hamburger = document.getElementById('nav-hamburger');
     const nav = document.querySelector('.nav');
     if (!hamburger || !nav) return;
+    this._hamburgerInitialized = true;
 
     // Move wallet button into dropdown on mobile
     const walletBtn = document.getElementById('connect-wallet');
@@ -1099,6 +1101,11 @@ const loading = {
     element.classList.remove('is-loading');
   }
 };
+
+// Initialize hamburger menu as soon as DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  utils.initHamburgerMenu();
+});
 
 // Export for modules (if using)
 if (typeof module !== 'undefined' && module.exports) {
