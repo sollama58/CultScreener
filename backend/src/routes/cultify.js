@@ -224,4 +224,75 @@ router.get('/analyze/:mint', validateMint, asyncHandler(async (req, res) => {
   }
 }));
 
+// ── RPC proxy endpoints (keeps Helius API key on the server) ──────────
+
+// GET /api/cultify/balance/:wallet — get ASDFASDFA balance for a wallet
+router.get('/balance/:wallet', asyncHandler(async (req, res) => {
+  const { wallet: walletAddress } = req.params;
+  if (!SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+
+  try {
+    const result = await solanaService.getTokenAccountsByOwner(walletAddress, BURN_MINT);
+    if (!result || !result.value || result.value.length === 0) {
+      return res.json({ balance: 0, uiBalance: 0, tokenAccount: null });
+    }
+
+    let bestAccount = null;
+    let bestBalance = 0;
+    let bestUiBalance = 0;
+
+    for (const item of result.value) {
+      const tokenAmount = item.account?.data?.parsed?.info?.tokenAmount;
+      if (tokenAmount) {
+        const amt = Number(tokenAmount.amount || '0');
+        if (amt > bestBalance) {
+          bestBalance = amt;
+          bestUiBalance = Number(tokenAmount.uiAmountString || tokenAmount.uiAmount || 0);
+          bestAccount = item.pubkey;
+        }
+      }
+    }
+
+    res.json({ balance: bestBalance, uiBalance: bestUiBalance, tokenAccount: bestAccount });
+  } catch (err) {
+    console.error('[Cultify] Balance check error:', err.message);
+    res.status(502).json({ error: 'Failed to check balance' });
+  }
+}));
+
+// GET /api/cultify/blockhash — get a recent blockhash for building transactions
+router.get('/blockhash', asyncHandler(async (req, res) => {
+  try {
+    const result = await solanaService.getRecentBlockhash();
+    if (!result || !result.value) {
+      return res.status(502).json({ error: 'Failed to get blockhash' });
+    }
+    res.json({ blockhash: result.value.blockhash });
+  } catch (err) {
+    console.error('[Cultify] Blockhash error:', err.message);
+    res.status(502).json({ error: 'Failed to get blockhash' });
+  }
+}));
+
+// GET /api/cultify/tx-status/:signature — check transaction confirmation status
+router.get('/tx-status/:signature', asyncHandler(async (req, res) => {
+  const { signature } = req.params;
+  if (!signature || signature.length < 80 || signature.length > 90) {
+    return res.status(400).json({ error: 'Invalid signature' });
+  }
+
+  try {
+    const tx = await solanaService.getTransaction(signature);
+    if (!tx) {
+      return res.json({ confirmed: false });
+    }
+    const failed = tx.meta && tx.meta.err;
+    res.json({ confirmed: true, failed: !!failed });
+  } catch (err) {
+    res.json({ confirmed: false });
+  }
+}));
+
 module.exports = router;

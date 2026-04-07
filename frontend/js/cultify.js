@@ -162,44 +162,13 @@
 
   // ── Burn gate UI ──────────────────────────────────
 
-  // Fetch user's ASDFASDFA balance and token account
+  // Fetch user's ASDFASDFA balance via backend (uses Helius RPC, keeps API key server-side)
   async function fetchBurnTokenBalance() {
     try {
-      const { Connection, PublicKey } = solanaWeb3;
-      const rpcEndpoint = (typeof config !== 'undefined' && config.solana?.rpcEndpoint)
-        || 'https://api.mainnet-beta.solana.com';
-      const connection = new Connection(rpcEndpoint, 'confirmed');
-      const ownerPubkey = new PublicKey(wallet.address);
-      const mintPubkey = new PublicKey(BURN_MINT);
-
-      // Find ALL token accounts for this mint owned by this wallet
-      // getParsedTokenAccountsByOwner returns jsonParsed data with balances
-      const resp = await connection.getParsedTokenAccountsByOwner(ownerPubkey, {
-        mint: mintPubkey
-      });
-
-      if (!resp.value || resp.value.length === 0) {
-        return { balance: 0, uiBalance: 0, tokenAccount: null };
-      }
-
-      // Use the account with the highest balance
-      let bestAccount = null;
-      let bestBalance = 0;
-      let bestUiBalance = 0;
-
-      for (const item of resp.value) {
-        const tokenAmount = item.account.data.parsed?.info?.tokenAmount;
-        if (tokenAmount) {
-          const amt = Number(tokenAmount.amount || '0');
-          if (amt > bestBalance) {
-            bestBalance = amt;
-            bestUiBalance = Number(tokenAmount.uiAmountString || tokenAmount.uiAmount || 0);
-            bestAccount = item.pubkey;
-          }
-        }
-      }
-
-      return { balance: bestBalance, uiBalance: bestUiBalance, tokenAccount: bestAccount };
+      const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
+      const resp = await fetch(`${baseUrl}/api/cultify/balance/${wallet.address}`);
+      if (!resp.ok) throw new Error('Balance check failed');
+      return await resp.json();
     } catch (err) {
       console.error('[Cultify] Failed to fetch ASDFASDFA balance:', err);
       return { balance: 0, uiBalance: 0, tokenAccount: null };
@@ -274,11 +243,9 @@
     errorEl.innerHTML = '';
 
     try {
-      const { Connection, PublicKey, Transaction, TransactionInstruction } = solanaWeb3;
+      const { PublicKey, Transaction, TransactionInstruction } = solanaWeb3;
+      const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
 
-      const rpcEndpoint = (typeof config !== 'undefined' && config.solana?.rpcEndpoint)
-        || 'https://api.mainnet-beta.solana.com';
-      const connection = new Connection(rpcEndpoint, 'confirmed');
       const ownerPubkey = new PublicKey(wallet.address);
       const mintPubkey = new PublicKey(BURN_MINT);
       const tokenProgramId = new PublicKey(TOKEN_PROGRAM_ID);
@@ -286,6 +253,12 @@
       if (!tokenAccount) {
         throw new Error('No ASDFASDFA token account found. Buy some first.');
       }
+
+      // Get blockhash from backend (uses Helius RPC)
+      burnBtn.textContent = 'Preparing transaction...';
+      const bhResp = await fetch(`${baseUrl}/api/cultify/blockhash`);
+      if (!bhResp.ok) throw new Error('Failed to get blockhash');
+      const { blockhash } = await bhResp.json();
 
       // Build burn instruction (SPL Token Burn)
       // Instruction layout: [u8 instruction_index (8 = Burn), u64 amount]
@@ -295,11 +268,15 @@
       amountBuffer.writeBigUInt64LE(BigInt(required));
       const data = Buffer.concat([Buffer.from([8]), amountBuffer]); // 8 = Burn instruction
 
+      // tokenAccount from balance check may be a string — convert to PublicKey
+      const tokenAccountPubkey = typeof tokenAccount === 'string'
+        ? new PublicKey(tokenAccount) : tokenAccount;
+
       const burnIx = new TransactionInstruction({
         keys: [
-          { pubkey: tokenAccount, isSigner: false, isWritable: true },  // token account
-          { pubkey: mintPubkey, isSigner: false, isWritable: true },     // mint
-          { pubkey: ownerPubkey, isSigner: true, isWritable: false },    // owner/authority
+          { pubkey: tokenAccountPubkey, isSigner: false, isWritable: true },
+          { pubkey: mintPubkey, isSigner: false, isWritable: true },
+          { pubkey: ownerPubkey, isSigner: true, isWritable: false },
         ],
         programId: tokenProgramId,
         data: data,
@@ -307,24 +284,38 @@
 
       const tx = new Transaction().add(burnIx);
       tx.feePayer = ownerPubkey;
-      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      tx.recentBlockhash = blockhash;
 
-      // Sign and send via wallet provider
+      // Sign and send via wallet provider (wallet sends to network directly)
       let signature;
       if (wallet.provider.signAndSendTransaction) {
         const result = await wallet.provider.signAndSendTransaction(tx);
         signature = result.signature;
       } else {
+        // Fallback: sign locally, send via public RPC (only for wallets without signAndSendTransaction)
+        const { Connection } = solanaWeb3;
+        const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
         const signed = await wallet.provider.signTransaction(tx);
         signature = await connection.sendRawTransaction(signed.serialize());
       }
 
+      // Poll backend for confirmation (uses Helius RPC)
       burnBtn.textContent = 'Confirming burn...';
-      await connection.confirmTransaction(signature, 'confirmed');
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const statusResp = await fetch(`${baseUrl}/api/cultify/tx-status/${signature}`);
+        if (statusResp.ok) {
+          const statusData = await statusResp.json();
+          if (statusData.confirmed) {
+            if (statusData.failed) throw new Error('Burn transaction failed on-chain');
+            break;
+          }
+        }
+        if (i === 29) throw new Error('Transaction confirmation timed out. Try verifying manually.');
+      }
 
       // Verify on backend
       burnBtn.textContent = 'Verifying...';
-      const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
       const verifyResp = await fetch(`${baseUrl}/api/cultify/verify-burn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
