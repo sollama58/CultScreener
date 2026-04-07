@@ -261,12 +261,13 @@
       const { blockhash } = await bhResp.json();
 
       // Build burn instruction (SPL Token Burn)
-      // Instruction layout: [u8 instruction_index (8 = Burn), u64 amount]
+      // Instruction layout: [u8 instruction_index (8 = Burn), u64 amount (little-endian u64)]
       burnBtn.textContent = 'Approve in wallet...';
-      const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
-      const amountBuffer = Buffer.alloc(8);
-      amountBuffer.writeBigUInt64LE(BigInt(required));
-      const data = Buffer.concat([Buffer.from([8]), amountBuffer]); // 8 = Burn instruction
+      const required = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
+      const data = new Uint8Array(9);
+      data[0] = 8; // SPL Token Burn instruction index
+      const view = new DataView(data.buffer);
+      view.setBigUint64(1, required, true); // little-endian
 
       // tokenAccount from balance check may be a string — convert to PublicKey
       const tokenAccountPubkey = typeof tokenAccount === 'string'
@@ -289,7 +290,10 @@
       // Sign with wallet, then send via backend (uses Helius RPC — no public RPC needed)
       const signed = await wallet.provider.signTransaction(tx);
       const serialized = signed.serialize();
-      const base64Tx = btoa(String.fromCharCode(...serialized));
+      // Convert to base64 without spread operator (avoids max call stack on large arrays)
+      let binary = '';
+      for (let i = 0; i < serialized.length; i++) binary += String.fromCharCode(serialized[i]);
+      const base64Tx = btoa(binary);
 
       burnBtn.textContent = 'Sending transaction...';
       const sendResp = await fetch(`${baseUrl}/api/cultify/send-tx`, {
