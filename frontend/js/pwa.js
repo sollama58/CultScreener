@@ -52,7 +52,8 @@
   // ─── Install Option in Nav Dropdown ─────────────────────
 
   function createInstallButton() {
-    const nav = document.getElementById('main-nav');
+    // Target the mobile dropdown (on <body>) if it exists, else fall back to in-header nav
+    const nav = (typeof utils !== 'undefined' && utils._mobileDropdown) || document.getElementById('main-nav');
     if (!nav || document.getElementById('pwa-install-nav')) return;
 
     const btn = document.createElement('button');
@@ -93,12 +94,8 @@
     if (!deferredPrompt) return;
 
     // Close the mobile nav dropdown
-    const nav = document.getElementById('main-nav');
-    const hamburger = document.getElementById('nav-hamburger');
-    if (nav) nav.classList.remove('open');
-    if (hamburger) {
-      hamburger.classList.remove('active');
-      hamburger.setAttribute('aria-expanded', 'false');
+    if (typeof utils !== 'undefined' && utils._closeMobileNav) {
+      utils._closeMobileNav();
     }
 
     deferredPrompt.prompt();

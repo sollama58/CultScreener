@@ -964,21 +964,29 @@ const utils = {
     this.initHamburgerMenu();
   },
 
-  // Hamburger menu for mobile navigation
+  // Hamburger menu for mobile navigation.
+  // Moves the nav out of .header and onto <body> so it is not trapped
+  // inside the header's backdrop-filter stacking context.
   initHamburgerMenu() {
     if (this._hamburgerInitialized) return;
     const hamburger = document.getElementById('nav-hamburger');
-    const nav = document.querySelector('.nav');
-    if (!hamburger || !nav) return;
+    const headerNav = document.getElementById('main-nav');
+    if (!hamburger || !headerNav) return;
     this._hamburgerInitialized = true;
 
-    // Move wallet button into dropdown on mobile
+    // Build mobile dropdown as a sibling of <body>, outside the header entirely
+    const dropdown = headerNav.cloneNode(true);
+    dropdown.removeAttribute('id');
+    dropdown.classList.add('mobile-dropdown');
+    document.body.appendChild(dropdown);
+
+    // Move the real wallet button into the mobile dropdown (only on mobile)
     const walletBtn = document.getElementById('connect-wallet');
     if (walletBtn && window.matchMedia('(max-width: 768px)').matches) {
       const wrapper = document.createElement('div');
       wrapper.className = 'nav-wallet-item';
       wrapper.appendChild(walletBtn);
-      nav.appendChild(wrapper);
+      dropdown.appendChild(wrapper);
     }
 
     // Invisible backdrop to catch outside clicks
@@ -986,16 +994,15 @@ const utils = {
     backdrop.className = 'nav-backdrop';
     document.body.appendChild(backdrop);
 
-    // Helper to close mobile nav dropdown
     const closeMobileNav = () => {
-      nav.classList.remove('open');
+      dropdown.classList.remove('open');
       hamburger.classList.remove('active');
       hamburger.setAttribute('aria-expanded', 'false');
       backdrop.classList.remove('active');
     };
 
     const openMobileNav = () => {
-      nav.classList.add('open');
+      dropdown.classList.add('open');
       hamburger.classList.add('active');
       hamburger.setAttribute('aria-expanded', 'true');
       backdrop.classList.add('active');
@@ -1003,7 +1010,7 @@ const utils = {
 
     hamburger.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (nav.classList.contains('open')) {
+      if (dropdown.classList.contains('open')) {
         closeMobileNav();
       } else {
         openMobileNav();
@@ -1011,7 +1018,7 @@ const utils = {
     });
 
     // Close menu when a nav link is clicked
-    nav.querySelectorAll('.nav-link:not(.nav-dropdown-toggle)').forEach(link => {
+    dropdown.querySelectorAll('.nav-link:not(.nav-dropdown-toggle)').forEach(link => {
       link.addEventListener('click', closeMobileNav);
     });
 
@@ -1020,24 +1027,27 @@ const utils = {
 
     // Close on Escape key
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && nav.classList.contains('open')) {
+      if (e.key === 'Escape' && dropdown.classList.contains('open')) {
         closeMobileNav();
       }
     });
 
     // Handle mobile dropdown toggles within hamburger menu
-    nav.querySelectorAll('.nav-dropdown-toggle').forEach(toggle => {
+    dropdown.querySelectorAll('.nav-dropdown-toggle').forEach(toggle => {
       toggle.addEventListener('click', (e) => {
         if (window.innerWidth > 768) return;
         e.preventDefault();
-        const dropdown = toggle.closest('.nav-dropdown');
-        // Close other dropdowns
-        nav.querySelectorAll('.nav-dropdown.open').forEach(dd => {
-          if (dd !== dropdown) dd.classList.remove('open');
+        const dd = toggle.closest('.nav-dropdown');
+        dropdown.querySelectorAll('.nav-dropdown.open').forEach(other => {
+          if (other !== dd) other.classList.remove('open');
         });
-        dropdown.classList.toggle('open');
+        dd.classList.toggle('open');
       });
     });
+
+    // Store reference for other code that needs to close the menu
+    this._mobileDropdown = dropdown;
+    this._closeMobileNav = closeMobileNav;
   },
 
   // Handle horizontal scroll indicators for tables
