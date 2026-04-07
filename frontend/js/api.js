@@ -979,18 +979,33 @@ const utils = {
       nav.appendChild(wrapper);
     }
 
+    // Invisible backdrop to catch outside clicks
+    const backdrop = document.createElement('div');
+    backdrop.className = 'nav-backdrop';
+    document.body.appendChild(backdrop);
+
     // Helper to close mobile nav dropdown
     const closeMobileNav = () => {
       nav.classList.remove('open');
       hamburger.classList.remove('active');
       hamburger.setAttribute('aria-expanded', 'false');
+      backdrop.classList.remove('active');
+    };
+
+    const openMobileNav = () => {
+      nav.classList.add('open');
+      hamburger.classList.add('active');
+      hamburger.setAttribute('aria-expanded', 'true');
+      backdrop.classList.add('active');
     };
 
     hamburger.addEventListener('click', (e) => {
       e.stopPropagation();
-      const isOpen = nav.classList.toggle('open');
-      hamburger.classList.toggle('active', isOpen);
-      hamburger.setAttribute('aria-expanded', String(isOpen));
+      if (nav.classList.contains('open')) {
+        closeMobileNav();
+      } else {
+        openMobileNav();
+      }
     });
 
     // Close menu when a nav link is clicked
@@ -998,13 +1013,8 @@ const utils = {
       link.addEventListener('click', closeMobileNav);
     });
 
-    // Close menu when clicking outside
-    document.addEventListener('click', (e) => {
-      if (!nav.classList.contains('open')) return;
-      if (!nav.contains(e.target) && !hamburger.contains(e.target)) {
-        closeMobileNav();
-      }
-    });
+    // Close when clicking the backdrop
+    backdrop.addEventListener('click', closeMobileNav);
 
     // Close on Escape key
     document.addEventListener('keydown', (e) => {

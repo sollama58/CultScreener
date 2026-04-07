@@ -4250,11 +4250,11 @@ select:focus {
     margin-left: auto;
   }
 
-  /* Dropdown menu anchored to top-right of header */
+  /* Dropdown menu — fixed to viewport, below header, right-aligned */
   .nav {
     display: none;
-    position: absolute;
-    top: 100%;
+    position: fixed;
+    top: 52px;
     right: 0.85rem;
     left: auto;
     bottom: auto;
@@ -4265,7 +4265,7 @@ select:focus {
     flex-direction: column;
     padding: 0.5rem;
     gap: 0.15rem;
-    z-index: 1300;
+    z-index: 9999;
     box-shadow: var(--shadow-lg);
     transform-origin: top right;
   }
@@ -4471,7 +4471,7 @@ select:focus {
   .logo-text { font-size: 1.05rem; }
   .logo-badge, .powered-badge { display: none; }
 
-  .nav { right: 0.6rem; width: 190px; }
+  .nav { top: 48px; right: 0.6rem; width: 190px; }
 
   .main { padding: 0.5rem 0.6rem 2rem; }
 
@@ -5011,6 +5011,18 @@ strong {
   .token-skeleton .skel-stat { height: 48px; }
   .token-skeleton .skel-table-row { height: 30px; margin-bottom: 0.3rem; }
   .token-skeleton .skel-pool { height: 54px; margin-bottom: 0.4rem; }
+}
+
+/* Nav backdrop — invisible overlay to catch outside clicks on mobile */
+.nav-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+}
+
+.nav-backdrop.active {
+  display: block;
 }
 
 /* =============================================

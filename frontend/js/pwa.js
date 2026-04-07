@@ -73,6 +73,9 @@
   }
 
   function showInstallOption() {
+    // Only show on mobile devices
+    if (!window.matchMedia('(max-width: 768px)').matches) return;
+
     // Don't show if already in standalone mode
     if (window.matchMedia('(display-mode: standalone)').matches) return;
 
