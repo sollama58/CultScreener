@@ -19,8 +19,13 @@
 
   const statusEl = document.getElementById('cultify-status');
   const resultsEl = document.getElementById('cultify-results');
+  const previewEl = document.getElementById('cultify-preview');
   const mintInput = document.getElementById('cultify-mint');
   const goBtn = document.getElementById('cultify-go');
+
+  // Cached token metadata for the current preview
+  let previewData = null;
+  let previewAbort = null;
 
   // ── Helpers ───────────────────────────────────────
 
@@ -45,6 +50,76 @@
     return typeof utils !== 'undefined' ? utils.escapeHtml(str) : String(str)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  // ── Token preview ─────────────────────────────────
+
+  function showPreview(html) {
+    previewEl.innerHTML = html;
+    previewEl.classList.add('visible');
+  }
+  function hidePreview() {
+    previewEl.innerHTML = '';
+    previewEl.classList.remove('visible');
+    previewData = null;
+  }
+
+  const defaultLogo = typeof utils !== 'undefined' ? utils.getDefaultLogo() :
+    'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2216%22 fill=%22%231c1c21%22/%3E%3Ctext x=%2216%22 y=%2221%22 text-anchor=%22middle%22 fill=%22%236b6b73%22 font-size=%2214%22%3E?%3C/text%3E%3C/svg%3E';
+
+  async function fetchTokenPreview(mint) {
+    // Cancel previous fetch
+    if (previewAbort) previewAbort.abort();
+    previewAbort = new AbortController();
+
+    showPreview('<div class="cultify-preview-loading">Loading token info...</div>');
+
+    try {
+      const resp = await fetch(
+        `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
+        { signal: previewAbort.signal, headers: {} }
+      );
+
+      if (!resp.ok) throw new Error('not found');
+      const pairs = await resp.json();
+      if (!Array.isArray(pairs) || pairs.length === 0) throw new Error('not found');
+
+      const pair = pairs[0];
+      const name = pair.baseToken?.name || 'Unknown';
+      const symbol = pair.baseToken?.symbol || '???';
+      const logo = pair.info?.imageUrl || defaultLogo;
+
+      previewData = { name, symbol, logo };
+
+      showPreview(`<div class="cultify-preview-card">
+        <img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'">
+        <div class="cultify-preview-info">
+          <div class="cultify-preview-name">${escapeHtml(name)}</div>
+          <div class="cultify-preview-ticker">$${escapeHtml(symbol)}</div>
+        </div>
+      </div>`);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      // Couldn't load metadata — show minimal preview with just the address
+      previewData = null;
+      const short = mint.slice(0, 6) + '...' + mint.slice(-4);
+      showPreview(`<div class="cultify-preview-card">
+        <img class="cultify-preview-logo" src="${defaultLogo}" alt="">
+        <div class="cultify-preview-info">
+          <div class="cultify-preview-name">${short}</div>
+          <div class="cultify-preview-ticker">Token not found on DexScreener</div>
+        </div>
+      </div>`);
+    }
+  }
+
+  function handleInputChange() {
+    const mint = mintInput.value.trim();
+    if (SOLANA_ADDR_RE.test(mint)) {
+      fetchTokenPreview(mint);
+    } else {
+      hidePreview();
+    }
   }
 
   // ── Main flow ─────────────────────────────────────
@@ -92,7 +167,7 @@
 
     let html = '<div class="cultify-gate">';
     html += '<h3>Burn Required</h3>';
-    html += '<p>This token is not in the curated list. To analyze it, burn <span class="cultify-burn-cost">100,000 ASDFASDFA</span> tokens.</p>';
+    html += `<p>This token is not in the curated list. To analyze it, burn <span class="cultify-burn-cost">${BURN_AMOUNT.toLocaleString()} ASDFASDFA</span> tokens.</p>`;
 
     if (!connected) {
       html += '<button class="cultify-burn-btn" id="cultify-connect-btn">Connect Wallet</button>';
@@ -265,8 +340,15 @@
     const { metrics, holders } = data;
     const shortMint = mint.slice(0, 6) + '...' + mint.slice(-4);
 
+    // Use preview data if available for a richer header
+    const name = previewData?.name || 'Token Analysis';
+    const symbol = previewData?.symbol || '';
+    const logo = previewData?.logo || defaultLogo;
+
     let html = '<div class="cultify-results-header">';
-    html += `<span class="cultify-token-name">Token Analysis</span>`;
+    html += `<img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'" style="width:32px;height:32px;">`;
+    html += `<span class="cultify-token-name">${escapeHtml(name)}</span>`;
+    if (symbol) html += `<span class="cultify-preview-ticker">$${escapeHtml(symbol)}</span>`;
     html += `<span class="cultify-token-address">${escapeHtml(shortMint)}</span>`;
     if (isCurated) html += '<span class="cultify-free-badge">Curated - Free</span>';
     html += '</div>';
@@ -327,6 +409,13 @@
   goBtn.addEventListener('click', handleCultify);
   mintInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleCultify();
+  });
+
+  // Show token preview when a valid CA is pasted or typed
+  mintInput.addEventListener('input', handleInputChange);
+  mintInput.addEventListener('paste', () => {
+    // paste event fires before the value updates — defer to next tick
+    setTimeout(handleInputChange, 0);
   });
 
 })();
