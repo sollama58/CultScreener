@@ -139,13 +139,17 @@
     try {
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
 
-      // Step 1: Check access
+      // Step 1: Check access (pass both cache token and wallet for DB lookup)
+      const walletAddr = (typeof wallet !== 'undefined' && wallet.connected) ? wallet.address : '';
       const tokenParam = currentAccessToken ? `&token=${currentAccessToken}` : '';
-      const checkUrl = `${baseUrl}/api/cultify/check-access/${mint}?_=1${tokenParam}`;
+      const walletParam = walletAddr ? `&wallet=${walletAddr}` : '';
+      const checkUrl = `${baseUrl}/api/cultify/check-access/${mint}?_=1${tokenParam}${walletParam}`;
       const checkResp = await fetch(checkUrl);
       const checkData = await checkResp.json();
 
       if (checkData.access) {
+        // Pick up fresh access token if one was issued (returning user within 12hr)
+        if (checkData.accessToken) currentAccessToken = checkData.accessToken;
         // Free or already burned — go straight to analysis
         showStatus('<div class="cultify-gate"><p class="cultify-loading">Analyzing holders...</p></div>');
         await loadAnalysis(mint, checkData.reason === 'curated');
@@ -515,6 +519,25 @@
       html += '</div>';
     }
 
+    // Diamond hands section — above holders table, starts as loading skeleton
+    html += '<div class="cultify-diamond-section" id="cultify-diamond">';
+    html += '<h3 style="font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Diamond Hands Distribution</h3>';
+    html += '<div id="cultify-diamond-bars">';
+    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    const labels = ['>6h', '>24h', '>3d', '>1w', '>1m', '>3m', '>6m', '>9m'];
+    buckets.forEach((key, i) => {
+      html += `<div class="cultify-dh-row" id="cultify-dh-row-${key}">
+        <span class="cultify-dh-label">${labels[i]}</span>
+        <div class="cultify-dh-track">
+          <div class="cultify-dh-fill cultify-dh-loading" id="cultify-dh-fill-${key}"></div>
+        </div>
+        <span class="cultify-dh-pct" id="cultify-dh-pct-${key}">...</span>
+      </div>`;
+    });
+    html += '</div>';
+    html += '<p id="cultify-diamond-status" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Loading diamond hands data...</p>';
+    html += '</div>';
+
     // Holders table
     if (holders && holders.length > 0) {
       html += '<div class="cultify-holders-table"><table>';
@@ -538,25 +561,6 @@
       html += '</tbody></table></div>';
     }
 
-    // Diamond hands section — starts as loading skeleton, polls for data
-    html += '<div class="cultify-diamond-section" id="cultify-diamond">';
-    html += '<h3 style="font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Diamond Hands Distribution</h3>';
-    html += '<div id="cultify-diamond-bars">';
-    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
-    const labels = ['>6h', '>24h', '>3d', '>1w', '>1m', '>3m', '>6m', '>9m'];
-    buckets.forEach((key, i) => {
-      html += `<div class="cultify-dh-row" id="cultify-dh-row-${key}">
-        <span class="cultify-dh-label">${labels[i]}</span>
-        <div class="cultify-dh-track">
-          <div class="cultify-dh-fill cultify-dh-loading" id="cultify-dh-fill-${key}"></div>
-        </div>
-        <span class="cultify-dh-pct" id="cultify-dh-pct-${key}">...</span>
-      </div>`;
-    });
-    html += '</div>';
-    html += '<p id="cultify-diamond-status" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Loading diamond hands data...</p>';
-    html += '</div>';
-
     showResults(html);
 
     // Start polling for diamond hands data
@@ -573,8 +577,14 @@
 
     try {
       const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${tokenParam}`);
-      if (!resp.ok) return;
+      if (!resp.ok) {
+        // Retry on server error
+        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
+        return;
+      }
       const data = await resp.json();
+
+      const statusEl = document.getElementById('cultify-diamond-status');
 
       if (data.distribution) {
         const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
@@ -591,7 +601,6 @@
           if (pctEl) pctEl.textContent = pct + '%';
         });
 
-        const statusEl = document.getElementById('cultify-diamond-status');
         if (statusEl) {
           if (data.computed) {
             statusEl.textContent = `${data.analyzed} of ${data.sampleSize} holders analyzed`;
@@ -599,6 +608,9 @@
             statusEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} holders`;
           }
         }
+      } else {
+        // No distribution yet — still loading
+        if (statusEl) statusEl.textContent = 'Computing hold times...';
       }
 
       // Keep polling if not fully computed
@@ -606,7 +618,7 @@
         diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 3000);
       }
     } catch {
-      // Retry on error
+      // Retry on network error
       diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
     }
   }

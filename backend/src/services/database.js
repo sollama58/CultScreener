@@ -3104,7 +3104,10 @@ async function recordCultifyBurn(walletAddress, tokenMint, signature, burnAmount
 async function hasCultifyAccess(walletAddress, tokenMint) {
   if (!pool) throw new Error('Database not available');
   const result = await pool.query(
-    'SELECT 1 FROM cultify_burns WHERE wallet_address = $1 AND token_mint = $2 LIMIT 1',
+    `SELECT 1 FROM cultify_burns
+     WHERE wallet_address = $1 AND token_mint = $2
+       AND created_at > NOW() - INTERVAL '12 hours'
+     LIMIT 1`,
     [walletAddress, tokenMint]
   );
   return result.rows.length > 0;

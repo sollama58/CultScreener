@@ -12,7 +12,7 @@ const BURN_AMOUNT = 10_000;
 const BURN_DECIMALS = 6; // pump.fun tokens use 6 decimals
 const BURN_RAW_AMOUNT = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const MAX_TX_AGE_SECONDS = 600; // 10 minutes
-const ACCESS_TOKEN_TTL = 3600; // 1 hour in seconds
+const ACCESS_TOKEN_TTL = 43200; // 12 hours in seconds
 
 // Generate a short-lived access token for a wallet+mint pair
 function generateAccessToken(walletAddress, mint) {
@@ -141,12 +141,24 @@ router.get('/check-access/:mint', validateMint, asyncHandler(async (req, res) =>
     return res.json({ access: true, reason: 'curated' });
   }
 
-  // For non-curated, check if an access token was provided
+  // Check cache token first (fast path)
   const accessToken = req.query.token;
   if (accessToken) {
     const accessData = await cache.get(`cultify:access:${accessToken}`);
     if (accessData && accessData.mint === mint) {
       return res.json({ access: true, reason: 'burned' });
+    }
+  }
+
+  // Check DB for a burn within the last 12 hours (returning users / expired cache tokens)
+  const walletAddress = req.query.wallet;
+  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    const hasBurn = await db.hasCultifyAccess(walletAddress, mint);
+    if (hasBurn) {
+      // Issue a fresh access token so subsequent analyze calls work
+      const newToken = generateAccessToken(walletAddress, mint);
+      await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      return res.json({ access: true, reason: 'burned', accessToken: newToken });
     }
   }
 
@@ -226,11 +238,13 @@ router.get('/analyze/:mint', validateMint, asyncHandler(async (req, res) => {
   }
 }));
 
-// GET /api/cultify/diamond-hands/:mint — diamond hands distribution (proxies to main logic)
+// GET /api/cultify/diamond-hands/:mint — diamond hands distribution
+// For non-curated tokens the main worker never runs, so this endpoint
+// computes hold times inline for the top holders.
 router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
-  // Verify access (same as analyze)
+  // Verify access
   const curated = await db.isTokenAllowed(mint);
   if (!curated) {
     const accessToken = req.query.token;
@@ -241,55 +255,85 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
     }
   }
 
+  const BUCKETS = [
+    { key: '6h', ms: 6*3600000 }, { key: '24h', ms: 24*3600000 },
+    { key: '3d', ms: 3*86400000 }, { key: '1w', ms: 7*86400000 },
+    { key: '1m', ms: 30*86400000 }, { key: '3m', ms: 90*86400000 },
+    { key: '6m', ms: 180*86400000 }, { key: '9m', ms: 270*86400000 },
+  ];
+
   try {
-    // Check for cached result
-    const resultCacheKey = `diamond-hands:${mint}`;
+    // Check for cached final result
+    const resultCacheKey = `cultify:diamond-hands:${mint}`;
     const cached = await cache.get(resultCacheKey);
     if (cached) return res.json(cached);
 
-    // Check if computation is in progress (wallets sampled but not all analyzed)
-    const walletsCacheKey = `diamond-hands-wallets:${mint}`;
-    const wallets = await cache.get(walletsCacheKey);
-    if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
-      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
+    // For curated tokens, check if the main worker already computed it
+    if (curated) {
+      const mainCached = await cache.get(`diamond-hands:${mint}`);
+      if (mainCached) return res.json(mainCached);
     }
 
-    // Check per-wallet caches
-    const walletList = wallets.map(e => typeof e === 'object' ? e.wallet : e);
-    const holdTimes = {};
-    let analyzedCount = 0;
+    if (!solanaService.isHeliusConfigured()) {
+      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
+    }
 
-    await Promise.all(walletList.map(async (w) => {
-      const val = await cache.get(`wallet-token-hold:${w}:${mint}`);
-      if (val != null) {
-        analyzedCount++;
-        if (val > 0) holdTimes[w] = val;
+    // Check partial progress from a previous request
+    const progressKey = `cultify:dh-progress:${mint}`;
+    let progress = await cache.get(progressKey) || { holdTimes: {}, analyzed: 0, wallets: null };
+
+    // Get holder wallets if we don't have them yet
+    if (!progress.wallets) {
+      const accounts = await solanaService.getTokenLargestAccounts(mint);
+      if (!accounts || accounts.length === 0) {
+        return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
       }
+      progress.wallets = accounts.slice(0, 20).map(a => a.address);
+      progress.holdTimes = {};
+      progress.analyzed = 0;
+    }
+
+    // Compute hold times for unanalyzed wallets (batch of 5 per request to stay fast)
+    const unanalyzed = progress.wallets.filter(w => !(w in progress.holdTimes));
+    const batch = unanalyzed.slice(0, 5);
+
+    await Promise.all(batch.map(async (walletAddr) => {
+      try {
+        const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint);
+        progress.holdTimes[walletAddr] = metrics.tokenHoldTime || 0;
+      } catch {
+        progress.holdTimes[walletAddr] = 0;
+      }
+      progress.analyzed++;
     }));
 
-    // Build distribution from whatever data we have so far
-    const BUCKETS = [
-      { key: '6h', ms: 6*3600000 }, { key: '24h', ms: 24*3600000 },
-      { key: '3d', ms: 3*86400000 }, { key: '1w', ms: 7*86400000 },
-      { key: '1m', ms: 30*86400000 }, { key: '3m', ms: 90*86400000 },
-      { key: '6m', ms: 180*86400000 }, { key: '9m', ms: 270*86400000 },
-    ];
+    // Save progress for next poll
+    await cache.set(progressKey, progress, 600); // 10 min TTL
 
+    // Build distribution from current data
     const now = Date.now();
+    const analyzedWallets = Object.values(progress.holdTimes).filter(t => t > 0);
     const distribution = {};
     for (const b of BUCKETS) {
-      const count = Object.values(holdTimes).filter(t => (now - t) >= b.ms).length;
-      distribution[b.key] = analyzedCount > 0 ? Math.round(count / analyzedCount * 100) : 0;
+      const count = analyzedWallets.filter(t => (now - t) >= b.ms).length;
+      distribution[b.key] = analyzedWallets.length > 0
+        ? Math.round(count / analyzedWallets.length * 100) : 0;
     }
 
-    const allDone = analyzedCount >= walletList.length;
+    const allDone = progress.analyzed >= progress.wallets.length;
+    const result = {
+      distribution,
+      sampleSize: progress.wallets.length,
+      analyzed: progress.analyzed,
+      computed: allDone
+    };
+
     if (allDone) {
-      const result = { distribution, sampleSize: walletList.length, analyzed: analyzedCount, computed: true };
-      await cache.set(resultCacheKey, result, 3 * 3600);
-      return res.json(result);
+      await cache.set(resultCacheKey, result, 3 * 3600); // cache 3 hours
+      await cache.delete(progressKey);
     }
 
-    res.json({ distribution, sampleSize: walletList.length, analyzed: analyzedCount, computed: false });
+    res.json(result);
   } catch (err) {
     console.error('[Cultify] Diamond hands error:', err.message);
     res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
