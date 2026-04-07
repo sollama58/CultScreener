@@ -6,7 +6,7 @@
   'use strict';
 
   let deferredPrompt = null;
-  let installBanner = null;
+  let installBtn = null;
 
   // ─── Service Worker Registration ────────────────────────
   if ('serviceWorker' in navigator) {
@@ -39,85 +39,71 @@
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredPrompt = e;
-    showInstallBanner();
+    showInstallOption();
   });
 
-  // Hide banner if app is installed
+  // Hide install option if app is installed
   window.addEventListener('appinstalled', () => {
     deferredPrompt = null;
-    hideInstallBanner();
+    hideInstallOption();
     console.log('[PWA] App installed successfully');
   });
 
-  // ─── Mobile Detection ───────────────────────────────────
-  function isMobileDevice() {
-    return window.matchMedia('(max-width: 768px)').matches
-      || /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  }
+  // ─── Install Option in Nav Dropdown ─────────────────────
 
-  // ─── Install Bubble UI (mobile-only, bottom-right) ─────
+  function createInstallButton() {
+    const nav = document.getElementById('main-nav');
+    if (!nav || document.getElementById('pwa-install-nav')) return;
 
-  function createInstallBubble() {
-    if (document.getElementById('pwa-install-bubble')) return;
-
-    const bubble = document.createElement('button');
-    bubble.id = 'pwa-install-bubble';
-    bubble.className = 'pwa-install-bubble';
-    bubble.setAttribute('aria-label', 'Install CultScreener app');
-    bubble.innerHTML = `
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <path d="M12 16l0-12M12 16l-4-4M12 16l4-4" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M4 20h16" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+    const btn = document.createElement('button');
+    btn.id = 'pwa-install-nav';
+    btn.className = 'nav-install-item';
+    btn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M12 16l0-12M12 16l-4-4M12 16l4-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 20h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
       </svg>
+      Install App
     `;
 
-    document.body.appendChild(bubble);
-    installBanner = bubble;
+    nav.appendChild(btn);
+    installBtn = btn;
 
-    bubble.addEventListener('click', handleInstall);
+    btn.addEventListener('click', handleInstall);
   }
 
-  function showInstallBanner() {
-    // Only show on mobile devices
-    if (!isMobileDevice()) return;
-
-    // Don't show if user previously dismissed (respect for 7 days)
-    const dismissed = localStorage.getItem('pwa-install-dismissed');
-    if (dismissed && Date.now() - parseInt(dismissed) < 7 * 24 * 60 * 60 * 1000) return;
-
+  function showInstallOption() {
     // Don't show if already in standalone mode
     if (window.matchMedia('(display-mode: standalone)').matches) return;
 
-    createInstallBubble();
-    // Animate in after a short delay (don't interrupt initial page load)
-    setTimeout(() => {
-      if (installBanner) installBanner.classList.add('visible');
-    }, 2000);
+    createInstallButton();
+    if (installBtn) installBtn.classList.add('installable');
   }
 
-  function hideInstallBanner() {
-    if (installBanner) {
-      installBanner.classList.remove('visible');
-      setTimeout(() => {
-        installBanner.remove();
-        installBanner = null;
-      }, 300);
+  function hideInstallOption() {
+    if (installBtn) {
+      installBtn.classList.remove('installable');
     }
   }
 
   async function handleInstall() {
     if (!deferredPrompt) return;
 
+    // Close the mobile nav dropdown
+    const nav = document.getElementById('main-nav');
+    const hamburger = document.getElementById('nav-hamburger');
+    if (nav) nav.classList.remove('open');
+    if (hamburger) {
+      hamburger.classList.remove('active');
+      hamburger.setAttribute('aria-expanded', 'false');
+    }
+
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     console.log('[PWA] Install prompt outcome:', outcome);
 
-    if (outcome === 'dismissed') {
-      localStorage.setItem('pwa-install-dismissed', Date.now().toString());
-    }
-
     deferredPrompt = null;
-    hideInstallBanner();
+    hideInstallOption();
   }
 
   // ─── Update Banner UI ──────────────────────────────────

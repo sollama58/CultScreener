@@ -970,19 +970,17 @@ const utils = {
     const nav = document.querySelector('.nav');
     if (!hamburger || !nav) return;
 
-    // Helper to close mobile nav and unlock body scroll
+    // Helper to close mobile nav dropdown
     const closeMobileNav = () => {
       nav.classList.remove('open');
       hamburger.classList.remove('active');
       hamburger.setAttribute('aria-expanded', 'false');
-      document.body.classList.remove('nav-open');
     };
 
     hamburger.addEventListener('click', () => {
       const isOpen = nav.classList.toggle('open');
       hamburger.classList.toggle('active', isOpen);
       hamburger.setAttribute('aria-expanded', String(isOpen));
-      document.body.classList.toggle('nav-open', isOpen);
     });
 
     // Close menu when a nav link is clicked
