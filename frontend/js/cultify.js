@@ -286,18 +286,22 @@
       tx.feePayer = ownerPubkey;
       tx.recentBlockhash = blockhash;
 
-      // Sign and send via wallet provider (wallet sends to network directly)
-      let signature;
-      if (wallet.provider.signAndSendTransaction) {
-        const result = await wallet.provider.signAndSendTransaction(tx);
-        signature = result.signature;
-      } else {
-        // Fallback: sign locally, send via public RPC (only for wallets without signAndSendTransaction)
-        const { Connection } = solanaWeb3;
-        const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-        const signed = await wallet.provider.signTransaction(tx);
-        signature = await connection.sendRawTransaction(signed.serialize());
+      // Sign with wallet, then send via backend (uses Helius RPC — no public RPC needed)
+      const signed = await wallet.provider.signTransaction(tx);
+      const serialized = signed.serialize();
+      const base64Tx = btoa(String.fromCharCode(...serialized));
+
+      burnBtn.textContent = 'Sending transaction...';
+      const sendResp = await fetch(`${baseUrl}/api/cultify/send-tx`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transaction: base64Tx }),
+      });
+      if (!sendResp.ok) {
+        const sendErr = await sendResp.json().catch(() => ({}));
+        throw new Error(sendErr.error || 'Failed to send transaction');
       }
+      const { signature } = await sendResp.json();
 
       // Poll backend for confirmation (uses Helius RPC)
       burnBtn.textContent = 'Confirming burn...';

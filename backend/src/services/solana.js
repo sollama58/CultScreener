@@ -233,6 +233,11 @@ async function getRecentBlockhash() {
   return rpcCall('getLatestBlockhash');
 }
 
+// Send a signed raw transaction (base64-encoded)
+async function sendRawTransaction(base64Tx) {
+  return rpcCall('sendTransaction', [base64Tx, { encoding: 'base64', preflightCommitment: 'confirmed' }]);
+}
+
 // Get transaction (confirmed commitment — data available sooner than finalized)
 async function getTransaction(signature) {
   return rpcCall('getTransaction', [
@@ -1024,6 +1029,7 @@ module.exports = {
   getMultipleAccounts,
   getTokenAccountsByOwner,
   getRecentBlockhash,
+  sendRawTransaction,
   getTransaction,
   getSignaturesForAddress,
   getTokenHolderCount,

@@ -276,6 +276,22 @@ router.get('/blockhash', asyncHandler(async (req, res) => {
   }
 }));
 
+// POST /api/cultify/send-tx — send a signed transaction via Helius RPC
+router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
+  const { transaction } = req.body;
+  if (!transaction || typeof transaction !== 'string') {
+    return res.status(400).json({ error: 'Missing transaction data' });
+  }
+
+  try {
+    const signature = await solanaService.sendRawTransaction(transaction);
+    res.json({ signature });
+  } catch (err) {
+    console.error('[Cultify] Send transaction error:', err.message);
+    res.status(502).json({ error: 'Failed to send transaction: ' + (err.message || 'RPC error') });
+  }
+}));
+
 // GET /api/cultify/tx-status/:signature — check transaction confirmation status
 router.get('/tx-status/:signature', asyncHandler(async (req, res) => {
   const { signature } = req.params;
