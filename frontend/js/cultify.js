@@ -89,7 +89,10 @@
       const symbol = pair.baseToken?.symbol || '???';
       const logo = pair.info?.imageUrl || defaultLogo;
 
-      previewData = { name, symbol, logo };
+      const pairCreatedAt = pair.pairCreatedAt || null;
+      const price = pair.priceUsd ? parseFloat(pair.priceUsd) : null;
+      const priceChange24h = pair.priceChange?.h24 != null ? parseFloat(pair.priceChange.h24) : null;
+      previewData = { name, symbol, logo, pairCreatedAt, price, priceChange24h };
 
       showPreview(`<div class="cultify-preview-card">
         <img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'">
@@ -564,20 +567,27 @@
       renderResults(mint, data, isCurated);
 
       // The first response is fast but may lack enriched data (real holder count,
-      // LP/burn flags). Poll once more after a few seconds to get the worker-enriched result.
+      // LP/burn flags). Poll a few times to get the worker-enriched result.
       if (!data.supply && !analysisPollTimer) {
-        analysisPollTimer = setTimeout(async () => {
+        let enrichAttempt = 0;
+        const pollEnriched = async () => {
           analysisPollTimer = null;
+          enrichAttempt++;
+          if (enrichAttempt > 5) return; // give up after 5 attempts (~25s)
           try {
             const enrichedResp = await fetch(url);
             if (enrichedResp.ok) {
               const enriched = await enrichedResp.json();
               if (enriched.supply || (enriched.metrics && enriched.metrics.holderCount)) {
                 updateEnrichedMetrics(enriched);
+                return; // done
               }
             }
           } catch (_) {}
-        }, 5000);
+          // Not enriched yet — try again
+          analysisPollTimer = setTimeout(pollEnriched, 5000);
+        };
+        analysisPollTimer = setTimeout(pollEnriched, 4000);
       }
     } catch (err) {
       showStatus(`<div class="cultify-gate"><p class="cultify-error">${escapeHtml(err.message)}</p></div>`);
@@ -586,17 +596,10 @@
 
   function updateEnrichedMetrics(data) {
     if (!data.metrics) return;
-    // Update holder count if the enriched data has it
-    const holderCountEls = document.querySelectorAll('.holder-metric-value');
+    // Update holder count by ID (fast and reliable)
     if (data.metrics.holderCount && data.metrics.holderCount > 0) {
-      // Find the "Total Holders" metric and update its value
-      const labels = document.querySelectorAll('.holder-metric-label');
-      labels.forEach((label, i) => {
-        if (label.textContent === 'Total Holders') {
-          const valueEl = label.parentElement.querySelector('.holder-metric-value');
-          if (valueEl) valueEl.textContent = data.metrics.holderCount.toLocaleString();
-        }
-      });
+      const el = document.getElementById('cultify-total-holders');
+      if (el) el.textContent = data.metrics.holderCount.toLocaleString();
     }
     // Update concentration metrics with LP/burn-adjusted values
     const metricMap = {
@@ -623,6 +626,15 @@
     const symbol = previewData?.symbol || '';
     const logo = previewData?.logo || defaultLogo;
 
+    // Token age from DexScreener pairCreatedAt
+    const pairCreatedAt = previewData?.pairCreatedAt;
+    const tokenAge = pairCreatedAt ? utils.formatAge(pairCreatedAt) : 'N/A';
+
+    // Holder count — prefer enriched data, fall back to "loading..."
+    const holderCountStr = (metrics && metrics.holderCount && metrics.holderCount > 0)
+      ? metrics.holderCount.toLocaleString()
+      : null;
+
     let html = '<div class="cultify-results-header">';
     html += `<img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'" style="width:32px;height:32px;">`;
     html += `<span class="cultify-token-name">${escapeHtml(name)}</span>`;
@@ -633,13 +645,25 @@
 
     // Conviction metrics section — uses same classes as token page
     html += '<section class="holders-section">';
-    html += '<div class="holders-graphic">';
+    html += '<div class="holders-graphic" id="cultify-holders-graphic">';
+
+    // Share button (top-right of the graphic, same style as token page)
+    html += `<div style="display:flex;justify-content:flex-end;margin-bottom:0.5rem;" id="cultify-share-wrap">
+      <button class="holders-share-btn" id="cultify-share-btn" title="Share conviction metrics">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+          <polyline points="16 6 12 2 8 6"/>
+          <line x1="12" y1="2" x2="12" y2="15"/>
+        </svg>
+      </button>
+    </div>`;
 
     // Metrics grid — same as token page
     if (metrics) {
       const safeRisk = ['high', 'medium', 'low'].includes(metrics.riskLevel) ? metrics.riskLevel : 'low';
       html += '<div class="holders-metrics">';
-      html += holderMetric('Total Holders', metrics.holderCount ? metrics.holderCount.toLocaleString() : '--');
+      html += holderMetric('Total Holders', holderCountStr || '...', null, 'cultify-total-holders');
+      html += holderMetric('Token Age', tokenAge);
       html += holderMetric('Top 5 Holders', metrics.top5Pct.toFixed(1) + '%', metrics.top5Pct);
       html += holderMetric('Top 10 Holders', metrics.top10Pct.toFixed(1) + '%', metrics.top10Pct);
       html += holderMetric('Top 20 Holders', metrics.top20Pct.toFixed(1) + '%', metrics.top20Pct);
@@ -666,7 +690,27 @@
         <span class="diamond-bar-pct" id="dh-pct-${key}">...</span>
       </div>`;
     });
-    html += '</div></div>';
+    html += '</div>';
+
+    // Watermark — same as token page
+    html += `<div class="diamond-hands-footer">
+      <span class="diamond-hands-watermark">
+        <svg class="dh-watermark-flame" width="12" height="12" viewBox="0 0 24 24" fill="url(#dhFlameGradCultify)">
+          <defs>
+            <linearGradient id="dhFlameGradCultify" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stop-color="#ff4500"/>
+              <stop offset="100%" stop-color="#ff8c00"/>
+            </linearGradient>
+          </defs>
+          <path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/>
+        </svg>
+        <span class="dh-watermark-text">CultScreener</span>
+        <span class="dh-watermark-sep"></span>
+        <span class="dh-watermark-powered">Powered by ASDFASDFA</span>
+      </span>
+    </div>`;
+
+    html += '</div>';
     html += '</div></section>';
 
     // Holders table — uses same classes as token page
@@ -696,21 +740,187 @@
 
     showResults(html);
 
+    // Bind share button
+    const shareBtn = document.getElementById('cultify-share-btn');
+    if (shareBtn) shareBtn.addEventListener('click', () => shareCultifyAnalytics(mint));
+
     // Start polling for diamond hands data (fresh=true on first poll to clear stale data)
     diamondPollCount = 0;
     diamondFreshRequested = true;
     pollDiamondHands(mint);
   }
 
-  function holderMetric(label, value, concentrationPct) {
+  function holderMetric(label, value, concentrationPct, id) {
     let cls = '';
     if (concentrationPct != null) {
       cls = concentrationPct > 80 ? 'concentration-high' : concentrationPct > 50 ? 'concentration-medium' : 'concentration-low';
     }
+    const idAttr = id ? ` id="${id}"` : '';
     return `<div class="holder-metric">
       <span class="holder-metric-label">${label}</span>
-      <span class="holder-metric-value ${cls}">${value}</span>
+      <span class="holder-metric-value ${cls}"${idAttr}>${value}</span>
     </div>`;
+  }
+
+  // ── Share screenshot ───────────────────────────────
+
+  async function shareCultifyAnalytics(mint) {
+    const graphic = document.getElementById('cultify-holders-graphic');
+    if (!graphic) return;
+
+    const btn = document.getElementById('cultify-share-btn');
+    if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
+
+    const injected = [];
+    const hidden = [];
+
+    const hideEl = (el) => {
+      if (!el) return;
+      el._prevDisplay = el.style.display;
+      el.style.display = 'none';
+      hidden.push(el);
+    };
+    const restoreAll = () => {
+      hidden.forEach(el => { el.style.display = el._prevDisplay || ''; delete el._prevDisplay; });
+      hidden.length = 0;
+      injected.forEach(el => { if (el.parentNode) el.remove(); });
+      injected.length = 0;
+      graphic.style.padding = '';
+    };
+
+    try {
+      // Dynamically load html2canvas
+      if (typeof html2canvas === 'undefined') {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+          script.crossOrigin = 'anonymous';
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('Failed to load screenshot library'));
+          document.head.appendChild(script);
+        });
+      }
+
+      const esc = escapeHtml;
+      const tokenName = previewData?.name || '';
+      const tokenSymbol = previewData?.symbol || '';
+      const tokenPrice = previewData?.price ? utils.formatPrice(previewData.price, 6) : '';
+      const priceChange = previewData?.priceChange24h;
+      const priceChangeStr = typeof priceChange === 'number' ? `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%` : '';
+      const priceColor = priceChange >= 0 ? '#10b981' : '#ef4444';
+
+      // Pre-load logo as data URL to avoid CORS
+      let logoDataUrl = '';
+      const logoSrc = previewData?.logo || defaultLogo;
+      if (logoSrc && !logoSrc.startsWith('data:')) {
+        try {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise((resolve) => {
+            img.onload = resolve;
+            img.onerror = resolve;
+            img.src = logoSrc;
+            setTimeout(resolve, 2000);
+          });
+          if (img.naturalWidth > 0) {
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth;
+            c.height = img.naturalHeight;
+            c.getContext('2d').drawImage(img, 0, 0);
+            try { logoDataUrl = c.toDataURL('image/png'); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
+      // Hide share button from screenshot
+      hideEl(document.getElementById('cultify-share-wrap'));
+
+      graphic.style.padding = '1.25rem';
+
+      // Inject header: logo + name + price
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:0.85rem;margin-bottom:0.85rem;border-bottom:1px solid rgba(255,255,255,0.06);';
+      header.innerHTML = `
+        <div style="display:flex;align-items:center;gap:0.6rem;">
+          ${logoDataUrl ? `<img src="${logoDataUrl}" style="width:32px;height:32px;border-radius:50%;background:#161719;">` : ''}
+          <div>
+            <div style="font-size:1rem;font-weight:800;color:#f0f0f2;letter-spacing:-0.02em;line-height:1.2;">${esc(tokenName)}</div>
+            <div style="font-size:0.7rem;font-family:'JetBrains Mono',monospace;color:#6b6b74;text-transform:uppercase;letter-spacing:0.04em;">${esc(tokenSymbol)}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          ${tokenPrice ? `<div style="font-size:1.1rem;font-weight:700;color:#f0f0f2;font-family:'JetBrains Mono',monospace;letter-spacing:-0.02em;">${esc(tokenPrice)}</div>` : ''}
+          ${priceChangeStr ? `<div style="font-size:0.75rem;font-weight:600;color:${priceColor};font-family:'JetBrains Mono',monospace;">${esc(priceChangeStr)}</div>` : ''}
+        </div>`;
+      graphic.insertBefore(header, graphic.firstChild);
+      injected.push(header);
+
+      // Inject section title
+      const sectionTitle = document.createElement('div');
+      sectionTitle.style.cssText = 'font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#6b6b74;margin-bottom:0.6rem;';
+      sectionTitle.textContent = 'CONVICTION METRICS';
+      graphic.insertBefore(sectionTitle, header.nextSibling);
+      injected.push(sectionTitle);
+
+      // Show watermark for screenshot
+      const watermark = graphic.querySelector('.diamond-hands-watermark');
+      let watermarkWasHidden = false;
+      if (watermark) {
+        const cs = getComputedStyle(watermark);
+        watermarkWasHidden = cs.display === 'none';
+        if (watermarkWasHidden) watermark.style.display = 'inline-flex';
+      }
+
+      const canvas = await html2canvas(graphic, {
+        backgroundColor: '#060607',
+        scale: 2,
+        allowTaint: true,
+        logging: false,
+      });
+
+      if (watermark && watermarkWasHidden) watermark.style.display = '';
+      restoreAll();
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png');
+      });
+      const filename = `${(tokenSymbol || tokenName || 'token').toLowerCase()}-conviction.png`;
+
+      // Try native share (mobile)
+      if (navigator.share && navigator.canShare) {
+        const file = new File([blob], filename, { type: 'image/png' });
+        const shareData = { files: [file] };
+        if (navigator.canShare(shareData)) {
+          try { await navigator.share(shareData); } catch (e) { if (e.name !== 'AbortError') throw e; }
+          return;
+        }
+      }
+
+      // Fallback: copy to clipboard
+      if (navigator.clipboard && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        if (typeof toast !== 'undefined') toast.success('Screenshot copied to clipboard!');
+      } else {
+        // Last fallback: download
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        if (typeof toast !== 'undefined') toast.success('Screenshot downloaded!');
+      }
+    } catch (err) {
+      console.error('[Cultify] Share error:', err.message);
+      if (typeof toast !== 'undefined') toast.error('Failed to capture screenshot');
+    } finally {
+      restoreAll();
+      const watermark = document.querySelector('#cultify-holders-graphic .diamond-hands-watermark');
+      if (watermark) watermark.style.display = '';
+      if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
+    }
   }
 
   let diamondPollTimer = null;
