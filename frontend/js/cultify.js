@@ -539,6 +539,8 @@
 
   // ── Load and render analysis ──────────────────────
 
+  let analysisPollTimer = null;
+
   async function loadAnalysis(mint, isCurated) {
     try {
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
@@ -560,9 +562,56 @@
 
       hideStatus();
       renderResults(mint, data, isCurated);
+
+      // The first response is fast but may lack enriched data (real holder count,
+      // LP/burn flags). Poll once more after a few seconds to get the worker-enriched result.
+      if (!data.supply && !analysisPollTimer) {
+        analysisPollTimer = setTimeout(async () => {
+          analysisPollTimer = null;
+          try {
+            const enrichedResp = await fetch(url);
+            if (enrichedResp.ok) {
+              const enriched = await enrichedResp.json();
+              if (enriched.supply || (enriched.metrics && enriched.metrics.holderCount)) {
+                updateEnrichedMetrics(enriched);
+              }
+            }
+          } catch (_) {}
+        }, 5000);
+      }
     } catch (err) {
       showStatus(`<div class="cultify-gate"><p class="cultify-error">${escapeHtml(err.message)}</p></div>`);
     }
+  }
+
+  function updateEnrichedMetrics(data) {
+    if (!data.metrics) return;
+    // Update holder count if the enriched data has it
+    const holderCountEls = document.querySelectorAll('.holder-metric-value');
+    if (data.metrics.holderCount && data.metrics.holderCount > 0) {
+      // Find the "Total Holders" metric and update its value
+      const labels = document.querySelectorAll('.holder-metric-label');
+      labels.forEach((label, i) => {
+        if (label.textContent === 'Total Holders') {
+          const valueEl = label.parentElement.querySelector('.holder-metric-value');
+          if (valueEl) valueEl.textContent = data.metrics.holderCount.toLocaleString();
+        }
+      });
+    }
+    // Update concentration metrics with LP/burn-adjusted values
+    const metricMap = {
+      'Top 5 Holders': data.metrics.top5Pct,
+      'Top 10 Holders': data.metrics.top10Pct,
+      'Top 20 Holders': data.metrics.top20Pct
+    };
+    const labels = document.querySelectorAll('.holder-metric-label');
+    labels.forEach(label => {
+      const pct = metricMap[label.textContent];
+      if (pct != null) {
+        const valueEl = label.parentElement.querySelector('.holder-metric-value');
+        if (valueEl) valueEl.textContent = pct.toFixed(1) + '%';
+      }
+    });
   }
 
   function renderResults(mint, data, isCurated) {

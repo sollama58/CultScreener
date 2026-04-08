@@ -166,7 +166,8 @@ router.get('/check-access/:mint', validateMint, asyncHandler(async (req, res) =>
 }));
 
 // GET /api/cultify/analyze/:mint — run holder analytics for a cultified token
-// Access is verified either by curated status or by a valid access token
+// Uses the SAME holder-analytics cache and worker flow as the main token pages
+// so cultify users see identical data (real holder count, LP/burn detection, etc.)
 router.get('/analyze/:mint', validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -183,55 +184,110 @@ router.get('/analyze/:mint', validateMint, asyncHandler(async (req, res) => {
     }
   }
 
-  // Run holder analytics
-  const cacheKey = `cultify:holders:${mint}`;
+  // Use the SAME cache key as the main holders endpoint — data is shared
+  const cacheKey = `holder-analytics:${mint}`;
   try {
-    const cached = await cache.get(cacheKey);
-    if (cached) return res.json(cached);
-
-    if (!solanaService.isHeliusConfigured()) {
-      return res.json({ error: 'rpc_unavailable', holders: [], metrics: null });
+    // Return enriched data if the worker has already processed this token
+    if (req.query.fresh !== 'true') {
+      const cached = await cache.get(cacheKey);
+      if (cached) return res.json(cached);
     }
 
-    // Fetch largest token accounts
-    const accounts = await solanaService.getTokenLargestAccounts(mint);
-    if (!accounts || accounts.length === 0) {
-      return res.json({ error: 'no_holders', holders: [], metrics: null });
+    // Phase 1: Fast inline — same as main /api/tokens/:mint/holders endpoint
+    const [rpcAccounts, supplyResult] = await Promise.all([
+      solanaService.getTokenLargestAccounts(mint),
+      solanaService.getTokenSupply(mint).catch(() => null)
+    ]);
+
+    let largestAccounts = rpcAccounts;
+    if (!largestAccounts && solanaService.isHeliusConfigured()) {
+      const decimals = supplyResult?.value?.decimals || 0;
+      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, decimals);
     }
 
-    // Get supply for percentage calculations
-    const supplyData = await solanaService.getTokenSupply(mint);
-    const totalSupply = supplyData?.value?.uiAmount || 0;
+    if (!largestAccounts || largestAccounts.length === 0) {
+      return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: !rpcAccounts ? 'rpc_unavailable' : 'no_holders' });
+    }
 
-    // Build holder list
-    const holders = accounts.slice(0, 20).map((acc, i) => ({
+    const totalSupply = supplyResult?.value
+      ? parseFloat(supplyResult.value.uiAmountString || supplyResult.value.uiAmount || 0)
+      : null;
+
+    // Build basic holders list (LP/burn flags come from worker enrichment)
+    const holders = largestAccounts.slice(0, 20).map((a, i) => ({
       rank: i + 1,
-      address: acc.address,
-      balance: acc.uiAmount || 0,
-      percentage: totalSupply > 0 ? ((acc.uiAmount || 0) / totalSupply * 100) : 0,
+      address: a.wallet || a.address,
+      balance: a.uiAmount,
+      percentage: totalSupply > 0 ? (a.uiAmount / totalSupply) * 100 : null,
       isLP: false,
       isBurnt: false
-    }));
+    })).filter(h => h.balance > 0);
 
-    // Calculate concentration metrics
-    const top5Pct = holders.slice(0, 5).reduce((s, h) => s + h.percentage, 0);
-    const top10Pct = holders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
-    const top20Pct = holders.reduce((s, h) => s + h.percentage, 0);
+    // Basic concentration metrics (refined by worker once LP/burn flags are set)
+    let metrics = null;
+    if (totalSupply > 0 && holders.length > 0) {
+      const top5Pct = holders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
+      const top10Pct = holders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
+      const top20Pct = holders.slice(0, 20).reduce((s, h) => s + (h.percentage || 0), 0);
+      const top1Pct = holders[0]?.percentage || 0;
 
-    const result = {
-      metrics: {
-        top5Pct,
-        top10Pct,
-        top20Pct,
-        holderCount: accounts.length,
-        riskLevel: top10Pct > 80 ? 'high' : top10Pct > 50 ? 'medium' : 'low'
-      },
-      holders,
-      fetchedAt: Date.now()
-    };
+      let riskLevel = 'low';
+      if (top10Pct > 70 || top1Pct > 30) riskLevel = 'high';
+      else if (top10Pct > 40 || top1Pct > 15) riskLevel = 'medium';
 
-    await cache.set(cacheKey, result, TTL.FIVE_MIN);
-    res.json(result);
+      metrics = {
+        top5Pct: Math.round(top5Pct * 100) / 100,
+        top10Pct: Math.round(top10Pct * 100) / 100,
+        top20Pct: Math.round(top20Pct * 100) / 100,
+        top1Pct: Math.round(top1Pct * 100) / 100,
+        riskLevel,
+        holderCount: null
+      };
+
+      // Use cached holder count (populated by worker or previous calls)
+      try {
+        const totalCount = await cache.get(`holder-total:${mint}`);
+        if (totalCount && totalCount > 0) {
+          metrics.holderCount = totalCount;
+        } else if (solanaService.isHeliusConfigured()) {
+          // Fire-and-forget: fetch real holder count in background
+          solanaService.getTokenHolderCount(mint).then(count => {
+            if (count && count > 0) {
+              cache.set(`holder-total:${mint}`, count, TTL.DAY);
+            }
+          }).catch(() => {});
+        }
+      } catch (_) {}
+    }
+
+    const fastResult = { holders, totalSupply, metrics, supply: null, fetchedAt: Date.now() };
+
+    // Phase 2: Queue the same worker job as the main endpoint for enrichment
+    // (LP/burn detection, real holder count, 250-wallet sample pre-fetch)
+    const pendingKey = `holder-classify-pending:${mint}`;
+    const alreadyPending = await cache.get(pendingKey);
+    if (!alreadyPending) {
+      await cache.set(cacheKey, fastResult, 120000); // 2 min short TTL
+      await cache.set(pendingKey, Date.now(), 120000);
+      const rawAccounts = largestAccounts.slice(0, 20).map(a => ({
+        address: a.address,
+        wallet: a.wallet || null,
+        uiAmount: a.uiAmount
+      }));
+      const jobQueue = require('../services/jobQueue');
+      const job = await jobQueue.addAnalyticsJob('compute-holder-analytics', {
+        mint,
+        rawAccounts,
+        totalSupply,
+        usedDAS: !rpcAccounts,
+        supplyDecimals: supplyResult?.value?.decimals || 0
+      });
+      if (!job) {
+        await cache.delete(pendingKey);
+      }
+    }
+
+    res.json(fastResult);
   } catch (error) {
     console.error('[Cultify] Analysis error:', error.message);
     res.status(500).json({ error: 'Analysis failed. Try again later.' });
@@ -261,8 +317,9 @@ function buildDistribution(holdTimes, sampleSize, analyzed) {
 }
 
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
-// Uses the SAME cache keys as the main tokens endpoint so data is shared.
-// Only computes inline for non-curated tokens where the main worker hasn't run.
+// Uses the SAME cache keys and worker flow as the main tokens endpoint.
+// No more inferior inline fallback — all tokens go through the proper
+// 250-wallet DAS sample + worker-based computation path.
 router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -278,103 +335,109 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
   }
 
   try {
-    const resultCacheKey = `diamond-hands:${mint}`; // same key as main endpoint
-    const fresh = req.query.fresh === 'true';
-
-    if (!fresh) {
-      // Check the shared final result cache (same key the main endpoint writes to)
-      const cached = await cache.get(resultCacheKey);
-      if (cached) return res.json(cached);
-
-      // Check if the main worker has partial data via per-wallet caches
-      const walletsCacheKey = `diamond-hands-wallets:${mint}`;
-      const mainWallets = await cache.get(walletsCacheKey);
-      if (mainWallets && Array.isArray(mainWallets) && mainWallets.length > 0) {
-        // Main worker is running — read its per-wallet caches and return partial results
-        const walletList = mainWallets.map(e => typeof e === 'object' ? e.wallet : e);
-        const holdTimes = {};
-        let analyzedCount = 0;
-        await Promise.all(walletList.map(async (w) => {
-          const val = await cache.get(`wallet-token-hold:${w}:${mint}`);
-          if (val != null) { analyzedCount++; if (val > 0) holdTimes[w] = val; }
-        }));
-        const partial = buildDistribution(holdTimes, walletList.length, analyzedCount);
-        partial.computed = analyzedCount >= walletList.length;
-        return res.json(partial);
-      }
-    } else {
-      await cache.delete(resultCacheKey);
-      await cache.delete(`cultify:dh-progress:${mint}`);
-    }
-
-    // No main worker data — compute inline (non-curated tokens only)
     if (!solanaService.isHeliusConfigured()) {
       return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
     }
 
-    const progressKey = `cultify:dh-progress:${mint}`;
-    let progress = await cache.get(progressKey) || { holdTimes: {}, holders: null };
+    const resultCacheKey = `diamond-hands:${mint}`;
+    const fresh = req.query.fresh === 'true';
 
-    // Get holder wallets + ATAs if not yet resolved (2 RPC calls total)
-    if (!progress.holders) {
-      const tokenAccounts = await solanaService.getTokenLargestAccounts(mint);
-      if (!tokenAccounts || tokenAccounts.length === 0) {
-        return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
-      }
-      const ataAddresses = tokenAccounts.slice(0, 20).map(a => a.address);
-      const accountInfos = await solanaService.getMultipleAccounts(ataAddresses);
-      const holders = [];
-      const seen = new Set();
-      if (accountInfos && accountInfos.value) {
-        for (let i = 0; i < accountInfos.value.length; i++) {
-          const owner = accountInfos.value[i]?.data?.parsed?.info?.owner;
-          if (owner && !seen.has(owner)) {
-            seen.add(owner);
-            holders.push({ wallet: owner, ata: ataAddresses[i] });
+    if (fresh) {
+      await cache.delete(resultCacheKey);
+    }
+
+    // Check for cached final result (shared with main endpoint)
+    if (!fresh) {
+      const cached = await cache.get(resultCacheKey);
+      if (cached) return res.json(cached);
+    }
+
+    // Get holder sample from cache — pre-fetched by compute-holder-analytics worker.
+    // If not cached, trigger the sample fetch so subsequent polls find it.
+    const walletsCacheKey = `diamond-hands-wallets:${mint}`;
+    let wallets = await cache.get(walletsCacheKey);
+
+    if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
+      // No sample yet — trigger DAS sample fetch if not already pending
+      const samplePendingKey = `cultify:sample-pending:${mint}`;
+      const samplePending = await cache.get(samplePendingKey);
+      if (!samplePending) {
+        await cache.set(samplePendingKey, Date.now(), 60000); // 1 min dedup
+        // Fire-and-forget: fetch 250-wallet sample via Helius DAS
+        solanaService.getTokenHolderSample(mint, 250).then(async (sampleResult) => {
+          if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
+            await cache.set(walletsCacheKey, sampleResult.holders, TTL.HOUR);
+            if (sampleResult.totalHolders && sampleResult.totalHolders > 0) {
+              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
+            }
+            console.log(`[Cultify] Fetched ${sampleResult.holders.length} holder sample for ${mint.slice(0, 8)}...`);
           }
-        }
+          await cache.delete(samplePendingKey);
+        }).catch(async (err) => {
+          console.warn(`[Cultify] Holder sample fetch failed for ${mint.slice(0, 8)}:`, err.message);
+          await cache.delete(samplePendingKey);
+        });
       }
-      if (holders.length === 0) {
-        return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
-      }
-      progress.holders = holders;
-      progress.holdTimes = {};
+      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
     }
 
-    // Process up to 3 wallets per poll (each ~1 RPC call with ATA pre-resolved)
-    // Reduced from 5 to limit Helius queue pressure from inline computation
-    const unanalyzed = progress.holders.filter(h => !(h.wallet in progress.holdTimes));
-    const batch = unanalyzed.slice(0, 3);
+    // Extract wallet addresses and ATA map
+    const walletList = wallets.map(e => typeof e === 'object' ? e.wallet : e);
+    const ataMap = {};
+    for (const e of wallets) {
+      if (typeof e === 'object' && e.wallet && e.ata) ataMap[e.wallet] = e.ata;
+    }
 
-    // Process sequentially to avoid burst-queuing multiple Helius requests at once
-    for (const { wallet: walletAddr, ata } of batch) {
-      try {
-        const holdTime = await solanaService.getTokenHoldTime(walletAddr, mint, ata);
-        progress.holdTimes[walletAddr] = holdTime || 0;
-      } catch {
-        progress.holdTimes[walletAddr] = 0;
+    // Check per-wallet token hold time caches
+    const holdTimes = {};
+    const uncached = [];
+    let analyzedCount = 0;
+
+    await Promise.all(walletList.map(async (wallet) => {
+      const val = await cache.get(`wallet-token-hold:${wallet}:${mint}`);
+      if (val != null) {
+        analyzedCount++;
+        if (val > 0) holdTimes[wallet] = val;
+      } else {
+        uncached.push(wallet);
       }
-    }
+    }));
 
-    if (batch.length > 0) {
-      await cache.set(progressKey, progress, 600);
-    }
-
-    const analyzedCount = Object.keys(progress.holdTimes).length;
-    const totalWallets = progress.holders.length;
-    const allDone = analyzedCount >= totalWallets;
-
-    // Use the same distribution formula as the main endpoint
-    const result = buildDistribution(progress.holdTimes, totalWallets, analyzedCount);
-    result.computed = allDone;
-
-    if (allDone) {
-      // Write to the SHARED cache key so both endpoints return the same data
+    // If all wallets are cached, compute final distribution
+    if (uncached.length === 0) {
+      const result = buildDistribution(holdTimes, walletList.length, analyzedCount);
       await cache.set(resultCacheKey, result, 3 * TTL.HOUR);
-      await cache.delete(progressKey);
+      // Persist to DB for conviction leaderboard
+      db.upsertConviction(mint, result.distribution, result.sampleSize, result.analyzed).catch(err => {
+        console.error(`[Cultify] DB persist failed for ${mint.slice(0, 8)}:`, err.message);
+      });
+      return res.json(result);
     }
 
-    res.json(result);
+    // Dispatch background computation for uncached wallets (same worker as main endpoint)
+    const pendingKey = `holder-metrics-pending:${mint}`;
+    const pending = await cache.get(pendingKey);
+    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 180000);
+
+    if (!isStillPending) {
+      if (pending) await cache.delete(pendingKey);
+      await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup
+      const jobQueue = require('../services/jobQueue');
+      const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
+        mint,
+        wallets: uncached,
+        ataMap
+      });
+      if (!job) {
+        await cache.delete(pendingKey);
+      }
+    }
+
+    // Return partial distribution from cached data
+    const partial = buildDistribution(holdTimes, walletList.length, analyzedCount);
+    partial.computed = false;
+    partial.totalCount = walletList.length;
+    res.json(partial);
   } catch (err) {
     console.error('[Cultify] Diamond hands error:', err.message);
     res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
