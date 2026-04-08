@@ -12,7 +12,7 @@ const BURN_AMOUNT = 10_000;
 const BURN_DECIMALS = 6; // pump.fun tokens use 6 decimals
 const BURN_RAW_AMOUNT = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const MAX_TX_AGE_SECONDS = 600; // 10 minutes
-const ACCESS_TOKEN_TTL = 43200; // 12 hours in seconds
+const ACCESS_TOKEN_TTL = 43200 * 1000; // 12 hours in milliseconds (cache.set takes ms)
 
 // Generate a short-lived access token for a wallet+mint pair
 function generateAccessToken(walletAddress, mint) {

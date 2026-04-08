@@ -732,12 +732,14 @@
     }
 
     const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
-    const tokenParam = currentAccessToken ? `?token=${currentAccessToken}` : '';
-    const freshParam = diamondFreshRequested ? '&fresh=true' : '';
+    const params = new URLSearchParams();
+    if (currentAccessToken) params.set('token', currentAccessToken);
+    if (diamondFreshRequested) params.set('fresh', 'true');
     diamondFreshRequested = false;
+    const qs = params.toString();
 
     try {
-      const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${tokenParam}${freshParam}`);
+      const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${qs ? '?' + qs : ''}`);
 
       // Stop polling on auth errors (403) — won't resolve with retries
       if (resp.status === 403) {
