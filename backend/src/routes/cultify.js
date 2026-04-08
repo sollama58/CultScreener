@@ -238,9 +238,31 @@ router.get('/analyze/:mint', validateMint, asyncHandler(async (req, res) => {
   }
 }));
 
+// Diamond hands distribution buckets (same as main tokens endpoint)
+const DIAMOND_HANDS_BUCKETS = [
+  { key: '6h', ms: 6*3600000 }, { key: '24h', ms: 24*3600000 },
+  { key: '3d', ms: 3*86400000 }, { key: '1w', ms: 7*86400000 },
+  { key: '1m', ms: 30*86400000 }, { key: '3m', ms: 90*86400000 },
+  { key: '6m', ms: 180*86400000 }, { key: '9m', ms: 270*86400000 },
+];
+
+// Same distribution calculation as the main tokens endpoint (buildDiamondHandsResult)
+function buildDistribution(holdTimes, sampleSize, analyzed) {
+  const values = Object.values(holdTimes).filter(t => t > 0);
+  if (values.length === 0) {
+    return { distribution: null, sampleSize, analyzed: 0, computed: true };
+  }
+  const distribution = {};
+  for (const b of DIAMOND_HANDS_BUCKETS) {
+    const count = values.filter(ms => ms >= b.ms).length;
+    distribution[b.key] = Math.round((count / values.length) * 1000) / 10;
+  }
+  return { distribution, sampleSize, analyzed, computed: true };
+}
+
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
-// For non-curated tokens the main worker never runs, so this endpoint
-// computes hold times inline for the top holders.
+// Uses the SAME cache keys as the main tokens endpoint so data is shared.
+// Only computes inline for non-curated tokens where the main worker hasn't run.
 router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -255,53 +277,53 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
     }
   }
 
-  const BUCKETS = [
-    { key: '6h', ms: 6*3600000 }, { key: '24h', ms: 24*3600000 },
-    { key: '3d', ms: 3*86400000 }, { key: '1w', ms: 7*86400000 },
-    { key: '1m', ms: 30*86400000 }, { key: '3m', ms: 90*86400000 },
-    { key: '6m', ms: 180*86400000 }, { key: '9m', ms: 270*86400000 },
-  ];
-
   try {
-    const resultCacheKey = `cultify:diamond-hands:${mint}`;
+    const resultCacheKey = `diamond-hands:${mint}`; // same key as main endpoint
     const fresh = req.query.fresh === 'true';
 
-    // Check for cached final result (skip if fresh requested)
     if (!fresh) {
+      // Check the shared final result cache (same key the main endpoint writes to)
       const cached = await cache.get(resultCacheKey);
       if (cached) return res.json(cached);
 
-      // For curated tokens, check if the main worker already computed it
-      if (curated) {
-        const mainCached = await cache.get(`diamond-hands:${mint}`);
-        if (mainCached) return res.json(mainCached);
+      // Check if the main worker has partial data via per-wallet caches
+      const walletsCacheKey = `diamond-hands-wallets:${mint}`;
+      const mainWallets = await cache.get(walletsCacheKey);
+      if (mainWallets && Array.isArray(mainWallets) && mainWallets.length > 0) {
+        // Main worker is running — read its per-wallet caches and return partial results
+        const walletList = mainWallets.map(e => typeof e === 'object' ? e.wallet : e);
+        const holdTimes = {};
+        let analyzedCount = 0;
+        await Promise.all(walletList.map(async (w) => {
+          const val = await cache.get(`wallet-token-hold:${w}:${mint}`);
+          if (val != null) { analyzedCount++; if (val > 0) holdTimes[w] = val; }
+        }));
+        const partial = buildDistribution(holdTimes, walletList.length, analyzedCount);
+        partial.computed = analyzedCount >= walletList.length;
+        return res.json(partial);
       }
     } else {
-      // Clear stale caches when fresh is requested
       await cache.delete(resultCacheKey);
       await cache.delete(`cultify:dh-progress:${mint}`);
     }
 
+    // No main worker data — compute inline (non-curated tokens only)
     if (!solanaService.isHeliusConfigured()) {
       return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
     }
 
-    // Check partial progress from a previous request
     const progressKey = `cultify:dh-progress:${mint}`;
     let progress = await cache.get(progressKey) || { holdTimes: {}, holders: null };
 
-    // Get holder wallets + their ATAs if we don't have them yet (2 RPC calls total)
+    // Get holder wallets + ATAs if not yet resolved (2 RPC calls total)
     if (!progress.holders) {
-      // Step 1: Get largest token accounts (ATAs)
       const tokenAccounts = await solanaService.getTokenLargestAccounts(mint);
       if (!tokenAccounts || tokenAccounts.length === 0) {
         return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
       }
-
-      // Step 2: Resolve ATA → owner wallet (1 batch RPC call via getMultipleAccounts)
       const ataAddresses = tokenAccounts.slice(0, 20).map(a => a.address);
       const accountInfos = await solanaService.getMultipleAccounts(ataAddresses);
-      const holders = []; // { wallet, ata } pairs
+      const holders = [];
       const seen = new Set();
       if (accountInfos && accountInfos.value) {
         for (let i = 0; i < accountInfos.value.length; i++) {
@@ -312,18 +334,14 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
           }
         }
       }
-
       if (holders.length === 0) {
         return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
       }
-
       progress.holders = holders;
       progress.holdTimes = {};
     }
 
-    // Process up to 5 wallets per request in parallel. Each costs ~1 RPC call
-    // (getSignaturesForAddress) since we pass the ATA directly. With a 10 req/s
-    // Helius limit, 5 parallel calls is safe.
+    // Process up to 5 wallets per poll (each ~1 RPC call with ATA pre-resolved)
     const unanalyzed = progress.holders.filter(h => !(h.wallet in progress.holdTimes));
     const batch = unanalyzed.slice(0, 5);
 
@@ -337,33 +355,20 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
     }));
 
     if (batch.length > 0) {
-      await cache.set(progressKey, progress, 600); // 10 min TTL
+      await cache.set(progressKey, progress, 600);
     }
 
-    // Derive analyzed count from actual holdTimes entries
     const analyzedCount = Object.keys(progress.holdTimes).length;
     const totalWallets = progress.holders.length;
-
-    // Build distribution from current data
-    // holdTimes values are DURATIONS in ms (e.g. 86400000 = held for 1 day)
-    // Use analyzedCount as denominator (not just successful lookups) for accurate %
-    const distribution = {};
-    for (const b of BUCKETS) {
-      const count = Object.values(progress.holdTimes).filter(t => t > 0 && t >= b.ms).length;
-      distribution[b.key] = analyzedCount > 0
-        ? Math.round(count / analyzedCount * 100) : 0;
-    }
-
     const allDone = analyzedCount >= totalWallets;
-    const result = {
-      distribution,
-      sampleSize: totalWallets,
-      analyzed: analyzedCount,
-      computed: allDone
-    };
+
+    // Use the same distribution formula as the main endpoint
+    const result = buildDistribution(progress.holdTimes, totalWallets, analyzedCount);
+    result.computed = allDone;
 
     if (allDone) {
-      await cache.set(resultCacheKey, result, 3 * 3600); // cache 3 hours
+      // Write to the SHARED cache key so both endpoints return the same data
+      await cache.set(resultCacheKey, result, 3 * TTL.HOUR);
       await cache.delete(progressKey);
     }
 
