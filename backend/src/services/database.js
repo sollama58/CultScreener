@@ -536,29 +536,18 @@ async function getTokensBatch(mintAddresses) {
 async function upsertConviction(mintAddress, distribution, sampleSize, analyzed) {
   if (!pool || !mintAddress || !distribution) return null;
   const conviction1m = distribution['1m'] ?? null;
-  const result = await pool.query(
+  // Only update existing rows — never insert new ones.
+  // Non-curated tokens analyzed via Cultify should NOT appear in the tokens table
+  // or on the conviction leaderboard. Their data lives in cache only.
+  await pool.query(
     `UPDATE tokens SET
        conviction_1m = $2,
        conviction_data = $3,
        conviction_sample_size = $4,
        conviction_computed_at = NOW()
-     WHERE mint_address = $1
-     RETURNING mint_address`,
+     WHERE mint_address = $1`,
     [mintAddress, conviction1m, JSON.stringify(distribution), analyzed != null ? analyzed : sampleSize]
   );
-  // If token doesn't exist in DB yet, insert a minimal row
-  if (result.rows.length === 0) {
-    await pool.query(
-      `INSERT INTO tokens (mint_address, conviction_1m, conviction_data, conviction_sample_size, conviction_computed_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (mint_address) DO UPDATE SET
-         conviction_1m = EXCLUDED.conviction_1m,
-         conviction_data = EXCLUDED.conviction_data,
-         conviction_sample_size = EXCLUDED.conviction_sample_size,
-         conviction_computed_at = NOW()`,
-      [mintAddress, conviction1m, JSON.stringify(distribution), analyzed != null ? analyzed : sampleSize]
-    );
-  }
 }
 
 // Get top tokens by conviction (>1M diamond hands percentage)
@@ -602,12 +591,15 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
   // Base CTE: merge tokens-with-conviction and curated tokens into one set.
   // Curated tokens that already have conviction data appear once (from tokens table).
   // Curated tokens WITHOUT conviction data get a row with conviction_1m = 0.
+  // Only curated tokens appear on the leaderboard. Non-curated tokens
+  // analyzed via Cultify have cache-only conviction data and must not leak here.
   const baseCte = `
     WITH combined AS (
-      SELECT mint_address, name, symbol, logo_uri, price, market_cap, volume_24h, price_change_24h,
-             conviction_1m, conviction_data, conviction_sample_size, conviction_computed_at
-      FROM tokens
-      WHERE conviction_1m IS NOT NULL AND conviction_1m > 0
+      SELECT t.mint_address, t.name, t.symbol, t.logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
+             t.conviction_1m, t.conviction_data, t.conviction_sample_size, t.conviction_computed_at
+      FROM tokens t
+      INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
+      WHERE t.conviction_1m IS NOT NULL AND t.conviction_1m > 0
 
       UNION ALL
 
@@ -3058,8 +3050,6 @@ async function isTokenAllowed(mintAddress) {
   if (!pool) return false;
   const result = await pool.query(`
     SELECT 1 FROM curated_tokens WHERE mint_address = $1
-    UNION ALL
-    SELECT 1 FROM tokens WHERE mint_address = $1 AND conviction_1m IS NOT NULL AND conviction_1m > 0
     LIMIT 1
   `, [mintAddress]);
   return result.rows.length > 0;
