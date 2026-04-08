@@ -179,8 +179,10 @@ const admin = {
   bindMaintenanceActions() {
     const flushBtn = document.getElementById('admin-flush-wallets');
     const refreshBtn = document.getElementById('admin-refresh-holders');
+    const wipeBtn = document.getElementById('admin-wipe-token');
     if (flushBtn) flushBtn.addEventListener('click', () => this.flushFailedWallets());
     if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshHolderCounts());
+    if (wipeBtn) wipeBtn.addEventListener('click', () => this.wipeTokenCache());
   },
 
   async flushFailedWallets() {
@@ -224,6 +226,41 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Refresh All Holder Counts';
+    }
+  },
+
+  async wipeTokenCache() {
+    const btn = document.getElementById('admin-wipe-token');
+    const input = document.getElementById('wipe-mint-input');
+    const status = document.getElementById('admin-wipe-status');
+    const mint = input.value.trim();
+
+    if (!mint || mint.length < 32 || mint.length > 44) {
+      status.textContent = 'Please enter a valid mint address (32-44 characters).';
+      status.style.color = 'var(--red)';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Wiping...';
+    status.textContent = '';
+
+    try {
+      const data = await this.request('/api/admin/wipe-token-cache', {
+        method: 'POST',
+        body: JSON.stringify({ mint })
+      });
+      status.textContent = `Done: ${data.deleted} cache entries wiped for ${data.mint.slice(0, 8)}...`;
+      status.style.color = 'var(--green)';
+      input.value = '';
+      if (typeof toast !== 'undefined') toast.success(`Wiped ${data.deleted} cache entries for token`);
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Wipe Cache';
     }
   },
 

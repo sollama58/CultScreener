@@ -376,6 +376,18 @@
           </div>
           <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Flush: Clears failed wallet caches so conviction re-computes. Refresh: Re-fetches total holder counts for all curated and leaderboard tokens from Helius DAS.</p>
         </div>
+        <div style="margin-top:1.25rem;">
+          <h3 style="font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Wipe Token Cache</h3>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:end;">
+            <div class="field" style="flex:1;min-width:250px;margin:0;">
+              <label for="wipe-mint-input" style="font-size:0.72rem;">Token Mint Address</label>
+              <input type="text" id="wipe-mint-input" placeholder="Paste contract address..." maxlength="44" style="font-size:0.82rem;">
+            </div>
+            <button class="btn btn-sm" id="admin-wipe-token" style="white-space:nowrap;">Wipe Cache</button>
+          </div>
+          <span id="admin-wipe-status" style="font-size:0.78rem;color:var(--text-muted);display:block;margin-top:0.4rem;"></span>
+          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Removes ALL cached data for a specific token: price, holders, diamond hands, conviction, charts, wallet hold times, and list/leaderboard caches. Use when a token's data is stale or stuck.</p>
+        </div>
       </div>
 
       <!-- Curated Tokens -->

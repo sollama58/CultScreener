@@ -179,6 +179,86 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
 }));
 
 // ==========================================
+// Per-Token Cache Wipe
+// ==========================================
+
+router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) => {
+  const { cache } = require('../services/cache');
+  const { mint } = req.body;
+
+  if (!mint || typeof mint !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint.trim())) {
+    return res.status(400).json({ error: 'Invalid mint address' });
+  }
+
+  const addr = mint.trim();
+  let deleted = 0;
+
+  try {
+    // Direct cache keys for this token
+    const directKeys = [
+      `token:${addr}`,
+      `price:${addr}`,
+      `pools:${addr}`,
+      `holders:${addr}`,
+      `batch:${addr}`,
+      `holder-total:${addr}`,
+      `holder-analytics:${addr}`,
+      `holder-classify-pending:${addr}`,
+      `holder-metrics-pending:${addr}`,
+      `diamond-hands:${addr}`,
+      `diamond-hands-wallets:${addr}`,
+      `similar:${addr}`,
+      `similar-pending:${addr}`,
+      `submissions:${addr}`,
+      `cultify:dh-progress:${addr}`,
+    ];
+
+    for (const key of directKeys) {
+      const existed = await cache.get(key);
+      if (existed != null) {
+        await cache.delete(key);
+        deleted++;
+      }
+    }
+
+    // Scan for wildcard patterns containing this mint
+    // wallet-token-hold:{wallet}:{mint} — per-wallet hold times for this token
+    const walletTokenKeys = await cache.scanKeys(`wallet-token-hold:*:${addr}`);
+    for (const key of walletTokenKeys) {
+      await cache.delete(key);
+      deleted++;
+    }
+
+    // Chart data: chart:{mint}:{interval}
+    const chartKeys = await cache.scanKeys(`chart:${addr}:*`);
+    for (const key of chartKeys) {
+      await cache.delete(key);
+      deleted++;
+    }
+
+    // Leaderboard caches (conviction pages reference this token's data)
+    const lbKeys = await cache.scanKeys('leaderboard:conviction:*');
+    for (const key of lbKeys) {
+      await cache.delete(key);
+      deleted++;
+    }
+
+    // List caches (token may appear in list pages)
+    const listKeys = await cache.scanKeys('list:*');
+    for (const key of listKeys) {
+      await cache.delete(key);
+      deleted++;
+    }
+
+    console.log(`[Admin] Wiped ${deleted} cache entries for token ${addr}`);
+    res.json({ success: true, deleted, mint: addr });
+  } catch (err) {
+    console.error('[Admin] Wipe token cache error:', err.message);
+    res.status(500).json({ error: 'Failed to wipe token cache' });
+  }
+}));
+
+// ==========================================
 // Curated Tokens (session-based proxy)
 // ==========================================
 
