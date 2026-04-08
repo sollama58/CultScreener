@@ -503,7 +503,10 @@ const jobProcessors = {
           const sampleResult = await solanaService.getTokenHolderSample(mint, 250, new Set([...BURN_WALLETS, ...LP_PROGRAMS]));
           if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
             await cache.set(sampleCacheKey, sampleResult.holders, TTL.HOUR);
-            if (sampleResult.totalHolders) {
+            // Only cache totalHolders from sample if we don't already have a precise count.
+            // getTokenHolderSample returns a lower-bound (1000) for large tokens;
+            // the precise paginated count is fetched separately above.
+            if (sampleResult.totalHolders && sampleResult.totalHolders > 1000) {
               await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
             }
             console.log(`[Worker] Pre-fetched ${sampleResult.holders.length} holder sample for ${mint}`);
@@ -528,21 +531,43 @@ const jobProcessors = {
    * and clears the shared pending flag.
    */
   'compute-holder-metrics': async (job) => {
-    const { mint, wallets } = job.data;
+    const { mint, wallets, ataMap: jobAtaMap } = job.data;
     if (!wallets || wallets.length === 0) return { computed: 0 };
 
     console.log(`[Worker] Computing holder metrics for ${wallets.length} wallets (token ${mint})`);
 
-    const BATCH_SIZE = 5;
+    // Build ATA lookup from job data or fall back to diamond-hands-wallets cache
+    let ataMap = jobAtaMap || {};
+    if (!jobAtaMap || Object.keys(ataMap).length === 0) {
+      try {
+        const sample = await cache.get(`diamond-hands-wallets:${mint}`);
+        if (Array.isArray(sample)) {
+          for (const e of sample) {
+            if (typeof e === 'object' && e.wallet && e.ata) ataMap[e.wallet] = e.ata;
+          }
+        }
+      } catch (_) {}
+    }
+
+    const BATCH_SIZE = 3; // Reduced from 5 to limit concurrent Helius load
+    const BATCH_DELAY_MS = 500; // Breathing room between batches
     let computed = 0;
     let skipped = 0;
 
     for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
       const batch = wallets.slice(i, i + BATCH_SIZE);
+
+      // Add inter-batch delay to prevent queue flooding
+      if (i > 0) {
+        await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
+      }
+
       const batchResults = await Promise.all(
         batch.map(async (wallet) => {
           try {
-            const holdTime = await solanaService.getTokenHoldTime(wallet, mint);
+            // Pass pre-resolved ATA to skip the extra getTokenAccountsByOwner call
+            const ata = ataMap[wallet] || null;
+            const holdTime = await solanaService.getTokenHoldTime(wallet, mint, ata);
             return [wallet, holdTime];
           } catch (err) {
             console.warn(`[Worker] Hold time failed for ${wallet}:`, err.message);
@@ -645,11 +670,11 @@ function createWorker(queueName, redisConfig) {
     },
     {
       connection: redisConfig,
-      concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 10, // Default to modest concurrency to avoid overwhelming APIs
-      lockDuration: 60000, // 60s lock — prevents stalled job false positives on slow jobs
-      stalledInterval: 30000, // Check for stalled jobs every 30s
+      concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 3, // Low concurrency — holder-metrics jobs are Helius-heavy
+      lockDuration: 120000, // 120s lock — holder-metrics can take 60-90s for 250 wallets
+      stalledInterval: 60000, // Check for stalled jobs every 60s (aligned with lock)
       limiter: {
-        max: parseInt(process.env.WORKER_LIMITER_MAX) || 10, // Max jobs per second (matched to concurrency)
+        max: parseInt(process.env.WORKER_LIMITER_MAX) || 3, // Max 3 jobs/sec — prevents multiple Helius-heavy jobs overlapping
         duration: 1000 // Per second
       }
     }

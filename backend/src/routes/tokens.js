@@ -2165,10 +2165,11 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       const pending = await cache.get(pendingKey);
 
       if (!pending) {
-        await cache.set(pendingKey, Date.now(), 120000);
+        await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup (consistent with diamond-hands)
         const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
           mint,
-          wallets: staleWallets
+          wallets: staleWallets,
+          ataMap // pass pre-resolved ATAs to avoid extra RPC calls
         });
         if (!job) {
           // Queue unavailable — clear pending so next poll retries
@@ -2266,18 +2267,20 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
     const pendingKey = `holder-metrics-pending:${mint}`;
     const pending = await cache.get(pendingKey);
 
-    if (pending && typeof pending === 'number' && (Date.now() - pending) > 30000) {
-      console.log(`[DiamondHands] Pending for ${Math.round((Date.now() - pending) / 1000)}s — retrying`);
+    // Only clear a stale pending flag if it's been stuck for >3 minutes (matching TTL).
+    // The old 30s threshold was too aggressive and caused duplicate job dispatches.
+    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 180000);
+    if (pending && !isStillPending) {
+      console.log(`[DiamondHands] Pending expired after ${Math.round((Date.now() - pending) / 1000)}s — allowing re-dispatch`);
       await cache.delete(pendingKey);
     }
 
-    const isStillPending = await cache.get(pendingKey);
-
     if (!isStillPending) {
-      await cache.set(pendingKey, Date.now(), 300000); // 5 min dedup
+      await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup (consistent)
       const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
         mint,
-        wallets: uncached
+        wallets: uncached,
+        ataMap // pass pre-resolved ATAs to avoid extra RPC calls
       });
       if (!job) {
         // Queue unavailable — clear pending so next poll retries

@@ -341,18 +341,20 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       progress.holdTimes = {};
     }
 
-    // Process up to 5 wallets per poll (each ~1 RPC call with ATA pre-resolved)
+    // Process up to 3 wallets per poll (each ~1 RPC call with ATA pre-resolved)
+    // Reduced from 5 to limit Helius queue pressure from inline computation
     const unanalyzed = progress.holders.filter(h => !(h.wallet in progress.holdTimes));
-    const batch = unanalyzed.slice(0, 5);
+    const batch = unanalyzed.slice(0, 3);
 
-    await Promise.all(batch.map(async ({ wallet: walletAddr, ata }) => {
+    // Process sequentially to avoid burst-queuing multiple Helius requests at once
+    for (const { wallet: walletAddr, ata } of batch) {
       try {
-        const metrics = await solanaService.getWalletHoldMetrics(walletAddr, mint, ata);
-        progress.holdTimes[walletAddr] = metrics.tokenHoldTime || 0;
+        const holdTime = await solanaService.getTokenHoldTime(walletAddr, mint, ata);
+        progress.holdTimes[walletAddr] = holdTime || 0;
       } catch {
         progress.holdTimes[walletAddr] = 0;
       }
-    }));
+    }
 
     if (batch.length > 0) {
       await cache.set(progressKey, progress, 600);

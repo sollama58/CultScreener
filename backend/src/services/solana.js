@@ -98,6 +98,10 @@ function safeSocialUrl(platform, value) {
 /**
  * Wrap a request function with 429 retry + exponential backoff.
  * Non-429 errors are thrown immediately.
+ *
+ * IMPORTANT: The requestFn typically calls rateLimitedRequest() which queues the
+ * request. On 429 retry, we sleep BEFORE re-entering the queue so the backoff
+ * actually reduces pressure rather than just re-queuing immediately.
  */
 async function withRpcRetry(requestFn, context = 'rpc') {
   let lastError;
@@ -106,15 +110,19 @@ async function withRpcRetry(requestFn, context = 'rpc') {
       return await requestFn();
     } catch (error) {
       lastError = error;
-      if (error.response?.status !== 429) throw error;
+      // Handle both axios 429 responses and queue overload errors
+      const is429 = error.response?.status === 429;
+      const isOverloaded = error.isOverloaded;
+      if (!is429 && !isOverloaded) throw error;
       if (attempt === RPC_RETRY_CONFIG.maxRetries) {
-        console.error(`[Solana] ${context}: Max retries (${RPC_RETRY_CONFIG.maxRetries}) exceeded for 429`);
+        console.error(`[Solana] ${context}: Max retries (${RPC_RETRY_CONFIG.maxRetries}) exceeded for ${is429 ? '429' : 'queue overload'}`);
         throw error;
       }
-      const baseDelay = RPC_RETRY_CONFIG.baseDelay * Math.pow(RPC_RETRY_CONFIG.backoffMultiplier, attempt);
-      const jitter = Math.random() * 1000;
+      // Longer backoff: 3s base (up from 2s) to give Helius time to recover
+      const baseDelay = 3000 * Math.pow(RPC_RETRY_CONFIG.backoffMultiplier, attempt);
+      const jitter = Math.random() * 1500;
       const delay = Math.min(baseDelay + jitter, RPC_RETRY_CONFIG.maxDelay);
-      console.log(`[Solana] ${context}: Rate limited (429), retry ${attempt + 1}/${RPC_RETRY_CONFIG.maxRetries} after ${Math.round(delay)}ms`);
+      console.log(`[Solana] ${context}: Rate limited (${is429 ? '429' : 'queue'}), retry ${attempt + 1}/${RPC_RETRY_CONFIG.maxRetries} after ${Math.round(delay)}ms`);
       await sleep(delay);
     }
   }
@@ -753,17 +761,16 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
 
     // Determine total holder count.
     // IMPORTANT: Do NOT trust result.total from Helius DAS — it can return the
-    // page size (1000) instead of the true total across all pages. Always use
-    // paginated getTokenHolderCount() when we got a full page.
+    // page size (1000) instead of the true total across all pages.
+    // We do NOT call getTokenHolderCount() inline here — it paginates up to 50
+    // pages and floods the Helius queue. Instead, return a lower-bound estimate
+    // and let the caller fetch the precise count asynchronously if needed.
     let totalHolders = null;
 
     if (accounts.length >= 1000) {
-      // Full page returned — there are more holders beyond this page.
-      // Paginate to get the real count.
-      try {
-        const paginatedCount = await getTokenHolderCount(mintAddress);
-        if (paginatedCount) totalHolders = paginatedCount;
-      } catch (_) {}
+      // Full page — there are more holders. Return 1000+ as lower bound.
+      // Precise count should be fetched separately via getTokenHolderCount().
+      totalHolders = 1000;
     } else {
       // Fewer than 1000 accounts — this is the complete set
       totalHolders = accounts.length;
@@ -812,22 +819,15 @@ async function getTokenHoldTime(walletAddress, tokenMint, ataAddress = null) {
       ata = accounts.value[0].pubkey;
     }
 
-    // Get oldest signature on this token account (1 RPC call)
-    // Most individual token accounts have < 100 txs, so 1 call suffices
+    // Get oldest signature on this token account (1 RPC call).
+    // Cap at 1 page — most ATAs have < 100 txs. For the rare accounts with
+    // 1000+ txs, we get a lower-bound hold time from the oldest tx in the
+    // first page, which is accurate enough for distribution buckets.
+    const sigs = await rpcCall('getSignaturesForAddress', [ata, { limit: 1000 }]);
     let oldestTimestamp = null;
-    let beforeSig = undefined;
-
-    for (let page = 0; page < 2; page++) {
-      const params = [ata, { limit: 1000 }];
-      if (beforeSig) params[1].before = beforeSig;
-
-      const sigs = await rpcCall('getSignaturesForAddress', params);
-      if (!sigs || sigs.length === 0) break;
-
+    if (sigs && sigs.length > 0) {
       const oldest = sigs[sigs.length - 1];
       if (oldest.blockTime) oldestTimestamp = oldest.blockTime * 1000;
-      if (sigs.length < 1000) break;
-      beforeSig = oldest.signature;
     }
 
     if (!oldestTimestamp) return null;
