@@ -926,20 +926,14 @@
   let diamondPollTimer = null;
   let diamondPollCount = 0;
   let diamondFreshRequested = false;
-  const MAX_DIAMOND_POLLS = 60; // ~3 minutes at 3s intervals
+  const MAX_DIAMOND_POLLS_ACTIVE = 60;  // ~3 min at 3s — actively computing
+  const MAX_DIAMOND_POLLS_QUEUED = 120; // ~10 min at 5s — waiting in queue
 
   async function pollDiamondHands(mint) {
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
     diamondPollCount++;
 
     const sampleEl = document.getElementById('diamond-hands-sample');
-
-    // Safety: stop polling after too many attempts
-    if (diamondPollCount > MAX_DIAMOND_POLLS) {
-      if (sampleEl) sampleEl.textContent = 'Analysis timed out. Showing partial results.';
-      finalizeDiamondBars();
-      return;
-    }
 
     const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
     const params = new URLSearchParams();
@@ -951,7 +945,6 @@
     try {
       const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${qs ? '?' + qs : ''}`);
 
-      // Stop polling on auth errors (403) — won't resolve with retries
       if (resp.status === 403) {
         if (sampleEl) sampleEl.textContent = 'Access expired. Re-analyze to refresh.';
         finalizeDiamondBars();
@@ -965,33 +958,59 @@
 
       const data = await resp.json();
 
-      // Terminal state: computed with no distribution (no holders / RPC unavailable)
+      // Terminal: computed with no distribution
       if (data.computed && !data.distribution) {
         if (sampleEl) sampleEl.textContent = 'Diamond hands data unavailable.';
         finalizeDiamondBars();
         return;
       }
 
+      // Terminal: fully computed
+      if (data.computed && data.distribution) {
+        updateDiamondBars(data.distribution);
+        if (sampleEl) sampleEl.textContent = `${data.analyzed} of ${data.sampleSize} holders analyzed`;
+        finalizeDiamondBars();
+        return;
+      }
+
+      // ── Not yet computed — determine status from queue + progress ──
+      const queuePos = data.queue?.position || 0;
+      const queueTotal = data.queue?.total || 0;
+      const isQueued = queuePos > 1;
+      const hasProgress = data.analyzed > 0 && data.sampleSize > 0;
+
+      // Update bars if we have partial distribution data
       if (data.distribution) {
         updateDiamondBars(data.distribution);
+      }
 
-        if (sampleEl) {
-          if (data.computed) {
-            sampleEl.textContent = `${data.analyzed} of ${data.sampleSize} holders analyzed`;
-          } else {
-            sampleEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} holders`;
-          }
+      // Pick the right status message
+      if (sampleEl) {
+        if (isQueued && !hasProgress) {
+          // Waiting behind other tokens
+          sampleEl.textContent = `In queue: position ${queuePos} of ${queueTotal}`;
+        } else if (hasProgress) {
+          // Actively being analyzed (might also have queue position 1)
+          sampleEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} holders`;
+        } else if (queuePos === 1) {
+          // First in queue, sample loading
+          sampleEl.textContent = 'Fetching holder data...';
+        } else {
+          sampleEl.textContent = 'Starting analysis...';
         }
-      } else {
-        if (sampleEl) sampleEl.textContent = 'Computing hold times...';
       }
 
-      // Keep polling if not done
-      if (!data.computed) {
-        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 3000);
-      } else {
+      // Timeout check — use longer limit when queued
+      const maxPolls = isQueued ? MAX_DIAMOND_POLLS_QUEUED : MAX_DIAMOND_POLLS_ACTIVE;
+      if (diamondPollCount > maxPolls) {
+        if (sampleEl) sampleEl.textContent = 'Analysis timed out. Showing partial results.';
         finalizeDiamondBars();
+        return;
       }
+
+      // Poll again — slower when queued
+      const pollDelay = isQueued ? 5000 : 3000;
+      diamondPollTimer = setTimeout(() => pollDiamondHands(mint), pollDelay);
     } catch {
       diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
     }

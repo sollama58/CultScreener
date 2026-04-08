@@ -316,10 +316,48 @@ function buildDistribution(holdTimes, sampleSize, analyzed) {
   return { distribution, sampleSize, analyzed, computed: true };
 }
 
+// ── Cultify analysis queue ───────────────────────────────────────────
+// Lightweight FIFO queue so concurrent users see their position.
+// Entries are { mint, enqueuedAt }. Completed/stale entries are pruned on read.
+// This is display-only — actual job ordering is handled by BullMQ.
+const CULTIFY_QUEUE_KEY = 'cultify:analysis-queue';
+const CULTIFY_QUEUE_STALE_MS = 600000; // 10 min — prune entries older than this
+
+// Read queue, prune stale entries, save back if anything was pruned.
+async function getCleanQueue() {
+  const raw = (await cache.get(CULTIFY_QUEUE_KEY)) || [];
+  const now = Date.now();
+  const live = raw.filter(e => now - e.enqueuedAt < CULTIFY_QUEUE_STALE_MS);
+  if (live.length !== raw.length) {
+    await cache.set(CULTIFY_QUEUE_KEY, live, CULTIFY_QUEUE_STALE_MS);
+  }
+  return live;
+}
+
+// Ensure mint is in queue (idempotent). Returns { position, total }.
+async function ensureEnqueued(mint) {
+  const queue = await getCleanQueue();
+  const idx = queue.findIndex(e => e.mint === mint);
+  if (idx >= 0) {
+    return { position: idx + 1, total: queue.length };
+  }
+  queue.push({ mint, enqueuedAt: Date.now() });
+  await cache.set(CULTIFY_QUEUE_KEY, queue, CULTIFY_QUEUE_STALE_MS);
+  return { position: queue.length, total: queue.length };
+}
+
+// Remove mint from queue (called when computation is complete).
+async function dequeueMint(mint) {
+  const queue = await getCleanQueue();
+  const filtered = queue.filter(e => e.mint !== mint);
+  if (filtered.length !== queue.length) {
+    await cache.set(CULTIFY_QUEUE_KEY, filtered, CULTIFY_QUEUE_STALE_MS);
+  }
+}
+
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
 // Uses the SAME cache keys and worker flow as the main tokens endpoint.
-// No more inferior inline fallback — all tokens go through the proper
-// 250-wallet DAS sample + worker-based computation path.
+// Includes queue position info so the frontend can show "You are #N in queue".
 router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -346,14 +384,20 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       await cache.delete(resultCacheKey);
     }
 
-    // Check for cached final result (shared with main endpoint)
+    // ── Fast path: cached final result ──
     if (!fresh) {
       const cached = await cache.get(resultCacheKey);
-      if (cached) return res.json(cached);
+      if (cached) {
+        dequeueMint(mint).catch(() => {});
+        return res.json(cached);
+      }
     }
 
-    // Get holder sample from cache — pre-fetched by compute-holder-analytics worker.
-    // If not cached, trigger the sample fetch so subsequent polls find it.
+    // ── Enqueue early: every token that doesn't have a final result gets a slot ──
+    // ensureEnqueued is idempotent — safe to call on every poll.
+    const queueInfo = await ensureEnqueued(mint);
+
+    // ── Sample fetch: get 250-wallet DAS sample ──
     const walletsCacheKey = `diamond-hands-wallets:${mint}`;
     let wallets = await cache.get(walletsCacheKey);
 
@@ -362,8 +406,7 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       const samplePendingKey = `cultify:sample-pending:${mint}`;
       const samplePending = await cache.get(samplePendingKey);
       if (!samplePending) {
-        await cache.set(samplePendingKey, Date.now(), 60000); // 1 min dedup
-        // Fire-and-forget: fetch 250-wallet sample via Helius DAS
+        await cache.set(samplePendingKey, Date.now(), 60000);
         solanaService.getTokenHolderSample(mint, 250).then(async (sampleResult) => {
           if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
             await cache.set(walletsCacheKey, sampleResult.holders, TTL.HOUR);
@@ -378,17 +421,16 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
           await cache.delete(samplePendingKey);
         });
       }
-      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
+      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false, queue: queueInfo });
     }
 
-    // Extract wallet addresses and ATA map
+    // ── Check per-wallet caches ──
     const walletList = wallets.map(e => typeof e === 'object' ? e.wallet : e);
     const ataMap = {};
     for (const e of wallets) {
       if (typeof e === 'object' && e.wallet && e.ata) ataMap[e.wallet] = e.ata;
     }
 
-    // Check per-wallet token hold time caches
     const holdTimes = {};
     const uncached = [];
     let analyzedCount = 0;
@@ -403,25 +445,25 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       }
     }));
 
-    // If all wallets are cached, compute final distribution
+    // ── Complete: all wallets cached ──
     if (uncached.length === 0) {
       const result = buildDistribution(holdTimes, walletList.length, analyzedCount);
       await cache.set(resultCacheKey, result, 3 * TTL.HOUR);
-      // Persist to DB for conviction leaderboard
       db.upsertConviction(mint, result.distribution, result.sampleSize, result.analyzed).catch(err => {
         console.error(`[Cultify] DB persist failed for ${mint.slice(0, 8)}:`, err.message);
       });
+      dequeueMint(mint).catch(() => {});
       return res.json(result);
     }
 
-    // Dispatch background computation for uncached wallets (same worker as main endpoint)
+    // ── Dispatch worker job for uncached wallets ──
     const pendingKey = `holder-metrics-pending:${mint}`;
     const pending = await cache.get(pendingKey);
     const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 180000);
 
     if (!isStillPending) {
       if (pending) await cache.delete(pendingKey);
-      await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup
+      await cache.set(pendingKey, Date.now(), 180000);
       const jobQueue = require('../services/jobQueue');
       const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
         mint,
@@ -433,10 +475,11 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
       }
     }
 
-    // Return partial distribution from cached data
+    // ── Return partial result with queue info ──
     const partial = buildDistribution(holdTimes, walletList.length, analyzedCount);
     partial.computed = false;
     partial.totalCount = walletList.length;
+    partial.queue = queueInfo;
     res.json(partial);
   } catch (err) {
     console.error('[Cultify] Diamond hands error:', err.message);
