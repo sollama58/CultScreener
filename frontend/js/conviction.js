@@ -345,6 +345,21 @@ const convictionPage = {
           this.tokens = this.tokens.filter(t => (t.conviction1m || 0) < 25);
           this.totalItems = this.tokens.length;
         }
+
+        // If some tokens are missing holder counts, the backend is fetching them in the
+        // background. Schedule a silent re-fetch after 8s to pick up the results.
+        const missingHolders = this.tokens.some(t => !t.holders);
+        if (missingHolders && !this._holderRefreshPending) {
+          this._holderRefreshPending = true;
+          setTimeout(() => {
+            this._holderRefreshPending = false;
+            // Only re-fetch if not already loading
+            if (!this._loading) {
+              apiCache.clearPattern('tokens:leaderboard:conviction');
+              this.loadData();
+            }
+          }, 8000);
+        }
       }
 
       // Tag original index for rank-based sorting

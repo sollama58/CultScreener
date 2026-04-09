@@ -1059,7 +1059,19 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   const filterKey = JSON.stringify(filters);
   const resultCacheKey = `leaderboard:conviction:${limit}:${offset}:${filterKey}`;
   const cached = await cache.get(resultCacheKey);
-  if (cached) return res.json(cached);
+  if (cached) {
+    // Enrich cached result with any holder counts fetched since this result was cached
+    if (cached.tokens && cached.tokens.length > 0) {
+      await Promise.all(cached.tokens.map(async (t) => {
+        if (!t.holders) {
+          const count = await cache.get(`holder-total:${t.mintAddress}`)
+            || await cache.get(keys.holderCount(t.mintAddress));
+          if (count && count > 0) t.holders = count;
+        }
+      }));
+    }
+    return res.json(cached);
+  }
 
   // Primary source: DB (persistent, survives cache expiry)
   const { tokens: dbRows, total } = await db.getTopConvictionTokens(limit, offset, filters).catch(() => ({ tokens: [], total: 0 }));
@@ -1098,6 +1110,19 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
         || await cache.get(keys.holderCount(t.mintAddress));
       if (count && count > 0) t.holders = count;
     }));
+  }
+
+  // Trigger background Helius fetches for any tokens still missing holder counts
+  if (solanaService.isHeliusConfigured()) {
+    const missing = tokens.filter(t => !t.holders);
+    missing.forEach(t => {
+      solanaService.getTokenHolderCount(t.mintAddress).then(count => {
+        if (count && count > 0) {
+          cache.set(keys.holderCount(t.mintAddress), count, TTL.DAY);
+          cache.set(`holder-total:${t.mintAddress}`, count, TTL.DAY);
+        }
+      }).catch(() => {});
+    });
   }
 
   const result = { tokens, total };
