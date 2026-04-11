@@ -65,7 +65,7 @@ function buildStartMessage(firstName) {
   return [
     `👋 *Welcome${name} to CultScreener\\!*`,
     '',
-    'CultScreener tracks *diamond hand conviction* on Solana — measuring what percentage of a token\\'s holders have held for *1 month or longer*\\.',
+    "CultScreener tracks *diamond hand conviction* on Solana — measuring what percentage of a token's holders have held for *1 month or longer*\\.",
     '',
     '📊 *Conviction Tiers*',
     '💎 *Elite* — 75%\\+ of holders holding 1m\\+',
