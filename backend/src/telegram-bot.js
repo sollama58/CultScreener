@@ -1,17 +1,8 @@
-require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
 
-if (!TELEGRAM_BOT_TOKEN) {
-  console.error('[TelegramBot] TELEGRAM_BOT_TOKEN is not set. Please add it to your .env file.');
-  process.exit(1);
-}
-
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
-
-console.log('[TelegramBot] Bot started and polling for messages...');
+let bot = null;
 
 function formatNumber(num) {
   if (num === null || num === undefined) return 'N/A';
@@ -36,11 +27,17 @@ function getConvictionEmoji(conviction) {
   return '👀';
 }
 
+// Escape special MarkdownV2 characters
+function escapeMd(text) {
+  if (text === null || text === undefined) return 'N/A';
+  return String(text).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+}
+
 async function fetchTopConvictionTokens(limit = 10) {
   const url = `${API_BASE_URL}/api/tokens/leaderboard/conviction?limit=${limit}&offset=0`;
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(`API responded with status ${response.status}`);
   }
   const data = await response.json();
   return data.tokens || [];
@@ -48,91 +45,99 @@ async function fetchTopConvictionTokens(limit = 10) {
 
 function buildConvictionMessage(tokens) {
   if (!tokens.length) {
-    return '⚠️ No conviction data available right now. Try again shortly.';
+    return '⚠️ No conviction data available right now\\. Try again shortly\\.';
   }
 
   const lines = [
     '💎 *Top 10 Tokens by Conviction*',
-    '_% of holders holding 1m+_',
+    '_% of holders holding 1m\\+_',
     '',
   ];
 
   tokens.slice(0, 10).forEach((token, i) => {
     const rank = i + 1;
     const emoji = getConvictionEmoji(token.conviction1m);
-    const name = token.name || token.symbol || 'Unknown';
-    const symbol = token.symbol ? `$${token.symbol}` : '';
+    const name = escapeMd(token.name || token.symbol || 'Unknown');
+    const symbol = token.symbol ? escapeMd(`$${token.symbol}`) : '';
     const conviction = token.conviction1m != null ? `${token.conviction1m.toFixed(1)}%` : 'N/A';
-    const mcap = formatNumber(token.marketCap);
-    const price = formatPrice(token.price);
-    const holders = token.sampleSize != null ? `${token.sampleSize} sampled` : '';
+    const mcap = escapeMd(formatNumber(token.marketCap));
+    const price = escapeMd(formatPrice(token.price));
+    const holders = token.sampleSize != null ? ` · ${escapeMd(`${token.sampleSize} sampled`)}` : '';
 
     lines.push(
-      `${rank}\\. ${emoji} *${escapeMd(name)}* ${escapeMd(symbol)}`,
-      `   Conviction: \`${conviction}\` · MCap: \`${escapeMd(mcap)}\``,
-      `   Price: \`${escapeMd(price)}\`${holders ? ` · ${escapeMd(holders)}` : ''}`,
+      `${rank}\\. ${emoji} *${name}* ${symbol}`,
+      `   Conviction: \`${conviction}\` · MCap: \`${mcap}\``,
+      `   Price: \`${price}\`${holders}`,
       ''
     );
   });
 
-  lines.push('_Powered by [CultScreener](https://cultscreener.com)_');
+  lines.push('_Powered by [CultScreener](https://cultscreener\\.com)_');
   return lines.join('\n');
 }
 
-// Escape special MarkdownV2 characters
-function escapeMd(text) {
-  if (text === null || text === undefined) return 'N/A';
-  return String(text).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+function startBot(token) {
+  if (!token) {
+    console.log('[TelegramBot] TELEGRAM_BOT_TOKEN not set — bot disabled');
+    return;
+  }
+
+  bot = new TelegramBot(token, { polling: true });
+  console.log('[TelegramBot] Bot started');
+
+  bot.onText(/\/TryConviction/i, async (msg) => {
+    const chatId = msg.chat.id;
+
+    let loadingMsg;
+    try {
+      loadingMsg = await bot.sendMessage(chatId, '🔍 Fetching top conviction tokens...');
+    } catch {
+      // continue without loading message
+    }
+
+    try {
+      const tokens = await fetchTopConvictionTokens(10);
+      const message = buildConvictionMessage(tokens);
+
+      if (loadingMsg) {
+        await bot.editMessageText(message, {
+          chat_id: chatId,
+          message_id: loadingMsg.message_id,
+          parse_mode: 'MarkdownV2',
+          disable_web_page_preview: true,
+        });
+      } else {
+        await bot.sendMessage(chatId, message, {
+          parse_mode: 'MarkdownV2',
+          disable_web_page_preview: true,
+        });
+      }
+    } catch (err) {
+      console.error('[TelegramBot] Error handling /TryConviction:', err.message);
+      const errText = '❌ Failed to fetch conviction data\\. Please try again in a moment\\.';
+      if (loadingMsg) {
+        await bot.editMessageText(errText, {
+          chat_id: chatId,
+          message_id: loadingMsg.message_id,
+          parse_mode: 'MarkdownV2',
+        }).catch(() => bot.sendMessage(chatId, '❌ Failed to fetch conviction data. Please try again.'));
+      } else {
+        await bot.sendMessage(chatId, '❌ Failed to fetch conviction data. Please try again.').catch(() => {});
+      }
+    }
+  });
+
+  bot.on('polling_error', (err) => {
+    console.error('[TelegramBot] Polling error:', err.message);
+  });
 }
 
-bot.onText(/\/TryConviction/i, async (msg) => {
-  const chatId = msg.chat.id;
-
-  let loadingMsg;
-  try {
-    loadingMsg = await bot.sendMessage(chatId, '🔍 Fetching top conviction tokens...');
-  } catch {
-    // If sending the loading message fails, continue anyway
+async function stopBot() {
+  if (bot) {
+    await bot.stopPolling();
+    bot = null;
+    console.log('[TelegramBot] Bot stopped');
   }
+}
 
-  try {
-    const tokens = await fetchTopConvictionTokens(10);
-    const message = buildConvictionMessage(tokens);
-
-    if (loadingMsg) {
-      await bot.editMessageText(message, {
-        chat_id: chatId,
-        message_id: loadingMsg.message_id,
-        parse_mode: 'MarkdownV2',
-        disable_web_page_preview: true,
-      });
-    } else {
-      await bot.sendMessage(chatId, message, {
-        parse_mode: 'MarkdownV2',
-        disable_web_page_preview: true,
-      });
-    }
-  } catch (err) {
-    console.error('[TelegramBot] Error fetching conviction data:', err.message);
-
-    const errText = '❌ Failed to fetch conviction data. Please try again in a moment.';
-    if (loadingMsg) {
-      await bot.editMessageText(errText, {
-        chat_id: chatId,
-        message_id: loadingMsg.message_id,
-      }).catch(() => bot.sendMessage(chatId, errText));
-    } else {
-      await bot.sendMessage(chatId, errText).catch(() => {});
-    }
-  }
-});
-
-// Graceful shutdown
-process.once('SIGINT', () => {
-  console.log('[TelegramBot] Shutting down...');
-  bot.stopPolling();
-});
-process.once('SIGTERM', () => {
-  console.log('[TelegramBot] Shutting down...');
-  bot.stopPolling();
-});
+module.exports = { startBot, stopBot };

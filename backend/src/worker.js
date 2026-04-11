@@ -15,6 +15,7 @@
 
 require('dotenv').config();
 const { Worker } = require('bullmq');
+const telegramBot = require('./telegram-bot');
 
 // Import services for job processing
 const db = require('./services/database');
@@ -744,6 +745,9 @@ async function start() {
   }
 
   console.log(`[Worker] All workers started. Processing jobs...`);
+
+  // Start Telegram bot if token is configured
+  telegramBot.startBot(process.env.TELEGRAM_BOT_TOKEN);
 }
 
 /**
@@ -756,6 +760,8 @@ async function shutdown(signal) {
   for (const worker of workers) {
     await worker.close();
   }
+
+  await telegramBot.stopBot();
 
   console.log('[Worker] All workers stopped');
   process.exit(0);

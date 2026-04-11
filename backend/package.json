@@ -8,8 +8,6 @@
     "dev": "node --watch src/app.js",
     "worker": "node src/worker.js",
     "worker:dev": "node --watch src/worker.js",
-    "bot": "node src/telegram-bot.js",
-    "bot:dev": "node --watch src/telegram-bot.js",
     "db:migrate": "node db/migrate.js",
     "db:migrate:seed": "node db/migrate.js --seed",
     "db:status": "node db/migrate.js --status",
