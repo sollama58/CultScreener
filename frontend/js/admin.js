@@ -1,6 +1,7 @@
 /* CultScreener Admin Panel */
 
 const admin = {
+  token: null,       // in-memory only — never written to sessionStorage
   activeTab: 'dashboard',
   _boundTabs: false,
 
@@ -44,6 +45,7 @@ const admin = {
         body: JSON.stringify({ password }),
         noAuth: true
       });
+      this.token = data.token;
       input.value = '';
       this.showPanel();
       this.loadTab('dashboard');
@@ -58,6 +60,7 @@ const admin = {
 
   async logout() {
     try { await this.request('/api/admin/logout', { method: 'POST' }); } catch (_) {}
+    this.token = null;
     this.showLogin();
   },
 
@@ -67,6 +70,7 @@ const admin = {
       this.showPanel();
       this.loadTab('dashboard');
     } catch {
+      this.token = null;
       this.showLogin();
     }
   },
@@ -87,16 +91,21 @@ const admin = {
   async request(endpoint, opts = {}) {
     const url = config.api.baseUrl + endpoint;
     const headers = { 'Content-Type': 'application/json' };
+    // Send token as header (works over HTTP); cookie is also sent via credentials:'include' (HTTPS)
+    if (!opts.noAuth && this.token) {
+      headers['X-Admin-Session'] = this.token;
+    }
     const res = await fetch(url, {
       method: opts.method || 'GET',
       headers,
       body: opts.body || undefined,
-      credentials: 'include', // sends the httpOnly admin_session cookie automatically
+      credentials: 'include',
       cache: 'no-store'
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       if (res.status === 401 && !opts.noAuth) {
+        this.token = null;
         this.showLogin();
       }
       const err = new Error(data.error || `HTTP ${res.status}`);
