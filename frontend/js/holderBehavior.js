@@ -71,6 +71,60 @@
     return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
+  // Resolve token name/symbol from whichever page context we're on
+  function getTokenInfo() {
+    if (typeof tokenDetail !== 'undefined' && tokenDetail.token) {
+      return { name: tokenDetail.token.name || null, symbol: tokenDetail.token.symbol || null };
+    }
+    // Cultify page: read from the preview card DOM
+    const nameEl   = document.querySelector('.cultify-preview-name');
+    const tickerEl = document.querySelector('.cultify-preview-ticker');
+    if (nameEl || tickerEl) {
+      return { name: nameEl?.textContent?.trim() || null, symbol: tickerEl?.textContent?.trim() || null };
+    }
+    return { name: null, symbol: null };
+  }
+
+  function buildShareText(tokenInfo, data) {
+    const ticker  = tokenInfo.symbol ? `$${tokenInfo.symbol.toUpperCase()}` : (tokenInfo.name || 'Token');
+    const avgHold = data.overallAvgHoldTimeMs ? formatDuration(data.overallAvgHoldTimeMs) : '—';
+    return [
+      `${ticker} Holder Behavior Analysis`,
+      `────────────────────`,
+      `Holders analyzed: ${data.analyzedCount}/${data.holderCount}`,
+      `Swaps analyzed: ${(data.totalSwapsAnalyzed || 0).toLocaleString()}`,
+      `Overall avg hold: ${avgHold}`,
+      ``,
+      `cultscreener.com`,
+    ].join('\n');
+  }
+
+  async function handleShare(tokenInfo, data) {
+    const ticker = tokenInfo.symbol ? `$${tokenInfo.symbol.toUpperCase()}` : (tokenInfo.name || 'Token');
+    const text   = buildShareText(tokenInfo, data);
+
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: `${ticker} Holder Behavior — CultScreener`, text, url: 'https://cultscreener.com' });
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
+    }
+
+    // Clipboard fallback
+    try {
+      await navigator.clipboard.writeText(text);
+      const btn = document.getElementById('hb-share-btn');
+      if (btn) {
+        const orig = btn.innerHTML;
+        btn.textContent = 'Copied!';
+        btn.style.color = '#22c55e';
+        setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 2000);
+      }
+    } catch {}
+  }
+
   // ── Modal ─────────────────────────────────────────────────────────────
   let pollTimer  = null;
   let pollStart  = null;
@@ -456,6 +510,13 @@
   // ── Results rendering ─────────────────────────────────────────────────
   function renderResults(data) {
     const { analyzedCount, holderCount, totalSwapsAnalyzed, overallAvgHoldTimeMs, holders = [], tokenStats = [] } = data;
+    const tokenInfo = getTokenInfo();
+    const ticker = tokenInfo.symbol ? tokenInfo.symbol.toUpperCase() : null;
+    const displayName = ticker ? `$${ticker}` : (tokenInfo.name || null);
+
+    const tickerHtml = displayName
+      ? `<span class="hb-ticker-label">${escHtml(displayName)}</span>`
+      : '';
 
     const summaryHtml = `
       <div class="hb-results-summary">
@@ -486,10 +547,29 @@
       </div>`;
 
     setBody(`
-      <div class="hb-section-title">Holder Behavior Results</div>
+      <div class="hb-results-header">
+        <div class="hb-results-header-left">
+          <span class="hb-section-title" style="margin-bottom:0">Holder Behavior</span>
+          ${tickerHtml}
+        </div>
+        <button class="hb-share-btn" id="hb-share-btn" title="Share results">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          Share
+        </button>
+      </div>
       ${summaryHtml}
       ${tabsHtml}
+      <div class="hb-watermark">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.5"><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
+        cultscreener.com
+      </div>
     `);
+
+    // Share button
+    document.getElementById('hb-share-btn')?.addEventListener('click', () => handleShare(tokenInfo, data));
 
     // Tab switching
     document.querySelectorAll('.hb-tab').forEach(btn => {

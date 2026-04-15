@@ -5764,6 +5764,72 @@ strong {
   font-style: italic;
 }
 
+/* Results header: title + ticker + share button */
+.hb-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-right: 2rem; /* clear modal close button */
+}
+
+.hb-results-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.hb-ticker-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--fire-primary);
+  background: rgba(255, 100, 0, 0.1);
+  border: 1px solid rgba(255, 100, 0, 0.2);
+  border-radius: var(--radius-full);
+  padding: 0.15rem 0.55rem;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.hb-share-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.85rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.hb-share-btn:hover {
+  border-color: var(--fire-primary);
+  color: var(--text-primary);
+}
+
+/* Watermark */
+.hb-watermark {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  margin-top: 1.25rem;
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  opacity: 0.6;
+  letter-spacing: 0.02em;
+}
+
 /* Error / empty states */
 .hb-error-state {
   text-align: center;
