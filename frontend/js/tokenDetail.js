@@ -1160,8 +1160,10 @@ const tokenDetail = {
               <div style="${lblStyle}">Avg hold time</div>
             </div>
           </div>`;
+        // .diamond-hands-footer is a child of .diamond-hands-section, not graphic —
+        // use its actual parent so insertBefore doesn't throw "not a child" error.
         const dhFooter = graphic.querySelector('.diamond-hands-footer');
-        if (dhFooter) graphic.insertBefore(hbSection, dhFooter);
+        if (dhFooter) dhFooter.parentNode.insertBefore(hbSection, dhFooter);
         else graphic.appendChild(hbSection);
         injected.push(hbSection);
       }
