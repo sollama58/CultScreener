@@ -302,9 +302,25 @@ async function checkHealth() {
  * the true number. Cached for 24h so the cost is negligible (a 10k-holder
  * token = 10 DAS calls once per day).
  */
+// In-flight dedup: if a paginating holder count fetch is already running for this
+// mint, callers get the same Promise instead of launching a second identical scan.
+const _holderCountInFlight = new Map();
+
 async function getTokenHolderCount(mintAddress) {
   if (!HELIUS_DAS_URL) return null;
 
+  if (_holderCountInFlight.has(mintAddress)) {
+    return _holderCountInFlight.get(mintAddress);
+  }
+
+  const promise = _doGetTokenHolderCount(mintAddress).finally(() => {
+    _holderCountInFlight.delete(mintAddress);
+  });
+  _holderCountInFlight.set(mintAddress, promise);
+  return promise;
+}
+
+async function _doGetTokenHolderCount(mintAddress) {
   try {
     return await circuitBreakers.helius.execute(async () => {
     let totalCount = 0;
@@ -376,6 +392,7 @@ async function getTokenMetadata(mintAddress) {
   // Check cache first (1hr TTL — metadata rarely changes)
   const metaCacheKey = `helius-meta:${mintAddress}`;
   const cached = await cache.get(metaCacheKey);
+  if (cached === 'NOT_FOUND') return null; // negative cache hit
   if (cached) return cached;
 
   try {
@@ -401,11 +418,13 @@ async function getTokenMetadata(mintAddress) {
 
     if (response.data.error) {
       console.error('[Solana] Helius getAsset error:', response.data.error.message);
+      await cache.set(metaCacheKey, 'NOT_FOUND', 300000); // 5-min negative cache
       return null;
     }
 
     const asset = response.data.result;
     if (!asset) {
+      await cache.set(metaCacheKey, 'NOT_FOUND', 300000); // 5-min negative cache
       return null;
     }
 

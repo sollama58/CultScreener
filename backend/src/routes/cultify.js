@@ -255,7 +255,9 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
             if (count && count > 0) {
               cache.set(`holder-total:${mint}`, count, TTL.DAY);
             }
-          }).catch(() => {});
+          }).catch(err => {
+            console.warn(`[Cultify] Background holder count failed for ${mint.slice(0, 8)}:`, err.message);
+          });
         }
       } catch (_) {}
     }
@@ -644,8 +646,15 @@ const HB_EXCLUDED_MINTS = new Set([
   '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',  // PYUSD
 ]);
 
-// Fetch up to maxCount SWAP transactions for a wallet using paginated Helius calls
+// Fetch up to maxCount SWAP transactions for a wallet using paginated Helius calls.
+// Results are cached per-wallet for 1 hour — the same whale wallets appear as top
+// holders across many different tokens, so the cache hit rate is high after the
+// first analysis of any given token.
 async function fetchSwapHistory(walletAddress, maxCount) {
+  const swapCacheKey = `hb-swaps:${walletAddress}`;
+  const cached = await cache.get(swapCacheKey);
+  if (cached) return cached;
+
   const results = [];
   let before = null;
 
@@ -662,6 +671,9 @@ async function fetchSwapHistory(walletAddress, maxCount) {
     before = txns[txns.length - 1].signature;
   }
 
+  if (results.length > 0) {
+    await cache.set(swapCacheKey, results, TTL.HOUR);
+  }
   return results;
 }
 
