@@ -696,13 +696,20 @@ function computeHoldPairs(walletAddress, transactions) {
       if (!tokenAmount || Number(tokenAmount) <= 0) continue;
 
       if (toUserAccount === walletAddress) {
-        // BUY: wallet received this token — record first buy time
+        // BUY: wallet received this token — record first buy time per cycle
         if (!firstBuy[tm]) firstBuy[tm] = ts;
-      } else if (fromUserAccount === walletAddress && firstBuy[tm]) {
+      } else if (fromUserAccount === walletAddress) {
         // SELL: wallet sent this token away — close the hold pair
         if (!pairs[tm]) pairs[tm] = [];
-        pairs[tm].push({ type: 'sold', buyTime: firstBuy[tm], sellTime: ts, holdTime: ts - firstBuy[tm] });
-        delete firstBuy[tm]; // reset for next buy/sell cycle
+        if (firstBuy[tm]) {
+          // Normal case: buy was within the transaction window
+          pairs[tm].push({ type: 'sold', buyTime: firstBuy[tm], sellTime: ts, holdTime: ts - firstBuy[tm] });
+          delete firstBuy[tm];
+        } else {
+          // Buy was before the transaction window — record with a null buyTime
+          // so the sell is still counted (avoids silently dropping half the data)
+          pairs[tm].push({ type: 'sold', buyTime: null, sellTime: ts, holdTime: null });
+        }
       }
     }
   }
@@ -723,27 +730,48 @@ async function runHolderBehaviorAnalysis(mint) {
   const resultKey  = `hb-analysis:${mint}`;
 
   try {
-    // Get holder list — prefer cached holder-analytics, else fetch fresh
+    // Get holder list — need OWNER WALLET addresses (not token account/ATA addresses)
+    // for getTransactionsForAddress to work correctly. Sources in priority order:
+    //   1. cached holder-analytics (worker-enriched, has owner wallets)
+    //   2. getTokenHolderSample via DAS (always returns owner wallets directly)
+    //   3. getTokenLargestAccounts — returns ATAs, NOT usable for HB analysis
     let holderList = null;
     const cachedAnalytics = await cache.get(`holder-analytics:${mint}`);
     if (cachedAnalytics && cachedAnalytics.holders && cachedAnalytics.holders.length > 0) {
+      // The worker resolves ATA→owner in most cases, but any that failed will still
+      // carry the raw ATA address. Fetch the DAS sample to build an ATA→owner map
+      // and correct any unresolved entries before running swap lookups.
       holderList = cachedAnalytics.holders;
+      try {
+        const sample = await solanaService.getTokenHolderSample(mint, HB_MAX_HOLDERS * 2);
+        if (sample && sample.holders && sample.holders.length > 0) {
+          const ataToOwner = new Map(sample.holders.map(h => [h.ata, h.wallet]));
+          holderList = holderList.map(h => ({
+            ...h,
+            address: ataToOwner.get(h.address) || h.address
+          }));
+        }
+      } catch (_) { /* non-critical — proceed with existing addresses */ }
     } else {
-      const accounts = await solanaService.getTokenLargestAccounts(mint);
-      if (!accounts || accounts.length === 0) throw new Error('No holders found');
-      holderList = accounts.map((a, i) => ({
+      // DAS getTokenAccounts returns a.owner (wallet) — correct for tx lookups
+      const sampleResult = await solanaService.getTokenHolderSample(mint, HB_MAX_HOLDERS);
+      if (!sampleResult || !sampleResult.holders || sampleResult.holders.length === 0) {
+        throw new Error('No holders found');
+      }
+      holderList = sampleResult.holders.map((h, i) => ({
         rank: i + 1,
-        address: a.wallet || a.address,
+        address: h.wallet,   // owner wallet — never ATA
         percentage: null,
         isLP: false,
         isBurnt: false
       }));
     }
 
-    // Filter LP/burn wallets, take top 50
+    // Filter LP/burn wallets, take top 50 (must have a resolved owner address)
     const eligible = holderList
       .filter(h => !h.isLP && !h.isBurnt && h.address)
       .slice(0, HB_MAX_HOLDERS);
+    console.log(`[HB] ${mint.slice(0, 8)}: ${eligible.length} eligible holders for swap analysis`);
 
     const now = Date.now();
     const holderResults = [];
@@ -765,15 +793,16 @@ async function runHolderBehaviorAnalysis(mint) {
           }
 
           const pairsMap = computeHoldPairs(holder.address, txns);
-          const allTimes = Object.values(pairsMap).flatMap(p => p.map(e => e.holdTime));
+          // Only average hold times where both buy and sell are known
+          const allTimes = Object.values(pairsMap).flatMap(p => p.map(e => e.holdTime)).filter(t => t != null);
           const avgHoldTimeMs = allTimes.length > 0
             ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length)
             : null;
 
-          // Flatten pairs array for output (sorted chronologically)
+          // Flatten pairs array for output (sorted by sellTime, nullBuyTime pairs last)
           const pairsArr = Object.entries(pairsMap)
             .flatMap(([tm, list]) => list.map(p => ({ mint: tm, ...p })))
-            .sort((a, b) => a.buyTime - b.buyTime);
+            .sort((a, b) => (a.buyTime ?? a.sellTime) - (b.buyTime ?? b.sellTime));
 
           return {
             rank: holder.rank,
@@ -796,7 +825,7 @@ async function runHolderBehaviorAnalysis(mint) {
         totalSwaps += r.swapsAnalyzed || 0;
         for (const pair of r.pairs) {
           if (!tokenAgg[pair.mint]) tokenAgg[pair.mint] = { holdTimes: [] };
-          tokenAgg[pair.mint].holdTimes.push(pair.holdTime);
+          if (pair.holdTime != null) tokenAgg[pair.mint].holdTimes.push(pair.holdTime);
         }
       }
     }

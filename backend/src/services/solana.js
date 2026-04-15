@@ -919,7 +919,7 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.get(
         `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions`,
-        { params, timeout: 10000, httpsAgent }
+        { params, timeout: 20000, httpsAgent }
       )
     ), 'getTransactionsForAddress');
 
