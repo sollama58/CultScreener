@@ -635,7 +635,7 @@ async function storeHBAccess(walletAddress, mint) {
   return accessToken;
 }
 const HB_MAX_HOLDERS = 50;
-const HB_MAX_SWAPS_PER_HOLDER = 250;
+const HB_MAX_SWAPS_PER_HOLDER = 150;
 
 // Tokens to exclude: wrapped SOL + major stablecoins
 const HB_EXCLUDED_MINTS = new Set([
@@ -723,12 +723,27 @@ function computeHoldPairs(walletAddress, transactions) {
   return pairs;
 }
 
+// Global semaphore — caps concurrent HB analyses to prevent Helius queue saturation.
+// Multiple simultaneous analyses for different tokens would otherwise flood the queue.
+let _hbAnalysisCount = 0;
+const HB_MAX_CONCURRENT_ANALYSES = 2;
+async function _acquireHbSemaphore() {
+  while (_hbAnalysisCount >= HB_MAX_CONCURRENT_ANALYSES) {
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  _hbAnalysisCount++;
+}
+function _releaseHbSemaphore() {
+  if (_hbAnalysisCount > 0) _hbAnalysisCount--;
+}
+
 // Run the full holder behavior analysis asynchronously (fire-and-forget).
-// Fetches top 50 holders, analyzes each wallet's last 250 swaps, then caches result.
+// Fetches top 50 holders, analyzes each wallet's last 150 swaps, then caches result.
 async function runHolderBehaviorAnalysis(mint) {
   const pendingKey = `hb-pending:${mint}`;
   const resultKey  = `hb-analysis:${mint}`;
 
+  await _acquireHbSemaphore();
   try {
     // Always fetch the full HB_MAX_HOLDERS list directly from DAS — it always
     // returns owner wallet addresses and gives us the full 50 we need.
@@ -767,56 +782,72 @@ async function runHolderBehaviorAnalysis(mint) {
     const tokenAgg = {}; // mint -> { holderCount, holdTimes: [] }
     let totalSwaps = 0;
 
-    // Process holders in small batches to respect Helius rate limits
-    const BATCH = 5;
-    for (let i = 0; i < eligible.length; i += BATCH) {
-      const batch = eligible.slice(i, i + BATCH);
-      if (i > 0) await new Promise(r => setTimeout(r, 300));
-
-      const batchRes = await Promise.all(batch.map(async (holder) => {
-        try {
-          const txns = await fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER);
-          if (!txns || txns.length === 0) {
-            return { rank: holder.rank, address: holder.address, percentage: holder.percentage,
-              swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [] };
-          }
-
-          const pairsMap = computeHoldPairs(holder.address, txns);
-          // Only average hold times where both buy and sell are known
-          const allTimes = Object.values(pairsMap).flatMap(p => p.map(e => e.holdTime)).filter(t => t != null);
-          const avgHoldTimeMs = allTimes.length > 0
-            ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length)
-            : null;
-
-          // Flatten pairs array for output (sorted by sellTime, nullBuyTime pairs last)
-          const pairsArr = Object.entries(pairsMap)
-            .flatMap(([tm, list]) => list.map(p => ({ mint: tm, ...p })))
-            .sort((a, b) => (a.buyTime ?? a.sellTime) - (b.buyTime ?? b.sellTime));
-
-          return {
-            rank: holder.rank,
-            address: holder.address,
-            percentage: holder.percentage,
-            swapsAnalyzed: txns.length,
-            tokensTraded: Object.keys(pairsMap).length,
-            avgHoldTimeMs,
-            pairs: pairsArr
-          };
-        } catch (err) {
-          console.warn(`[HB] Holder ${holder.address.slice(0, 8)} failed:`, err.message);
+    // Process one holder's swap history and return a result object
+    const processHolder = async (holder) => {
+      try {
+        const txns = await fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER);
+        if (!txns || txns.length === 0) {
           return { rank: holder.rank, address: holder.address, percentage: holder.percentage,
             swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [] };
         }
-      }));
-
-      for (const r of batchRes) {
-        holderResults.push(r);
-        totalSwaps += r.swapsAnalyzed || 0;
-        for (const pair of r.pairs) {
-          if (!tokenAgg[pair.mint]) tokenAgg[pair.mint] = { holdTimes: [] };
-          if (pair.holdTime != null) tokenAgg[pair.mint].holdTimes.push(pair.holdTime);
-        }
+        const pairsMap = computeHoldPairs(holder.address, txns);
+        // Only average hold times where both buy and sell are known
+        const allTimes = Object.values(pairsMap).flatMap(p => p.map(e => e.holdTime)).filter(t => t != null);
+        const avgHoldTimeMs = allTimes.length > 0
+          ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length)
+          : null;
+        // Flatten pairs array for output (sorted by sellTime, nullBuyTime pairs last)
+        const pairsArr = Object.entries(pairsMap)
+          .flatMap(([tm, list]) => list.map(p => ({ mint: tm, ...p })))
+          .sort((a, b) => (a.buyTime ?? a.sellTime) - (b.buyTime ?? b.sellTime));
+        return {
+          rank: holder.rank, address: holder.address, percentage: holder.percentage,
+          swapsAnalyzed: txns.length, tokensTraded: Object.keys(pairsMap).length,
+          avgHoldTimeMs, pairs: pairsArr
+        };
+      } catch (err) {
+        console.warn(`[HB] Holder ${holder.address.slice(0, 8)} failed:`, err.message);
+        return { rank: holder.rank, address: holder.address, percentage: holder.percentage,
+          swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [] };
       }
+    };
+
+    // Accumulate a processed holder result into the running aggregates
+    const accumulateResult = (r) => {
+      holderResults.push(r);
+      totalSwaps += r.swapsAnalyzed || 0;
+      for (const pair of r.pairs) {
+        if (!tokenAgg[pair.mint]) tokenAgg[pair.mint] = { holdTimes: [] };
+        if (pair.holdTime != null) tokenAgg[pair.mint].holdTimes.push(pair.holdTime);
+      }
+    };
+
+    // Pre-check the per-wallet swap cache to split holders into two groups:
+    //   cached   → fetchSwapHistory returns instantly, no Helius queue pressure
+    //   uncached → will make 1-2 sequential Helius calls each
+    const swapCacheEntries = await Promise.all(
+      eligible.map(h => cache.get(`hb-swaps:${h.address}`).then(v => [h, v]))
+    );
+    const cachedHolders   = swapCacheEntries.filter(([, v]) => v != null).map(([h]) => h);
+    const uncachedHolders = swapCacheEntries.filter(([, v]) => v == null).map(([h]) => h);
+    console.log(`[HB] ${mint.slice(0, 8)}: ${cachedHolders.length} cached, ${uncachedHolders.length} need Helius`);
+
+    // Process cached holders immediately — no queue pressure, no batching delay needed
+    for (const holder of cachedHolders) {
+      accumulateResult(await processHolder(holder));
+    }
+
+    // Process uncached holders in small batches to stay well within Helius rate limits.
+    // BATCH=2: 2 wallets × ≤2 pages each = ≤4 queue inserts per batch.
+    // At 40 req/sec that drains in ~100ms; 600ms inter-batch delay gives 6× headroom
+    // even when two concurrent analyses are running for different tokens simultaneously.
+    const BATCH = 2;
+    const BATCH_DELAY_MS = 600;
+    for (let i = 0; i < uncachedHolders.length; i += BATCH) {
+      if (i > 0) await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
+      const batch = uncachedHolders.slice(i, i + BATCH);
+      const batchRes = await Promise.all(batch.map(processHolder));
+      for (const r of batchRes) accumulateResult(r);
     }
 
     // Compute accurate holderCount once all batches are done
@@ -868,6 +899,7 @@ async function runHolderBehaviorAnalysis(mint) {
     // Cache a failure marker so frontend doesn't loop forever
     await cache.set(resultKey, { status: 'failed', error: err.message }, 300000).catch(() => {});
   } finally {
+    _releaseHbSemaphore();
     await cache.delete(pendingKey).catch(() => {});
   }
 }
