@@ -425,6 +425,9 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_cultify_burns_wallet_mint ON cultify_burns(wallet_address, token_mint);
       CREATE INDEX IF NOT EXISTS idx_cultify_burns_sig ON cultify_burns(burn_signature);
 
+      -- utility_type distinguishes Cultify burns from Holder Behavior burns
+      ALTER TABLE cultify_burns ADD COLUMN IF NOT EXISTS utility_type VARCHAR(32) DEFAULT 'cultify';
+
       -- Utility whitelist: wallets that can use paid utilities for free (no burn required)
       CREATE TABLE IF NOT EXISTS utility_whitelist (
         id SERIAL PRIMARY KEY,
@@ -3093,12 +3096,12 @@ async function updateCuratedTokenDexScreener(mintAddress, data) {
 
 // ── Cultify Burns ──────────────────────────────────────
 
-async function recordCultifyBurn(walletAddress, tokenMint, signature, burnAmount) {
+async function recordCultifyBurn(walletAddress, tokenMint, signature, burnAmount, utilityType = 'cultify') {
   if (!pool) throw new Error('Database not available');
   await pool.query(`
-    INSERT INTO cultify_burns (wallet_address, token_mint, burn_signature, burn_amount)
-    VALUES ($1, $2, $3, $4)
-  `, [walletAddress, tokenMint, signature, burnAmount]);
+    INSERT INTO cultify_burns (wallet_address, token_mint, burn_signature, burn_amount, utility_type)
+    VALUES ($1, $2, $3, $4, $5)
+  `, [walletAddress, tokenMint, signature, burnAmount, utilityType]);
 }
 
 async function hasCultifyAccess(walletAddress, tokenMint) {
@@ -3106,6 +3109,7 @@ async function hasCultifyAccess(walletAddress, tokenMint) {
   const result = await pool.query(
     `SELECT 1 FROM cultify_burns
      WHERE wallet_address = $1 AND token_mint = $2
+       AND utility_type = 'cultify'
        AND created_at > NOW() - INTERVAL '12 hours'
      LIMIT 1`,
     [walletAddress, tokenMint]
@@ -3117,11 +3121,44 @@ async function getCultifyBurnsByWallet(walletAddress) {
   if (!pool) return [];
   const result = await pool.query(
     `SELECT token_mint, created_at FROM cultify_burns
-     WHERE wallet_address = $1 AND created_at > NOW() - INTERVAL '12 hours'
+     WHERE wallet_address = $1
+       AND utility_type = 'cultify'
+       AND created_at > NOW() - INTERVAL '12 hours'
      ORDER BY created_at DESC`,
     [walletAddress]
   );
   return result.rows.map(r => ({ mint: r.token_mint, createdAt: r.created_at }));
+}
+
+async function hasHBAccess(walletAddress, tokenMint) {
+  if (!pool) return false;
+  const result = await pool.query(
+    `SELECT 1 FROM cultify_burns
+     WHERE wallet_address = $1 AND token_mint = $2
+       AND utility_type = 'holder_behavior'
+       AND created_at > NOW() - INTERVAL '3 days'
+     LIMIT 1`,
+    [walletAddress, tokenMint]
+  );
+  return result.rows.length > 0;
+}
+
+async function getHBAccessByWallet(walletAddress) {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT token_mint, created_at FROM cultify_burns
+     WHERE wallet_address = $1
+       AND utility_type = 'holder_behavior'
+       AND created_at > NOW() - INTERVAL '3 days'
+     ORDER BY created_at DESC`,
+    [walletAddress]
+  );
+  // Compute expiresAt from DB timestamp so the frontend can show the countdown
+  const HB_ACCESS_MS = 3 * 24 * 60 * 60 * 1000; // 3 days in ms
+  return result.rows.map(r => ({
+    mint: r.token_mint,
+    expiresAt: new Date(r.created_at).getTime() + HB_ACCESS_MS
+  }));
 }
 
 async function isCultifySignatureUsed(signature) {
@@ -3315,6 +3352,8 @@ module.exports = {
   hasCultifyAccess,
   getCultifyBurnsByWallet,
   isCultifySignatureUsed,
+  hasHBAccess,
+  getHBAccessByWallet,
   // Utility whitelist
   isWalletWhitelisted,
   addWhitelistedWallet,

@@ -692,7 +692,7 @@ async function fetchSwapHistory(walletAddress, maxCount) {
   }
 
   if (results.length > 0) {
-    await cache.set(swapCacheKey, results, TTL.HOUR);
+    await cache.set(swapCacheKey, results, TTL.DAY);
   }
   return results;
 }
@@ -1006,7 +1006,7 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
   }
 
   try {
-    await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString());
+    await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString(), 'holder_behavior');
   } catch (err) {
     if (err.code === '23505') {
       const accessToken = await storeHBAccess(walletAddress, mint);
@@ -1035,10 +1035,22 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, a
   }
 
   const accessToken = req.query.token;
-  if (!accessToken) return res.json({ access: false, reason: 'none' });
-  const accessData = await cache.get(`hb:access:${accessToken}`);
-  if (accessData && accessData.mint === mint) return res.json({ access: true, reason: 'burned' });
-  res.json({ access: false, reason: 'expired' });
+  if (accessToken) {
+    const accessData = await cache.get(`hb:access:${accessToken}`);
+    if (accessData && accessData.mint === mint) return res.json({ access: true, reason: 'burned' });
+  }
+
+  // Cache miss (e.g. server restart) — fall back to DB
+  const walletForCheck = req.query.wallet;
+  if (walletForCheck && SOLANA_ADDRESS_REGEX.test(walletForCheck)) {
+    const hasBurn = await db.hasHBAccess(walletForCheck, mint);
+    if (hasBurn) {
+      const newToken = await storeHBAccess(walletForCheck, mint);
+      return res.json({ access: true, reason: 'burned', accessToken: newToken });
+    }
+  }
+
+  res.json({ access: false, reason: accessToken ? 'expired' : 'none' });
 }));
 
 // GET /api/cultify/holder-behavior/analyze/:mint
@@ -1092,9 +1104,22 @@ router.get('/holder-behavior/my-access', walletLimiter, asyncHandler(async (req,
     return res.json({ items: [] });
   }
   const idxKey = `hb:wallet-idx:${walletAddress}`;
-  const entries = (await cache.get(idxKey)) || [];
+  let entries = (await cache.get(idxKey)) || [];
   const now = Date.now();
-  const active = entries.filter(e => e.expiresAt > now);
+  let active = entries.filter(e => e.expiresAt > now);
+
+  // If cache is cold (server restart / TTL expired), rebuild from DB
+  if (active.length === 0) {
+    const dbEntries = await db.getHBAccessByWallet(walletAddress);
+    if (dbEntries.length > 0) {
+      active = dbEntries.filter(e => e.expiresAt > now);
+      // Repopulate the Redis index so subsequent calls are fast
+      if (active.length > 0) {
+        await cache.set(idxKey, active, HB_ACCESS_TTL).catch(() => {});
+      }
+    }
+  }
+
   res.json({ items: active.map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' })) });
 }));
 
