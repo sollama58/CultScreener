@@ -730,42 +730,31 @@ async function runHolderBehaviorAnalysis(mint) {
   const resultKey  = `hb-analysis:${mint}`;
 
   try {
-    // Get holder list — need OWNER WALLET addresses (not token account/ATA addresses)
-    // for getTransactionsForAddress to work correctly. Sources in priority order:
-    //   1. cached holder-analytics (worker-enriched, has owner wallets)
-    //   2. getTokenHolderSample via DAS (always returns owner wallets directly)
-    //   3. getTokenLargestAccounts — returns ATAs, NOT usable for HB analysis
-    let holderList = null;
-    const cachedAnalytics = await cache.get(`holder-analytics:${mint}`);
-    if (cachedAnalytics && cachedAnalytics.holders && cachedAnalytics.holders.length > 0) {
-      // The worker resolves ATA→owner in most cases, but any that failed will still
-      // carry the raw ATA address. Fetch the DAS sample to build an ATA→owner map
-      // and correct any unresolved entries before running swap lookups.
-      holderList = cachedAnalytics.holders;
-      try {
-        const sample = await solanaService.getTokenHolderSample(mint, HB_MAX_HOLDERS * 2);
-        if (sample && sample.holders && sample.holders.length > 0) {
-          const ataToOwner = new Map(sample.holders.map(h => [h.ata, h.wallet]));
-          holderList = holderList.map(h => ({
-            ...h,
-            address: ataToOwner.get(h.address) || h.address
-          }));
-        }
-      } catch (_) { /* non-critical — proceed with existing addresses */ }
-    } else {
-      // DAS getTokenAccounts returns a.owner (wallet) — correct for tx lookups
-      const sampleResult = await solanaService.getTokenHolderSample(mint, HB_MAX_HOLDERS);
-      if (!sampleResult || !sampleResult.holders || sampleResult.holders.length === 0) {
-        throw new Error('No holders found');
-      }
-      holderList = sampleResult.holders.map((h, i) => ({
-        rank: i + 1,
-        address: h.wallet,   // owner wallet — never ATA
-        percentage: null,
-        isLP: false,
-        isBurnt: false
-      }));
+    // Always fetch the full HB_MAX_HOLDERS list directly from DAS — it always
+    // returns owner wallet addresses and gives us the full 50 we need.
+    // cached holder-analytics only holds the top 20 (the token detail page limit),
+    // so using it as the wallet source would cap HB analysis at ~12-15 eligible wallets.
+    const sampleResult = await solanaService.getTokenHolderSample(mint, HB_MAX_HOLDERS);
+    if (!sampleResult || !sampleResult.holders || sampleResult.holders.length === 0) {
+      throw new Error('No holders found');
     }
+    let holderList = sampleResult.holders.map((h, i) => ({
+      rank: i + 1,
+      address: h.wallet,  // owner wallet — DAS always resolves this correctly
+      percentage: null,
+      isLP: false,
+      isBurnt: false
+    }));
+
+    // Enrich with LP/burn flags from cached analytics where available.
+    // These flags let us skip LP programs and burn wallets.
+    try {
+      const cachedAnalytics = await cache.get(`holder-analytics:${mint}`);
+      if (cachedAnalytics && cachedAnalytics.holders && cachedAnalytics.holders.length > 0) {
+        const flagMap = new Map(cachedAnalytics.holders.map(h => [h.address, { isLP: h.isLP, isBurnt: h.isBurnt }]));
+        holderList = holderList.map(h => ({ ...h, ...(flagMap.get(h.address) || {}) }));
+      }
+    } catch (_) { /* non-critical — proceed without LP/burn flags */ }
 
     // Filter LP/burn wallets, take top 50 (must have a resolved owner address)
     const eligible = holderList
