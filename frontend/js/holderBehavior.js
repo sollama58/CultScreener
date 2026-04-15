@@ -1,6 +1,6 @@
 // =============================================
 // CultScreener — Holder Behavior Analysis
-// Burn 25,000 ASDFASDFA → analyze top 50 holders'
+// Burn 10,000 ASDFASDFA → analyze top 50 holders'
 // avg hold time across all tokens (last 250 swaps)
 // =============================================
 
@@ -8,7 +8,7 @@
   'use strict';
 
   const BURN_MINT     = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
-  const BURN_AMOUNT   = 25_000;
+  const BURN_AMOUNT   = 10_000;
   const BURN_DECIMALS = 6;
   const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
@@ -207,7 +207,7 @@
           </linearGradient></defs>
           <path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/>
         </svg>
-        <strong>25,000 ASDFASDFA</strong> burn required
+        <strong>10,000 ASDFASDFA</strong> burn required
       </div>`;
 
     if (!connected) {

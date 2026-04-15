@@ -8,7 +8,7 @@ const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX } = require('../middlew
 const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
 
 const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
-const BURN_AMOUNT = 10_000;
+const BURN_AMOUNT = 5_000;
 const BURN_DECIMALS = 6; // pump.fun tokens use 6 decimals
 const BURN_RAW_AMOUNT = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const MAX_TX_AGE_SECONDS = 600; // 10 minutes
@@ -610,10 +610,10 @@ router.get('/tx-status/:signature', walletLimiter, asyncHandler(async (req, res)
 }));
 
 // ── Holder Behavior Analysis ──────────────────────────────────────────
-// Burns 25,000 ASDFASDFA to analyze top 50 holders' last 250 swap
+// Burns 10,000 ASDFASDFA to analyze top 50 holders' last 250 swap
 // transactions across all tokens (excluding SOL + stablecoins).
 
-const HB_BURN_AMOUNT = 25_000;
+const HB_BURN_AMOUNT = 10_000;
 const HB_BURN_RAW_AMOUNT = BigInt(HB_BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const HB_ACCESS_TTL = 259200 * 1000;  // 3 days (72 hours)
 const HB_ANALYSIS_CACHE_TTL = 7200 * 1000; // 2 hours
@@ -935,7 +935,7 @@ async function runHolderBehaviorAnalysis(mint) {
 }
 
 // POST /api/cultify/holder-behavior/verify-burn
-// Same on-chain verification pattern as /verify-burn but requires 25,000 ASDFASDFA.
+// Same on-chain verification pattern as /verify-burn but requires 10,000 ASDFASDFA.
 router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   const { signature, mint, wallet: walletAddress } = req.body;
 

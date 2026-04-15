@@ -7,7 +7,7 @@
   'use strict';
 
   const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
-  const BURN_AMOUNT = 10_000;
+  const BURN_AMOUNT = 5_000;
   const BURN_DECIMALS = 6;
   const SOLANA_ADDR_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
