@@ -309,11 +309,29 @@ const _holderCountInFlight = new Map();
 async function getTokenHolderCount(mintAddress) {
   if (!HELIUS_DAS_URL) return null;
 
+  // Check Redis cache first — holder counts change slowly, 24h TTL is fine
+  try {
+    const [countA, countB] = await Promise.all([
+      cache.get(`holder-total:${mintAddress}`),
+      cache.get(`holders:${mintAddress}`)
+    ]);
+    const cached = countA || countB;
+    if (cached && cached > 0) return cached;
+  } catch (_) {}
+
   if (_holderCountInFlight.has(mintAddress)) {
     return _holderCountInFlight.get(mintAddress);
   }
 
-  const promise = _doGetTokenHolderCount(mintAddress).finally(() => {
+  const promise = _doGetTokenHolderCount(mintAddress).then(async (count) => {
+    if (count && count > 0) {
+      await Promise.all([
+        cache.set(`holder-total:${mintAddress}`, count, TTL.DAY),
+        cache.set(`holders:${mintAddress}`, count, TTL.DAY)
+      ]).catch(() => {});
+    }
+    return count;
+  }).finally(() => {
     _holderCountInFlight.delete(mintAddress);
   });
   _holderCountInFlight.set(mintAddress, promise);

@@ -30,8 +30,16 @@ const tokenDetail = {
 
     this.bindEvents();
 
+    // Fire off pool and social fetches immediately — they only need this.mint,
+    // not this.token, so they run in parallel with the main token load.
+    // Their DOM updates land on elements inside #token-content (still hidden at
+    // this point), so when hideLoading() reveals the page these sections are
+    // already populated — no skeleton → data flash.
+    this.loadPools().catch(() => {});
+    this.loadDexScreenerData().catch(() => {});
+
     try {
-      // Load token data first — everything else depends on this.token being populated
+      // Load core token data. renderToken() depends on this.token being set.
       await this.loadToken();
       this.hideLoading();
 
@@ -47,17 +55,9 @@ const tokenDetail = {
         this.recordView();
       }
 
-      // Phase 2: Load dependent data now that this.token is populated and content is visible.
-      // These run in parallel — holder analytics needs this.token.pairCreatedAt for age-gated rows.
-      const phase2 = Promise.all([
-        this.loadPools(),
-        this.loadHolderAnalytics(),
-        this.loadDexScreenerData()
-      ]).catch(() => {});
-
-      await phase2;
-
-      // Start price refresh and freshness timer
+      // Start price refresh and freshness timer immediately — don't wait for
+      // holder analytics to complete. The holders section already shows skeleton
+      // rows; hold times and diamond hands fill in via their own polling loops.
       this.startPriceRefresh();
       this.startFreshnessTimer();
 
@@ -68,6 +68,10 @@ const tokenDetail = {
         setTimeout(() => this.updateWatchlistButton(), 500);
       };
       window.addEventListener('walletConnected', this._walletConnectedHandler);
+
+      // Kick off holder analytics (fire-and-forget). this.token is now populated
+      // so pairCreatedAt is available for token age and age-gated diamond-hands rows.
+      this.loadHolderAnalytics().catch(() => {});
     } catch (error) {
       console.error('Failed to initialize token page:', error.message);
       if (error.code === 'NOT_CURATED') {
@@ -836,7 +840,7 @@ const tokenDetail = {
   async _loadHoldTimes(attempt = 0) {
     const MAX_POLLS = 8;
     // First delay is longer to give backend inline computation time to complete
-    const POLL_DELAYS = [6000, 5000, 5000, 6000, 8000, 12000, 16000, 20000];
+    const POLL_DELAYS = [2000, 2000, 3000, 4000, 6000, 10000, 15000, 20000];
 
     // Cancel any in-flight polling from a previous load (e.g. refresh clicked while polling)
     if (attempt === 0) {
@@ -1169,7 +1173,7 @@ const tokenDetail = {
   // Load diamond hands distribution with polling
   async _loadDiamondHands(attempt = 0) {
     const MAX_POLLS = 10;
-    const POLL_DELAYS = [5000, 5000, 6000, 8000, 8000, 10000, 12000, 16000, 20000, 24000]; // 250 wallets at batch 25 ≈ 20-30s
+    const POLL_DELAYS = [2000, 3000, 4000, 5000, 6000, 8000, 10000, 14000, 18000, 22000];
 
     // Cancel any in-flight polling from a previous load
     if (attempt === 0) {
@@ -1191,7 +1195,17 @@ const tokenDetail = {
         return;
       }
 
-      // Only render once we have actual distribution data (at least some analyzed)
+      // Show progress even before any wallets are analyzed — give the user
+      // feedback that work is in progress rather than leaving the static text.
+      if (!data.computed && !(data.distribution && data.analyzed > 0)) {
+        const sampleEl = document.getElementById('diamond-hands-sample');
+        const total = data.totalCount || data.sampleSize || 0;
+        if (sampleEl && total > 0) {
+          sampleEl.textContent = `${data.analyzed || 0}/${total} analyzed...`;
+        }
+      }
+
+      // Render once we have actual distribution data (at least some analyzed)
       if (data.distribution && data.analyzed > 0) {
         this._renderDiamondHands(data);
       }

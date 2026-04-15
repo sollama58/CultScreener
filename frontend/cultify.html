@@ -317,6 +317,12 @@
       .cultify-metrics { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
+
+  <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
+  <link rel="preload" href="js/config.js" as="script">
+  <link rel="preload" href="js/api.js" as="script">
+  <link rel="preload" href="js/wallet.js" as="script">
+  <link rel="preload" href="js/cultify.js" as="script">
 </head>
 <body>
   <header class="header">

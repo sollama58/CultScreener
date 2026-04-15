@@ -5,3 +5,30 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+# HTML pages: always revalidate so users get updates immediately
+/*.html
+  Cache-Control: no-cache
+
+/
+  Cache-Control: no-cache
+
+# JS and CSS: 1-hour browser cache + serve stale while fetching fresh
+/js/*
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/css/*
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+# Images and other static assets: 1-day cache
+/*.jpg
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/*.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/*.svg
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/manifest.json
+  Cache-Control: public, max-age=86400

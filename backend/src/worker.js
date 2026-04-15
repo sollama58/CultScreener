@@ -330,6 +330,50 @@ const jobProcessors = {
   },
 
   // ==========================================
+  // Holder Count Fetching Jobs
+  // ==========================================
+
+  /**
+   * Fetch and cache holder counts for a batch of mints.
+   * Replaces fire-and-forget calls in the API routes so the API process stays
+   * free to serve requests while Helius DAS pagination happens here.
+   */
+  'fetch-holder-counts-batch': async (job) => {
+    const { mints } = job.data;
+    if (!mints || mints.length === 0) return { processed: 0 };
+
+    console.log(`[Worker] Fetching holder counts for ${mints.length} token(s)`);
+    let fetched = 0;
+    let skipped = 0;
+
+    for (const mint of mints) {
+      try {
+        // Skip if already cached — solanaService.getTokenHolderCount checks Redis first
+        const [countA, countB] = await Promise.all([
+          cache.get(`holder-total:${mint}`),
+          cache.get(keys.holderCount(mint))
+        ]);
+        if ((countA || countB) > 0) { skipped++; continue; }
+
+        const count = await solanaService.getTokenHolderCount(mint);
+        if (count && count > 0) {
+          // solanaService already caches internally; belt-and-suspenders for both keys
+          await Promise.all([
+            cache.set(`holder-total:${mint}`, count, TTL.DAY),
+            cache.set(keys.holderCount(mint), count, TTL.DAY)
+          ]);
+          fetched++;
+        }
+      } catch (err) {
+        console.warn(`[Worker] Holder count failed for ${mint.slice(0, 8)}:`, err.message);
+      }
+    }
+
+    console.log(`[Worker] Holder counts — fetched: ${fetched}, skipped (cached): ${skipped}`);
+    return { processed: mints.length, fetched, skipped };
+  },
+
+  // ==========================================
   // Holder Analytics Jobs
   // ==========================================
 

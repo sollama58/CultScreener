@@ -1103,30 +1103,30 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
     };
   });
 
-  // Batch-fetch holder counts from cache
+  // Batch-fetch holder counts from cache — check both keys in parallel
   if (tokens.length > 0) {
     await Promise.all(tokens.map(async (t) => {
-      const count = await cache.get(`holder-total:${t.mintAddress}`)
-        || await cache.get(keys.holderCount(t.mintAddress));
+      const [countA, countB] = await Promise.all([
+        cache.get(`holder-total:${t.mintAddress}`),
+        cache.get(keys.holderCount(t.mintAddress))
+      ]);
+      const count = countA || countB;
       if (count && count > 0) t.holders = count;
     }));
   }
 
-  // Trigger background Helius fetches for any tokens still missing holder counts
+  // Queue background Helius fetches for any tokens still missing holder counts
   if (solanaService.isHeliusConfigured()) {
     const missing = tokens.filter(t => !t.holders);
-    missing.forEach(t => {
-      solanaService.getTokenHolderCount(t.mintAddress).then(count => {
-        if (count && count > 0) {
-          cache.set(keys.holderCount(t.mintAddress), count, TTL.DAY);
-          cache.set(`holder-total:${t.mintAddress}`, count, TTL.DAY);
-        }
-      }).catch(() => {});
-    });
+    if (missing.length > 0) {
+      jobQueue.addAnalyticsJob('fetch-holder-counts-batch', {
+        mints: missing.map(t => t.mintAddress)
+      }, { priority: 10 }).catch(() => {});
+    }
   }
 
   const result = { tokens, total };
-  await cache.set(resultCacheKey, result, TTL.MEDIUM);
+  await cache.set(resultCacheKey, result, TTL.LONG);
   res.json(result);
 }));
 
@@ -1365,16 +1365,10 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       const results = await Promise.all(fetchPromises);
       const [heliusMetadata, geckoOverview, submissions, cachedHolders] = results;
 
-      // Use cached holder count; if missing, fire-and-forget a background fetch
+      // Use cached holder count; if missing, queue a background fetch via worker
       let holders = (typeof cachedHolders === 'number' && cachedHolders > 0) ? cachedHolders : null;
       if (!holders && solanaService.isHeliusConfigured()) {
-        // Don't await — let it populate the cache for the next request
-        solanaService.getTokenHolderCount(mint).then(count => {
-          if (count && count > 0) {
-            cache.set(keys.holderCount(mint), count, TTL.DAY);
-            cache.set(`holder-total:${mint}`, count, TTL.DAY);
-          }
-        }).catch(() => {});
+        jobQueue.addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }, { priority: 5 }).catch(() => {});
       }
 
       // Privacy: Don't log API response details
@@ -1905,19 +1899,17 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
         holderCount: null
       };
 
-      // Use cached holder count
+      // Use cached holder count — check both keys in parallel
       try {
-        const totalCount = await cache.get(`holder-total:${mint}`)
-          || await cache.get(keys.holderCount(mint));
+        const [countA, countB] = await Promise.all([
+          cache.get(`holder-total:${mint}`),
+          cache.get(keys.holderCount(mint))
+        ]);
+        const totalCount = countA || countB;
         if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
         } else if (solanaService.isHeliusConfigured()) {
-          solanaService.getTokenHolderCount(mint).then(count => {
-            if (count && count > 0) {
-              cache.set(`holder-total:${mint}`, count, TTL.DAY);
-              cache.set(keys.holderCount(mint), count, TTL.DAY);
-            }
-          }).catch(() => {});
+          jobQueue.addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }, { priority: 5 }).catch(() => {});
         }
       } catch (_) {}
     }
@@ -2190,7 +2182,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       const pending = await cache.get(pendingKey);
 
       if (!pending) {
-        await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup (consistent with diamond-hands)
+        await cache.set(pendingKey, Date.now(), 90000); // 90s dedup
         const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
           mint,
           wallets: staleWallets,
@@ -2294,14 +2286,14 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
 
     // Only clear a stale pending flag if it's been stuck for >3 minutes (matching TTL).
     // The old 30s threshold was too aggressive and caused duplicate job dispatches.
-    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 180000);
+    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 90000);
     if (pending && !isStillPending) {
       console.log(`[DiamondHands] Pending expired after ${Math.round((Date.now() - pending) / 1000)}s — allowing re-dispatch`);
       await cache.delete(pendingKey);
     }
 
     if (!isStillPending) {
-      await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup (consistent)
+      await cache.set(pendingKey, Date.now(), 90000); // 90s dedup
       const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
         mint,
         wallets: uncached,
