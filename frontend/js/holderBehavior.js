@@ -100,6 +100,13 @@
   }
 
   async function handleShare(tokenInfo, data) {
+    // On the token detail page — delegate to tokenDetail for the combined screenshot
+    // (diamond hands + holder behavior in one image, matching the DH share button)
+    if (typeof tokenDetail !== 'undefined' && typeof tokenDetail.shareWithHBData === 'function') {
+      return tokenDetail.shareWithHBData(data);
+    }
+
+    // Cultify page fallback — plain text share / clipboard copy
     const ticker = tokenInfo.symbol ? `$${tokenInfo.symbol.toUpperCase()}` : (tokenInfo.name || 'Token');
     const text   = buildShareText(tokenInfo, data);
 

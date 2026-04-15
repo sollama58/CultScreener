@@ -996,8 +996,15 @@ const tokenDetail = {
     else el.classList.add('concentration-high');                 // red = suspicious
   },
 
-  // Share holder analytics as a screenshot image
-  async _shareHolderAnalytics() {
+  // Public entry point called from holderBehavior.js share button —
+  // passes the already-fetched HB data so we don't need a second API call.
+  async shareWithHBData(hbData) {
+    return this._shareHolderAnalytics(hbData);
+  },
+
+  // Share holder analytics as a screenshot image.
+  // @param {Object|null} preloadedHBData — HB analysis result if already available
+  async _shareHolderAnalytics(preloadedHBData = null) {
     const graphic = document.getElementById('holders-graphic');
     if (!graphic) return;
 
@@ -1069,6 +1076,26 @@ const tokenDetail = {
         logoDataUrl = logoEl.src; // already a data URL
       }
 
+      // If HB data wasn't preloaded, try a fast cached fetch (3s timeout, non-blocking)
+      let hbData = preloadedHBData;
+      if (!hbData) {
+        try {
+          const hbMap = JSON.parse(sessionStorage.getItem('hb_access') || '{}');
+          const hbToken = hbMap[this.mint];
+          const wa = (typeof wallet !== 'undefined' && wallet.connected) ? wallet.address : null;
+          if (hbToken || wa) {
+            const params = new URLSearchParams();
+            if (hbToken) params.set('token', hbToken);
+            if (wa) params.set('wallet', wa);
+            const ac = new AbortController();
+            const t = setTimeout(() => ac.abort(), 3000);
+            const r = await fetch(`${apiBase}/api/cultify/holder-behavior/analyze/${encodeURIComponent(this.mint)}?${params}`, { signal: ac.signal });
+            clearTimeout(t);
+            if (r.ok) { const d = await r.json(); if (d.status === 'done') hbData = d; }
+          }
+        } catch (_) {}
+      }
+
       // Hide share button, refresh button, and timestamp from the screenshot
       hideEl(document.getElementById('holders-share'));
       hideEl(document.getElementById('holders-refresh'));
@@ -1102,7 +1129,44 @@ const tokenDetail = {
       graphic.insertBefore(sectionTitle, header.nextSibling);
       injected.push(sectionTitle);
 
-      // 3. Show watermark for screenshot (hidden on normal page via CSS)
+      // 3. If HB data is available, inject a Holder Behavior section above the watermark
+      if (hbData) {
+        const fmt = (ms) => {
+          if (!ms || ms <= 0) return '< 1m';
+          const d = Math.floor(ms / 86400000), h = Math.floor((ms % 86400000) / 3600000), m = Math.floor((ms % 3600000) / 60000);
+          if (d >= 1) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+          if (h >= 1) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+          return `${m}m`;
+        };
+        const avgHold = hbData.overallAvgHoldTimeMs ? fmt(hbData.overallAvgHoldTimeMs) : '—';
+        const statStyle = 'background:#1c1c21;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:0.65rem 0.75rem;';
+        const valStyle  = 'font-size:1rem;font-weight:700;color:#f0f0f2;font-family:\'JetBrains Mono\',monospace;line-height:1.2;';
+        const lblStyle  = 'font-size:0.68rem;color:#6b6b74;margin-top:0.2rem;';
+        const hbSection = document.createElement('div');
+        hbSection.style.cssText = 'margin-top:0.85rem;padding-top:0.85rem;border-top:1px solid rgba(255,255,255,0.06);';
+        hbSection.innerHTML = `
+          <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#6b6b74;margin-bottom:0.6rem;">HOLDER BEHAVIOR</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;">
+            <div style="${statStyle}">
+              <div style="${valStyle}">${hbData.analyzedCount}/${hbData.holderCount}</div>
+              <div style="${lblStyle}">Holders analyzed</div>
+            </div>
+            <div style="${statStyle}">
+              <div style="${valStyle}">${(hbData.totalSwapsAnalyzed || 0).toLocaleString()}</div>
+              <div style="${lblStyle}">Swaps analyzed</div>
+            </div>
+            <div style="${statStyle}">
+              <div style="${valStyle};color:#ff8c00;">${avgHold}</div>
+              <div style="${lblStyle}">Avg hold time</div>
+            </div>
+          </div>`;
+        const dhFooter = graphic.querySelector('.diamond-hands-footer');
+        if (dhFooter) graphic.insertBefore(hbSection, dhFooter);
+        else graphic.appendChild(hbSection);
+        injected.push(hbSection);
+      }
+
+      // 4. Show watermark for screenshot (hidden on normal page via CSS)
       const watermark = graphic.querySelector('.diamond-hands-watermark');
       let watermarkWasHidden = false;
       if (watermark) {
@@ -1127,7 +1191,7 @@ const tokenDetail = {
       const blob = await new Promise((resolve, reject) => {
         canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png');
       });
-      const filename = `${(tokenSymbol || tokenName || 'token').toLowerCase()}-conviction.png`;
+      const filename = `${(tokenSymbol || tokenName || 'token').toLowerCase()}-${hbData ? 'analysis' : 'conviction'}.png`;
 
       // Try native share (mobile)
       if (navigator.share && navigator.canShare) {
