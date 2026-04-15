@@ -27,7 +27,9 @@ const apiCache = {
 
   // Generate cache key
   key(endpoint, params = {}) {
-    const paramStr = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&');
+    const paramStr = Object.keys(params).sort()
+      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
+      .join('&');
     return `${endpoint}${paramStr ? '?' + paramStr : ''}`;
   },
 
@@ -184,8 +186,9 @@ const latencyTracker = {
   }
 };
 
-// Default request timeout (10 seconds) - prevents hung requests
-const DEFAULT_REQUEST_TIMEOUT = (typeof config !== 'undefined' && config.api?.timeout) || 10000;
+// Default request timeout — must exceed server-side REQUEST_TIMEOUT (30s) so the server
+// gets a chance to respond with an error rather than the client aborting first.
+const DEFAULT_REQUEST_TIMEOUT = (typeof config !== 'undefined' && config.api?.timeout) || 35000;
 
 // Global 429 rate-limit awareness: when set, auto-refresh and background requests should back off
 let _rateLimitedUntil = 0;

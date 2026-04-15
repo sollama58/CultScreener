@@ -5,7 +5,7 @@ const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
-const { strictLimiter } = require('../middleware/rateLimit');
+const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
 
 const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
 const BURN_AMOUNT = 10_000;
@@ -132,7 +132,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
 // GET /api/cultify/check-access/:mint — check if a wallet/token pair has access
 // For curated tokens this is unauthenticated (free). For burned tokens, the
 // frontend passes the access token it received from verify-burn.
-router.get('/check-access/:mint', validateMint, asyncHandler(async (req, res) => {
+router.get('/check-access/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   // Curated tokens are free for everyone
@@ -168,7 +168,7 @@ router.get('/check-access/:mint', validateMint, asyncHandler(async (req, res) =>
 // GET /api/cultify/analyze/:mint — run holder analytics for a cultified token
 // Uses the SAME holder-analytics cache and worker flow as the main token pages
 // so cultify users see identical data (real holder count, LP/burn detection, etc.)
-router.get('/analyze/:mint', validateMint, asyncHandler(async (req, res) => {
+router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   // Verify access: curated (free) or valid access token (from verify-burn)
@@ -358,7 +358,7 @@ async function dequeueMint(mint) {
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
 // Uses the SAME cache keys and worker flow as the main tokens endpoint.
 // Includes queue position info so the frontend can show "You are #N in queue".
-router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) => {
+router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   // Verify access
@@ -488,7 +488,7 @@ router.get('/diamond-hands/:mint', validateMint, asyncHandler(async (req, res) =
 }));
 
 // GET /api/cultify/my-tokens/:wallet — list tokens the wallet has active access to
-router.get('/my-tokens/:wallet', asyncHandler(async (req, res) => {
+router.get('/my-tokens/:wallet', walletLimiter, asyncHandler(async (req, res) => {
   const { wallet: walletAddress } = req.params;
   if (!SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     return res.status(400).json({ error: 'Invalid wallet address' });
@@ -506,7 +506,7 @@ router.get('/my-tokens/:wallet', asyncHandler(async (req, res) => {
 // ── RPC proxy endpoints (keeps Helius API key on the server) ──────────
 
 // GET /api/cultify/balance/:wallet — get ASDFASDFA balance for a wallet
-router.get('/balance/:wallet', asyncHandler(async (req, res) => {
+router.get('/balance/:wallet', walletLimiter, asyncHandler(async (req, res) => {
   const { wallet: walletAddress } = req.params;
   if (!SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     return res.status(400).json({ error: 'Invalid wallet address' });
@@ -542,13 +542,18 @@ router.get('/balance/:wallet', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/cultify/blockhash — get a recent blockhash for building transactions
-router.get('/blockhash', asyncHandler(async (req, res) => {
+router.get('/blockhash', walletLimiter, asyncHandler(async (req, res) => {
+  const cached = await cache.get('cultify:blockhash');
+  if (cached) return res.json(cached);
+
   try {
     const result = await solanaService.getRecentBlockhash();
     if (!result || !result.value) {
       return res.status(502).json({ error: 'Failed to get blockhash' });
     }
-    res.json({ blockhash: result.value.blockhash });
+    const payload = { blockhash: result.value.blockhash };
+    await cache.set('cultify:blockhash', payload, 15000); // 15-second TTL
+    res.json(payload);
   } catch (err) {
     console.error('[Cultify] Blockhash error:', err.message);
     res.status(502).json({ error: 'Failed to get blockhash' });
@@ -561,6 +566,10 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
   if (!transaction || typeof transaction !== 'string') {
     return res.status(400).json({ error: 'Missing transaction data' });
   }
+  // Validate base64 format and size (max ~2KB for a Solana tx)
+  if (!/^[A-Za-z0-9+/=]+$/.test(transaction) || transaction.length > 2800) {
+    return res.status(400).json({ error: 'Invalid transaction format' });
+  }
 
   try {
     const signature = await solanaService.sendRawTransaction(transaction);
@@ -572,11 +581,16 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
 }));
 
 // GET /api/cultify/tx-status/:signature — check transaction confirmation status
-router.get('/tx-status/:signature', asyncHandler(async (req, res) => {
+router.get('/tx-status/:signature', walletLimiter, asyncHandler(async (req, res) => {
   const { signature } = req.params;
   if (!signature || signature.length < 80 || signature.length > 90) {
     return res.status(400).json({ error: 'Invalid signature' });
   }
+
+  // Return confirmed status from cache (avoids repeated RPC calls while frontend polls)
+  const cacheKey = `cultify:tx-confirmed:${signature}`;
+  const confirmed = await cache.get(cacheKey);
+  if (confirmed != null) return res.json(confirmed);
 
   try {
     const tx = await solanaService.getTransaction(signature);
@@ -584,10 +598,412 @@ router.get('/tx-status/:signature', asyncHandler(async (req, res) => {
       return res.json({ confirmed: false });
     }
     const failed = tx.meta && tx.meta.err;
-    res.json({ confirmed: true, failed: !!failed });
+    const payload = { confirmed: true, failed: !!failed };
+    // Cache confirmed results for 5 minutes so repeated polls are cheap
+    await cache.set(cacheKey, payload, 300000);
+    res.json(payload);
   } catch (err) {
     res.json({ confirmed: false });
   }
+}));
+
+// ── Holder Behavior Analysis ──────────────────────────────────────────
+// Burns 25,000 ASDFASDFA to analyze top 50 holders' last 250 swap
+// transactions across all tokens (excluding SOL + stablecoins).
+
+const HB_BURN_AMOUNT = 25_000;
+const HB_BURN_RAW_AMOUNT = BigInt(HB_BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
+const HB_ACCESS_TTL = 259200 * 1000;  // 3 days (72 hours)
+const HB_ANALYSIS_CACHE_TTL = 7200 * 1000; // 2 hours
+const HB_PENDING_TTL = 1800 * 1000;   // 30 min auto-expire if analysis crashes
+
+// Store an HB access token and update the per-wallet index for "My Utilities"
+async function storeHBAccess(walletAddress, mint) {
+  const accessToken = generateAccessToken(walletAddress, mint);
+  const expiresAt = Date.now() + HB_ACCESS_TTL;
+  await cache.set(`hb:access:${accessToken}`, { wallet: walletAddress, mint, expiresAt }, HB_ACCESS_TTL);
+
+  // Maintain a per-wallet index so "My Utilities" can enumerate active accesses
+  const idxKey = `hb:wallet-idx:${walletAddress}`;
+  const existing = (await cache.get(idxKey)) || [];
+  const now = Date.now();
+  const filtered = existing.filter(e => e.mint !== mint && e.expiresAt > now);
+  filtered.push({ mint, expiresAt });
+  await cache.set(idxKey, filtered, HB_ACCESS_TTL);
+  return accessToken;
+}
+const HB_MAX_HOLDERS = 50;
+const HB_MAX_SWAPS_PER_HOLDER = 250;
+
+// Tokens to exclude: wrapped SOL + major stablecoins
+const HB_EXCLUDED_MINTS = new Set([
+  'So11111111111111111111111111111111111111112',    // Wrapped SOL
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',  // USDC
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',  // USDT
+  'USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA',   // USDS
+  '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',  // PYUSD
+]);
+
+// Fetch up to maxCount SWAP transactions for a wallet using paginated Helius calls
+async function fetchSwapHistory(walletAddress, maxCount) {
+  const results = [];
+  let before = null;
+
+  while (results.length < maxCount) {
+    const batchSize = Math.min(100, maxCount - results.length);
+    const opts = { limit: batchSize, type: 'SWAP' };
+    if (before) opts.before = before;
+
+    const txns = await solanaService.getTransactionsForAddress(walletAddress, opts);
+    if (!txns || txns.length === 0) break;
+
+    results.push(...txns);
+    if (txns.length < batchSize) break; // no more pages
+    before = txns[txns.length - 1].signature;
+  }
+
+  return results;
+}
+
+// Parse swap transactions into per-token hold pairs for a wallet.
+// Buy = wallet receives token, Sell = wallet sends token.
+// For tokens still held, sellTime is null and holdTime uses Date.now().
+function computeHoldPairs(walletAddress, transactions) {
+  const now = Date.now();
+  const firstBuy = {}; // mint -> first buy timestamp (ms)
+  const pairs = {};    // mint -> [{type, buyTime, sellTime, holdTime}]
+
+  // Process in ascending chronological order
+  const sorted = [...transactions].sort((a, b) => a.timestamp - b.timestamp);
+
+  for (const tx of sorted) {
+    const ts = tx.timestamp * 1000; // seconds → ms
+    for (const t of (tx.tokenTransfers || [])) {
+      const { mint: tm, fromUserAccount, toUserAccount, tokenAmount } = t;
+      if (!tm || HB_EXCLUDED_MINTS.has(tm)) continue;
+      if (!tokenAmount || Number(tokenAmount) <= 0) continue;
+
+      if (toUserAccount === walletAddress) {
+        // BUY: wallet received this token — record first buy time
+        if (!firstBuy[tm]) firstBuy[tm] = ts;
+      } else if (fromUserAccount === walletAddress && firstBuy[tm]) {
+        // SELL: wallet sent this token away — close the hold pair
+        if (!pairs[tm]) pairs[tm] = [];
+        pairs[tm].push({ type: 'sold', buyTime: firstBuy[tm], sellTime: ts, holdTime: ts - firstBuy[tm] });
+        delete firstBuy[tm]; // reset for next buy/sell cycle
+      }
+    }
+  }
+
+  // Remaining entries in firstBuy are still being held
+  for (const [tm, buyTime] of Object.entries(firstBuy)) {
+    if (!pairs[tm]) pairs[tm] = [];
+    pairs[tm].push({ type: 'holding', buyTime, sellTime: null, holdTime: now - buyTime });
+  }
+
+  return pairs;
+}
+
+// Run the full holder behavior analysis asynchronously (fire-and-forget).
+// Fetches top 50 holders, analyzes each wallet's last 250 swaps, then caches result.
+async function runHolderBehaviorAnalysis(mint) {
+  const pendingKey = `hb-pending:${mint}`;
+  const resultKey  = `hb-analysis:${mint}`;
+
+  try {
+    // Get holder list — prefer cached holder-analytics, else fetch fresh
+    let holderList = null;
+    const cachedAnalytics = await cache.get(`holder-analytics:${mint}`);
+    if (cachedAnalytics && cachedAnalytics.holders && cachedAnalytics.holders.length > 0) {
+      holderList = cachedAnalytics.holders;
+    } else {
+      const accounts = await solanaService.getTokenLargestAccounts(mint);
+      if (!accounts || accounts.length === 0) throw new Error('No holders found');
+      holderList = accounts.map((a, i) => ({
+        rank: i + 1,
+        address: a.wallet || a.address,
+        percentage: null,
+        isLP: false,
+        isBurnt: false
+      }));
+    }
+
+    // Filter LP/burn wallets, take top 50
+    const eligible = holderList
+      .filter(h => !h.isLP && !h.isBurnt && h.address)
+      .slice(0, HB_MAX_HOLDERS);
+
+    const now = Date.now();
+    const holderResults = [];
+    const tokenAgg = {}; // mint -> { holderCount, holdTimes: [] }
+    let totalSwaps = 0;
+
+    // Process holders in small batches to respect Helius rate limits
+    const BATCH = 5;
+    for (let i = 0; i < eligible.length; i += BATCH) {
+      const batch = eligible.slice(i, i + BATCH);
+      if (i > 0) await new Promise(r => setTimeout(r, 300));
+
+      const batchRes = await Promise.all(batch.map(async (holder) => {
+        try {
+          const txns = await fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER);
+          if (!txns || txns.length === 0) {
+            return { rank: holder.rank, address: holder.address, percentage: holder.percentage,
+              swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [] };
+          }
+
+          const pairsMap = computeHoldPairs(holder.address, txns);
+          const allTimes = Object.values(pairsMap).flatMap(p => p.map(e => e.holdTime));
+          const avgHoldTimeMs = allTimes.length > 0
+            ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length)
+            : null;
+
+          // Flatten pairs array for output (sorted chronologically)
+          const pairsArr = Object.entries(pairsMap)
+            .flatMap(([tm, list]) => list.map(p => ({ mint: tm, ...p })))
+            .sort((a, b) => a.buyTime - b.buyTime);
+
+          return {
+            rank: holder.rank,
+            address: holder.address,
+            percentage: holder.percentage,
+            swapsAnalyzed: txns.length,
+            tokensTraded: Object.keys(pairsMap).length,
+            avgHoldTimeMs,
+            pairs: pairsArr
+          };
+        } catch (err) {
+          console.warn(`[HB] Holder ${holder.address.slice(0, 8)} failed:`, err.message);
+          return { rank: holder.rank, address: holder.address, percentage: holder.percentage,
+            swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [] };
+        }
+      }));
+
+      for (const r of batchRes) {
+        holderResults.push(r);
+        totalSwaps += r.swapsAnalyzed || 0;
+        for (const pair of r.pairs) {
+          if (!tokenAgg[pair.mint]) tokenAgg[pair.mint] = { holdTimes: [] };
+          tokenAgg[pair.mint].holdTimes.push(pair.holdTime);
+        }
+      }
+    }
+
+    // Compute accurate holderCount once all batches are done
+    for (const [tm, agg] of Object.entries(tokenAgg)) {
+      agg.holderCount = holderResults.filter(h => h.pairs.some(p => p.mint === tm)).length;
+    }
+
+    // Overall avg hold time (mean of per-holder averages)
+    const validAvgs = holderResults.map(h => h.avgHoldTimeMs).filter(v => v != null);
+    const overallAvgHoldTimeMs = validAvgs.length > 0
+      ? Math.round(validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length)
+      : null;
+
+    // Token stats sorted by holderCount desc, cap at top 200 tokens
+    // Use reduce for min/max to avoid call-stack limits on large arrays
+    const tokenStats = Object.entries(tokenAgg)
+      .map(([tm, agg]) => {
+        const times = agg.holdTimes;
+        const sum = times.reduce((a, b) => a + b, 0);
+        const min = times.reduce((a, b) => (b < a ? b : a), times[0]);
+        const max = times.reduce((a, b) => (b > a ? b : a), times[0]);
+        return {
+          mint: tm,
+          holderCount: agg.holderCount,
+          pairCount: times.length,
+          avgHoldTimeMs: Math.round(sum / times.length),
+          minHoldTimeMs: min,
+          maxHoldTimeMs: max
+        };
+      })
+      .sort((a, b) => b.holderCount - a.holderCount)
+      .slice(0, 200);
+
+    const result = {
+      status: 'done',
+      analyzedAt: now,
+      holderCount: eligible.length,
+      analyzedCount: holderResults.filter(h => h.swapsAnalyzed > 0).length,
+      totalSwapsAnalyzed: totalSwaps,
+      overallAvgHoldTimeMs,
+      holders: holderResults,
+      tokenStats
+    };
+
+    await cache.set(resultKey, result, HB_ANALYSIS_CACHE_TTL);
+    console.log(`[HB] Done for ${mint.slice(0, 8)}: ${result.analyzedCount}/${result.holderCount} holders, ${totalSwaps} swaps`);
+  } catch (err) {
+    console.error(`[HB] Analysis failed for ${mint.slice(0, 8)}:`, err.message);
+    // Cache a failure marker so frontend doesn't loop forever
+    await cache.set(resultKey, { status: 'failed', error: err.message }, 300000).catch(() => {});
+  } finally {
+    await cache.delete(pendingKey).catch(() => {});
+  }
+}
+
+// POST /api/cultify/holder-behavior/verify-burn
+// Same on-chain verification pattern as /verify-burn but requires 25,000 ASDFASDFA.
+router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
+  const { signature, mint, wallet: walletAddress } = req.body;
+
+  if (!signature || typeof signature !== 'string' || signature.length < 80 || signature.length > 90) {
+    return res.status(400).json({ error: 'Invalid transaction signature' });
+  }
+  if (!mint || !SOLANA_ADDRESS_REGEX.test(mint)) {
+    return res.status(400).json({ error: 'Invalid token mint address' });
+  }
+  if (!walletAddress || !SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+
+  const alreadyUsed = await db.isCultifySignatureUsed(signature);
+  if (alreadyUsed) {
+    return res.status(409).json({ error: 'This burn transaction has already been claimed' });
+  }
+
+  let tx;
+  try {
+    tx = await solanaService.getTransaction(signature);
+  } catch (err) {
+    return res.status(502).json({ error: 'Failed to fetch transaction. Try again shortly.' });
+  }
+  if (!tx) {
+    return res.status(404).json({ error: 'Transaction not found. It may still be confirming.' });
+  }
+  if (tx.meta && tx.meta.err) {
+    return res.status(400).json({ error: 'Transaction failed on-chain' });
+  }
+  if (tx.blockTime) {
+    const ageSec = Math.floor(Date.now() / 1000) - tx.blockTime;
+    if (ageSec > MAX_TX_AGE_SECONDS) {
+      return res.status(400).json({ error: 'Transaction is too old. Please submit a new burn.' });
+    }
+  }
+
+  const allInstructions = [
+    ...(tx.transaction?.message?.instructions || []),
+    ...(tx.meta?.innerInstructions?.flatMap(ii => ii.instructions) || [])
+  ];
+  const burnIx = allInstructions.find(ix => {
+    const t = ix.parsed?.type;
+    return t === 'burn' || t === 'burnChecked';
+  });
+  if (!burnIx) {
+    return res.status(400).json({ error: 'No burn instruction found in this transaction' });
+  }
+
+  const burnedMint = burnIx.parsed?.info?.mint;
+  if (burnedMint !== BURN_MINT) {
+    return res.status(400).json({ error: 'Wrong token burned. Must burn $ASDFASDFA.' });
+  }
+
+  const rawAmount = burnIx.parsed?.info?.amount
+    || burnIx.parsed?.info?.tokenAmount?.amount
+    || '0';
+  if (BigInt(rawAmount) < HB_BURN_RAW_AMOUNT) {
+    return res.status(400).json({ error: `Insufficient burn amount. Required: ${HB_BURN_AMOUNT.toLocaleString()} ASDFASDFA.` });
+  }
+
+  const accountKeys = tx.transaction?.message?.accountKeys || [];
+  const signerMatch = accountKeys.some(k =>
+    (k.pubkey === walletAddress || k.pubkey?.toString() === walletAddress) && k.signer
+  );
+  if (!signerMatch) {
+    return res.status(400).json({ error: 'Transaction signer does not match your wallet' });
+  }
+
+  try {
+    await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString());
+  } catch (err) {
+    if (err.code === '23505') {
+      const accessToken = await storeHBAccess(walletAddress, mint);
+      return res.json({ success: true, accessToken, note: 'Burn already recorded' });
+    }
+    throw err;
+  }
+
+  const accessToken = await storeHBAccess(walletAddress, mint);
+  res.json({ success: true, accessToken });
+}));
+
+// GET /api/cultify/holder-behavior/check-access/:mint
+router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+
+  // Whitelisted wallets get free access — no burn needed
+  const walletAddress = req.query.wallet;
+  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
+    if (isWhitelisted) {
+      // Issue a temporary access token so the analyze route can validate normally
+      const accessToken = await storeHBAccess(walletAddress, mint);
+      return res.json({ access: true, reason: 'whitelisted', accessToken });
+    }
+  }
+
+  const accessToken = req.query.token;
+  if (!accessToken) return res.json({ access: false, reason: 'none' });
+  const accessData = await cache.get(`hb:access:${accessToken}`);
+  if (accessData && accessData.mint === mint) return res.json({ access: true, reason: 'burned' });
+  res.json({ access: false, reason: 'expired' });
+}));
+
+// GET /api/cultify/holder-behavior/analyze/:mint
+// Returns { status: 'computing' } immediately; caches final result for polling.
+router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+
+  // Whitelisted wallets bypass the burn gate entirely
+  const walletAddress = req.query.wallet;
+  let isWhitelisted = false;
+  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    isWhitelisted = await db.isWalletWhitelisted(walletAddress);
+  }
+
+  if (!isWhitelisted) {
+    const accessToken = req.query.token;
+    if (!accessToken) return res.status(403).json({ error: 'Access token required' });
+    const accessData = await cache.get(`hb:access:${accessToken}`);
+    if (!accessData || accessData.mint !== mint) {
+      return res.status(403).json({ error: 'Invalid or expired access token. Please burn again.' });
+    }
+  }
+
+  if (!solanaService.isHeliusConfigured()) {
+    return res.status(503).json({ error: 'Analysis unavailable: Helius not configured' });
+  }
+
+  const resultKey  = `hb-analysis:${mint}`;
+  const pendingKey = `hb-pending:${mint}`;
+
+  // Return cached result if available (includes failed results cached for 5 min)
+  const cached = await cache.get(resultKey);
+  if (cached) return res.json(cached);
+
+  // Return pending status if already running
+  const pending = await cache.get(pendingKey);
+  if (pending) return res.json({ status: 'computing' });
+
+  // Kick off analysis (fire and forget)
+  await cache.set(pendingKey, Date.now(), HB_PENDING_TTL);
+  setImmediate(() => runHolderBehaviorAnalysis(mint));
+
+  res.json({ status: 'computing' });
+}));
+
+// GET /api/cultify/holder-behavior/my-access?wallet=...
+// Returns all active HB accesses for a wallet (used by "My Utilities" modal)
+router.get('/holder-behavior/my-access', walletLimiter, asyncHandler(async (req, res) => {
+  const { wallet: walletAddress } = req.query;
+  if (!walletAddress || !SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    return res.json({ items: [] });
+  }
+  const idxKey = `hb:wallet-idx:${walletAddress}`;
+  const entries = (await cache.get(idxKey)) || [];
+  const now = Date.now();
+  const active = entries.filter(e => e.expiresAt > now);
+  res.json({ items: active.map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' })) });
 }));
 
 module.exports = router;

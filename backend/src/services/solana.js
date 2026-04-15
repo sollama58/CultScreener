@@ -886,7 +886,7 @@ async function getTokenAuthorities(mintAddress) {
  * @param {string} [options.type] - Filter by transaction type (e.g. 'SWAP')
  * @returns {Promise<Array|null>} - Array of parsed transactions or null
  */
-async function getTransactionsForAddress(walletAddress, { limit = 100, type } = {}) {
+async function getTransactionsForAddress(walletAddress, { limit = 100, type, before } = {}) {
   if (!HELIUS_API_KEY) {
     console.warn(`[Solana] getTransactionsForAddress skipped: no HELIUS_API_KEY`);
     return null;
@@ -895,6 +895,7 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type } = 
   try {
     const params = { 'api-key': HELIUS_API_KEY, limit };
     if (type) params.type = type;
+    if (before) params.before = before;
 
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.get(
@@ -1004,7 +1005,7 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
       if (data.length > CLOSED_OFFSET && data[CLOSED_OFFSET] !== 0) continue;
       const withdrawn = data.readBigUInt64LE(WITHDRAWN_OFFSET);
       const deposited = data.readBigUInt64LE(NET_DEPOSITED_OFFSET);
-      const remaining = deposited - withdrawn;
+      const remaining = deposited >= withdrawn ? deposited - withdrawn : 0n;
       if (remaining > 0n) {
         totalLocked += Number(remaining) / divisor;
       }

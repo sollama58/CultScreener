@@ -234,6 +234,48 @@ app.use('/api/', defaultLimiter);
 // Health check routes (no rate limiting)
 app.use('/health', healthRoutes);
 
+// Utility access summary for a wallet (Cultify + Holder Behavior)
+// Used by the "My Utilities" modal in the wallet dropdown
+app.get('/api/utilities/my-access', async (req, res) => {
+  const wallet = req.query.wallet;
+  const SOLANA_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  if (!wallet || !SOLANA_ADDR.test(wallet)) return res.json({ cultify: [], holderBehavior: [] });
+
+  try {
+    const { cache } = require('./services/cache');
+    const CULTIFY_ACCESS_TTL_MS = 43200 * 1000; // 12 hours (matches ACCESS_TOKEN_TTL in cultify.js)
+
+    // Cultify: look up recent burns from DB
+    const burns = await db.getCultifyBurnsByWallet(wallet);
+    const cultify = burns.map(b => ({
+      mint: b.mint,
+      expiresAt: new Date(new Date(b.createdAt).getTime() + CULTIFY_ACCESS_TTL_MS).toISOString(),
+      type: 'cultify'
+    }));
+
+    // Holder Behavior: read wallet index from Redis
+    const hbEntries = (await cache.get(`hb:wallet-idx:${wallet}`)) || [];
+    const now = Date.now();
+    const holderBehavior = hbEntries
+      .filter(e => e.expiresAt > now)
+      .map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' }));
+
+    res.json({ cultify, holderBehavior });
+  } catch {
+    res.json({ cultify: [], holderBehavior: [] });
+  }
+});
+
+// Public announcements endpoint (no auth required)
+app.get('/api/announcements', async (req, res) => {
+  try {
+    const announcements = await db.getActiveAnnouncements();
+    res.json({ announcements });
+  } catch {
+    res.json({ announcements: [] });
+  }
+});
+
 // API Routes
 app.use('/api/tokens', tokenRoutes);
 app.use('/api/watchlist', watchlistRoutes);
@@ -494,8 +536,8 @@ async function warmConviction() {
       // Check DB — skip if computed recently
       const dbRow = await db.getToken(mint).catch(() => null);
       if (dbRow && dbRow.conviction_computed_at) {
-        const age = Date.now() - new Date(dbRow.conviction_computed_at).getTime();
-        if (age < STALE_MS) continue;
+        const timestamp = new Date(dbRow.conviction_computed_at).getTime();
+        if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
       }
 
       // Trigger by making an internal request to the diamond-hands endpoint
@@ -540,8 +582,8 @@ async function warmCuratedConviction() {
       // Skip if conviction was computed recently
       const dbRow = await db.getToken(mint).catch(() => null);
       if (dbRow && dbRow.conviction_computed_at) {
-        const age = Date.now() - new Date(dbRow.conviction_computed_at).getTime();
-        if (age < STALE_MS) continue;
+        const timestamp = new Date(dbRow.conviction_computed_at).getTime();
+        if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
       }
 
       // Trigger diamond-hands computation via internal request

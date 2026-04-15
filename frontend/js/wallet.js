@@ -552,6 +552,20 @@ const wallet = {
       window.open(`https://solscan.io/account/${this.address}`, '_blank');
     };
 
+    const utilitiesBtn = document.createElement('button');
+    utilitiesBtn.className = 'btn btn-secondary';
+    utilitiesBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="3" width="20" height="14" rx="2"/>
+        <path d="M8 21h8M12 17v4"/>
+      </svg>
+      My Utilities
+    `;
+    utilitiesBtn.onclick = () => {
+      menu.remove();
+      this.showUtilitiesModal(this.address);
+    };
+
     const disconnectBtn = document.createElement('button');
     disconnectBtn.className = 'btn btn-danger';
     disconnectBtn.innerHTML = `
@@ -568,6 +582,7 @@ const wallet = {
     };
 
     actions.appendChild(copyBtn);
+    actions.appendChild(utilitiesBtn);
     actions.appendChild(viewBtn);
     actions.appendChild(disconnectBtn);
     content.appendChild(actions);
@@ -575,6 +590,100 @@ const wallet = {
     menu.appendChild(overlay);
     menu.appendChild(content);
     document.body.appendChild(menu);
+  },
+
+  // Show My Utilities modal
+  async showUtilitiesModal(walletAddress) {
+    // Remove any existing modal
+    document.querySelector('.utilities-modal')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'utilities-modal';
+
+    const box = document.createElement('div');
+    box.className = 'utilities-modal-box';
+
+    const header = document.createElement('div');
+    header.className = 'utilities-modal-header';
+    header.innerHTML = `
+      <span class="utilities-modal-title">My Utility Access</span>
+      <button class="utilities-modal-close" aria-label="Close">&times;</button>
+    `;
+    const closeModal = () => { overlay.remove(); document.removeEventListener('keydown', escHandler); };
+    const escHandler = (e) => { if (e.key === 'Escape') closeModal(); };
+    header.querySelector('.utilities-modal-close').onclick = closeModal;
+    overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
+    document.addEventListener('keydown', escHandler);
+
+    const body = document.createElement('div');
+    body.className = 'utilities-modal-body';
+    body.innerHTML = '<p class="utilities-loading">Loading...</p>';
+
+    box.appendChild(header);
+    box.appendChild(body);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    // Fetch access data
+    try {
+      const base = (typeof config !== 'undefined' && config.api?.baseUrl) ? config.api.baseUrl : '';
+      const res = await fetch(`${base}/api/utilities/my-access?wallet=${encodeURIComponent(walletAddress)}`, { cache: 'no-store' });
+      const data = await res.ok ? await res.json() : { cultify: [], holderBehavior: [] };
+
+      const cultify = data.cultify || [];
+      const hb = data.holderBehavior || [];
+
+      if (cultify.length === 0 && hb.length === 0) {
+        body.innerHTML = `
+          <p class="utilities-empty">No active utility access.</p>
+          <p class="utilities-empty-sub">Burn ASDFASDFA tokens on the <a href="cultify.html">Cultify</a> page or on a token's analysis page to gain access.</p>
+        `;
+        return;
+      }
+
+      function timeRemaining(isoExpiry) {
+        const ms = new Date(isoExpiry) - Date.now();
+        if (ms <= 0) return 'Expired';
+        const h = Math.floor(ms / 3600000);
+        const m = Math.floor((ms % 3600000) / 60000);
+        if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+        return h > 0 ? `${h}h ${m}m` : `${m}m`;
+      }
+
+      function mintShort(mint) {
+        return mint ? mint.slice(0, 6) + '…' + mint.slice(-4) : '--';
+      }
+
+      function buildSection(title, icon, items, tokenPage) {
+        if (items.length === 0) return '';
+        const rows = items.map(item => {
+          const expiry = timeRemaining(item.expiresAt);
+          const expired = expiry === 'Expired';
+          const link = tokenPage ? `<a href="token.html?mint=${item.mint}" class="utilities-mint-link" title="${item.mint}">${mintShort(item.mint)}</a>` : `<span class="utilities-mint" title="${item.mint}">${mintShort(item.mint)}</span>`;
+          return `<tr class="${expired ? 'utilities-row-expired' : ''}">
+            <td>${link}</td>
+            <td class="utilities-expiry ${expired ? 'utilities-expired' : ''}">${expiry}</td>
+          </tr>`;
+        }).join('');
+        return `
+          <div class="utilities-section">
+            <div class="utilities-section-title">${icon} ${title}</div>
+            <table class="utilities-table">
+              <thead><tr><th>Token</th><th>Expires In</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      body.innerHTML = [
+        buildSection('Cultify Analysis', '🔥', cultify, true),
+        buildSection('Holder Behavior', '📊', hb, true)
+      ].join('');
+
+    } catch {
+      body.innerHTML = '<p class="utilities-empty">Failed to load utility access.</p>';
+    }
   },
 
   // Save connection to sessionStorage (privacy-conscious: cleared on browser close)

@@ -223,7 +223,7 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
 
     // Scan for wildcard patterns containing this mint
     // wallet-token-hold:{wallet}:{mint} — per-wallet hold times for this token
-    const walletTokenKeys = await cache.scanKeys(`wallet-token-hold:*:${addr}`);
+    const walletTokenKeys = (await cache.scanKeys(`wallet-token-hold:*:${addr}`)).slice(0, 10000);
     for (const key of walletTokenKeys) {
       await cache.delete(key);
       deleted++;
@@ -494,6 +494,34 @@ router.delete('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) =
 
   const result = await db.deleteBugReport(id);
   if (!result) return res.status(404).json({ error: 'Bug report not found' });
+  res.json({ success: true });
+}));
+
+// ==========================================
+// Utility Whitelist
+// ==========================================
+
+router.get('/whitelist', asyncHandler(async (req, res) => {
+  const wallets = await db.getWhitelistedWallets();
+  res.json({ wallets });
+}));
+
+router.post('/whitelist', strictLimiter, asyncHandler(async (req, res) => {
+  const { wallet, note } = req.body;
+  if (!wallet || typeof wallet !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet.trim())) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+  const entry = await db.addWhitelistedWallet(wallet.trim(), note ? String(note).slice(0, 200) : null);
+  res.status(201).json({ success: true, entry });
+}));
+
+router.delete('/whitelist/:wallet', strictLimiter, asyncHandler(async (req, res) => {
+  const { wallet } = req.params;
+  if (!wallet || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+  const removed = await db.removeWhitelistedWallet(wallet);
+  if (!removed) return res.status(404).json({ error: 'Wallet not in whitelist' });
   res.json({ success: true });
 }));
 

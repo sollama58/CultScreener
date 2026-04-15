@@ -739,15 +739,8 @@ async function validateVoteSignature(req, res, next) {
     });
   }
 
-  // Replay protection: reject previously used signatures
+  // Replay protection — use only the atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({
-      error: 'Signature already used',
-      message: 'Each signature can only be used once',
-      code: 'SIGNATURE_REPLAY'
-    });
-  }
 
   // Recreate the expected message
   const expectedMessage = createVoteSignatureMessage(voteType, parseInt(submissionId), timestamp);
@@ -764,7 +757,7 @@ async function validateVoteSignature(req, res, next) {
   }
 
   // Mark signature as used (TTL = expiry window)
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({
@@ -907,11 +900,8 @@ async function validateBatchVoteSignature(req, res, next) {
     });
   }
 
-  // Replay protection
+  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
-  }
 
   // Recreate the expected message
   const expectedMessage = createBatchVoteSignatureMessage(votes, voterWallet, timestamp);
@@ -927,7 +917,7 @@ async function validateBatchVoteSignature(req, res, next) {
     });
   }
 
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({
@@ -998,11 +988,8 @@ async function validateSubmissionSignature(req, res, next) {
     });
   }
 
-  // Replay protection
+  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
-  }
 
   // Recreate the expected message
   const expectedMessage = createSubmissionSignatureMessage(submissionType, tokenMint, timestamp);
@@ -1018,7 +1005,7 @@ async function validateSubmissionSignature(req, res, next) {
     });
   }
 
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({
@@ -1219,11 +1206,8 @@ async function validateBatchSubmissionSignature(req, res, next) {
     });
   }
 
-  // Replay protection
+  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
-  }
 
   // Extract submission types for signature verification
   const submissionTypes = submissions.map(s => s.submissionType);
@@ -1242,7 +1226,7 @@ async function validateBatchSubmissionSignature(req, res, next) {
     });
   }
 
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({
@@ -1345,11 +1329,8 @@ async function validateWatchlistSignature(req, res, next) {
   const action = req.method === 'DELETE' ? 'remove' : 'add';
   const expectedMessage = createWatchlistSignatureMessage(action, wallet, tokenMint, timestamp);
 
-  // Replay protection
+  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
-  }
 
   const isValid = verifyWalletSignature(expectedMessage, signature, wallet);
 
@@ -1357,7 +1338,7 @@ async function validateWatchlistSignature(req, res, next) {
     return res.status(401).json({ error: 'Invalid signature', message: 'Wallet signature verification failed', code: 'INVALID_SIGNATURE' });
   }
 
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({
@@ -1413,11 +1394,8 @@ async function validateSentimentSignature(req, res, next) {
   const mint = req.params.mint || '';
   const expectedMessage = createSentimentSignatureMessage(sentiment, mint, voterWallet, timestamp);
 
-  // Replay protection
+  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
-  }
 
   const isValid = verifyWalletSignature(expectedMessage, signature, voterWallet);
 
@@ -1425,7 +1403,7 @@ async function validateSentimentSignature(req, res, next) {
     return res.status(401).json({ error: 'Invalid signature', message: 'Wallet signature verification failed', code: 'INVALID_SIGNATURE' });
   }
 
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({
@@ -1481,10 +1459,8 @@ async function validateCallSignature(req, res, next) {
   const mint = req.params.mint || '';
   const expectedMessage = createCallSignatureMessage(mint, callerWallet, timestamp);
 
+  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
-  }
 
   const isValid = verifyWalletSignature(expectedMessage, signature, callerWallet);
 
@@ -1492,7 +1468,7 @@ async function validateCallSignature(req, res, next) {
     return res.status(401).json({ error: 'Invalid signature', message: 'Wallet signature verification failed', code: 'INVALID_SIGNATURE' });
   }
 
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({
@@ -1545,11 +1521,8 @@ async function validateApiKeySignature(req, res, next) {
     return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
   }
 
-  // Replay protection
+  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
-  if (await isSignatureUsed(sigKey)) {
-    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
-  }
 
   const expectedMessage = createApiKeySignatureMessage(wallet, timestamp);
   const isValid = verifyWalletSignature(expectedMessage, signature, wallet);
@@ -1558,7 +1531,7 @@ async function validateApiKeySignature(req, res, next) {
     return res.status(401).json({ error: 'Invalid signature', message: 'Wallet signature verification failed', code: 'INVALID_SIGNATURE' });
   }
 
-  // Atomic check-and-mark to close the TOCTOU window between the early check and here
+  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
   const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
   if (alreadyUsed) {
     return res.status(400).json({

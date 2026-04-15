@@ -424,6 +424,16 @@ async function initializeDatabase() {
 
       CREATE INDEX IF NOT EXISTS idx_cultify_burns_wallet_mint ON cultify_burns(wallet_address, token_mint);
       CREATE INDEX IF NOT EXISTS idx_cultify_burns_sig ON cultify_burns(burn_signature);
+
+      -- Utility whitelist: wallets that can use paid utilities for free (no burn required)
+      CREATE TABLE IF NOT EXISTS utility_whitelist (
+        id SERIAL PRIMARY KEY,
+        wallet_address VARCHAR(44) UNIQUE NOT NULL,
+        note TEXT,
+        added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_utility_whitelist_wallet ON utility_whitelist(wallet_address);
     `);
 
     await client.query('COMMIT');
@@ -3123,6 +3133,48 @@ async function isCultifySignatureUsed(signature) {
   return result.rows.length > 0;
 }
 
+// ==========================================
+// Utility Whitelist
+// ==========================================
+
+async function isWalletWhitelisted(walletAddress) {
+  if (!pool) return false;
+  const result = await pool.query(
+    'SELECT 1 FROM utility_whitelist WHERE wallet_address = $1 LIMIT 1',
+    [walletAddress]
+  );
+  return result.rows.length > 0;
+}
+
+async function addWhitelistedWallet(walletAddress, note = null) {
+  if (!pool) throw new Error('Database not available');
+  const result = await pool.query(
+    `INSERT INTO utility_whitelist (wallet_address, note)
+     VALUES ($1, $2)
+     ON CONFLICT (wallet_address) DO UPDATE SET note = EXCLUDED.note
+     RETURNING *`,
+    [walletAddress, note]
+  );
+  return result.rows[0];
+}
+
+async function removeWhitelistedWallet(walletAddress) {
+  if (!pool) throw new Error('Database not available');
+  const result = await pool.query(
+    'DELETE FROM utility_whitelist WHERE wallet_address = $1 RETURNING wallet_address',
+    [walletAddress]
+  );
+  return result.rows.length > 0;
+}
+
+async function getWhitelistedWallets() {
+  if (!pool) return [];
+  const result = await pool.query(
+    'SELECT wallet_address, note, added_at FROM utility_whitelist ORDER BY added_at DESC'
+  );
+  return result.rows;
+}
+
 module.exports = {
   get pool() { return pool; },
   initializeDatabase,
@@ -3262,5 +3314,10 @@ module.exports = {
   recordCultifyBurn,
   hasCultifyAccess,
   getCultifyBurnsByWallet,
-  isCultifySignatureUsed
+  isCultifySignatureUsed,
+  // Utility whitelist
+  isWalletWhitelisted,
+  addWhitelistedWallet,
+  removeWhitelistedWallet,
+  getWhitelistedWallets
 };

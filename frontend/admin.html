@@ -352,6 +352,7 @@
         <button class="admin-tab" data-tab="announcements">Announcements</button>
         <button class="admin-tab" data-tab="bugs">Bug Reports</button>
         <button class="admin-tab" data-tab="submissions">Submissions</button>
+        <button class="admin-tab" data-tab="whitelist">Whitelist</button>
         <button class="admin-tab" data-tab="health">System Health</button>
       </div>
 
@@ -408,25 +409,33 @@
 
       <!-- Announcements -->
       <div id="tab-announcements" class="tab-panel">
-        <div class="admin-form" id="announcement-form">
-          <div class="field" style="flex:1;min-width:200px;">
-            <label for="ann-title">Title</label>
-            <input type="text" id="ann-title" placeholder="Announcement title" maxlength="200">
+        <div class="admin-form" id="announcement-form" style="flex-direction:column;align-items:stretch;">
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;">
+            <div class="field" style="flex:1;min-width:200px;">
+              <label for="ann-title">Title</label>
+              <input type="text" id="ann-title" placeholder="Announcement title" maxlength="200">
+            </div>
+            <div class="field">
+              <label for="ann-type">Type</label>
+              <select id="ann-type">
+                <option value="info">Info</option>
+                <option value="warning">Warning</option>
+                <option value="success">Success</option>
+                <option value="error">Error</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ann-expires">Expires (optional)</label>
+              <input type="datetime-local" id="ann-expires" style="font-size:0.82rem;">
+            </div>
           </div>
-          <div class="field">
-            <label for="ann-type">Type</label>
-            <select id="ann-type">
-              <option value="info">Info</option>
-              <option value="warning">Warning</option>
-              <option value="success">Success</option>
-              <option value="error">Error</option>
-            </select>
+          <div class="field" style="margin-top:0.25rem;">
+            <label for="ann-message">Message</label>
+            <textarea id="ann-message" placeholder="Announcement message..." maxlength="2000" style="width:100%;box-sizing:border-box;"></textarea>
           </div>
-          <button class="btn btn-primary btn-sm" id="ann-create-btn">Create</button>
-        </div>
-        <div class="field" style="margin-bottom:1rem;">
-          <label for="ann-message" style="font-size:0.7rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.25rem;display:block;">Message</label>
-          <textarea id="ann-message" placeholder="Announcement message..." maxlength="2000" style="width:100%;padding:0.5rem 0.75rem;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.84rem;font-family:var(--font-sans);min-height:60px;resize:vertical;outline:none;"></textarea>
+          <div>
+            <button class="btn btn-primary btn-sm" id="ann-create-btn">Create Announcement</button>
+          </div>
         </div>
         <table class="admin-table">
           <thead><tr><th>Title</th><th>Type</th><th>Active</th><th>Created</th><th>Actions</th></tr></thead>
@@ -470,6 +479,27 @@
         <table class="admin-table">
           <thead><tr><th>ID</th><th>Token</th><th>Type</th><th>Content</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
           <tbody id="subs-table-body"><tr><td colspan="7" class="empty-msg">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- Utility Whitelist -->
+      <div id="tab-whitelist" class="tab-panel">
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:1rem;">Wallets on this list can use paid utilities (Cultify, Holder Behavior) for free — no token burn required.</p>
+        <div class="admin-form">
+          <div class="field" style="flex:1;min-width:260px;">
+            <label for="wl-wallet-input">Wallet Address</label>
+            <input type="text" id="wl-wallet-input" placeholder="Solana wallet address..." maxlength="44">
+          </div>
+          <div class="field" style="flex:1;min-width:160px;">
+            <label for="wl-note-input">Note (optional)</label>
+            <input type="text" id="wl-note-input" placeholder="e.g. team member" maxlength="200">
+          </div>
+          <button class="btn btn-primary btn-sm" id="wl-add-btn">Add Wallet</button>
+        </div>
+        <span id="wl-status" style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.75rem;"></span>
+        <table class="admin-table">
+          <thead><tr><th>Wallet</th><th>Note</th><th>Added</th><th>Actions</th></tr></thead>
+          <tbody id="wl-table-body"><tr><td colspan="4" class="empty-msg">Loading...</td></tr></tbody>
         </table>
       </div>
 

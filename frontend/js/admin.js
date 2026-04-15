@@ -1,26 +1,22 @@
 /* CultScreener Admin Panel */
 
 const admin = {
-  token: null,
   activeTab: 'dashboard',
   _boundTabs: false,
 
   init() {
-    this.token = sessionStorage.getItem('cultscreener_admin_session');
     this.bindLogin();
     this.bindTabs();
     this.bindCuratedActions();
     this.bindAnnouncementActions();
     this.bindFilterActions();
     this.bindMaintenanceActions();
+    this.bindWhitelistActions();
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
-    if (this.token) {
-      this.verifySession();
-    } else {
-      this.showLogin();
-    }
+    // Always attempt session verification — the httpOnly cookie is sent automatically
+    this.verifySession();
   },
 
   // ── Auth ──────────────────────────────────────
@@ -48,8 +44,6 @@ const admin = {
         body: JSON.stringify({ password }),
         noAuth: true
       });
-      this.token = data.token;
-      sessionStorage.setItem('cultscreener_admin_session', data.token);
       input.value = '';
       this.showPanel();
       this.loadTab('dashboard');
@@ -64,8 +58,6 @@ const admin = {
 
   async logout() {
     try { await this.request('/api/admin/logout', { method: 'POST' }); } catch (_) {}
-    this.token = null;
-    sessionStorage.removeItem('cultscreener_admin_session');
     this.showLogin();
   },
 
@@ -75,8 +67,6 @@ const admin = {
       this.showPanel();
       this.loadTab('dashboard');
     } catch {
-      this.token = null;
-      sessionStorage.removeItem('cultscreener_admin_session');
       this.showLogin();
     }
   },
@@ -97,21 +87,16 @@ const admin = {
   async request(endpoint, opts = {}) {
     const url = config.api.baseUrl + endpoint;
     const headers = { 'Content-Type': 'application/json' };
-    if (!opts.noAuth && this.token) {
-      headers['X-Admin-Session'] = this.token;
-    }
     const res = await fetch(url, {
       method: opts.method || 'GET',
       headers,
       body: opts.body || undefined,
-      credentials: 'include',
+      credentials: 'include', // sends the httpOnly admin_session cookie automatically
       cache: 'no-store'
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       if (res.status === 401 && !opts.noAuth) {
-        this.token = null;
-        sessionStorage.removeItem('cultscreener_admin_session');
         this.showLogin();
       }
       const err = new Error(data.error || `HTTP ${res.status}`);
@@ -146,6 +131,7 @@ const admin = {
       case 'announcements': this.loadAnnouncements(); break;
       case 'bugs': this.loadBugReports(); break;
       case 'submissions': this.loadSubmissions(); break;
+      case 'whitelist': this.loadWhitelist(); break;
       case 'health': this.loadHealth(); break;
     }
   },
@@ -434,6 +420,8 @@ const admin = {
     const title = document.getElementById('ann-title').value.trim();
     const message = document.getElementById('ann-message').value.trim();
     const type = document.getElementById('ann-type').value;
+    const expiresRaw = document.getElementById('ann-expires').value;
+    const expiresAt = expiresRaw ? new Date(expiresRaw).toISOString() : null;
     if (!title || !message) {
       if (typeof toast !== 'undefined') toast.error('Title and message required');
       return;
@@ -441,10 +429,11 @@ const admin = {
     try {
       await this.request('/api/admin/announcements', {
         method: 'POST',
-        body: JSON.stringify({ title, message, type })
+        body: JSON.stringify({ title, message, type, expiresAt })
       });
       document.getElementById('ann-title').value = '';
       document.getElementById('ann-message').value = '';
+      document.getElementById('ann-expires').value = '';
       this.loadAnnouncements();
       if (typeof toast !== 'undefined') toast.success('Announcement created');
     } catch (err) {
@@ -589,6 +578,91 @@ const admin = {
       this.loadSubmissions();
       this.loadStats();
       if (typeof toast !== 'undefined') toast.success(`Submission ${status}`);
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    }
+  },
+
+  // ── Utility Whitelist ─────────────────────────
+
+  bindWhitelistActions() {
+    const addBtn = document.getElementById('wl-add-btn');
+    const walletInput = document.getElementById('wl-wallet-input');
+    if (addBtn) addBtn.addEventListener('click', () => this.addWhitelistedWallet());
+    if (walletInput) walletInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.addWhitelistedWallet();
+    });
+  },
+
+  async loadWhitelist() {
+    const tbody = document.getElementById('wl-table-body');
+    tbody.innerHTML = '<tr><td colspan="4" class="empty-msg">Loading...</td></tr>';
+    try {
+      const data = await this.request('/api/admin/whitelist');
+      const wallets = data.wallets || [];
+      if (wallets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-msg">No whitelisted wallets.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = wallets.map(w => `<tr>
+        <td class="mono" title="${this.esc(w.wallet_address)}">${this.esc(w.wallet_address)}</td>
+        <td>${this.esc(w.note || '--')}</td>
+        <td>${w.added_at ? new Date(w.added_at).toLocaleDateString() : '--'}</td>
+        <td><button class="action-btn danger" data-remove-wallet="${this.esc(w.wallet_address)}">Remove</button></td>
+      </tr>`).join('');
+
+      tbody.querySelectorAll('[data-remove-wallet]').forEach(btn => {
+        btn.addEventListener('click', () => this.removeWhitelistedWallet(btn.dataset.removeWallet));
+      });
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+    }
+  },
+
+  async addWhitelistedWallet() {
+    const walletInput = document.getElementById('wl-wallet-input');
+    const noteInput = document.getElementById('wl-note-input');
+    const btn = document.getElementById('wl-add-btn');
+    const status = document.getElementById('wl-status');
+    const wallet = walletInput.value.trim();
+    const note = noteInput.value.trim();
+
+    if (!wallet || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
+      status.textContent = 'Invalid Solana wallet address.';
+      status.style.color = 'var(--red)';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Adding...';
+    status.textContent = '';
+    try {
+      await this.request('/api/admin/whitelist', {
+        method: 'POST',
+        body: JSON.stringify({ wallet, note: note || undefined })
+      });
+      walletInput.value = '';
+      noteInput.value = '';
+      status.textContent = 'Wallet added to whitelist.';
+      status.style.color = 'var(--green)';
+      this.loadWhitelist();
+      if (typeof toast !== 'undefined') toast.success('Wallet whitelisted');
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Add Wallet';
+    }
+  },
+
+  async removeWhitelistedWallet(wallet) {
+    if (!confirm(`Remove ${wallet.slice(0, 8)}... from whitelist?`)) return;
+    try {
+      await this.request(`/api/admin/whitelist/${encodeURIComponent(wallet)}`, { method: 'DELETE' });
+      this.loadWhitelist();
+      if (typeof toast !== 'undefined') toast.success('Wallet removed from whitelist');
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
     }
