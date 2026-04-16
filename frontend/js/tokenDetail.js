@@ -1250,46 +1250,62 @@ const tokenDetail = {
         this._diamondHandsTimer = null;
       }
       this._diamondHandsLoaded = false;
-      this._dhLastAnalyzed = -1;
+      this._dhLastState = null;
       this._dhStalledCount = 0;
+      this._dhAutoRetried = false;
     }
 
     const isExtended = attempt >= MAX_POLLS;
     const extendedAttempt = attempt - MAX_POLLS;
 
+    // Capture mint at call time — if the user navigates to a different token while this
+    // request is in-flight, we discard the stale response instead of rendering it onto
+    // the wrong token's DOM.
+    const mintAtStart = this.mint;
+
+    const scheduleNext = (nextAttempt) => {
+      const delay = nextAttempt >= MAX_POLLS ? EXTENDED_DELAY : (POLL_DELAYS[nextAttempt] || 10000);
+      this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(nextAttempt), delay);
+    };
+
     try {
       // Bypass apiCache — poll directly so we always get fresh data from backend
-      if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Poll ${attempt}/${MAX_POLLS + EXTENDED_POLLS} for ${this.mint.slice(0, 8)}...`);
-      const data = await api.request(`/api/tokens/${this.mint}/holders/diamond-hands`);
+      if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Poll ${attempt}/${MAX_POLLS + EXTENDED_POLLS} for ${mintAtStart.slice(0, 8)}...`);
+      const data = await api.request(`/api/tokens/${mintAtStart}/holders/diamond-hands`);
+
+      // Discard response if user navigated away while this request was in-flight
+      if (this.mint !== mintAtStart) return;
+
+      const canRetry = (!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS);
 
       if (!data) {
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] No response`);
-        // Keep existing data if we have it; only show unavailable if we have nothing
-        if (!this._diamondHandsData) {
-          this._diamondHandsLoaded = true;
-          this._showDiamondHandsUnavailable();
-        }
+        if (canRetry) { scheduleNext(attempt + 1); } else if (!this._diamondHandsData) { this._diamondHandsLoaded = true; this._showDiamondHandsUnavailable(); }
         return;
       }
 
       const analyzed = data.analyzed || 0;
       const total = data.totalCount || data.sampleSize || 0;
 
-      // Stall detection: track how many consecutive polls show no change in analyzed count
-      if (analyzed === this._dhLastAnalyzed && analyzed > 0) {
+      // Stall detection: fires whenever analyzed+total stays identical across polls,
+      // including the early "analyzed=0, total=N" queuing phase.
+      const stateKey = `${analyzed}/${total}`;
+      if (stateKey === this._dhLastState && total > 0) {
         this._dhStalledCount++;
       } else {
         this._dhStalledCount = 0;
-        this._dhLastAnalyzed = analyzed;
+        this._dhLastState = stateKey;
       }
 
       // Show progress status text even before distribution is ready
       if (!data.computed) {
         const sampleEl = document.getElementById('diamond-hands-sample');
         if (sampleEl) {
-          if (analyzed === 0 && total > 0) {
-            sampleEl.textContent = 'Queuing analysis...';
-          } else if (analyzed > 0 && total > 0) {
+          if (total === 0) {
+            sampleEl.textContent = attempt > 2 ? 'Fetching holder list — taking longer than usual...' : 'Fetching holder list...';
+          } else if (analyzed === 0) {
+            sampleEl.textContent = this._dhStalledCount >= 3 ? 'Queuing analysis — taking longer than usual...' : 'Queuing analysis...';
+          } else {
             if (this._dhStalledCount >= 3) {
               sampleEl.textContent = `${analyzed}/${total} — taking longer than usual...`;
             } else if (isExtended) {
@@ -1306,24 +1322,28 @@ const tokenDetail = {
         this._renderDiamondHands(data);
       }
 
-      const canContinue = !data.computed && (
-        (attempt < MAX_POLLS) ||
-        (isExtended && extendedAttempt < EXTENDED_POLLS)
-      );
+      const canContinue = !data.computed && canRetry;
 
       if (canContinue) {
         const nextDelay = isExtended ? EXTENDED_DELAY : POLL_DELAYS[attempt];
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] ${analyzed}/${total} analyzed, re-polling in ${nextDelay}ms`);
         this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), nextDelay);
       } else {
-        // Final state
+        // All polls exhausted — show whatever we have
         this._diamondHandsLoaded = true;
         if (!data.distribution || !analyzed) {
-          // Only replace with unavailable if we have no data at all
           if (!this._diamondHandsData) {
-            this._showDiamondHandsUnavailable();
+            // Backend was still computing when we ran out of polls — auto-retry once after 30s
+            // so a slow worker doesn't permanently show "Unavailable"
+            if (!data.computed && (analyzed > 0 || total > 0) && !this._dhAutoRetried) {
+              this._dhAutoRetried = true;
+              const sampleEl = document.getElementById('diamond-hands-sample');
+              if (sampleEl) sampleEl.textContent = 'Analysis still running — retrying shortly...';
+              this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(0), 30000);
+            } else {
+              this._showDiamondHandsUnavailable();
+            }
           } else {
-            // Keep showing whatever partial data we have
             const sampleEl = document.getElementById('diamond-hands-sample');
             if (sampleEl && !data.computed) sampleEl.textContent = `${analyzed} of ${total} holders (partial)`;
           }
@@ -1332,17 +1352,15 @@ const tokenDetail = {
       }
     } catch (error) {
       console.warn('[DiamondHands] Failed:', error.message);
-      // On network error keep existing render; only mark unavailable if we have nothing
-      if (!this._diamondHandsData) {
-        this._diamondHandsLoaded = true;
-        this._showDiamondHandsUnavailable();
+      if (this.mint !== mintAtStart) return;
+      // Always retry on error up to max polls — a single network hiccup should not
+      // permanently show "Unavailable" on the very first attempt.
+      const canRetry = (!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS);
+      if (canRetry) {
+        scheduleNext(attempt + 1);
       } else {
-        // Retry once more if in extended phase, otherwise stop
-        if (!isExtended && attempt < MAX_POLLS) {
-          this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), POLL_DELAYS[attempt] || 10000);
-        } else {
-          this._diamondHandsLoaded = true;
-        }
+        this._diamondHandsLoaded = true;
+        if (!this._diamondHandsData) this._showDiamondHandsUnavailable();
       }
     }
   },
@@ -1422,7 +1440,7 @@ const tokenDetail = {
     section.style.display = '';
     const sampleEl = document.getElementById('diamond-hands-sample');
     if (sampleEl) sampleEl.textContent = 'Analyzing holders...';
-    const buckets = ['24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
     for (const key of buckets) {
       const fillEl = document.getElementById(`dh-fill-${key}`);
       const pctEl = document.getElementById(`dh-pct-${key}`);

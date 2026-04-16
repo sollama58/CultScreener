@@ -926,11 +926,13 @@
   let diamondPollTimer = null;
   let diamondPollCount = 0;
   let diamondFreshRequested = false;
+  let diamondCurrentMint = null; // for retry button
   const MAX_DIAMOND_POLLS_ACTIVE = 60;  // ~3 min at 3s — actively computing
   const MAX_DIAMOND_POLLS_QUEUED = 120; // ~10 min at 5s — waiting in queue
 
   async function pollDiamondHands(mint) {
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
+    diamondCurrentMint = mint;
     diamondPollCount++;
 
     const sampleEl = document.getElementById('diamond-hands-sample');
@@ -1003,7 +1005,16 @@
       // Timeout check — use longer limit when queued
       const maxPolls = isQueued ? MAX_DIAMOND_POLLS_QUEUED : MAX_DIAMOND_POLLS_ACTIVE;
       if (diamondPollCount > maxPolls) {
-        if (sampleEl) sampleEl.textContent = 'Analysis timed out. Showing partial results.';
+        if (sampleEl) {
+          sampleEl.innerHTML = data.distribution
+            ? 'Analysis timed out — showing partial results. <button class="dh-retry-btn" id="dh-retry-cultify">Retry</button>'
+            : 'Analysis timed out. <button class="dh-retry-btn" id="dh-retry-cultify">Retry</button>';
+          document.getElementById('dh-retry-cultify')?.addEventListener('click', () => {
+            diamondPollCount = 0;
+            if (sampleEl) sampleEl.textContent = 'Retrying...';
+            if (diamondCurrentMint) pollDiamondHands(diamondCurrentMint);
+          });
+        }
         finalizeDiamondBars();
         return;
       }

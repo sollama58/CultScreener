@@ -502,14 +502,27 @@
         return;
       }
 
-      // Still computing — update elapsed time
+      // Still computing — update elapsed time and check for overall timeout
       const elapsed = Math.round((Date.now() - (pollStart || Date.now())) / 1000);
       const elapsedEl = document.getElementById('hb-elapsed');
       if (elapsedEl) elapsedEl.textContent = `${elapsed}s elapsed`;
 
+      // 5-minute hard timeout — prevents indefinite spinning if the backend job gets stuck
+      if (elapsed >= 300) {
+        setBody(errorHtml('Analysis is taking longer than expected. Your access is preserved — close this and try again later.'));
+        bindErrClose();
+        return;
+      }
+
       pollTimer = setTimeout(() => pollOnce(mint), 5000);
     } catch {
       // Network error — keep polling (user may be on flaky connection)
+      const elapsed = Math.round((Date.now() - (pollStart || Date.now())) / 1000);
+      if (elapsed >= 300) {
+        setBody(errorHtml('Analysis is taking longer than expected. Your access is preserved — close this and try again later.'));
+        bindErrClose();
+        return;
+      }
       pollTimer = setTimeout(() => pollOnce(mint), 8000);
     }
   }
