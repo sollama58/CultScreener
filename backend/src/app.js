@@ -31,13 +31,16 @@ async function initializeJobQueue() {
   const initialized = jobQueue.initialize();
 
   if (initialized) {
-    // Schedule recurring session cleanup (runs every hour via worker)
     await jobQueue.scheduleSessionCleanup();
+    // Conviction warming runs in the worker — no setInterval needed in API process
+    await jobQueue.scheduleConvictionWarm();
+    await jobQueue.scheduleCuratedConvictionWarm();
     console.log('[App] Job queue initialized - background jobs will be handled by worker');
   } else {
-    // Fallback: Run cleanup in main process if Redis not available
-    console.log('[App] Job queue not available - using in-process cleanup');
+    // Fallback: run everything in-process when Redis is unavailable
+    console.log('[App] Job queue not available - using in-process fallback');
     startFallbackCleanup();
+    startFallbackConvictionWarmers();
   }
 }
 
@@ -75,6 +78,21 @@ function startFallbackCleanup() {
       }
     }
   }, CLEANUP_INTERVAL_MS);
+}
+
+// Fallback conviction warmers for when Redis/worker is not available
+function startFallbackConvictionWarmers() {
+  // First run after 2 min, then every 10 min
+  setTimeout(() => {
+    warmConviction();
+    setInterval(warmConviction, 10 * 60 * 1000);
+  }, 2 * 60 * 1000);
+
+  // First run after 30s, then every hour
+  setTimeout(() => {
+    warmCuratedConviction();
+    setInterval(warmCuratedConviction, 60 * 60 * 1000);
+  }, 30 * 1000);
 }
 
 // Initialize job queue after a short delay (allow DB/Redis to connect)
@@ -511,7 +529,10 @@ async function warmCache() {
 // Periodically trigger diamond-hands computation for popular tokens
 // that don't have conviction data yet (or have stale data > 6 hours).
 // Runs every 10 minutes, processes up to 3 tokens per cycle to avoid API overload.
+let _warmConvictionRunning = false;
 async function warmConviction() {
+  if (_warmConvictionRunning) return; // Prevent overlap if previous run takes > 10 min
+  _warmConvictionRunning = true;
   try {
     const { cache } = require('./services/cache');
     const topTokens = await db.getMostViewedTokens(30);
@@ -520,6 +541,12 @@ async function warmConviction() {
     let triggered = 0;
     const MAX_PER_CYCLE = 3;
     const STALE_MS = 6 * 3600000; // 6 hours
+
+    // Batch-fetch DB rows upfront — avoids N sequential getToken queries in the loop
+    const allMints = topTokens.map(t => t.token_mint);
+    const dbRows = await db.getTokensBatch(allMints).catch(() => []);
+    const dbRowMap = {};
+    for (const row of dbRows) dbRowMap[row.mint_address] = row;
 
     for (const token of topTokens) {
       if (triggered >= MAX_PER_CYCLE) break;
@@ -534,7 +561,7 @@ async function warmConviction() {
       if (pending) continue;
 
       // Check DB — skip if computed recently
-      const dbRow = await db.getToken(mint).catch(() => null);
+      const dbRow = dbRowMap[mint];
       if (dbRow && dbRow.conviction_computed_at) {
         const timestamp = new Date(dbRow.conviction_computed_at).getTime();
         if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
@@ -556,13 +583,18 @@ async function warmConviction() {
     }
   } catch (err) {
     console.error('[ConvictionWarm] Failed (non-critical):', err.message);
+  } finally {
+    _warmConvictionRunning = false;
   }
 }
 
 // Trigger conviction analysis for all curated tokens.
 // Runs on startup (after delay) and every hour.
 // Processes tokens that have no conviction data or stale data (>1 hour).
+let _warmCuratedRunning = false;
 async function warmCuratedConviction() {
+  if (_warmCuratedRunning) return; // Prevent overlap if previous run takes > 1 hour
+  _warmCuratedRunning = true;
   try {
     const { cache } = require('./services/cache');
     const curatedTokens = await db.getCuratedTokens();
@@ -570,6 +602,12 @@ async function warmCuratedConviction() {
 
     let triggered = 0;
     const STALE_MS = 60 * 60 * 1000; // 1 hour
+
+    // Batch-fetch DB rows upfront — avoids N sequential getToken queries in the loop
+    const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
+    const dbRows = await db.getTokensBatch(allMints).catch(() => []);
+    const dbRowMap = {};
+    for (const row of dbRows) dbRowMap[row.mint_address] = row;
 
     for (const token of curatedTokens) {
       const mint = token.mintAddress || token.mint_address;
@@ -580,7 +618,7 @@ async function warmCuratedConviction() {
       if (pending) continue;
 
       // Skip if conviction was computed recently
-      const dbRow = await db.getToken(mint).catch(() => null);
+      const dbRow = dbRowMap[mint];
       if (dbRow && dbRow.conviction_computed_at) {
         const timestamp = new Date(dbRow.conviction_computed_at).getTime();
         if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
@@ -607,6 +645,8 @@ async function warmCuratedConviction() {
     }
   } catch (err) {
     console.error('[CuratedConviction] Failed (non-critical):', err.message);
+  } finally {
+    _warmCuratedRunning = false;
   }
 }
 
@@ -624,18 +664,6 @@ httpServer = app.listen(PORT, () => {
 
   // Warm cache after server is ready (non-blocking)
   warmCache().catch(err => console.error('[CacheWarm] Startup error:', err.message));
-
-  // Start conviction warmer — first run after 2 min, then every 10 min
-  setTimeout(() => {
-    warmConviction();
-    setInterval(warmConviction, 10 * 60 * 1000);
-  }, 2 * 60 * 1000);
-
-  // Start curated token conviction warmer — first run after 30s, then every hour
-  setTimeout(() => {
-    warmCuratedConviction();
-    setInterval(warmCuratedConviction, 60 * 60 * 1000);
-  }, 30 * 1000);
 });
 
 module.exports = app;

@@ -8,9 +8,12 @@
  * Or in production: npm run worker
  *
  * Jobs handled:
- * - Session cleanup (hourly)
+ * - Session cleanup (every 30 min)
  * - View count batching
  * - Stats aggregation
+ * - compute-holder-behavior: Holder behavior analysis (HB) for a token
+ * - warm-conviction: Refresh conviction scores for top-viewed tokens (every 10 min)
+ * - warm-curated-conviction: Refresh conviction scores for all curated tokens (every hour)
  */
 
 require('dotenv').config();
@@ -104,44 +107,32 @@ const jobProcessors = {
 
     console.log(`[Worker] Processing ${updates.length} view count updates...`);
 
-    let successCount = 0;
-    let errorCount = 0;
+    // Single UNNEST INSERT replaces N individual round-trips — dramatically faster
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // Process in batches to avoid overwhelming database
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < updates.length; i += BATCH_SIZE) {
-      const batch = updates.slice(i, i + BATCH_SIZE);
+      const mints = updates.map(u => u.tokenMint);
+      const counts = updates.map(u => u.count);
 
-      // Use a transaction for each batch
-      const client = await db.pool.connect();
-      try {
-        await client.query('BEGIN');
+      await client.query(`
+        INSERT INTO token_views (token_mint, view_count, last_viewed_at)
+        SELECT unnest($1::text[]), unnest($2::int[]), NOW()
+        ON CONFLICT (token_mint) DO UPDATE SET
+          view_count = token_views.view_count + EXCLUDED.view_count,
+          last_viewed_at = NOW()
+      `, [mints, counts]);
 
-        for (const { tokenMint, count } of batch) {
-          await client.query(`
-            INSERT INTO token_views (token_mint, view_count, last_viewed_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (token_mint) DO UPDATE SET
-              view_count = token_views.view_count + $2,
-              last_viewed_at = NOW()
-          `, [tokenMint, count]);
-          successCount++;
-        }
-
-        await client.query('COMMIT');
-      } catch (err) {
-        try { await client.query('ROLLBACK'); } catch (rollbackErr) {
-          console.error('[Worker] Rollback failed:', rollbackErr.message);
-        }
-        console.error('[Worker] Batch view update failed:', err.message);
-        errorCount += batch.length;
-      } finally {
-        client.release();
-      }
+      await client.query('COMMIT');
+      console.log(`[Worker] View counts updated: ${updates.length} tokens`);
+      return { updated: updates.length, errors: 0 };
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      console.error('[Worker] Batch view update failed:', err.message);
+      throw err;
+    } finally {
+      client.release();
     }
-
-    console.log(`[Worker] View counts updated: ${successCount} success, ${errorCount} errors`);
-    return { updated: successCount, errors: errorCount };
   },
 
   /**
@@ -353,7 +344,7 @@ const jobProcessors = {
           cache.get(`holder-total:${mint}`),
           cache.get(keys.holderCount(mint))
         ]);
-        if ((countA || countB) > 0) { skipped++; continue; }
+        if (countA > 0 || countB > 0) { skipped++; continue; }
 
         const count = await solanaService.getTokenHolderCount(mint);
         if (count && count > 0) {
@@ -599,6 +590,38 @@ const jobProcessors = {
     let computed = 0;
     let skipped = 0;
 
+    // Pre-load full wallet sample and any already-cached hold times
+    const allSample = await cache.get(`diamond-hands-wallets:${mint}`) || [];
+    const allWallets = allSample.map(e => typeof e === 'object' ? e.wallet : e);
+    const totalWallets = allWallets.length;
+
+    // Snapshot of already-resolved hold times before this job (other wallets in the full sample)
+    const liveHoldTimes = {};
+    let liveAnalyzedCount = 0;
+    if (totalWallets > 0) {
+      const existingVals = await Promise.all(allWallets.map(w => cache.get(`wallet-token-hold:${w}:${mint}`)));
+      allWallets.forEach((w, i) => {
+        const val = existingVals[i];
+        if (val != null) {
+          liveAnalyzedCount++;
+          if (val > 0) liveHoldTimes[w] = val;
+        }
+      });
+    }
+
+    const PARTIAL_WRITE_EVERY = 3; // Write partial results every N batches
+    const BUCKETS = [
+      { key: '6h', ms: 6 * 3600000 },
+      { key: '24h', ms: 24 * 3600000 },
+      { key: '3d', ms: 3 * 86400000 },
+      { key: '1w', ms: 7 * 86400000 },
+      { key: '1m', ms: 30 * 86400000 },
+      { key: '3m', ms: 90 * 86400000 },
+      { key: '6m', ms: 180 * 86400000 },
+      { key: '9m', ms: 270 * 86400000 },
+    ];
+
+    let batchIndex = 0;
     for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
       const batch = wallets.slice(i, i + BATCH_SIZE);
 
@@ -625,7 +648,25 @@ const jobProcessors = {
         const val = holdTime ?? -1;
         await cache.set(`wallet-hold-time:${wallet}`, val, 2 * TTL.DAY);
         await cache.set(`wallet-token-hold:${wallet}:${mint}`, val, 2 * TTL.DAY);
-        if (val > 0) computed++; else skipped++;
+        liveAnalyzedCount++;
+        if (val > 0) { liveHoldTimes[wallet] = val; computed++; } else { skipped++; }
+      }
+
+      batchIndex++;
+
+      // Write partial distribution after every N batches so the API returns live progress
+      if (batchIndex % PARTIAL_WRITE_EVERY === 0 && totalWallets > 0) {
+        try {
+          const partialValues = Object.values(liveHoldTimes);
+          if (partialValues.length > 0) {
+            const distribution = {};
+            for (const b of BUCKETS) {
+              distribution[b.key] = Math.round((partialValues.filter(ms => ms >= b.ms).length / partialValues.length) * 1000) / 10;
+            }
+            const partialResult = { distribution, sampleSize: totalWallets, analyzed: liveAnalyzedCount, computed: false };
+            await cache.set(`diamond-hands:${mint}`, partialResult, 120000); // 120s — refreshed on next partial write or final
+          }
+        } catch (_) {}
       }
     }
 
@@ -634,9 +675,7 @@ const jobProcessors = {
 
     // Rebuild diamond hands distribution and persist to DB
     try {
-      const allSample = await cache.get(`diamond-hands-wallets:${mint}`) || [];
-      const allWallets = allSample.map(e => typeof e === 'object' ? e.wallet : e);
-      if (allWallets.length > 0) {
+      if (totalWallets > 0) {
         const holdTimes = {};
         let analyzedCount = 0;
         const vals = await Promise.all(allWallets.map(w => cache.get(`wallet-token-hold:${w}:${mint}`)));
@@ -650,31 +689,21 @@ const jobProcessors = {
         // Compute distribution even with partial data (some wallets may not have resolved yet).
         // Full completion (analyzedCount === allWallets.length) persists to DB;
         // partial results are cached with a shorter TTL so they can be refined.
-        const BUCKETS = [
-          { key: '6h', ms: 6 * 3600000 },
-          { key: '24h', ms: 24 * 3600000 },
-          { key: '3d', ms: 3 * 86400000 },
-          { key: '1w', ms: 7 * 86400000 },
-          { key: '1m', ms: 30 * 86400000 },
-          { key: '3m', ms: 90 * 86400000 },
-          { key: '6m', ms: 180 * 86400000 },
-          { key: '9m', ms: 270 * 86400000 },
-        ];
         const values = Object.values(holdTimes);
         if (values.length > 0) {
           const distribution = {};
           for (const b of BUCKETS) {
             distribution[b.key] = Math.round((values.filter(ms => ms >= b.ms).length / values.length) * 1000) / 10;
           }
-          const isComplete = analyzedCount === allWallets.length;
-          const finalResult = { distribution, sampleSize: allWallets.length, analyzed: analyzedCount, computed: isComplete };
+          const isComplete = analyzedCount === totalWallets;
+          const finalResult = { distribution, sampleSize: totalWallets, analyzed: analyzedCount, computed: isComplete };
           const cacheTTL = isComplete ? 3 * TTL.HOUR : TTL.HOUR;
           await cache.set(`diamond-hands:${mint}`, finalResult, cacheTTL);
           if (isComplete) {
-            await db.upsertConviction(mint, distribution, allWallets.length, analyzedCount);
+            await db.upsertConviction(mint, distribution, totalWallets, analyzedCount);
             console.log(`[Worker] Diamond hands persisted for ${mint}: ${distribution['1m']}% >1M`);
           } else {
-            console.warn(`[Worker] Diamond hands partial for ${mint}: ${analyzedCount}/${allWallets.length} analyzed, cached with short TTL`);
+            console.warn(`[Worker] Diamond hands partial for ${mint}: ${analyzedCount}/${totalWallets} analyzed, cached with short TTL`);
           }
         }
       }
@@ -684,6 +713,109 @@ const jobProcessors = {
 
     console.log(`[Worker] Holder metrics for ${mint}: ${computed} computed, ${skipped} no data`);
     return { computed, skipped };
+  },
+
+  // ==========================================
+  // Holder Behavior Analysis
+  // ==========================================
+
+  /**
+   * Run full holder behavior analysis for a token.
+   * Moved from API process (setImmediate + spin-wait semaphore) to worker.
+   * BullMQ concurrency setting caps simultaneous analyses instead of the old semaphore.
+   */
+  'compute-holder-behavior': async (job) => {
+    const { mint } = job.data;
+    if (!mint) return { error: 'No mint provided' };
+    const { runHolderBehaviorAnalysis } = require('./services/holderBehaviorAnalysis');
+    await runHolderBehaviorAnalysis(mint);
+    return { mint };
+  },
+
+  // ==========================================
+  // Conviction Warming (moved from app.js setInterval)
+  // ==========================================
+
+  /**
+   * Trigger diamond-hands computation for top-viewed tokens that have stale/missing conviction.
+   * Runs every 10 minutes via BullMQ repeating job — replaces setInterval in app.js.
+   */
+  'warm-conviction': async (job) => {
+    const STALE_MS    = 6 * 3600000; // 6 hours
+    const MAX_PER_CYCLE = 3;
+
+    const topTokens = await db.getMostViewedTokens(30).catch(() => []);
+    if (!topTokens || topTokens.length === 0) return { triggered: 0 };
+
+    const allMints = topTokens.map(t => t.token_mint);
+    const dbRows   = await db.getTokensBatch(allMints).catch(() => []);
+    const dbRowMap = {};
+    for (const row of dbRows) dbRowMap[row.mint_address] = row;
+
+    let triggered = 0;
+    for (const token of topTokens) {
+      if (triggered >= MAX_PER_CYCLE) break;
+      const mint = token.token_mint;
+
+      if (await cache.get(`diamond-hands:${mint}`)) continue;
+      if (await cache.get(`holder-metrics-pending:${mint}`)) continue;
+
+      const dbRow = dbRowMap[mint];
+      if (dbRow && dbRow.conviction_computed_at) {
+        const ts = new Date(dbRow.conviction_computed_at).getTime();
+        if (!isNaN(ts) && Date.now() - ts < STALE_MS) continue;
+      }
+
+      // Trigger via compute-holder-analytics which will chain into compute-holder-metrics
+      await require('./services/jobQueue').addAnalyticsJob(
+        'compute-holder-analytics', { mint }, { priority: 10 }
+      ).catch(() => {});
+      triggered++;
+    }
+
+    if (triggered > 0) console.log(`[Worker] warm-conviction: triggered ${triggered} tokens`);
+    return { triggered };
+  },
+
+  /**
+   * Trigger diamond-hands computation for all curated tokens with stale/missing conviction.
+   * Runs every hour via BullMQ repeating job — replaces setInterval in app.js.
+   */
+  'warm-curated-conviction': async (job) => {
+    const STALE_MS = 60 * 60 * 1000; // 1 hour
+
+    const curatedTokens = await db.getCuratedTokens().catch(() => []);
+    if (!curatedTokens || curatedTokens.length === 0) return { triggered: 0 };
+
+    const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
+    const dbRows   = await db.getTokensBatch(allMints).catch(() => []);
+    const dbRowMap = {};
+    for (const row of dbRows) dbRowMap[row.mint_address] = row;
+
+    let triggered = 0;
+    for (const token of curatedTokens) {
+      const mint = token.mintAddress || token.mint_address;
+      if (!mint) continue;
+
+      if (await cache.get(`holder-metrics-pending:${mint}`)) continue;
+
+      const dbRow = dbRowMap[mint];
+      if (dbRow && dbRow.conviction_computed_at) {
+        const ts = new Date(dbRow.conviction_computed_at).getTime();
+        if (!isNaN(ts) && Date.now() - ts < STALE_MS) continue;
+      }
+
+      await require('./services/jobQueue').addAnalyticsJob(
+        'compute-holder-analytics', { mint }, { priority: 10 }
+      ).catch(() => {});
+      triggered++;
+
+      // Stagger every 3 triggers to avoid overloading Helius
+      if (triggered % 3 === 0) await new Promise(r => setTimeout(r, 10000));
+    }
+
+    if (triggered > 0) console.log(`[Worker] warm-curated-conviction: triggered ${triggered}/${curatedTokens.length} curated tokens`);
+    return { triggered };
   }
 };
 

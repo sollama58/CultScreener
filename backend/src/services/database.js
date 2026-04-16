@@ -163,6 +163,9 @@ async function initializeDatabase() {
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_sample_size INTEGER;
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_computed_at TIMESTAMP;
       CREATE INDEX IF NOT EXISTS idx_tokens_conviction_1m ON tokens(conviction_1m DESC NULLS LAST) WHERE conviction_1m IS NOT NULL AND conviction_1m > 0;
+      -- Composite index: conviction leaderboard query + staleness check (conviction_computed_at)
+      CREATE INDEX IF NOT EXISTS idx_tokens_conviction_computed ON tokens(conviction_computed_at DESC NULLS LAST) WHERE conviction_computed_at IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_tokens_conviction_1m_mcap ON tokens(conviction_1m DESC NULLS LAST, market_cap DESC NULLS LAST) WHERE conviction_1m IS NOT NULL AND conviction_1m > 0;
 
       CREATE TABLE IF NOT EXISTS submissions (
         id SERIAL PRIMARY KEY,

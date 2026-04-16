@@ -8,7 +8,8 @@ const API_BASE_URL = (typeof config !== 'undefined' && config.api?.baseUrl)
 const apiCache = {
   cache: new Map(),
   accessOrder: new Map(), // LRU via Map insertion order (O(1) delete + re-insert)
-  inFlight: new Map(),    // Deduplication for background refreshes
+  inFlight: new Map(),         // Deduplication for fresh (non-stale) fetches
+  bgRefreshing: new Set(),     // Tracks keys with an in-flight background stale refresh
   maxSize: 500,    // Increased from 100 for better cache hit rates
 
   // Cache TTLs in milliseconds - pulled from config.js with fallback defaults
@@ -91,26 +92,34 @@ const apiCache = {
 
     // If stale cache exists and allowStale, return it and refresh in background
     if (cached && allowStale) {
-      // Deduplicate background refreshes — skip if one is already in-flight
-      if (!this.inFlight.has(key)) {
-        const refreshPromise = fetchFn().then(data => {
+      // Deduplicate background refreshes — skip if one is already running for this key
+      if (!this.bgRefreshing.has(key)) {
+        this.bgRefreshing.add(key);
+        fetchFn().then(data => {
           if (data) this.set(key, data, ttl);
         }).catch(error => {
           if (typeof config !== 'undefined' && config.app?.debug) {
             console.warn(`[Cache] Background refresh failed for ${key}:`, error.message);
           }
         }).finally(() => {
-          this.inFlight.delete(key);
+          this.bgRefreshing.delete(key);
         });
-        this.inFlight.set(key, refreshPromise);
       }
       return cached.data;
     }
 
-    // No cache or stale not allowed, fetch fresh
-    const data = await fetchFn();
-    if (data) this.set(key, data, ttl);
-    return data;
+    // No cache or stale not allowed — deduplicate concurrent callers for the same key
+    if (this.inFlight.has(key)) {
+      return this.inFlight.get(key);
+    }
+    const fetchPromise = fetchFn().then(data => {
+      if (data) this.set(key, data, ttl);
+      return data;
+    }).finally(() => {
+      this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, fetchPromise);
+    return fetchPromise;
   },
 
   // Clear specific cache entries by pattern

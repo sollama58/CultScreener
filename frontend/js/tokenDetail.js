@@ -1239,6 +1239,8 @@ const tokenDetail = {
   // Load diamond hands distribution with polling
   async _loadDiamondHands(attempt = 0) {
     const MAX_POLLS = 10;
+    const EXTENDED_POLLS = 6;      // Extra polls at slow cadence after MAX_POLLS
+    const EXTENDED_DELAY = 25000;  // 25s between extended polls
     const POLL_DELAYS = [2000, 3000, 4000, 5000, 6000, 8000, 10000, 14000, 18000, 22000];
 
     // Cancel any in-flight polling from a previous load
@@ -1248,49 +1250,100 @@ const tokenDetail = {
         this._diamondHandsTimer = null;
       }
       this._diamondHandsLoaded = false;
+      this._dhLastAnalyzed = -1;
+      this._dhStalledCount = 0;
     }
+
+    const isExtended = attempt >= MAX_POLLS;
+    const extendedAttempt = attempt - MAX_POLLS;
 
     try {
       // Bypass apiCache — poll directly so we always get fresh data from backend
-      if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Poll ${attempt}/${MAX_POLLS} for ${this.mint.slice(0, 8)}...`);
+      if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Poll ${attempt}/${MAX_POLLS + EXTENDED_POLLS} for ${this.mint.slice(0, 8)}...`);
       const data = await api.request(`/api/tokens/${this.mint}/holders/diamond-hands`);
 
       if (!data) {
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] No response`);
-        this._diamondHandsLoaded = true;
+        // Keep existing data if we have it; only show unavailable if we have nothing
+        if (!this._diamondHandsData) {
+          this._diamondHandsLoaded = true;
+          this._showDiamondHandsUnavailable();
+        }
         return;
       }
 
-      // Show progress even before any wallets are analyzed — give the user
-      // feedback that work is in progress rather than leaving the static text.
-      if (!data.computed && !(data.distribution && data.analyzed > 0)) {
+      const analyzed = data.analyzed || 0;
+      const total = data.totalCount || data.sampleSize || 0;
+
+      // Stall detection: track how many consecutive polls show no change in analyzed count
+      if (analyzed === this._dhLastAnalyzed && analyzed > 0) {
+        this._dhStalledCount++;
+      } else {
+        this._dhStalledCount = 0;
+        this._dhLastAnalyzed = analyzed;
+      }
+
+      // Show progress status text even before distribution is ready
+      if (!data.computed) {
         const sampleEl = document.getElementById('diamond-hands-sample');
-        const total = data.totalCount || data.sampleSize || 0;
-        if (sampleEl && total > 0) {
-          sampleEl.textContent = `${data.analyzed || 0}/${total} analyzed...`;
+        if (sampleEl) {
+          if (analyzed === 0 && total > 0) {
+            sampleEl.textContent = 'Queuing analysis...';
+          } else if (analyzed > 0 && total > 0) {
+            if (this._dhStalledCount >= 3) {
+              sampleEl.textContent = `${analyzed}/${total} — taking longer than usual...`;
+            } else if (isExtended) {
+              sampleEl.textContent = `${analyzed}/${total} — still analyzing...`;
+            } else {
+              sampleEl.textContent = `${analyzed}/${total} analyzed...`;
+            }
+          }
         }
       }
 
       // Render once we have actual distribution data (at least some analyzed)
-      if (data.distribution && data.analyzed > 0) {
+      if (data.distribution && analyzed > 0) {
         this._renderDiamondHands(data);
       }
 
-      if (!data.computed && attempt < MAX_POLLS) {
-        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] ${data.analyzed || 0}/${data.totalCount || data.sampleSize} analyzed, re-polling in ${POLL_DELAYS[attempt]}ms`);
-        this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), POLL_DELAYS[attempt]);
+      const canContinue = !data.computed && (
+        (attempt < MAX_POLLS) ||
+        (isExtended && extendedAttempt < EXTENDED_POLLS)
+      );
+
+      if (canContinue) {
+        const nextDelay = isExtended ? EXTENDED_DELAY : POLL_DELAYS[attempt];
+        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] ${analyzed}/${total} analyzed, re-polling in ${nextDelay}ms`);
+        this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), nextDelay);
       } else {
-        // Final state — if still no data, show unavailable message
-        if (!data.distribution || !data.analyzed) {
-          this._showDiamondHandsUnavailable();
-        }
+        // Final state
         this._diamondHandsLoaded = true;
+        if (!data.distribution || !analyzed) {
+          // Only replace with unavailable if we have no data at all
+          if (!this._diamondHandsData) {
+            this._showDiamondHandsUnavailable();
+          } else {
+            // Keep showing whatever partial data we have
+            const sampleEl = document.getElementById('diamond-hands-sample');
+            if (sampleEl && !data.computed) sampleEl.textContent = `${analyzed} of ${total} holders (partial)`;
+          }
+        }
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Done: sample=${data.sampleSize}, analyzed=${data.analyzed}`);
       }
     } catch (error) {
       console.warn('[DiamondHands] Failed:', error.message);
-      this._diamondHandsLoaded = true;
-      this._showDiamondHandsUnavailable();
+      // On network error keep existing render; only mark unavailable if we have nothing
+      if (!this._diamondHandsData) {
+        this._diamondHandsLoaded = true;
+        this._showDiamondHandsUnavailable();
+      } else {
+        // Retry once more if in extended phase, otherwise stop
+        if (!isExtended && attempt < MAX_POLLS) {
+          this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), POLL_DELAYS[attempt] || 10000);
+        } else {
+          this._diamondHandsLoaded = true;
+        }
+      }
     }
   },
 
@@ -1394,7 +1447,16 @@ const tokenDetail = {
     const section = document.getElementById('diamond-hands-section');
     if (!section) return;
     const sampleEl = document.getElementById('diamond-hands-sample');
-    if (sampleEl) sampleEl.textContent = 'Unavailable';
+    if (sampleEl) {
+      sampleEl.innerHTML = 'Unavailable &nbsp;<button class="dh-retry-btn" id="dh-retry-btn">Retry</button>';
+      const retryBtn = document.getElementById('dh-retry-btn');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+          if (sampleEl) sampleEl.textContent = 'Retrying...';
+          this._loadDiamondHands(0);
+        });
+      }
+    }
     // Remove shimmer from all bars and show 0%
     document.querySelectorAll('.diamond-bar-fill.dh-loading').forEach(el => {
       el.classList.remove('dh-loading');

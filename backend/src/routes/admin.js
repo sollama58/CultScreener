@@ -276,6 +276,9 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
 
   await db.addCuratedToken(mintAddress);
 
+  // Invalidate any cached 'not allowed' entry so token is immediately accessible
+  await cache.delete(`curated-allowed:${mintAddress}`).catch(() => {});
+
   // Enrich with DexScreener data
   try {
     const axios = require('axios');

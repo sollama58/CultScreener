@@ -14,10 +14,21 @@ router.use(requireDatabase);
 
 // Middleware: reject requests for tokens not in the curated list or leaderboard.
 // Prevents arbitrary tokens from triggering expensive RPC/computation calls.
+// Result is cached (5 min for allowed, 1 min for denied) to avoid a DB query on every request.
 const requireAllowedToken = asyncHandler(async (req, res, next) => {
   const mint = req.params.mint;
   if (!mint) return next();
+
+  const cacheKey = `curated-allowed:${mint}`;
+  const cached = await cache.get(cacheKey);
+  if (cached === true) return next();
+  if (cached === false) {
+    return res.status(403).json({ error: 'Token not available. Only curated tokens can be viewed.', code: 'NOT_CURATED' });
+  }
+
   const allowed = await db.isTokenAllowed(mint);
+  // Cache longer for allowed tokens (rarely removed); shorter for denied (may be added soon)
+  await cache.set(cacheKey, allowed, allowed ? 5 * 60 * 1000 : 60 * 1000).catch(() => {});
   if (!allowed) {
     return res.status(403).json({ error: 'Token not available. Only curated tokens can be viewed.', code: 'NOT_CURATED' });
   }
@@ -2182,7 +2193,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       const pending = await cache.get(pendingKey);
 
       if (!pending) {
-        await cache.set(pendingKey, Date.now(), 90000); // 90s dedup
+        await cache.set(pendingKey, Date.now(), 150000); // 150s dedup (worker can take 90s+ for 250 wallets)
         const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
           mint,
           wallets: staleWallets,
@@ -2286,14 +2297,14 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
 
     // Only clear a stale pending flag if it's been stuck for >3 minutes (matching TTL).
     // The old 30s threshold was too aggressive and caused duplicate job dispatches.
-    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 90000);
+    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 150000);
     if (pending && !isStillPending) {
       console.log(`[DiamondHands] Pending expired after ${Math.round((Date.now() - pending) / 1000)}s — allowing re-dispatch`);
       await cache.delete(pendingKey);
     }
 
     if (!isStillPending) {
-      await cache.set(pendingKey, Date.now(), 90000); // 90s dedup
+      await cache.set(pendingKey, Date.now(), 150000); // 150s dedup (worker can take 90s+ for 250 wallets)
       const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
         mint,
         wallets: uncached,

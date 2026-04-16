@@ -147,6 +147,56 @@ async function addSearchJob(jobName, data = {}, options = {}) {
 }
 
 /**
+ * Schedule conviction warming for top-viewed tokens (every 10 minutes).
+ * Replaces the setInterval in app.js — runs in worker process, not API process.
+ */
+async function scheduleConvictionWarm() {
+  if (!isInitialized && !initialize()) return null;
+  try {
+    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
+    for (const job of existing) {
+      if (job.name === 'warm-conviction') {
+        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
+      }
+    }
+    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
+      'warm-conviction', {},
+      { repeat: { every: 10 * 60 * 1000 }, jobId: 'warm-conviction-recurring' }
+    );
+    console.log('[JobQueue] Scheduled warm-conviction (every 10 min)');
+    return job;
+  } catch (err) {
+    console.error('[JobQueue] Failed to schedule warm-conviction:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Schedule conviction warming for all curated tokens (every hour).
+ * Replaces the setInterval in app.js — runs in worker process, not API process.
+ */
+async function scheduleCuratedConvictionWarm() {
+  if (!isInitialized && !initialize()) return null;
+  try {
+    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
+    for (const job of existing) {
+      if (job.name === 'warm-curated-conviction') {
+        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
+      }
+    }
+    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
+      'warm-curated-conviction', {},
+      { repeat: { every: 60 * 60 * 1000 }, jobId: 'warm-curated-conviction-recurring' }
+    );
+    console.log('[JobQueue] Scheduled warm-curated-conviction (every hour)');
+    return job;
+  } catch (err) {
+    console.error('[JobQueue] Failed to schedule warm-curated-conviction:', err.message);
+    return null;
+  }
+}
+
+/**
  * Schedule recurring session cleanup job
  * Runs every 30 minutes to clean up expired admin sessions
  */
@@ -444,6 +494,8 @@ module.exports = {
   addAnalyticsJob,
   addSearchJob,
   scheduleSessionCleanup,
+  scheduleConvictionWarm,
+  scheduleCuratedConvictionWarm,
   incrementViewCount,
   getBufferedViewCounts,
   flushViewCounts,

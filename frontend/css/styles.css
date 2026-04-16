@@ -2655,6 +2655,24 @@ select:focus {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* Diamond Hands retry button */
+.dh-retry-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-sans);
+  padding: 0.1rem 0.5rem;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.dh-retry-btn:hover {
+  border-color: var(--fire-primary);
+  color: var(--fire-primary);
+}
+
 /* Diamond Hands loading shimmer */
 .diamond-bar-fill.dh-loading {
   width: 0;

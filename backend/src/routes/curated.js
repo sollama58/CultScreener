@@ -124,6 +124,9 @@ router.post('/', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
   // Add to database
   const token = await db.addCuratedToken(mintAddress);
 
+  // Invalidate the 'not allowed' cache entry so token is immediately accessible
+  await cache.delete(`curated-allowed:${mintAddress}`).catch(() => {});
+
   // Fetch DexScreener data and enrich
   const dexData = await fetchDexScreenerData(mintAddress);
   if (dexData) {
