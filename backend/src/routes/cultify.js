@@ -480,7 +480,7 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
         mint,
         wallets: uncached,
         ataMap
-      }, { jobId: `dhm_${mint}`, removeOnFail: true }); // removeOnFail: true — failed jobs must be removed so re-dispatch works (default keeps 24h which blocks dedup)
+      }); // No jobId: pending flag is the dedup mechanism; static jobId blocks re-dispatch when a job gets stuck in waiting/active state
       if (!job) {
         await cache.delete(pendingKey);
       }

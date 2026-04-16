@@ -2198,7 +2198,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
           mint,
           wallets: staleWallets,
           ataMap // pass pre-resolved ATAs to avoid extra RPC calls
-        }, { jobId: `dhm_${mint}`, removeOnFail: true }); // removeOnFail: true — failed jobs must be removed so re-dispatch works (default keeps 24h which blocks dedup)
+        }); // No jobId: pending flag is the dedup mechanism; static jobId blocks re-dispatch when a job gets stuck in waiting/active state
         if (!job) {
           // Queue unavailable — clear pending so next poll retries
           await cache.delete(pendingKey);
@@ -2309,7 +2309,7 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
         mint,
         wallets: uncached,
         ataMap // pass pre-resolved ATAs to avoid extra RPC calls
-      }, { jobId: `dhm_${mint}`, removeOnFail: true }); // removeOnFail: true — failed jobs must be removed so re-dispatch works (default keeps 24h which blocks dedup)
+      }); // No jobId: pending flag is the dedup mechanism; static jobId blocks re-dispatch when a job gets stuck in waiting/active state
       if (!job) {
         // Queue unavailable — clear pending so next poll retries
         await cache.delete(pendingKey);
@@ -2337,7 +2337,7 @@ function buildDiamondHandsResult(holdTimes, sampleSize, analyzed) {
   const values = Object.values(holdTimes);
   const denominator = values.length;
   if (denominator === 0) {
-    return { distribution: null, sampleSize, analyzed: 0, computed: true };
+    return { distribution: null, sampleSize, analyzed, computed: true };
   }
 
   const distribution = {};

@@ -658,14 +658,16 @@ const jobProcessors = {
       if (batchIndex % PARTIAL_WRITE_EVERY === 0 && totalWallets > 0) {
         try {
           const partialValues = Object.values(liveHoldTimes);
-          if (partialValues.length > 0) {
-            const distribution = {};
+          const partialDistribution = partialValues.length > 0 ? (() => {
+            const dist = {};
             for (const b of BUCKETS) {
-              distribution[b.key] = Math.round((partialValues.filter(ms => ms >= b.ms).length / partialValues.length) * 1000) / 10;
+              dist[b.key] = Math.round((partialValues.filter(ms => ms >= b.ms).length / partialValues.length) * 1000) / 10;
             }
-            const partialResult = { distribution, sampleSize: totalWallets, analyzed: liveAnalyzedCount, computed: false };
-            await cache.set(`diamond-hands:${mint}`, partialResult, 120000); // 120s — refreshed on next partial write or final
-          }
+            return dist;
+          })() : null;
+          // Always write partial cache so API shows live analyzed count even when no positive hold times yet
+          const partialResult = { distribution: partialDistribution, sampleSize: totalWallets, analyzed: liveAnalyzedCount, computed: false };
+          await cache.set(`diamond-hands:${mint}`, partialResult, 120000); // 120s — refreshed on next partial write or final
         } catch (_) {}
       }
     }
@@ -690,21 +692,24 @@ const jobProcessors = {
         // Full completion (analyzedCount === allWallets.length) persists to DB;
         // partial results are cached with a shorter TTL so they can be refined.
         const values = Object.values(holdTimes);
-        if (values.length > 0) {
-          const distribution = {};
+        const isComplete = analyzedCount === totalWallets;
+        const distribution = values.length > 0 ? (() => {
+          const dist = {};
           for (const b of BUCKETS) {
-            distribution[b.key] = Math.round((values.filter(ms => ms >= b.ms).length / values.length) * 1000) / 10;
+            dist[b.key] = Math.round((values.filter(ms => ms >= b.ms).length / values.length) * 1000) / 10;
           }
-          const isComplete = analyzedCount === totalWallets;
-          const finalResult = { distribution, sampleSize: totalWallets, analyzed: analyzedCount, computed: isComplete };
-          const cacheTTL = isComplete ? 3 * TTL.HOUR : TTL.HOUR;
-          await cache.set(`diamond-hands:${mint}`, finalResult, cacheTTL);
-          if (isComplete) {
-            await db.upsertConviction(mint, distribution, totalWallets, analyzedCount);
-            console.log(`[Worker] Diamond hands persisted for ${mint}: ${distribution['1m']}% >1M`);
-          } else {
-            console.warn(`[Worker] Diamond hands partial for ${mint}: ${analyzedCount}/${totalWallets} analyzed, cached with short TTL`);
-          }
+          return dist;
+        })() : null;
+        // Always write final cache — even when no positive hold times — so next API poll
+        // sees all wallets as analyzed and doesn't re-dispatch a new job.
+        const finalResult = { distribution, sampleSize: totalWallets, analyzed: analyzedCount, computed: isComplete };
+        const cacheTTL = isComplete ? 3 * TTL.HOUR : TTL.HOUR;
+        await cache.set(`diamond-hands:${mint}`, finalResult, cacheTTL);
+        if (isComplete) {
+          await db.upsertConviction(mint, distribution, totalWallets, analyzedCount);
+          console.log(`[Worker] Diamond hands persisted for ${mint}: ${distribution ? distribution['1m'] : 0}% >1M`);
+        } else {
+          console.warn(`[Worker] Diamond hands partial for ${mint}: ${analyzedCount}/${totalWallets} analyzed, cached with short TTL`);
         }
       }
     } catch (persistErr) {
