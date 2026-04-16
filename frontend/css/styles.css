@@ -227,11 +227,20 @@ img {
 .logo {
   display: flex;
   align-items: center;
+  gap: 0.45rem;
   color: var(--text-primary);
   font-weight: 700;
   transition: opacity var(--transition-fast);
   flex-shrink: 0;
   text-decoration: none;
+}
+
+.logo-icon {
+  height: 1.6rem;
+  width: 1.6rem;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .logo:hover {
