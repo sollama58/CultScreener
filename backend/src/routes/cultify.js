@@ -480,7 +480,7 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
         mint,
         wallets: uncached,
         ataMap
-      });
+      }, { jobId: `dhm:${mint}` }); // jobId dedup prevents duplicate jobs from concurrent requests
       if (!job) {
         await cache.delete(pendingKey);
       }
@@ -801,9 +801,11 @@ router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, asyncH
   const pending = await cache.get(pendingKey);
   if (pending) return res.json({ status: 'computing' });
 
-  // Enqueue analysis in worker process (replaces setImmediate + in-process semaphore)
+  // Enqueue analysis in worker process (replaces setImmediate + in-process semaphore).
+  // jobId deduplicates at the BullMQ level — prevents duplicate jobs when concurrent
+  // requests race past the pending-flag check above.
   await cache.set(pendingKey, Date.now(), HB_PENDING_TTL);
-  const queued = await jobQueue.addAnalyticsJob('compute-holder-behavior', { mint });
+  const queued = await jobQueue.addAnalyticsJob('compute-holder-behavior', { mint }, { jobId: `hb:${mint}` });
   if (!queued) {
     // Queue unavailable — fall back to in-process execution so the feature still works
     setImmediate(() => runHolderBehaviorAnalysis(mint));

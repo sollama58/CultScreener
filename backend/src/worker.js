@@ -847,9 +847,9 @@ function createWorker(queueName, redisConfig) {
     },
     {
       connection: redisConfig,
-      concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 3, // Low concurrency — holder-metrics jobs are Helius-heavy
-      lockDuration: 120000, // 120s lock — holder-metrics can take 60-90s for 250 wallets
-      stalledInterval: 60000, // Check for stalled jobs every 60s (aligned with lock)
+      concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 2, // Limit concurrency — holder-metrics/behavior jobs are Helius-heavy
+      lockDuration: 300000, // 5 min lock — compute-holder-metrics can take 150-200s for 250 wallets
+      stalledInterval: 120000, // Check for stalled jobs every 2 min (must be < lockDuration)
       limiter: {
         max: parseInt(process.env.WORKER_LIMITER_MAX) || 3, // Max 3 jobs/sec — prevents multiple Helius-heavy jobs overlapping
         duration: 1000 // Per second

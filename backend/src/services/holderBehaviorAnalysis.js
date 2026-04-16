@@ -172,7 +172,13 @@ async function runHolderBehaviorAnalysis(mint) {
 
     const processHolder = async (holder) => {
       try {
-        const txns = await fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER);
+        // 25s timeout per holder — prevents one slow/hung Helius call from stalling the entire analysis
+        let timeoutId;
+        const txns = await Promise.race([
+          fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER),
+          new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('holder timeout')), 25000); })
+        ]);
+        clearTimeout(timeoutId);
         if (!txns || txns.length === 0) {
           return { rank: holder.rank, address: holder.address, percentage: holder.percentage,
             swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [] };
