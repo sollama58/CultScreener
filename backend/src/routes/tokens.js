@@ -2198,7 +2198,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
           mint,
           wallets: staleWallets,
           ataMap // pass pre-resolved ATAs to avoid extra RPC calls
-        }, { jobId: `dhm:${mint}` }); // jobId dedup prevents duplicate jobs from concurrent requests
+        }, { jobId: `dhm_${mint}` }); // jobId dedup prevents duplicate jobs from concurrent requests
         if (!job) {
           // Queue unavailable — clear pending so next poll retries
           await cache.delete(pendingKey);
@@ -2309,7 +2309,7 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
         mint,
         wallets: uncached,
         ataMap // pass pre-resolved ATAs to avoid extra RPC calls
-      }, { jobId: `dhm:${mint}` }); // jobId dedup prevents duplicate jobs from concurrent requests
+      }, { jobId: `dhm_${mint}` }); // jobId dedup prevents duplicate jobs from concurrent requests
       if (!job) {
         // Queue unavailable — clear pending so next poll retries
         await cache.delete(pendingKey);

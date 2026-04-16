@@ -480,7 +480,7 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
         mint,
         wallets: uncached,
         ataMap
-      }, { jobId: `dhm:${mint}` }); // jobId dedup prevents duplicate jobs from concurrent requests
+      }, { jobId: `dhm_${mint}` }); // jobId dedup prevents duplicate jobs from concurrent requests
       if (!job) {
         await cache.delete(pendingKey);
       }
