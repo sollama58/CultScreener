@@ -10,9 +10,7 @@ const jobQueue = require('../services/jobQueue');
 const {
   HB_ANALYSIS_CACHE_TTL,
   HB_PENDING_TTL,
-  HB_EXCLUDED_MINTS,
-  fetchSwapHistory,
-  computeHoldPairs,
+  DIAMOND_HANDS_BUCKETS,
   runHolderBehaviorAnalysis
 } = require('../services/holderBehaviorAnalysis');
 
@@ -305,13 +303,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
   }
 }));
 
-// Diamond hands distribution buckets (same as main tokens endpoint)
-const DIAMOND_HANDS_BUCKETS = [
-  { key: '6h', ms: 6*3600000 }, { key: '24h', ms: 24*3600000 },
-  { key: '3d', ms: 3*86400000 }, { key: '1w', ms: 7*86400000 },
-  { key: '1m', ms: 30*86400000 }, { key: '3m', ms: 90*86400000 },
-  { key: '6m', ms: 180*86400000 }, { key: '9m', ms: 270*86400000 },
-];
+// DIAMOND_HANDS_BUCKETS imported from holderBehaviorAnalysis (shared with tokens.js and worker.js)
 
 // Same distribution calculation as the main tokens endpoint (buildDiamondHandsResult)
 function buildDistribution(holdTimes, sampleSize, analyzed) {
@@ -619,7 +611,7 @@ router.get('/tx-status/:signature', walletLimiter, asyncHandler(async (req, res)
 }));
 
 // ── Holder Behavior Analysis ──────────────────────────────────────────
-// Burns 10,000 ASDFASDFA to analyze top 50 holders' last 250 swap
+// Burns 10,000 ASDFASDFA to analyze top 50 holders' last 150 swap
 // transactions across all tokens (excluding SOL + stablecoins).
 
 const HB_BURN_AMOUNT = 10_000;
@@ -642,9 +634,8 @@ async function storeHBAccess(walletAddress, mint) {
   await cache.set(idxKey, filtered, HB_ACCESS_TTL);
   return accessToken;
 }
-// HB_MAX_HOLDERS, HB_MAX_SWAPS_PER_HOLDER, HB_EXCLUDED_MINTS, fetchSwapHistory,
-// computeHoldPairs, and runHolderBehaviorAnalysis all imported from
-// services/holderBehaviorAnalysis.js and processed by the BullMQ worker.
+// runHolderBehaviorAnalysis imported from services/holderBehaviorAnalysis.js
+// and executed by the BullMQ worker process.
 
 // POST /api/cultify/holder-behavior/verify-burn
 // Same on-chain verification pattern as /verify-burn but requires 10,000 ASDFASDFA.

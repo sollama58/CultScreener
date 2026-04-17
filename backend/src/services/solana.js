@@ -964,21 +964,6 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
  * @param {string} tokenMint - The specific token mint to measure hold duration for
  * @returns {Promise<{avgHoldTime: number|null, tokenHoldTime: number|null}>}
  */
-// Base currencies and stablecoins to exclude from avg hold time calculations.
-// These appear in every swap as intermediaries and would skew the average.
-const HOLD_TIME_EXCLUDE_MINTS = new Set([
-  'So11111111111111111111111111111111111111112',  // Wrapped SOL
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
-]);
-
-// NFT transaction types to exclude from hold time calculations
-const HOLD_TIME_EXCLUDE_TYPES = new Set([
-  'NFT_SALE', 'NFT_LISTING', 'NFT_CANCEL_LISTING', 'NFT_BID',
-  'NFT_BID_CANCELLED', 'NFT_MINT', 'BURN', 'BURN_NFT',
-  'COMPRESSED_NFT_MINT', 'COMPRESSED_NFT_TRANSFER',
-]);
-
 /**
  * Get hold metrics for a wallet. Uses the ATA-based approach exclusively:
  * 1 RPC call if ATA address is provided, 2 if not.

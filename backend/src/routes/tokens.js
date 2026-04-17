@@ -7,6 +7,7 @@ const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase } = require('../middleware/validation');
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
+const { BURN_WALLETS, LP_PROGRAMS, DIAMOND_HANDS_BUCKETS } = require('../constants');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -47,24 +48,7 @@ const VALID_FILTERS = ['trending', 'new', 'gainers', 'losers', 'most_viewed', 't
 const VALID_SORTS = ['volume', 'price', 'priceChange24h', 'marketCap', 'views'];
 const VALID_ORDERS = ['asc', 'desc'];
 
-// Known burn wallets and LP program IDs — shared across holder endpoints
-const BURN_WALLETS = new Set([
-  '1nc1nerator11111111111111111111111111111111',  // Solana incinerator (most common)
-  '1111111111111111111111111111111111111111111',   // Null address (44 ones)
-  'burnedFi11111111111111111111111111111111111',   // burnedFi vanity address
-]);
-const LP_PROGRAMS = new Set([
-  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  // Raydium AMM v4
-  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',  // Raydium CLMM
-  'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C',  // Raydium CPMM
-  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool
-  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',  // Meteora DLMM
-  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB',  // Meteora Pools
-  '2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c',  // Lifinity v2
-  '9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP',  // Orca Token Swap v2
-  '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',  // Pump.fun AMM (bonding curve)
-  'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',  // PumpSwap AMM
-]);
+// BURN_WALLETS and LP_PROGRAMS imported from ../constants (shared with worker.js)
 const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website', 'other'];
 const VALID_SUBMISSION_STATUSES = ['pending', 'approved', 'rejected', 'all'];
 const jobQueue = require('../services/jobQueue');
@@ -2220,16 +2204,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
 // Returns % of holders that have held the token for >6h, >24h, >3d, >1w, >1m.
 // Uses Helius DAS to sample up to 250 holders, then getWalletHoldMetrics for each.
 // Background computation with polling pattern (same as hold-times).
-const DIAMOND_HANDS_BUCKETS = [
-  { key: '6h',  label: '>6h',  ms: 6 * 3600000 },
-  { key: '24h', label: '>24h', ms: 24 * 3600000 },
-  { key: '3d',  label: '>3d',  ms: 3 * 86400000 },
-  { key: '1w',  label: '>1w',  ms: 7 * 86400000 },
-  { key: '1m',  label: '>1m',  ms: 30 * 86400000 },
-  { key: '3m',  label: '>3m',  ms: 90 * 86400000 },
-  { key: '6m',  label: '>6m',  ms: 180 * 86400000 },
-  { key: '9m',  label: '>9m',  ms: 270 * 86400000 },
-];
+// DIAMOND_HANDS_BUCKETS imported from ../constants (shared with cultify.js and worker.js)
 
 router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;

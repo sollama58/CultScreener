@@ -25,6 +25,7 @@ const db = require('./services/database');
 const geckoService = require('./services/geckoTerminal');
 const solanaService = require('./services/solana');
 const { cache, TTL, keys } = require('./services/cache');
+const { BURN_WALLETS, LP_PROGRAMS, DIAMOND_HANDS_BUCKETS } = require('./constants');
 
 // Allowed DEXes for similar-tokens anti-spoofing filter
 const SIMILAR_TOKEN_DEX_PREFIXES = ['raydium', 'pump', 'bonk'];
@@ -378,24 +379,7 @@ const jobProcessors = {
     if (!rawAccounts || rawAccounts.length === 0) return { status: 'empty' };
 
     console.log(`[Worker] Classifying ${rawAccounts.length} holder accounts for ${mint}`);
-
-    const BURN_WALLETS = new Set([
-      '1nc1nerator11111111111111111111111111111111',
-      '1111111111111111111111111111111111111111111',
-      'burnedFi11111111111111111111111111111111111',
-    ]);
-    const LP_PROGRAMS = new Set([
-      '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',
-      'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',
-      'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C',
-      'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
-      'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',
-      'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB',
-      '2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c',
-      '9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP',
-      '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
-      'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',
-    ]);
+    // BURN_WALLETS and LP_PROGRAMS imported from ./constants at module level
 
     try {
       // Fetch mint account info + token authorities + Streamflow locks in parallel
@@ -610,16 +594,7 @@ const jobProcessors = {
     }
 
     const PARTIAL_WRITE_EVERY = 3; // Write partial results every N batches
-    const BUCKETS = [
-      { key: '6h', ms: 6 * 3600000 },
-      { key: '24h', ms: 24 * 3600000 },
-      { key: '3d', ms: 3 * 86400000 },
-      { key: '1w', ms: 7 * 86400000 },
-      { key: '1m', ms: 30 * 86400000 },
-      { key: '3m', ms: 90 * 86400000 },
-      { key: '6m', ms: 180 * 86400000 },
-      { key: '9m', ms: 270 * 86400000 },
-    ];
+    // DIAMOND_HANDS_BUCKETS imported from ./constants at module level
 
     let batchIndex = 0;
     for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
@@ -660,7 +635,7 @@ const jobProcessors = {
           const partialValues = Object.values(liveHoldTimes);
           const partialDistribution = partialValues.length > 0 ? (() => {
             const dist = {};
-            for (const b of BUCKETS) {
+            for (const b of DIAMOND_HANDS_BUCKETS) {
               dist[b.key] = Math.round((partialValues.filter(ms => ms >= b.ms).length / partialValues.length) * 1000) / 10;
             }
             return dist;
@@ -695,7 +670,7 @@ const jobProcessors = {
         const isComplete = analyzedCount === totalWallets;
         const distribution = values.length > 0 ? (() => {
           const dist = {};
-          for (const b of BUCKETS) {
+          for (const b of DIAMOND_HANDS_BUCKETS) {
             dist[b.key] = Math.round((values.filter(ms => ms >= b.ms).length / values.length) * 1000) / 10;
           }
           return dist;

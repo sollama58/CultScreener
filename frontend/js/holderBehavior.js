@@ -199,7 +199,7 @@
 
     let html = `
       <div class="hb-section-title">Holder Behavior Analysis</div>
-      <p class="hb-desc">Analyze top 50 holders' avg hold time across all tokens using their last 250 swaps each.</p>
+      <p class="hb-desc">Analyze top 50 holders' avg hold time across all tokens using their last 150 swaps each.</p>
       <div class="hb-cost-row">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="url(#hbGateFlame)">
           <defs><linearGradient id="hbGateFlame" x1="0" y1="1" x2="0" y2="0">
@@ -651,8 +651,8 @@
                     <tr>
                       <td class="hb-addr hb-mono">${escHtml(shortAddr(p.mint))}</td>
                       <td><span class="hb-type-badge hb-type-${p.type === 'sold' ? 'sold' : 'holding'}">${p.type === 'sold' ? 'Sold' : 'Holding'}</span></td>
-                      <td class="hb-hold-val">${formatDuration(p.holdTime)}</td>
-                      <td class="hb-dim">${formatTs(p.buyTime)}</td>
+                      <td class="hb-hold-val">${p.holdTime != null ? formatDuration(p.holdTime) : '<span class="hb-dim">—</span>'}</td>
+                      <td class="hb-dim">${p.buyTime ? formatTs(p.buyTime) : '<span class="hb-dim">—</span>'}</td>
                       <td class="hb-dim">${p.sellTime ? formatTs(p.sellTime) : '<span class="hb-holding-now">still holding</span>'}</td>
                     </tr>`).join('')}
                 </tbody>

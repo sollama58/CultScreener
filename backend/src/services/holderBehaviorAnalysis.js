@@ -8,6 +8,7 @@
 
 const solanaService = require('./solana');
 const { cache, TTL } = require('./cache');
+const { DIAMOND_HANDS_BUCKETS } = require('../constants');
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -245,6 +246,7 @@ async function runHolderBehaviorAnalysis(mint) {
       : null;
 
     const tokenStats = Object.entries(tokenAgg)
+      .filter(([, agg]) => agg.holdTimes.length > 0)  // skip mints with no resolved hold times
       .map(([tm, agg]) => {
         const times = agg.holdTimes;
         const sum  = times.reduce((a, b) => a + b, 0);
@@ -289,6 +291,7 @@ module.exports = {
   HB_ANALYSIS_CACHE_TTL,
   HB_PENDING_TTL,
   HB_EXCLUDED_MINTS,
+  DIAMOND_HANDS_BUCKETS,
   fetchSwapHistory,
   computeHoldPairs,
   runHolderBehaviorAnalysis
