@@ -236,8 +236,11 @@ img {
 }
 
 .logo-icon {
+  display: block;
   height: 1.6rem;
   width: 1.6rem;
+  max-height: 1.6rem;
+  max-width: 1.6rem;
   object-fit: cover;
   border-radius: 4px;
   flex-shrink: 0;
