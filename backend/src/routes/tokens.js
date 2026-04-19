@@ -1860,11 +1860,12 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
       : null;
 
     // Build basic holders list (no LP/burn flags yet — those come from the worker)
+    // Percentages set to null since LP status unknown — worker will compute actual percentages excluding LPs
     const holders = largestAccounts.map((a, i) => ({
       rank: i + 1,
       address: a.wallet || a.address,
       balance: a.uiAmount,
-      percentage: totalSupply > 0 ? (a.uiAmount / totalSupply) * 100 : null,
+      percentage: null,  // Will be computed by worker after LP detection
       isLP: false,
       isBurnt: false
     })).filter(h => h.balance > 0);
@@ -1872,25 +1873,17 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
     // Basic concentration metrics (will be refined by worker once LP/burn flags are set)
     let metrics = null;
     if (totalSupply > 0 && holders.length > 0) {
-      const top5Pct = holders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top10Pct = holders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top20Pct = holders.slice(0, 20).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top1Pct = holders[0]?.percentage || 0;
-
-      let riskLevel = 'low';
-      if (top10Pct > 70 || top1Pct > 30) riskLevel = 'high';
-      else if (top10Pct > 40 || top1Pct > 15) riskLevel = 'medium';
-
+      // In fast path, percentages are null (set by worker after LP detection)
+      // So we don't compute concentration metrics yet (they'll be computed by worker)
       metrics = {
-        top5Pct: Math.round(top5Pct * 100) / 100,
-        top10Pct: Math.round(top10Pct * 100) / 100,
-        top20Pct: Math.round(top20Pct * 100) / 100,
-        herfindahl: Math.round(holders.slice(0, 20).reduce((s, h) => s + Math.pow(h.percentage || 0, 2), 0)),
-        top1Pct: Math.round(top1Pct * 100) / 100,
-        dominance: top20Pct > 0 ? Math.round((top1Pct / top20Pct) * 10000) / 100 : 0,
-        avgBalance: holders.reduce((s, h) => s + h.balance, 0) / holders.length,
-        avgPct: Math.round((top20Pct / Math.min(holders.length, 20)) * 100) / 100,
-        riskLevel,
+        top5Pct: null,
+        top10Pct: null,
+        top20Pct: null,
+        herfindahl: null,
+        top1Pct: null,
+        dominance: null,
+        avgBalance: null,
+        avgPct: null,
         holderCount: null
       };
 
@@ -2059,9 +2052,6 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
     const top10Pct = realHolders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
     const top20Pct = realHolders.reduce((s, h) => s + (h.percentage || 0), 0);
     const top1Pct = realHolders[0]?.percentage || 0;
-    let riskLevel = 'low';
-    if (top10Pct > 70 || top1Pct > 30) riskLevel = 'high';
-    else if (top10Pct > 40 || top1Pct > 15) riskLevel = 'medium';
 
     metrics = {
       top5Pct: Math.round(top5Pct * 100) / 100, top10Pct: Math.round(top10Pct * 100) / 100,
@@ -2071,7 +2061,7 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
       dominance: top20Pct > 0 ? Math.round((top1Pct / top20Pct) * 10000) / 100 : 0,
       avgBalance: realHolders.reduce((s, h) => s + h.balance, 0) / realHolders.length,
       avgPct: Math.round((top20Pct / realHolders.length) * 100) / 100,
-      riskLevel, holderCount: null
+      holderCount: null
     };
   }
 

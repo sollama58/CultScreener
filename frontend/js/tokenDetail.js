@@ -647,9 +647,10 @@ const tokenDetail = {
         const t20 = document.getElementById('holders-top20');
         const avgHoldTimeEl = document.getElementById('holders-avg-hold-time');
         const tokenAgeEl = document.getElementById('holders-token-age');
-        if (t5) t5.textContent = metrics.top5Pct.toFixed(1) + '%';
-        if (t10) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
-        if (t20) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
+        // Percentages may be null in fast path until worker enriches with LP exclusion
+        if (t5 && metrics.top5Pct != null) t5.textContent = metrics.top5Pct.toFixed(1) + '%';
+        if (t10 && metrics.top10Pct != null) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
+        if (t20 && metrics.top20Pct != null) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
         // Avg Hold Time metric is populated by _updateAvgHoldTimeMetric after hold times load
         if (avgHoldTimeEl) avgHoldTimeEl.textContent = '...';
         if (tokenAgeEl) {
@@ -677,15 +678,6 @@ const tokenDetail = {
           else if (val > 50) el.classList.add('concentration-medium');
           else el.classList.add('concentration-low');
         });
-
-        // Render risk badge
-        const riskRow = document.getElementById('holders-risk-row');
-        const riskBadge = document.getElementById('holders-risk-badge');
-        if (riskRow && riskBadge && metrics.riskLevel) {
-          riskRow.style.display = '';
-          riskBadge.textContent = metrics.riskLevel.charAt(0).toUpperCase() + metrics.riskLevel.slice(1);
-          riskBadge.className = 'holders-risk-badge risk-' + metrics.riskLevel;
-        }
       }
 
       // Render locked & burnt supply info (inside the metrics grid)

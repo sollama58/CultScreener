@@ -221,11 +221,12 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
       : null;
 
     // Build basic holders list (LP/burn flags come from worker enrichment)
+    // Percentages set to null in fast path since LP status unknown — worker will compute actual percentages excluding LPs
     const holders = largestAccounts.slice(0, 20).map((a, i) => ({
       rank: i + 1,
       address: a.wallet || a.address,
       balance: a.uiAmount,
-      percentage: totalSupply > 0 ? (a.uiAmount / totalSupply) * 100 : null,
+      percentage: null,  // Will be computed by worker after LP detection
       isLP: false,
       isBurnt: false
     })).filter(h => h.balance > 0);
@@ -233,21 +234,13 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     // Basic concentration metrics (refined by worker once LP/burn flags are set)
     let metrics = null;
     if (totalSupply > 0 && holders.length > 0) {
-      const top5Pct = holders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top10Pct = holders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top20Pct = holders.slice(0, 20).reduce((s, h) => s + (h.percentage || 0), 0);
-      const top1Pct = holders[0]?.percentage || 0;
-
-      let riskLevel = 'low';
-      if (top10Pct > 70 || top1Pct > 30) riskLevel = 'high';
-      else if (top10Pct > 40 || top1Pct > 15) riskLevel = 'medium';
-
+      // In fast path, percentages are null (set by worker after LP detection)
+      // So we don't compute concentration metrics yet
       metrics = {
-        top5Pct: Math.round(top5Pct * 100) / 100,
-        top10Pct: Math.round(top10Pct * 100) / 100,
-        top20Pct: Math.round(top20Pct * 100) / 100,
-        top1Pct: Math.round(top1Pct * 100) / 100,
-        riskLevel,
+        top5Pct: null,
+        top10Pct: null,
+        top20Pct: null,
+        top1Pct: null,
         holderCount: null
       };
 

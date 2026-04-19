@@ -660,17 +660,15 @@
 
     // Metrics grid — same as token page
     if (metrics) {
-      const safeRisk = ['high', 'medium', 'low'].includes(metrics.riskLevel) ? metrics.riskLevel : 'low';
       html += '<div class="holders-metrics">';
       html += holderMetric('Total Holders', holderCountStr || '...', null, 'cultify-total-holders');
       html += holderMetric('Token Age', tokenAge);
-      html += holderMetric('Top 5 Holders', metrics.top5Pct.toFixed(1) + '%', metrics.top5Pct);
-      html += holderMetric('Top 10 Holders', metrics.top10Pct.toFixed(1) + '%', metrics.top10Pct);
-      html += holderMetric('Top 20 Holders', metrics.top20Pct.toFixed(1) + '%', metrics.top20Pct);
-      html += `<div class="holder-metric" style="display:flex;">
-        <span class="holder-metric-label">Risk Level</span>
-        <span class="holder-metric-value holders-risk-badge risk-${safeRisk}">${safeRisk.charAt(0).toUpperCase() + safeRisk.slice(1)}</span>
-      </div>`;
+      // Top percentage metrics only shown if populated (worker enriches with LP-excluded percentages)
+      if (metrics.top5Pct != null) {
+        html += holderMetric('Top 5 Holders', metrics.top5Pct.toFixed(1) + '%', metrics.top5Pct);
+        html += holderMetric('Top 10 Holders', metrics.top10Pct.toFixed(1) + '%', metrics.top10Pct);
+        html += holderMetric('Top 20 Holders', metrics.top20Pct.toFixed(1) + '%', metrics.top20Pct);
+      }
       html += '</div>';
     }
 

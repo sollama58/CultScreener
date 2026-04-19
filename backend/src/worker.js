@@ -482,9 +482,6 @@ const jobProcessors = {
         const top10Pct = realHolders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
         const top20Pct = realHolders.reduce((s, h) => s + (h.percentage || 0), 0);
         const top1Pct = realHolders[0]?.percentage || 0;
-        let riskLevel = 'low';
-        if (top10Pct > 70 || top1Pct > 30) riskLevel = 'high';
-        else if (top10Pct > 40 || top1Pct > 15) riskLevel = 'medium';
 
         metrics = {
           top5Pct: Math.round(top5Pct * 100) / 100, top10Pct: Math.round(top10Pct * 100) / 100,
@@ -494,7 +491,7 @@ const jobProcessors = {
           dominance: top20Pct > 0 ? Math.round((top1Pct / top20Pct) * 10000) / 100 : 0,
           avgBalance: realHolders.reduce((s, h) => s + h.balance, 0) / realHolders.length,
           avgPct: Math.round((top20Pct / realHolders.length) * 100) / 100,
-          riskLevel, holderCount: null
+          holderCount: null
         };
 
         // Fetch holder count
