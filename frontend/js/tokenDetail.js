@@ -881,11 +881,6 @@ const tokenDetail = {
         this._tokenHoldTimesData = Object.assign(this._tokenHoldTimesData || {}, data.tokenHoldTimes);
       }
 
-      // Update fresh wallets metric if available
-      if (data.freshWallets && data.freshWallets.checked > 0) {
-        this._updateFreshWalletsMetric(data.freshWallets);
-      }
-
       // Fill in pending placeholders with any data we have so far
       this._applyHoldTimesToDOM();
 
@@ -965,27 +960,6 @@ const tokenDetail = {
 
     const avgMs = values.reduce((sum, v) => sum + v, 0) / values.length;
     el.textContent = this._formatHoldTime(avgMs);
-  },
-
-  // Update the "Fresh Wallets" metric — wallets with first-ever tx within 24h.
-  // Color-coded by percentage: green (<2%) = healthy, yellow (2-5%) = watch, red (>5%) = suspicious.
-  _updateFreshWalletsMetric(freshData) {
-    const el = document.getElementById('holders-fresh-wallets');
-    if (!el) return;
-
-    const { count, checked, total } = freshData;
-    if (checked === 0) {
-      el.textContent = '...';
-      return;
-    }
-
-    const pct = checked > 0 ? (count / checked) * 100 : 0;
-    el.textContent = `${count}/${total} (${pct.toFixed(0)}%)`;
-    el.classList.remove('concentration-low', 'concentration-medium', 'concentration-high');
-    // Percentage-based thresholds — scales with any sample size
-    if (pct < 2) el.classList.add('concentration-low');        // green = healthy
-    else if (pct < 5) el.classList.add('concentration-medium'); // yellow = watch
-    else el.classList.add('concentration-high');                 // red = suspicious
   },
 
   // Public entry point called from holderBehavior.js share button —
