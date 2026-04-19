@@ -1123,7 +1123,7 @@ const tokenDetail = {
             </div>
             <div style="${statStyle}">
               <div style="${valStyle};color:#ff8c00;">${avgHold}</div>
-              <div style="${lblStyle}">Avg hold time</div>
+              <div style="${lblStyle}">Average Hold Time (all tokens)</div>
             </div>
           </div>`;
         // .diamond-hands-footer is a child of .diamond-hands-section, not graphic —

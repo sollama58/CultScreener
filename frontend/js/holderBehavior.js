@@ -550,7 +550,7 @@
         </div>
         <div class="hb-results-stat">
           <span class="hb-results-stat-value hb-avg-hold">${overallAvgHoldTimeMs ? formatDuration(overallAvgHoldTimeMs) : '—'}</span>
-          <span class="hb-results-stat-label">Overall avg hold</span>
+          <span class="hb-results-stat-label">Average Hold Time (all tokens)</span>
         </div>
       </div>`;
 
