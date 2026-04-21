@@ -564,4 +564,50 @@ router.patch('/submissions/:id', strictLimiter, asyncHandler(async (req, res) =>
   res.json({ success: true, submission: result });
 }));
 
+// ==========================================
+// API Keys Management
+// ==========================================
+
+router.get('/api-keys', asyncHandler(async (req, res) => {
+  const limit = Math.min(100, parseInt(req.query.limit) || 50);
+  const offset = Math.max(0, parseInt(req.query.offset) || 0);
+
+  const result = await db.getAllApiKeys({ limit, offset });
+  res.json(result);
+}));
+
+router.patch('/api-keys/:id/revoke', strictLimiter, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+
+  const result = await db.revokeApiKeyById(id);
+  if (!result) return res.status(404).json({ error: 'API key not found' });
+
+  res.json({ success: true, key: result });
+}));
+
+router.patch('/api-keys/:id/restore', strictLimiter, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+
+  const result = await db.pool.query(
+    `UPDATE api_keys SET is_active = true WHERE id = $1 RETURNING *`,
+    [id]
+  );
+
+  if (!result.rows[0]) return res.status(404).json({ error: 'API key not found' });
+
+  res.json({ success: true, key: result.rows[0] });
+}));
+
+router.delete('/api-keys/:id', strictLimiter, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+
+  const result = await db.deleteApiKeyById(id);
+  if (!result) return res.status(404).json({ error: 'API key not found' });
+
+  res.json({ success: true });
+}));
+
 module.exports = router;

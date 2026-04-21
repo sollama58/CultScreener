@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>🔑 API Keys - CultScreener</title>
+  <meta name="description" content="Generate and manage API keys to access CultScreener's public API.">
+  <meta name="theme-color" content="#07080a">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/thisisfine8bit.jpg" type="image/jpeg">
+  <link rel="apple-touch-icon" href="/thisisfine8bit.jpg">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <style>
+    .api-keys-container {
+      display: grid;
+      gap: 2rem;
+      margin-top: 2rem;
+    }
+
+    .api-section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+    }
+
+    .api-section h2 {
+      font-size: 1.25rem;
+      margin-bottom: 1.5rem;
+      color: var(--text-primary);
+    }
+
+    .key-input-group {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .key-input-group input {
+      flex: 1;
+      padding: 0.75rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color var(--transition-fast);
+    }
+
+    .key-input-group input:focus {
+      border-color: var(--fire-primary);
+      box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.1);
+    }
+
+    .key-display {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-fire);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .key-display .key-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .key-display .key-value {
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      color: var(--fire-primary);
+      word-break: break-all;
+      margin-bottom: 1rem;
+    }
+
+    .key-display .key-message {
+      color: var(--yellow);
+      font-size: 0.875rem;
+      margin-top: 0.75rem;
+    }
+
+    .key-info {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .info-item {
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+    }
+
+    .info-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .info-value {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      color: var(--text-primary);
+      word-break: break-all;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.4rem 0.8rem;
+      border-radius: var(--radius-full);
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .status-badge.active {
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-badge.inactive {
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .tester-tabs {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 1.5rem;
+    }
+
+    .tester-tab {
+      padding: 0.75rem 1rem;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      transition: all var(--transition-fast);
+    }
+
+    .tester-tab:hover {
+      color: var(--text-primary);
+    }
+
+    .tester-tab.active {
+      color: var(--fire-primary);
+      border-bottom-color: var(--fire-primary);
+    }
+
+    .tester-content {
+      display: none;
+    }
+
+    .tester-content.active {
+      display: block;
+    }
+
+    .tester-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .tester-form label {
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.4rem;
+    }
+
+    .tester-form input,
+    .tester-form select {
+      padding: 0.6rem 0.85rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: border-color var(--transition-fast);
+    }
+
+    .tester-form input:focus,
+    .tester-form select:focus {
+      border-color: var(--fire-primary);
+      box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.1);
+    }
+
+    .tester-response {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      margin-top: 1rem;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .tester-response.hidden {
+      display: none;
+    }
+
+    .tester-response pre {
+      margin: 0;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .tester-response.error pre {
+      color: var(--red);
+    }
+
+    .tester-response.success pre {
+      color: var(--green);
+    }
+
+    .doc-code {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      overflow-x: auto;
+      margin-bottom: 1.5rem;
+    }
+
+    .doc-code code {
+      color: var(--fire-primary);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    .doc-endpoint {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .doc-method {
+      padding: 0.4rem 0.8rem;
+      border-radius: var(--radius-md);
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-family: var(--font-mono);
+      min-width: 60px;
+      text-align: center;
+    }
+
+    .doc-method.get {
+      background: rgba(59, 130, 246, 0.2);
+      color: #3b82f6;
+    }
+
+    .doc-method.post {
+      background: rgba(34, 197, 94, 0.2);
+      color: #22c55e;
+    }
+
+    .doc-path {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--text-primary);
+    }
+
+    .loader {
+      display: inline-block;
+      width: 0.875rem;
+      height: 0.875rem;
+      border: 2px solid var(--border-color);
+      border-top-color: var(--fire-primary);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">
+        <img src="/cultscreenerlogo.jpg" alt="" class="logo-icon" width="28" height="28" aria-hidden="true">
+        <span class="logo-text">CultScreener</span>
+      </a>
+      <nav class="nav">
+        <a href="/" class="nav-link">Diamond Hands</a>
+        <a href="community.html" class="nav-link">Watchlist</a>
+        <a href="api-keys.html" class="nav-link active">API</a>
+        <a href="about.html" class="nav-link">About</a>
+        <a href="cultify.html" class="nav-link">Cultify</a>
+      </nav>
+      <div class="header-actions">
+        <button class="btn btn-wallet" id="wallet-btn">Connect Wallet</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main terminal-page">
+    <div class="api-keys-container">
+      <!-- Generate / Manage API Key -->
+      <div class="api-section">
+        <h2>🔑 API Key Management</h2>
+
+        <div id="key-not-connected" style="display: none; margin-bottom: 1.5rem;">
+          <p style="color: var(--text-muted); margin-bottom: 1rem;">Connect your wallet to generate an API key.</p>
+          <button class="btn btn-primary" id="connect-for-key">Connect Wallet</button>
+        </div>
+
+        <div id="key-management" style="display: none;">
+          <div class="tester-form">
+            <label>Your Wallet</label>
+            <input type="text" id="key-wallet" readonly>
+          </div>
+
+          <div id="existing-key" style="display: none;">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">You have an active API key:</p>
+            <div class="key-info" style="margin-bottom: 1rem;">
+              <div class="info-item">
+                <div class="info-label">Key Prefix</div>
+                <div class="info-value" id="key-prefix">-</div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">Created</div>
+                <div class="info-value" id="key-created">-</div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">Last Used</div>
+                <div class="info-value" id="key-last-used">Never</div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">Requests</div>
+                <div class="info-value" id="key-requests">-</div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">Status</div>
+                <div style="margin-top: 0.5rem;">
+                  <span class="status-badge active" id="key-status">Active</span>
+                </div>
+              </div>
+            </div>
+            <div class="button-group">
+              <button class="btn btn-secondary" id="rotate-key-btn">Rotate Key</button>
+              <button class="btn btn-danger" id="revoke-key-btn">Revoke Key</button>
+            </div>
+          </div>
+
+          <div id="no-key" style="display: none; margin: 1.5rem 0;">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">You don't have an API key yet. Generate one by signing with your wallet:</p>
+            <button class="btn btn-primary" id="generate-key-btn">Generate API Key</button>
+          </div>
+
+          <div id="key-generated" style="display: none;">
+            <div class="key-display">
+              <div class="key-label">Your API Key (Save it now - it won't be shown again!)</div>
+              <div class="key-value" id="new-key-value">-</div>
+              <button class="btn btn-sm btn-ghost" id="copy-key-btn">Copy to Clipboard</button>
+              <div class="key-message">⚠️ Save this key somewhere safe. You won't be able to see it again!</div>
+            </div>
+            <button class="btn btn-primary" id="key-generated-confirm">I've Saved My Key</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Tester -->
+      <div class="api-section">
+        <h2>🧪 API Tester</h2>
+        <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Test the public API endpoints (requires API key above)</p>
+
+        <div id="tester-not-authenticated" style="display: none; text-align: center; padding: 2rem;">
+          <p style="color: var(--text-muted);">Generate an API key first to test the endpoints</p>
+        </div>
+
+        <div id="tester-authenticated" style="display: none;">
+          <div class="tester-tabs">
+            <button class="tester-tab active" data-tab="leaderboard">Leaderboard</button>
+            <button class="tester-tab" data-tab="token">Token Conviction</button>
+          </div>
+
+          <!-- Leaderboard Tester -->
+          <div id="tester-leaderboard" class="tester-content active">
+            <div class="tester-form">
+              <label>Limit (max 100)</label>
+              <input type="number" id="lb-limit" value="25" min="1" max="100">
+              <label>Offset</label>
+              <input type="number" id="lb-offset" value="0" min="0">
+              <label>Min Conviction Score (%)</label>
+              <input type="number" id="lb-min-conviction" placeholder="0-100" step="0.1">
+              <label>Min Market Cap</label>
+              <input type="number" id="lb-min-mcap" placeholder="e.g., 100000">
+              <button class="btn btn-primary" id="test-leaderboard-btn">Test Leaderboard Endpoint</button>
+            </div>
+            <div id="lb-response" class="tester-response hidden">
+              <pre id="lb-response-content"></pre>
+            </div>
+          </div>
+
+          <!-- Token Conviction Tester -->
+          <div id="tester-token" class="tester-content">
+            <div class="tester-form">
+              <label>Token Mint Address</label>
+              <input type="text" id="token-mint" placeholder="e.g., EPjFWaLb3odcccccccccccccccccccccccccccccccccc">
+              <button class="btn btn-primary" id="test-token-btn">Get Token Conviction</button>
+            </div>
+            <div id="token-response" class="tester-response hidden">
+              <pre id="token-response-content"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Documentation -->
+      <div class="api-section">
+        <h2>📖 API Documentation</h2>
+
+        <h3 style="margin-top: 2rem; margin-bottom: 1rem; color: var(--text-primary);">Base URL</h3>
+        <div class="doc-code">
+          <code id="api-base-url">https://cultscreener-api.onrender.com/v1</code>
+        </div>
+
+        <h3 style="margin-top: 2rem; margin-bottom: 1rem; color: var(--text-primary);">Authentication</h3>
+        <p style="color: var(--text-secondary); margin-bottom: 1rem;">Include your API key in the request header:</p>
+        <div class="doc-code">
+          <code>X-API-Key: your_api_key_here</code>
+        </div>
+
+        <h3 style="margin-top: 2rem; margin-bottom: 1rem; color: var(--text-primary);">Endpoints</h3>
+
+        <div style="margin-bottom: 2rem;">
+          <div class="doc-endpoint">
+            <div class="doc-method get">GET</div>
+            <div class="doc-path">/leaderboard</div>
+          </div>
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">Get the conviction token leaderboard</p>
+          <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;"><strong>Query Parameters:</strong></p>
+          <div style="margin-left: 1rem; margin-bottom: 1rem; color: var(--text-muted); font-size: 0.875rem;">
+            <div><code style="color: var(--fire-secondary);">limit</code> - Results per page (max 100, default 25)</div>
+            <div><code style="color: var(--fire-secondary);">offset</code> - Pagination offset (default 0)</div>
+            <div><code style="color: var(--fire-secondary);">minConviction</code> - Filter by minimum conviction % (0-100)</div>
+            <div><code style="color: var(--fire-secondary);">minMcap</code> - Filter by minimum market cap</div>
+            <div><code style="color: var(--fire-secondary);">maxMcap</code> - Filter by maximum market cap</div>
+            <div><code style="color: var(--fire-secondary);">minSample</code> - Filter by minimum sample size</div>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;"><strong>Example:</strong></p>
+          <div class="doc-code">
+            <code>curl -H "X-API-Key: your_key" "https://cultscreener-api.onrender.com/v1/leaderboard?limit=10&minConviction=50"</code>
+          </div>
+        </div>
+
+        <div>
+          <div class="doc-endpoint">
+            <div class="doc-method get">GET</div>
+            <div class="doc-path">/leaderboard/:mint</div>
+          </div>
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">Get conviction data for a specific token with its leaderboard rank</p>
+          <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;"><strong>Path Parameters:</strong></p>
+          <div style="margin-left: 1rem; margin-bottom: 1rem; color: var(--text-muted); font-size: 0.875rem;">
+            <div><code style="color: var(--fire-secondary);">mint</code> - The token's mint address (Solana address)</div>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;"><strong>Example:</strong></p>
+          <div class="doc-code">
+            <code>curl -H "X-API-Key: your_key" "https://cultscreener-api.onrender.com/v1/leaderboard/EPjFWaLb3odcccccccccccccccccccccccccccccccccc"</code>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 2rem; margin-bottom: 1rem; color: var(--text-primary);">Response Format</h3>
+        <p style="color: var(--text-secondary); margin-bottom: 1rem;">All responses return JSON with the following structure:</p>
+        <div class="doc-code">
+          <code>{
+  "success": true,
+  "data": [...],
+  "limit": 25,
+  "offset": 0,
+  "total": 1234
+}</code>
+        </div>
+
+        <h3 style="margin-top: 2rem; margin-bottom: 1rem; color: var(--text-primary);">Error Handling</h3>
+        <p style="color: var(--text-secondary); margin-bottom: 1rem;">Invalid API key or rate limiting will return appropriate HTTP status codes:</p>
+        <div style="margin-left: 1rem; margin-bottom: 1rem; color: var(--text-muted); font-size: 0.875rem;">
+          <div><strong style="color: var(--text-secondary);">401</strong> - Invalid API key</div>
+          <div><strong style="color: var(--text-secondary);">403</strong> - API key revoked or inactive</div>
+          <div><strong style="color: var(--text-secondary);">429</strong> - Rate limit exceeded</div>
+          <div><strong style="color: var(--text-secondary);">404</strong> - Token not found</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/wallet.js"></script>
+  <script src="js/apiKeys.js"></script>
+</body>
+</html>

@@ -13,6 +13,8 @@ const adminRoutes = require('./routes/admin');
 const sentimentRoutes = require('./routes/sentiment');
 const shareRoutes = require('./routes/share');
 const cultifyRoutes = require('./routes/cultify');
+const apiKeyRoutes = require('./routes/apiKeys');
+const publicApiRoutes = require('./routes/public');
 
 // Import middleware
 const { defaultLimiter } = require('./middleware/rateLimit');
@@ -137,7 +139,7 @@ app.use((req, res, next) => {
     console.log(`[CORS] Preflight: origin="${origin}" allowed=${allowed} corsOrigins=${JSON.stringify(corsOrigins)}`);
     if (allowed && normalizedOrigin) {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Session, X-Admin-Password');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Session, X-Admin-Password, X-API-Key');
       res.setHeader('Access-Control-Max-Age', '86400');
     }
     return res.status(204).end();
@@ -301,6 +303,10 @@ app.use('/api/curated', curatedRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/cultify', cultifyRoutes);
+app.use('/api/keys', apiKeyRoutes);
+
+// Public API Routes (protected by API key)
+app.use('/v1', publicApiRoutes);
 
 // Social media share routes (OG meta tags + OG image)
 app.use('/share', shareRoutes);

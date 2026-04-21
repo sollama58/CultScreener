@@ -13,6 +13,7 @@ const admin = {
     this.bindFilterActions();
     this.bindMaintenanceActions();
     this.bindWhitelistActions();
+    this.bindApiKeyActions();
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
@@ -141,6 +142,7 @@ const admin = {
       case 'bugs': this.loadBugReports(); break;
       case 'submissions': this.loadSubmissions(); break;
       case 'whitelist': this.loadWhitelist(); break;
+      case 'api-keys': this.loadApiKeys(); break;
       case 'health': this.loadHealth(); break;
     }
   },
@@ -672,6 +674,77 @@ const admin = {
       await this.request(`/api/admin/whitelist/${encodeURIComponent(wallet)}`, { method: 'DELETE' });
       this.loadWhitelist();
       if (typeof toast !== 'undefined') toast.success('Wallet removed from whitelist');
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    }
+  },
+
+  // ── API Keys ──────────────────────────────────
+
+  bindApiKeyActions() {
+    // API Keys tab is loaded when tab is clicked
+  },
+
+  async loadApiKeys() {
+    const tbody = document.getElementById('api-keys-table-body');
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">Loading...</td></tr>';
+    try {
+      const result = await this.request('/api/admin/api-keys?limit=100&offset=0');
+      const keys = result.keys || [];
+
+      if (keys.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">No API keys registered</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = keys.map(key => `
+        <tr>
+          <td><code style="color: var(--fire-primary); font-size: 0.8rem;">${this.esc(key.key_prefix)}***</code></td>
+          <td><code style="font-size: 0.8rem; font-family: var(--font-mono);">${this.esc(key.owner_wallet.slice(0, 8))}...</code></td>
+          <td>${key.name ? this.esc(key.name) : '-'}</td>
+          <td style="font-size: 0.8rem;">${key.created_at ? new Date(key.created_at).toLocaleDateString() : '-'}</td>
+          <td style="font-size: 0.8rem;">${key.last_used_at ? new Date(key.last_used_at).toLocaleString() : 'Never'}</td>
+          <td>${key.request_count || 0}</td>
+          <td><span class="badge ${key.is_active ? 'badge-green' : 'badge-red'}">${key.is_active ? 'Active' : 'Revoked'}</span></td>
+          <td>
+            ${key.is_active ? `<button class="action-btn danger" onclick="admin.revokeApiKey(${key.id}, '${this.esc(key.owner_wallet.slice(0, 8))}...')">Revoke</button>` : `<button class="action-btn success" onclick="admin.restoreApiKey(${key.id})">Restore</button>`}
+            <button class="action-btn danger" onclick="admin.deleteApiKey(${key.id}, '${this.esc(key.owner_wallet.slice(0, 8))}...')">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+    }
+  },
+
+  async revokeApiKey(id, wallet) {
+    if (!confirm(`Revoke API key for ${wallet}?`)) return;
+    try {
+      await this.request(`/api/admin/api-keys/${id}/revoke`, { method: 'PATCH' });
+      this.loadApiKeys();
+      if (typeof toast !== 'undefined') toast.success('API key revoked');
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    }
+  },
+
+  async restoreApiKey(id) {
+    if (!confirm('Restore this API key?')) return;
+    try {
+      await this.request(`/api/admin/api-keys/${id}/restore`, { method: 'PATCH' });
+      this.loadApiKeys();
+      if (typeof toast !== 'undefined') toast.success('API key restored');
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    }
+  },
+
+  async deleteApiKey(id, wallet) {
+    if (!confirm(`Delete API key for ${wallet}? This action cannot be undone.`)) return;
+    try {
+      await this.request(`/api/admin/api-keys/${id}`, { method: 'DELETE' });
+      this.loadApiKeys();
+      if (typeof toast !== 'undefined') toast.success('API key deleted');
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
     }

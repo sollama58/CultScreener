@@ -53,10 +53,25 @@ const walletLimiter = rateLimit({
   }
 });
 
+// Limiter for API key requests (higher limits than default)
+// Uses IP as key to prevent per-key rate limit circumvention
+const apiKeyLimiter = rateLimit({
+  windowMs: 60000, // 1 minute
+  max: 300,        // 300 requests per minute per IP
+  message: { error: 'Too many requests with this API key. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Use IP as key to prevent circumvention
+    return req.ip;
+  }
+});
+
 module.exports = {
   defaultLimiter,
   strictLimiter,
   veryStrictLimiter,
   searchLimiter,
-  walletLimiter
+  walletLimiter,
+  apiKeyLimiter
 };
