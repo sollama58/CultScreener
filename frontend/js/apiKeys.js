@@ -1,488 +1,468 @@
 /* CultScreener API Keys Page */
-
 const apiKeysPage = {
   currentWallet: null,
-  currentKey: null,
-  apiBaseUrl: config.api.baseUrl,
+  currentKey: null,   // Actual key — only kept in memory/sessionStorage within session
+  keyMeta: null,      // Metadata (prefix, dates, etc.) — cached in localStorage
+
+  _metaStorageKey(wallet) {
+    return `cultApiKeyMeta_${wallet}`;
+  },
 
   init() {
+    this.loadSessionKey();
+    this.setApiBaseUrl();
     this.bindWalletConnection();
     this.bindKeyManagement();
     this.bindApiTester();
-    this.setApiBaseUrl();
 
-    // Check if wallet is already connected
-    const connectedWallet = wallet.getConnected();
-    if (connectedWallet) {
-      this.currentWallet = connectedWallet;
+    // Check wallet state on load
+    if (wallet.connected && wallet.address) {
+      this.currentWallet = wallet.address;
       this.showKeyManagement();
-      this.loadExistingKey();
+      this.loadCachedKeyMeta();
     } else {
       this.showConnectPrompt();
     }
 
-    // Listen for wallet changes
     window.addEventListener('walletConnected', (e) => {
       this.currentWallet = e.detail.address;
       this.showKeyManagement();
-      this.loadExistingKey();
+      this.loadCachedKeyMeta();
     });
 
     window.addEventListener('walletDisconnected', () => {
       this.currentWallet = null;
+      this.currentKey = null;
+      this.keyMeta = null;
       this.showConnectPrompt();
     });
   },
 
-  setApiBaseUrl() {
-    const el = document.getElementById('api-base-url');
-    if (el) {
-      el.textContent = `${this.apiBaseUrl}/v1`;
+  loadSessionKey() {
+    // Restore key from sessionStorage so tester works within same browser session
+    const saved = sessionStorage.getItem('cultApiKey');
+    if (saved) {
+      this.currentKey = saved;
+      const testerInput = document.getElementById('tester-api-key');
+      if (testerInput) testerInput.value = saved;
     }
+  },
+
+  setApiBaseUrl() {
+    const base = `${config.api.baseUrl}/v1`;
+    document.querySelectorAll('.api-base-url').forEach(el => {
+      el.textContent = base;
+    });
   },
 
   showConnectPrompt() {
-    const notConnected = document.getElementById('key-not-connected');
-    const management = document.getElementById('key-management');
-    if (notConnected) notConnected.style.display = 'block';
-    if (management) management.style.display = 'none';
-
-    const testerAuth = document.getElementById('tester-authenticated');
-    const testerNoAuth = document.getElementById('tester-not-authenticated');
-    if (testerAuth) testerAuth.style.display = 'none';
-    if (testerNoAuth) testerNoAuth.style.display = 'block';
+    document.getElementById('key-not-connected').style.display = 'block';
+    document.getElementById('key-management').style.display = 'none';
   },
 
   showKeyManagement() {
-    const notConnected = document.getElementById('key-not-connected');
-    const management = document.getElementById('key-management');
-    if (notConnected) notConnected.style.display = 'none';
-    if (management) management.style.display = 'block';
+    document.getElementById('key-not-connected').style.display = 'none';
+    document.getElementById('key-management').style.display = 'block';
 
-    const walletInput = document.getElementById('key-wallet');
-    if (walletInput && this.currentWallet) {
-      walletInput.value = this.currentWallet;
+    const walletEl = document.getElementById('wallet-address-display');
+    if (walletEl && this.currentWallet) {
+      const short = `${this.currentWallet.slice(0, 6)}...${this.currentWallet.slice(-4)}`;
+      walletEl.textContent = short;
+      walletEl.title = this.currentWallet;
     }
+  },
+
+  showLoading() {
+    document.getElementById('key-loading').style.display = 'flex';
+    document.getElementById('existing-key').style.display = 'none';
+    document.getElementById('no-key').style.display = 'none';
+    document.getElementById('key-generated').style.display = 'none';
+  },
+
+  hideLoading() {
+    document.getElementById('key-loading').style.display = 'none';
   },
 
   bindWalletConnection() {
-    const connectBtn = document.getElementById('connect-for-key');
-    if (connectBtn) {
-      connectBtn.addEventListener('click', () => wallet.showWalletModal());
-    }
+    document.querySelectorAll('.connect-wallet-btn').forEach(btn => {
+      btn.addEventListener('click', () => wallet.connect());
+    });
   },
 
   bindKeyManagement() {
-    const generateBtn = document.getElementById('generate-key-btn');
-    const rotateBtn = document.getElementById('rotate-key-btn');
-    const revokeBtn = document.getElementById('revoke-key-btn');
-    const confirmedBtn = document.getElementById('key-generated-confirm');
-    const copyBtn = document.getElementById('copy-key-btn');
-
-    if (generateBtn) generateBtn.addEventListener('click', () => this.generateKey());
-    if (rotateBtn) rotateBtn.addEventListener('click', () => this.rotateKey());
-    if (revokeBtn) revokeBtn.addEventListener('click', () => this.revokeKey());
-    if (confirmedBtn) confirmedBtn.addEventListener('click', () => this.hideKeyDisplay());
-    if (copyBtn) copyBtn.addEventListener('click', () => this.copyKeyToClipboard());
+    const on = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', fn);
+    };
+    on('generate-key-btn', () => this.generateKey());
+    on('rotate-key-btn', () => this.rotateKey());
+    on('revoke-key-btn', () => this.revokeKey());
+    on('key-generated-confirm', () => this.confirmKeySaved());
+    on('copy-key-btn', () => this.copyKeyToClipboard());
   },
 
   bindApiTester() {
-    // Tab switching
-    const tabs = document.querySelectorAll('.tester-tab');
-    tabs.forEach(tab => {
+    document.querySelectorAll('.tester-tab').forEach(tab => {
       tab.addEventListener('click', () => this.switchTesterTab(tab.dataset.tab));
     });
 
-    // Leaderboard tester
-    const lbBtn = document.getElementById('test-leaderboard-btn');
-    if (lbBtn) lbBtn.addEventListener('click', () => this.testLeaderboard());
-
-    // Token tester
-    const tokenBtn = document.getElementById('test-token-btn');
-    if (tokenBtn) tokenBtn.addEventListener('click', () => this.testToken());
+    const on = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', fn);
+    };
+    on('test-leaderboard-btn', () => this.testLeaderboard());
+    on('test-token-btn', () => this.testToken());
   },
 
-  async generateKey() {
-    if (!this.currentWallet) {
-      api.toast.error('Wallet not connected');
-      return;
-    }
+  // ── Key metadata: localStorage cache ─────────────────────────────────────
 
-    const generateBtn = document.getElementById('generate-key-btn');
-    if (generateBtn) generateBtn.disabled = true;
-    if (generateBtn) generateBtn.textContent = 'Signing...';
+  loadCachedKeyMeta() {
+    if (!this.currentWallet) return;
+    this.showLoading();
 
     try {
-      const timestamp = Date.now();
-      const message = `CultScreener API Key: register for ${this.currentWallet} at ${timestamp}`;
-
-      const sig = await wallet.signMessage(message);
-      if (!sig || !sig.signature) {
-        api.toast.error('Failed to sign message');
+      const raw = localStorage.getItem(this._metaStorageKey(this.currentWallet));
+      if (raw) {
+        this.keyMeta = JSON.parse(raw);
+        this.hideLoading();
+        this.showExistingKey(this.keyMeta);
         return;
       }
+    } catch (e) {
+      // Corrupted — fall through to no-key state
+    }
+
+    this.hideLoading();
+    this.showNoKey();
+  },
+
+  saveKeyMeta(meta) {
+    if (!this.currentWallet) return;
+    this.keyMeta = meta;
+    try {
+      localStorage.setItem(this._metaStorageKey(this.currentWallet), JSON.stringify(meta));
+    } catch (e) { /* storage unavailable */ }
+  },
+
+  clearKeyMeta() {
+    if (!this.currentWallet) return;
+    this.keyMeta = null;
+    try {
+      localStorage.removeItem(this._metaStorageKey(this.currentWallet));
+    } catch (e) { /* ignore */ }
+  },
+
+  // ── Signing helper ────────────────────────────────────────────────────────
+
+  async signForApi() {
+    const timestamp = Date.now();
+    const message = `CultScreener API Key: register for ${this.currentWallet} at ${timestamp}`;
+    const sig = await wallet.signMessage(message);
+    if (!sig || !sig.signature) throw new Error('Signature cancelled or failed');
+    return { signature: sig.signature, signatureTimestamp: timestamp };
+  },
+
+  // ── Key operations ────────────────────────────────────────────────────────
+
+  async generateKey() {
+    if (!this.currentWallet) { api.toast.error('Wallet not connected'); return; }
+
+    const btn = document.getElementById('generate-key-btn');
+    this._setLoading(btn, true, 'Signing...');
+
+    try {
+      const { signature, signatureTimestamp } = await this.signForApi();
 
       const response = await api.request('/api/keys', {
         method: 'POST',
-        body: JSON.stringify({
-          wallet: this.currentWallet,
-          signature: sig.signature,
-          signatureTimestamp: timestamp
-        })
+        body: JSON.stringify({ wallet: this.currentWallet, signature, signatureTimestamp })
       });
 
       if (response.success && response.key) {
         this.currentKey = response.key;
+        sessionStorage.setItem('cultApiKey', response.key);
+
+        this.saveKeyMeta({
+          prefix: response.prefix,
+          created_at: response.created_at,
+          is_active: true,
+          request_count: 0,
+          last_used_at: null
+        });
+
+        this._prefillTesterKey(response.key);
         this.hideNoKey();
         this.showKeyDisplay();
-        this.showTesterAuthenticated();
-
-        // Hide tester not authenticated
-        const testerNoAuth = document.getElementById('tester-not-authenticated');
-        if (testerNoAuth) testerNoAuth.style.display = 'none';
-
-        api.toast.success('API key generated successfully!');
+        api.toast.success('API key generated!');
       }
     } catch (err) {
       api.toast.error(err.message || 'Failed to generate API key');
     } finally {
-      if (generateBtn) {
-        generateBtn.disabled = false;
-        generateBtn.textContent = 'Generate API Key';
-      }
+      this._setLoading(btn, false, 'Generate API Key');
     }
   },
 
   async rotateKey() {
     if (!this.currentWallet) return;
+    if (!confirm('Generate a new key? Your current key will stop working immediately.')) return;
 
-    const confirmed = confirm('Generate a new API key? Your old key will stop working.');
-    if (!confirmed) return;
-
-    const rotateBtn = document.getElementById('rotate-key-btn');
-    if (rotateBtn) rotateBtn.disabled = true;
-    if (rotateBtn) rotateBtn.textContent = 'Rotating...';
+    const btn = document.getElementById('rotate-key-btn');
+    this._setLoading(btn, true, 'Signing...');
 
     try {
-      const timestamp = Date.now();
-      const message = `CultScreener API Key: register for ${this.currentWallet} at ${timestamp}`;
-
-      const sig = await wallet.signMessage(message);
-      if (!sig || !sig.signature) {
-        api.toast.error('Failed to sign message');
-        return;
-      }
+      const { signature, signatureTimestamp } = await this.signForApi();
 
       const response = await api.request('/api/keys/rotate', {
         method: 'POST',
-        body: JSON.stringify({
-          wallet: this.currentWallet,
-          signature: sig.signature,
-          signatureTimestamp: timestamp
-        })
+        body: JSON.stringify({ wallet: this.currentWallet, signature, signatureTimestamp })
       });
 
       if (response.success && response.key) {
         this.currentKey = response.key;
+        sessionStorage.setItem('cultApiKey', response.key);
+
+        this.saveKeyMeta({
+          prefix: response.prefix,
+          created_at: response.created_at,
+          is_active: true,
+          request_count: 0,
+          last_used_at: null
+        });
+
+        this._prefillTesterKey(response.key);
         this.hideExistingKey();
         this.showKeyDisplay();
-        api.toast.success('API key rotated successfully!');
+        api.toast.success('API key rotated!');
       }
     } catch (err) {
-      api.toast.error(err.message || 'Failed to rotate API key');
+      api.toast.error(err.message || 'Failed to rotate key');
     } finally {
-      if (rotateBtn) {
-        rotateBtn.disabled = false;
-        rotateBtn.textContent = 'Rotate Key';
-      }
+      this._setLoading(btn, false, 'Rotate Key');
     }
   },
 
   async revokeKey() {
     if (!this.currentWallet) return;
+    if (!confirm('Permanently revoke your API key? Any integrations using it will break.')) return;
 
-    const confirmed = confirm('Revoke your API key? This action cannot be undone.');
-    if (!confirmed) return;
-
-    const revokeBtn = document.getElementById('revoke-key-btn');
-    if (revokeBtn) revokeBtn.disabled = true;
-    if (revokeBtn) revokeBtn.textContent = 'Revoking...';
+    const btn = document.getElementById('revoke-key-btn');
+    this._setLoading(btn, true, 'Revoking...');
 
     try {
-      const timestamp = Date.now();
-      const message = `CultScreener API Key: register for ${this.currentWallet} at ${timestamp}`;
-
-      const sig = await wallet.signMessage(message);
-      if (!sig || !sig.signature) {
-        api.toast.error('Failed to sign message');
-        return;
-      }
+      const { signature, signatureTimestamp } = await this.signForApi();
 
       const response = await api.request('/api/keys/me', {
         method: 'DELETE',
-        body: JSON.stringify({
-          wallet: this.currentWallet,
-          signature: sig.signature,
-          signatureTimestamp: timestamp
-        })
+        body: JSON.stringify({ wallet: this.currentWallet, signature, signatureTimestamp })
       });
 
       if (response.success) {
         this.currentKey = null;
+        sessionStorage.removeItem('cultApiKey');
+        this.clearKeyMeta();
+        this._prefillTesterKey('');
         this.hideExistingKey();
         this.showNoKey();
-        this.hideTesterAuthenticated();
-
-        // Show tester not authenticated
-        const testerNoAuth = document.getElementById('tester-not-authenticated');
-        if (testerNoAuth) testerNoAuth.style.display = 'block';
-
         api.toast.success('API key revoked');
       }
     } catch (err) {
-      api.toast.error(err.message || 'Failed to revoke API key');
+      api.toast.error(err.message || 'Failed to revoke key');
     } finally {
-      if (revokeBtn) {
-        revokeBtn.disabled = false;
-        revokeBtn.textContent = 'Revoke Key';
-      }
+      this._setLoading(btn, false, 'Revoke Key');
     }
   },
 
-  async loadExistingKey() {
-    if (!this.currentWallet) return;
+  // ── UI state helpers ──────────────────────────────────────────────────────
 
-    try {
-      const response = await api.request(`/api/keys/me?wallet=${encodeURIComponent(this.currentWallet)}`);
+  showExistingKey(meta) {
+    document.getElementById('existing-key').style.display = 'block';
+    document.getElementById('no-key').style.display = 'none';
+    document.getElementById('key-generated').style.display = 'none';
 
-      if (response.found && response.prefix) {
-        this.hideNoKey();
-        this.hideKeyDisplay();
-        this.showExistingKey(response);
-        this.showTesterAuthenticated();
+    const set = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
 
-        // Hide tester not authenticated
-        const testerNoAuth = document.getElementById('tester-not-authenticated');
-        if (testerNoAuth) testerNoAuth.style.display = 'none';
-      } else {
-        this.hideExistingKey();
-        this.showNoKey();
-        this.hideTesterAuthenticated();
+    set('key-prefix', meta.prefix || '-');
+    set('key-created', meta.created_at ? new Date(meta.created_at).toLocaleDateString() : '-');
+    set('key-last-used', meta.last_used_at ? new Date(meta.last_used_at).toLocaleString() : 'Never');
+    set('key-requests', typeof meta.request_count === 'number' ? meta.request_count.toLocaleString() : '0');
 
-        // Show tester not authenticated
-        const testerNoAuth = document.getElementById('tester-not-authenticated');
-        if (testerNoAuth) testerNoAuth.style.display = 'block';
-      }
-    } catch (err) {
-      console.error('Failed to load API key:', err);
-      this.showNoKey();
-    }
-  },
-
-  showExistingKey(keyInfo) {
-    const existing = document.getElementById('existing-key');
-    if (existing) existing.style.display = 'block';
-
-    if (document.getElementById('key-prefix')) {
-      document.getElementById('key-prefix').textContent = keyInfo.prefix || '-';
-    }
-    if (document.getElementById('key-created')) {
-      document.getElementById('key-created').textContent = keyInfo.created_at
-        ? new Date(keyInfo.created_at).toLocaleDateString()
-        : '-';
-    }
-    if (document.getElementById('key-last-used')) {
-      document.getElementById('key-last-used').textContent = keyInfo.last_used_at
-        ? new Date(keyInfo.last_used_at).toLocaleString()
-        : 'Never';
-    }
-    if (document.getElementById('key-requests')) {
-      document.getElementById('key-requests').textContent = keyInfo.request_count || '0';
+    const statusEl = document.getElementById('key-status');
+    if (statusEl) {
+      statusEl.textContent = meta.is_active !== false ? 'Active' : 'Revoked';
+      statusEl.className = `status-badge ${meta.is_active !== false ? 'active' : 'inactive'}`;
     }
   },
 
   hideExistingKey() {
-    const existing = document.getElementById('existing-key');
-    if (existing) existing.style.display = 'none';
+    document.getElementById('existing-key').style.display = 'none';
   },
 
   showNoKey() {
-    const noKey = document.getElementById('no-key');
-    if (noKey) noKey.style.display = 'block';
+    document.getElementById('no-key').style.display = 'block';
+    document.getElementById('existing-key').style.display = 'none';
+    document.getElementById('key-generated').style.display = 'none';
   },
 
   hideNoKey() {
-    const noKey = document.getElementById('no-key');
-    if (noKey) noKey.style.display = 'none';
+    document.getElementById('no-key').style.display = 'none';
   },
 
   showKeyDisplay() {
     const display = document.getElementById('key-generated');
     const value = document.getElementById('new-key-value');
     if (display) display.style.display = 'block';
-    if (value && this.currentKey) {
-      value.textContent = this.currentKey;
-    }
+    if (value && this.currentKey) value.textContent = this.currentKey;
   },
 
-  hideKeyDisplay() {
-    const display = document.getElementById('key-generated');
-    if (display) display.style.display = 'none';
-    this.loadExistingKey();
+  confirmKeySaved() {
+    document.getElementById('key-generated').style.display = 'none';
+    if (this.keyMeta) {
+      this.showExistingKey(this.keyMeta);
+    } else {
+      this.showNoKey();
+    }
   },
 
   copyKeyToClipboard() {
     if (!this.currentKey) return;
-
     navigator.clipboard.writeText(this.currentKey).then(() => {
-      api.toast.success('API key copied to clipboard');
+      const btn = document.getElementById('copy-key-btn');
+      if (btn) {
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = original; }, 2000);
+      }
     }).catch(() => {
-      api.toast.error('Failed to copy to clipboard');
+      api.toast.error('Copy failed — select the key text and copy manually');
     });
   },
 
-  showTesterAuthenticated() {
-    const auth = document.getElementById('tester-authenticated');
-    if (auth) auth.style.display = 'block';
-  },
-
-  hideTesterAuthenticated() {
-    const auth = document.getElementById('tester-authenticated');
-    if (auth) auth.style.display = 'none';
-  },
+  // ── API Tester ────────────────────────────────────────────────────────────
 
   switchTesterTab(tabName) {
-    // Hide all tabs
-    const contents = document.querySelectorAll('.tester-content');
-    contents.forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.tester-content').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.tester-tab').forEach(t => t.classList.remove('active'));
+    const content = document.getElementById(`tester-${tabName}`);
+    if (content) content.classList.add('active');
+    const tab = document.querySelector(`[data-tab="${tabName}"]`);
+    if (tab) tab.classList.add('active');
+  },
 
-    // Remove active from all buttons
-    const tabs = document.querySelectorAll('.tester-tab');
-    tabs.forEach(t => t.classList.remove('active'));
+  _getTesterKey() {
+    const input = document.getElementById('tester-api-key');
+    const key = (input?.value || '').trim() || this.currentKey;
+    if (!key) {
+      api.toast.error('Paste your API key into the field above first');
+      return null;
+    }
+    return key;
+  },
 
-    // Show selected tab
-    const selectedContent = document.getElementById(`tester-${tabName}`);
-    if (selectedContent) selectedContent.classList.add('active');
+  _prefillTesterKey(key) {
+    const input = document.getElementById('tester-api-key');
+    if (input) input.value = key;
+  },
 
-    // Highlight selected button
-    const selectedTab = document.querySelector(`[data-tab="${tabName}"]`);
-    if (selectedTab) selectedTab.classList.add('active');
+  _setLoading(btn, loading, label) {
+    if (!btn) return;
+    btn.disabled = loading;
+    if (label) btn.textContent = loading ? label : btn.dataset.label || label;
+  },
+
+  _showResponse(prefix, data, status, ok) {
+    const responseEl = document.getElementById(`${prefix}-response`);
+    const contentEl = document.getElementById(`${prefix}-response-content`);
+    const statusEl = document.getElementById(`${prefix}-status`);
+
+    if (!responseEl || !contentEl) return;
+
+    responseEl.classList.remove('hidden', 'error', 'success');
+    responseEl.classList.add(ok ? 'success' : 'error');
+    contentEl.textContent = JSON.stringify(data, null, 2);
+
+    if (statusEl) {
+      statusEl.textContent = `HTTP ${status}`;
+      statusEl.className = `response-status-badge ${ok ? 'ok' : 'err'}`;
+      statusEl.style.display = '';
+    }
+  },
+
+  _showNetworkError(prefix, message) {
+    const responseEl = document.getElementById(`${prefix}-response`);
+    const contentEl = document.getElementById(`${prefix}-response-content`);
+    const statusEl = document.getElementById(`${prefix}-status`);
+
+    if (!responseEl || !contentEl) return;
+
+    responseEl.classList.remove('hidden', 'success');
+    responseEl.classList.add('error');
+    contentEl.textContent = `Network Error: ${message}\n\nCheck that the API server is running and CORS is configured correctly.`;
+
+    if (statusEl) {
+      statusEl.textContent = 'Network Error';
+      statusEl.className = 'response-status-badge err';
+      statusEl.style.display = '';
+    }
   },
 
   async testLeaderboard() {
-    if (!this.currentKey) {
-      api.toast.error('No API key available');
-      return;
-    }
+    const key = this._getTesterKey();
+    if (!key) return;
 
-    const limit = document.getElementById('lb-limit')?.value || 25;
-    const offset = document.getElementById('lb-offset')?.value || 0;
+    const limit = Math.min(parseInt(document.getElementById('lb-limit')?.value) || 25, 100);
+    const offset = Math.max(0, parseInt(document.getElementById('lb-offset')?.value) || 0);
     const minConviction = document.getElementById('lb-min-conviction')?.value;
     const minMcap = document.getElementById('lb-min-mcap')?.value;
 
     const btn = document.getElementById('test-leaderboard-btn');
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = 'Testing...';
-    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
 
     try {
-      const params = new URLSearchParams({
-        limit: Math.min(parseInt(limit) || 25, 100),
-        offset: Math.max(0, parseInt(offset) || 0)
-      });
+      const params = new URLSearchParams({ limit, offset });
       if (minConviction) params.append('minConviction', parseFloat(minConviction));
       if (minMcap) params.append('minMcap', parseFloat(minMcap));
 
       const response = await fetch(
-        `${this.apiBaseUrl}/v1/leaderboard?${params.toString()}`,
-        {
-          headers: { 'X-API-Key': this.currentKey }
-        }
+        `${config.api.baseUrl}/v1/leaderboard?${params}`,
+        { headers: { 'X-API-Key': key } }
       );
-
       const data = await response.json();
-      const responseEl = document.getElementById('lb-response');
-      const contentEl = document.getElementById('lb-response-content');
-
-      if (responseEl && contentEl) {
-        responseEl.classList.remove('hidden', 'error', 'success');
-        responseEl.classList.add(response.ok ? 'success' : 'error');
-        contentEl.textContent = JSON.stringify(data, null, 2);
-        responseEl.classList.remove('hidden');
-      }
+      this._showResponse('lb', data, response.status, response.ok);
     } catch (err) {
-      const responseEl = document.getElementById('lb-response');
-      const contentEl = document.getElementById('lb-response-content');
-
-      if (responseEl && contentEl) {
-        responseEl.classList.remove('hidden');
-        responseEl.classList.add('error');
-        contentEl.textContent = `Error: ${err.message}`;
-      }
+      this._showNetworkError('lb', err.message);
     } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = 'Test Leaderboard Endpoint';
-      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
     }
   },
 
   async testToken() {
-    if (!this.currentKey) {
-      api.toast.error('No API key available');
-      return;
-    }
+    const key = this._getTesterKey();
+    if (!key) return;
 
     const mint = document.getElementById('token-mint')?.value?.trim();
-    if (!mint) {
-      api.toast.error('Enter a token mint address');
-      return;
-    }
+    if (!mint) { api.toast.error('Enter a token mint address'); return; }
 
     const btn = document.getElementById('test-token-btn');
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = 'Testing...';
-    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
 
     try {
       const response = await fetch(
-        `${this.apiBaseUrl}/v1/leaderboard/${encodeURIComponent(mint)}`,
-        {
-          headers: { 'X-API-Key': this.currentKey }
-        }
+        `${config.api.baseUrl}/v1/leaderboard/${encodeURIComponent(mint)}`,
+        { headers: { 'X-API-Key': key } }
       );
-
       const data = await response.json();
-      const responseEl = document.getElementById('token-response');
-      const contentEl = document.getElementById('token-response-content');
-
-      if (responseEl && contentEl) {
-        responseEl.classList.remove('hidden', 'error', 'success');
-        responseEl.classList.add(response.ok ? 'success' : 'error');
-        contentEl.textContent = JSON.stringify(data, null, 2);
-        responseEl.classList.remove('hidden');
-      }
+      this._showResponse('token', data, response.status, response.ok);
     } catch (err) {
-      const responseEl = document.getElementById('token-response');
-      const contentEl = document.getElementById('token-response-content');
-
-      if (responseEl && contentEl) {
-        responseEl.classList.remove('hidden');
-        responseEl.classList.add('error');
-        contentEl.textContent = `Error: ${err.message}`;
-      }
+      this._showNetworkError('token', err.message);
     } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = 'Get Token Conviction';
-      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
     }
   }
 };
 
-// Initialize when page loads
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => apiKeysPage.init());
 } else {
