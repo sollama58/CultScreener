@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const sharp = require('sharp');
 const db = require('../services/database');
 const { cache, TTL } = require('../services/cache');
 
@@ -46,120 +47,9 @@ function fmtMcap(mcap) {
 }
 
 /**
- * GET /share/:mint
- * Serves a minimal HTML page with dynamic OG meta tags for social media crawlers.
- * Browsers get redirected to the real token page on the frontend.
+ * Generates the SVG preview for a token
  */
-router.get('/:mint', async (req, res) => {
-  const { mint } = req.params;
-
-  if (!MINT_RE.test(mint)) {
-    return res.redirect(302, FRONTEND_URL);
-  }
-
-  // Fetch token data (try cache first, then DB)
-  let token = null;
-  try {
-    const cached = await cache.get(`token:${mint}`) || await cache.get(`batch:${mint}`);
-    if (cached) {
-      token = cached;
-    } else {
-      token = await db.getToken(mint);
-    }
-  } catch (_) {}
-
-  const name = token?.name || token?.symbol || 'Unknown Token';
-  const symbol = token?.symbol || '';
-  const price = fmtPrice(token?.price);
-  const mcap = fmtMcap(token?.market_cap || token?.marketCap);
-  const change = token?.price_change_24h ?? token?.priceChange24h ?? null;
-  const conviction = token?.conviction_1m ?? token?.conviction1m ?? null;
-
-  // Build title
-  let title = symbol ? `${name} (${symbol})` : name;
-  title += ' - CultScreener';
-
-  // Build description
-  const parts = [];
-  if (price) parts.push(price);
-  if (change !== null) {
-    const sign = change >= 0 ? '+' : '';
-    parts.push(`${sign}${change.toFixed(2)}% 24h`);
-  }
-  if (mcap) parts.push(`MCap ${mcap}`);
-  if (conviction !== null) parts.push(`Diamond Hands ${Math.round(conviction)}%`);
-
-  let description = parts.length > 0
-    ? parts.join(' | ')
-    : 'View token details, price charts, holder analytics, and diamond hands conviction data.';
-  description += ' | CultScreener - Solana Diamond Hands Terminal';
-
-  const tokenPageUrl = `${FRONTEND_URL}/token.html?mint=${encodeURIComponent(mint)}`;
-  const ogImageUrl = `${req.protocol}://${req.get('host')}/share/${encodeURIComponent(mint)}/og-image`;
-  // Twitter doesn't support SVG — use the static banner JPG as fallback
-  const twitterImageUrl = `${FRONTEND_URL}/CultScreenerBanner.jpg`;
-
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, max-age=300'); // 5 min cache
-
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>${esc(title)}</title>
-<meta name="description" content="${esc(description)}">
-
-<!-- Open Graph -->
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="CultScreener">
-<meta property="og:title" content="${esc(title)}">
-<meta property="og:description" content="${esc(description)}">
-<meta property="og:image" content="${esc(ogImageUrl)}">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:url" content="${esc(tokenPageUrl)}">
-
-<!-- Twitter Card -->
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="${esc(title)}">
-<meta name="twitter:description" content="${esc(description)}">
-<meta name="twitter:image" content="${esc(twitterImageUrl)}">
-
-<!-- Redirect browsers to the real page -->
-<meta http-equiv="refresh" content="0; url=${esc(tokenPageUrl)}">
-<link rel="canonical" href="${esc(tokenPageUrl)}">
-</head>
-<body>
-<p>Redirecting to <a href="${esc(tokenPageUrl)}">${esc(title)}</a>...</p>
-<script>window.location.replace(${JSON.stringify(tokenPageUrl)});</script>
-</body>
-</html>`);
-});
-
-/**
- * GET /share/:mint/og-image
- * Generates a dynamic SVG preview card for social media embeds.
- * Returns SVG with Content-Type image/svg+xml (works on Discord, Telegram, Facebook).
- * Twitter doesn't support SVG natively, but many proxy services convert it.
- */
-router.get('/:mint/og-image', async (req, res) => {
-  const { mint } = req.params;
-
-  if (!MINT_RE.test(mint)) {
-    return res.status(400).send('Invalid mint');
-  }
-
-  // Fetch token data
-  let token = null;
-  try {
-    const cached = await cache.get(`token:${mint}`) || await cache.get(`batch:${mint}`);
-    if (cached) {
-      token = cached;
-    } else {
-      token = await db.getToken(mint);
-    }
-  } catch (_) {}
-
+function generateTokenSvg(token, mint) {
   const name = esc(token?.name || token?.symbol || 'Unknown Token');
   const symbol = esc(token?.symbol || '');
   const price = fmtPrice(token?.price) || '--';
@@ -181,7 +71,7 @@ router.get('/:mint/og-image', async (req, res) => {
   const convBarWidth = conviction !== null ? Math.min(100, Math.max(0, Math.round(conviction))) : 0;
   const convBarColor = convBarWidth >= 50 ? '#ff5722' : convBarWidth >= 20 ? '#ff9100' : '#3a3a42';
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#09090b"/>
@@ -258,10 +148,167 @@ router.get('/:mint/og-image', async (req, res) => {
   <!-- Accent line at bottom -->
   <rect x="0" y="624" width="1200" height="6" fill="url(#fire)" opacity="0.5"/>
 </svg>`;
+}
+
+/**
+ * GET /share/:mint
+ * Serves a minimal HTML page with dynamic OG meta tags for social media crawlers.
+ * Browsers get redirected to the real token page on the frontend.
+ */
+router.get('/:mint', async (req, res) => {
+  const { mint } = req.params;
+
+  if (!MINT_RE.test(mint)) {
+    return res.redirect(302, FRONTEND_URL);
+  }
+
+  // Fetch token data (try cache first, then DB)
+  let token = null;
+  try {
+    const cached = await cache.get(`token:${mint}`) || await cache.get(`batch:${mint}`);
+    if (cached) {
+      token = cached;
+    } else {
+      token = await db.getToken(mint);
+    }
+  } catch (_) {}
+
+  const name = token?.name || token?.symbol || 'Unknown Token';
+  const symbol = token?.symbol || '';
+  const price = fmtPrice(token?.price);
+  const mcap = fmtMcap(token?.market_cap || token?.marketCap);
+  const change = token?.price_change_24h ?? token?.priceChange24h ?? null;
+  const conviction = token?.conviction_1m ?? token?.conviction1m ?? null;
+
+  // Build title
+  let title = symbol ? `${name} (${symbol})` : name;
+  title += ' - CultScreener';
+
+  // Build description
+  const parts = [];
+  if (price) parts.push(price);
+  if (change !== null) {
+    const sign = change >= 0 ? '+' : '';
+    parts.push(`${sign}${change.toFixed(2)}% 24h`);
+  }
+  if (mcap) parts.push(`MCap ${mcap}`);
+  if (conviction !== null) parts.push(`Diamond Hands ${Math.round(conviction)}%`);
+
+  let description = parts.length > 0
+    ? parts.join(' | ')
+    : 'View token details, price charts, holder analytics, and diamond hands conviction data.';
+  description += ' | CultScreener - Solana Diamond Hands Terminal';
+
+  const tokenPageUrl = `${FRONTEND_URL}/token.html?mint=${encodeURIComponent(mint)}`;
+  const ogImageUrl = `${req.protocol}://${req.get('host')}/share/${encodeURIComponent(mint)}/og-image`;
+  // Twitter requires PNG for cards — point to our dynamic PNG generator
+  const twitterImageUrl = `${req.protocol}://${req.get('host')}/share/${encodeURIComponent(mint)}/twitter-image.png`;
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=300'); // 5 min cache
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(description)}">
+
+<!-- Open Graph (Discord, Telegram, Facebook) -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="CultScreener">
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="${esc(description)}">
+<meta property="og:image" content="${esc(ogImageUrl)}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="${esc(tokenPageUrl)}">
+
+<!-- Twitter Card (Twitter/X) -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${esc(title)}">
+<meta name="twitter:description" content="${esc(description)}">
+<meta name="twitter:image" content="${esc(twitterImageUrl)}">
+
+<!-- Redirect browsers to the real page -->
+<meta http-equiv="refresh" content="0; url=${esc(tokenPageUrl)}">
+<link rel="canonical" href="${esc(tokenPageUrl)}">
+</head>
+<body>
+<p>Redirecting to <a href="${esc(tokenPageUrl)}">${esc(title)}</a>...</p>
+<script>window.location.replace(${JSON.stringify(tokenPageUrl)});</script>
+</body>
+</html>`);
+});
+
+/**
+ * GET /share/:mint/og-image
+ * Generates a dynamic SVG preview card for social media embeds.
+ * Returns SVG with Content-Type image/svg+xml (works on Discord, Telegram, Facebook).
+ */
+router.get('/:mint/og-image', async (req, res) => {
+  const { mint } = req.params;
+
+  if (!MINT_RE.test(mint)) {
+    return res.status(400).send('Invalid mint');
+  }
+
+  // Fetch token data
+  let token = null;
+  try {
+    const cached = await cache.get(`token:${mint}`) || await cache.get(`batch:${mint}`);
+    if (cached) {
+      token = cached;
+    } else {
+      token = await db.getToken(mint);
+    }
+  } catch (_) {}
+
+  const svg = generateTokenSvg(token, mint);
 
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=600'); // 10 min cache
   res.send(svg);
+});
+
+/**
+ * GET /share/:mint/twitter-image.png
+ * Generates a dynamic PNG preview card for Twitter (which doesn't support SVG).
+ */
+router.get('/:mint/twitter-image.png', async (req, res) => {
+  const { mint } = req.params;
+
+  if (!MINT_RE.test(mint)) {
+    return res.status(400).send('Invalid mint');
+  }
+
+  // Fetch token data
+  let token = null;
+  try {
+    const cached = await cache.get(`token:${mint}`) || await cache.get(`batch:${mint}`);
+    if (cached) {
+      token = cached;
+    } else {
+      token = await db.getToken(mint);
+    }
+  } catch (_) {}
+
+  const svg = generateTokenSvg(token, mint);
+
+  try {
+    // Convert SVG to PNG using sharp
+    const pngBuffer = await sharp(Buffer.from(svg))
+      .png()
+      .toBuffer();
+
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=600'); // 10 min cache
+    res.send(pngBuffer);
+  } catch (err) {
+    console.error('[Share] PNG generation failed:', err.message);
+    // Fallback to static banner if PNG generation fails
+    res.redirect(`${FRONTEND_URL}/CultScreenerBanner.jpg`);
+  }
 });
 
 module.exports = router;
