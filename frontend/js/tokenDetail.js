@@ -148,7 +148,8 @@ const tokenDetail = {
     // Share button — copies a share URL with rich social media previews
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      const shareUrl = `https://cultscreener.com/token.html?mint=${this.mint}`;
+      // Use backend share route for rich social media embeds
+      const shareUrl = `${config.api.baseUrl}/share/${this.mint}`;
       const copied = await utils.copyToClipboard(shareUrl);
       if (copied) toast.success('Share link copied to clipboard');
     };
