@@ -5169,3 +5169,46 @@ strong {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
 }
+
+/* Share Theme Selector */
+.share-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.theme-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--bg-tertiary);
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.theme-opt {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background-color: var(--theme-color);
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.theme-opt:hover {
+  transform: scale(1.2);
+}
+
+.theme-opt.active {
+  border-color: #fff;
+  transform: scale(1.1);
+}
+
+@media (max-width: 480px) {
+  .share-container {
+    flex-wrap: wrap;
+  }
+}

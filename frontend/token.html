@@ -197,11 +197,17 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><line x1="7" y1="7" x2="10" y2="10"/><line x1="14" y1="10" x2="17" y2="7"/><line x1="7" y1="17" x2="10" y2="14"/><line x1="14" y1="14" x2="17" y2="17"/></svg>
               Bubblemaps
             </a>
-            <button id="share-btn" class="token-action-chip" title="Share this token">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              Share
-            </button>
-          </div>
+            <div class="share-container">
+              <button id="share-btn" class="token-action-chip" title="Share this token">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                Share
+              </button>
+              <div class="theme-selector" id="share-theme-selector">
+                <button class="theme-opt active" data-theme="default" title="Default Theme" style="--theme-color: #ff5722;"></button>
+                <button class="theme-opt" data-theme="cyber" title="Cyber Theme" style="--theme-color: #00f2ff;"></button>
+                <button class="theme-opt" data-theme="emerald" title="Emerald Theme" style="--theme-color: #10b981;"></button>
+              </div>
+            </div>          </div>
           <!-- Token Socials (populated by JS) -->
           <div id="token-socials" class="token-socials" style="display:none"></div>
           <button id="watchlist-btn" class="token-action-chip watchlist-btn-header" title="Add to watchlist">

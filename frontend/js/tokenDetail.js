@@ -22,6 +22,7 @@ const tokenDetail = {
   // Initialize
   async init() {
     this.mint = utils.getUrlParam('mint');
+    this.shareTheme = 'default';
 
     if (!this.mint || !utils.isValidSolanaAddress(this.mint)) {
       this.showError('Invalid token address provided.');
@@ -29,6 +30,7 @@ const tokenDetail = {
     }
 
     this.bindEvents();
+    this.initThemeSelector();
 
     try {
       // Load token data first — everything else depends on this.token being populated
@@ -149,9 +151,13 @@ const tokenDetail = {
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
       // Use backend share route for rich social media embeds
-      const shareUrl = `${config.api.baseUrl}/share/${this.mint}`;
+      let shareUrl = `${config.api.baseUrl}/share/${this.mint}`;
+      if (this.shareTheme !== 'default') {
+        shareUrl += `?theme=${encodeURIComponent(this.shareTheme)}`;
+      }
+      
       const copied = await utils.copyToClipboard(shareUrl);
-      if (copied) toast.success('Share link copied to clipboard');
+      if (copied) toast.success(`Share link copied (${this.shareTheme} theme)`);
     };
     bindHandler(shareBtn, 'click', shareHandler);
 
@@ -307,8 +313,25 @@ const tokenDetail = {
     }
   },
 
-  // Load token data
-  async loadToken() {
+  // Initialize theme selector for sharing
+  initThemeSelector() {
+    const selector = document.getElementById('share-theme-selector');
+    if (!selector) return;
+
+    const opts = selector.querySelectorAll('.theme-opt');
+    opts.forEach(opt => {
+      opt.addEventListener('click', () => {
+        const theme = opt.dataset.theme;
+        this.shareTheme = theme;
+
+        // Update UI
+        opts.forEach(o => o.classList.remove('active'));
+        opt.classList.add('active');
+      });
+    });
+  },
+
+  // Load token data  async loadToken() {
     const _t0 = performance.now();
     let _ok = true;
     try {
