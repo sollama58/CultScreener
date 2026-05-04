@@ -405,7 +405,7 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
         await cache.set(samplePendingKey, Date.now(), 60000);
         solanaService.getTokenHolderSample(mint, 250).then(async (sampleResult) => {
           if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
-            await cache.set(walletsCacheKey, sampleResult.holders, TTL.HOUR);
+            await cache.set(walletsCacheKey, sampleResult.holders, TTL.DAY);
             if (sampleResult.totalHolders && sampleResult.totalHolders > 0) {
               await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
             }
@@ -444,7 +444,7 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     // ── Complete: all wallets cached ──
     if (uncached.length === 0) {
       const result = buildDistribution(holdTimes, walletList.length, analyzedCount);
-      await cache.set(resultCacheKey, result, 3 * TTL.HOUR);
+      await cache.set(resultCacheKey, result, TTL.DAY);
       db.upsertConviction(mint, result.distribution, result.sampleSize, result.analyzed).catch(err => {
         console.error(`[Cultify] DB persist failed for ${mint.slice(0, 8)}:`, err.message);
       });

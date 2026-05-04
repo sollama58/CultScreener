@@ -2222,7 +2222,7 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
       return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
     }
 
-    // Check for cached final result (1 hour TTL, set after full computation)
+    // Check for cached final result (24 hour TTL, set after full computation)
     const resultCacheKey = `diamond-hands:${mint}`;
     const cached = await cache.get(resultCacheKey);
     if (cached) {
@@ -2264,7 +2264,7 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
     // If all wallets are cached, compute final distribution and cache it
     if (uncached.length === 0) {
       const result = buildDiamondHandsResult(holdTimes, walletList.length, analyzedCount);
-      await cache.set(resultCacheKey, result, 3 * TTL.HOUR);
+      await cache.set(resultCacheKey, result, TTL.DAY);
       // Persist to DB for the conviction leaderboard
       db.upsertConviction(mint, result.distribution, result.sampleSize, result.analyzed).catch(err => {
         console.error(`[DiamondHands] DB persist failed for ${mint.slice(0, 8)}:`, err.message);

@@ -519,7 +519,7 @@ const jobProcessors = {
         if (!existingSample && solanaService.isHeliusConfigured()) {
           const sampleResult = await solanaService.getTokenHolderSample(mint, 250, new Set([...BURN_WALLETS, ...LP_PROGRAMS]));
           if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
-            await cache.set(sampleCacheKey, sampleResult.holders, TTL.HOUR);
+            await cache.set(sampleCacheKey, sampleResult.holders, TTL.DAY);
             // Only cache totalHolders from sample if we don't already have a precise count.
             // getTokenHolderSample returns a lower-bound (1000) for large tokens;
             // the precise paginated count is fetched separately above.
@@ -637,9 +637,12 @@ const jobProcessors = {
             }
             return dist;
           })() : null;
-          // Always write partial cache so API shows live analyzed count even when no positive hold times yet
-          const partialResult = { distribution: partialDistribution, sampleSize: totalWallets, analyzed: liveAnalyzedCount, computed: false };
-          await cache.set(`diamond-hands:${mint}`, partialResult, 120000); // 120s — refreshed on next partial write or final
+          // Write partial cache only if no complete result exists yet (prevents overwriting long-TTL final result)
+          const existingResult = await cache.get(`diamond-hands:${mint}`);
+          if (!existingResult || !existingResult.computed) {
+            const partialResult = { distribution: partialDistribution, sampleSize: totalWallets, analyzed: liveAnalyzedCount, computed: false };
+            await cache.set(`diamond-hands:${mint}`, partialResult, 120000); // 120s — refreshed on next partial write or final
+          }
         } catch (_) {}
       }
     }
@@ -675,7 +678,7 @@ const jobProcessors = {
         // Always write final cache — even when no positive hold times — so next API poll
         // sees all wallets as analyzed and doesn't re-dispatch a new job.
         const finalResult = { distribution, sampleSize: totalWallets, analyzed: analyzedCount, computed: isComplete };
-        const cacheTTL = isComplete ? 3 * TTL.HOUR : TTL.HOUR;
+        const cacheTTL = isComplete ? TTL.DAY : 3 * TTL.HOUR;
         await cache.set(`diamond-hands:${mint}`, finalResult, cacheTTL);
         if (isComplete) {
           await db.upsertConviction(mint, distribution, totalWallets, analyzedCount);
