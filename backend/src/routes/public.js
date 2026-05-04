@@ -90,21 +90,17 @@ router.get('/leaderboard/:mint', asyncHandler(async (req, res) => {
     await cache.set(cacheKey, tokenData, TTL.PRICE_DATA);
   }
 
-  // Compute rank — fetch top 10000 tokens (max reasonable leaderboard), find position
+  // Compute rank via indexed COUNT query — O(log n) vs O(n) JS findIndex on 10k rows
   const rankCacheKey = `api:token:rank:${mint}`;
   let rank = null;
 
-  // Try cache first
   const cachedRank = await cache.get(rankCacheKey);
   if (cachedRank !== null) {
     rank = cachedRank;
   } else {
-    // Fetch top conviction tokens in chunks to find the token
-    const allTokens = await db.getTopConvictionTokens(10000, 0, {});
-    const position = allTokens.tokens?.findIndex(t => t.mint_address === mint);
-    if (position !== undefined && position >= 0) {
-      rank = position + 1; // 1-indexed
-      // Cache rank for 30 minutes (more stable than individual token data)
+    rank = await db.getTokenConvictionRank(mint);
+    if (rank !== null) {
+      // Cache rank for 30 minutes (conviction scores are stable)
       await cache.set(rankCacheKey, rank, TTL.LONG * 15);
     }
   }

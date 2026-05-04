@@ -177,6 +177,8 @@ async function networkFirstWithCache(request, cacheName, ttl) {
           return cached;
         }
       }
+      // Trim cache even on fallback path to prevent unbounded growth
+      trimCache(cacheName, MAX_API_ENTRIES).catch(() => {});
       return cached;
     }
     return offlineFallback(request);

@@ -159,23 +159,23 @@ const latencyTracker = {
   record(endpoint, durationMs, success = true, type = 'api') {
     const key = this.normalize(endpoint);
     if (!this.data.has(key)) {
-      this.data.set(key, { samples: [], count: 0, errors: 0, type });
+      this.data.set(key, { samples: new Array(this.WINDOW_SIZE), writeIdx: 0, filled: 0, count: 0, errors: 0, type });
     }
     const entry = this.data.get(key);
     entry.count++;
     if (!success) entry.errors++;
-    entry.samples.push(Math.round(durationMs));
-    if (entry.samples.length > this.WINDOW_SIZE) {
-      entry.samples.shift();
-    }
+    // Circular buffer: O(1) write, no shift() needed
+    entry.samples[entry.writeIdx] = Math.round(durationMs);
+    entry.writeIdx = (entry.writeIdx + 1) % this.WINDOW_SIZE;
+    if (entry.filled < this.WINDOW_SIZE) entry.filled++;
   },
 
   // Return per-endpoint summary sorted by call count (descending)
   getSummary() {
     const results = [];
     for (const [key, entry] of this.data) {
-      if (entry.samples.length === 0) continue;
-      const sorted = [...entry.samples].sort((a, b) => a - b);
+      if (entry.filled === 0) continue;
+      const sorted = entry.samples.slice(0, entry.filled).sort((a, b) => a - b);
       const n = sorted.length;
       const avg = Math.round(sorted.reduce((s, v) => s + v, 0) / n);
       const p95 = sorted[Math.min(Math.floor(n * 0.95), n - 1)];
@@ -188,7 +188,7 @@ const latencyTracker = {
         p95,
         min: sorted[0],
         max: sorted[n - 1],
-        last: entry.samples[entry.samples.length - 1]
+        last: entry.samples[(entry.writeIdx + this.WINDOW_SIZE - 1) % this.WINDOW_SIZE]
       });
     }
     return results.sort((a, b) => b.count - a.count);

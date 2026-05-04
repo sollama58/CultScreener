@@ -398,12 +398,16 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     let wallets = await cache.get(walletsCacheKey);
 
     if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
-      // No sample yet — trigger DAS sample fetch if not already pending
+      // No sample yet — trigger DAS sample fetch if not already pending.
+      // setNX is atomic: only one concurrent request will get true and trigger the fetch.
       const samplePendingKey = `cultify:sample-pending:${mint}`;
-      const samplePending = await cache.get(samplePendingKey);
-      if (!samplePending) {
-        await cache.set(samplePendingKey, Date.now(), 60000);
-        solanaService.getTokenHolderSample(mint, 250).then(async (sampleResult) => {
+      const acquired = await cache.setNX(samplePendingKey, Date.now(), 60000);
+      if (acquired) {
+        const sampleFetch = Promise.race([
+          solanaService.getTokenHolderSample(mint, 250),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('sample fetch timeout')), 15000))
+        ]);
+        sampleFetch.then(async (sampleResult) => {
           if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
             await cache.set(walletsCacheKey, sampleResult.holders, TTL.DAY);
             if (sampleResult.totalHolders && sampleResult.totalHolders > 0) {

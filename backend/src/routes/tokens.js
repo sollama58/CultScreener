@@ -236,10 +236,12 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
       // Enrich tokens with sentiment scores and community update flags
       try {
         const addrs = tokens.map(t => t.address || t.mintAddress);
-        const [sentimentScores, communityMints] = await Promise.all([
+        const [sentimentResult, communityResult] = await Promise.allSettled([
           db.getSentimentBatch(addrs),
           db.hasApprovedSubmissionsBatch(addrs)
         ]);
+        const sentimentScores = sentimentResult.status === 'fulfilled' ? sentimentResult.value : {};
+        const communityMints = communityResult.status === 'fulfilled' ? communityResult.value : new Set();
         for (const token of tokens) {
           const addr = token.address || token.mintAddress;
           const s = sentimentScores[addr];
@@ -1097,14 +1099,12 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
     };
   });
 
-  // Batch-fetch holder counts from cache — check both keys in parallel
+  // Batch-fetch holder counts from cache — check primary key first, fall back to secondary
+  // Sequential fallback avoids a redundant second Redis GET on cache hit (common case)
   if (tokens.length > 0) {
     await Promise.all(tokens.map(async (t) => {
-      const [countA, countB] = await Promise.all([
-        cache.get(`holder-total:${t.mintAddress}`),
-        cache.get(keys.holderCount(t.mintAddress))
-      ]);
-      const count = countA || countB;
+      const countA = await cache.get(`holder-total:${t.mintAddress}`);
+      const count = countA || await cache.get(keys.holderCount(t.mintAddress));
       if (count && count > 0) t.holders = count;
     }));
   }
@@ -2068,7 +2068,7 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
   if ((totalSupply || currentSupply) > 0 && realHolders.length > 0) {
     const top5Pct = realHolders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
     const top10Pct = realHolders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
-    const top20Pct = realHolders.reduce((s, h) => s + (h.percentage || 0), 0);
+    const top20Pct = realHolders.slice(0, 20).reduce((s, h) => s + (h.percentage || 0), 0);
     const top1Pct = realHolders[0]?.percentage || 0;
 
     metrics = {

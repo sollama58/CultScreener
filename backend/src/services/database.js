@@ -649,6 +649,30 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
   return { tokens: result.rows, total };
 }
 
+// Get conviction leaderboard rank for a single token.
+// Uses an indexed COUNT query instead of fetching all rows and doing JS findIndex.
+// The idx_tokens_conviction_1m index makes this O(log n) rather than O(n).
+async function getTokenConvictionRank(mintAddress) {
+  if (!pool) return null;
+  try {
+    // Count curated tokens with strictly higher conviction_1m — that is this token's 0-based rank
+    const result = await pool.query(
+      `SELECT COUNT(*) + 1 AS rank
+       FROM tokens t
+       INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
+       WHERE t.conviction_1m > (
+         SELECT conviction_1m FROM tokens WHERE mint_address = $1
+       )
+       AND t.conviction_1m IS NOT NULL`,
+      [mintAddress]
+    );
+    const rank = parseInt(result.rows[0]?.rank);
+    return isNaN(rank) ? null : rank;
+  } catch {
+    return null;
+  }
+}
+
 // Search tokens by name, symbol, or mint address
 // Max query length to prevent DoS via expensive LIKE queries
 const MAX_SEARCH_QUERY_LENGTH = 100;
@@ -3280,6 +3304,7 @@ module.exports = {
   // Conviction / Diamond Hands
   upsertConviction,
   getTopConvictionTokens,
+  getTokenConvictionRank,
   // Community leaderboards
   getMostWatchlistedTokens,
   getTopSentimentTokens,

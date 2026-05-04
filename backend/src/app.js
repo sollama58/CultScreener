@@ -572,13 +572,9 @@ async function warmConviction() {
         if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
       }
 
-      // Trigger by making an internal request to the diamond-hands endpoint
+      // Trigger directly via job queue — avoids HTTP round-trip through middleware
       try {
-        const http = require('http');
-        const url = `http://127.0.0.1:${PORT}/api/tokens/${encodeURIComponent(mint)}/holders/diamond-hands`;
-        const req = http.get(url, (res) => { res.resume(); });
-        req.on('error', () => {}); // suppress socket errors (non-critical)
-        req.setTimeout(15000, () => req.destroy());
+        await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint }, { priority: 10 });
         triggered++;
       } catch { /* non-critical */ }
     }
@@ -629,13 +625,9 @@ async function warmCuratedConviction() {
         if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
       }
 
-      // Trigger diamond-hands computation via internal request
+      // Trigger directly via job queue — avoids HTTP round-trip through middleware
       try {
-        const http = require('http');
-        const url = `http://127.0.0.1:${PORT}/api/tokens/${encodeURIComponent(mint)}/holders/diamond-hands`;
-        const req = http.get(url, (res) => { res.resume(); });
-        req.on('error', () => {});
-        req.setTimeout(15000, () => req.destroy());
+        await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint }, { priority: 10 });
         triggered++;
       } catch { /* non-critical */ }
 

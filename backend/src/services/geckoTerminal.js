@@ -851,7 +851,10 @@ async function getOHLCV(mintAddress, options = {}) {
         return { mintAddress, interval, data: [] };
       }
 
-      // Cache the pool address
+      // Cache the pool address — evict oldest entry if at capacity
+      if (poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
+        poolAddressCache.delete(poolAddressCache.keys().next().value);
+      }
       poolAddressCache.set(mintAddress, {
         address: poolAddress,
         expiry: Date.now() + POOL_CACHE_TTL

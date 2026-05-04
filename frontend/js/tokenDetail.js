@@ -222,7 +222,9 @@ const tokenDetail = {
           this.freshnessInterval = null;
         }
       } else if (document.visibilityState === 'visible') {
-        // Page is visible again, restart intervals if needed
+        // Page is visible again, restart intervals if needed.
+        // Reset backoff so the interval returns to normal after the tab was hidden.
+        this._consecutivePriceErrors = 0;
         if (!this.priceRefreshInterval && this.mint) {
           this.refreshPrice(); // Immediate refresh when becoming visible
           this.startPriceRefresh();
@@ -249,6 +251,12 @@ const tokenDetail = {
     if (this.visibilityHandler) {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
+    }
+
+    // Remove wallet connected handler
+    if (this._walletConnectedHandler) {
+      window.removeEventListener('walletConnected', this._walletConnectedHandler);
+      this._walletConnectedHandler = null;
     }
   },
 
@@ -330,9 +338,11 @@ const tokenDetail = {
       // If initial data came from list-page preview (sessionStorage seed), fetch full detail
       // before Phase 2 starts so this.token.pairCreatedAt is available for diamond hands
       if (isPreview) {
+        const mintAtFetch = this.mint;
         try {
-          const fullData = await api.tokens.get(this.mint, { fresh: true });
-          if (fullData && this.mint === this.mint) {
+          const fullData = await api.tokens.get(mintAtFetch, { fresh: true });
+          // Guard: discard if user navigated to a different token while the fetch was in-flight
+          if (fullData && this.mint === mintAtFetch) {
             this.token = fullData;
             this.renderToken();
           }

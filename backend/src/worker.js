@@ -480,7 +480,7 @@ const jobProcessors = {
       if ((totalSupply || currentSupply) > 0 && realHolders.length > 0) {
         const top5Pct = realHolders.slice(0, 5).reduce((s, h) => s + (h.percentage || 0), 0);
         const top10Pct = realHolders.slice(0, 10).reduce((s, h) => s + (h.percentage || 0), 0);
-        const top20Pct = realHolders.reduce((s, h) => s + (h.percentage || 0), 0);
+        const top20Pct = realHolders.slice(0, 20).reduce((s, h) => s + (h.percentage || 0), 0);
         const top1Pct = realHolders[0]?.percentage || 0;
 
         metrics = {
@@ -653,16 +653,10 @@ const jobProcessors = {
     // Rebuild diamond hands distribution and persist to DB
     try {
       if (totalWallets > 0) {
-        const holdTimes = {};
-        let analyzedCount = 0;
-        const vals = await Promise.all(allWallets.map(w => cache.get(`wallet-token-hold:${w}:${mint}`)));
-        allWallets.forEach((w, i) => {
-          const val = vals[i];
-          if (val != null) {
-            analyzedCount++;
-            if (val > 0) holdTimes[w] = val;
-          }
-        });
+        // liveHoldTimes is already fully populated: seeded with pre-existing cached values
+        // at job start (lines above), then updated with each batch result. No cache round-trip needed.
+        const holdTimes = liveHoldTimes;
+        const analyzedCount = liveAnalyzedCount;
         // Compute distribution even with partial data (some wallets may not have resolved yet).
         // Full completion (analyzedCount === allWallets.length) persists to DB;
         // partial results are cached with a shorter TTL so they can be refined.

@@ -521,10 +521,17 @@ class CacheService {
       return this.inFlightFetches.get(key);
     }
 
-    // Create fetch promise and store it for deduplication
+    // Create fetch promise and store it for deduplication.
+    // 30s timeout ensures the in-flight map entry is always cleaned up even if fetchFn hangs.
+    const INFLIGHT_TIMEOUT_MS = 30000;
     const fetchPromise = (async () => {
       try {
-        const value = await fetchFn();
+        const value = await Promise.race([
+          fetchFn(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('getOrSet timeout')), INFLIGHT_TIMEOUT_MS)
+          )
+        ]);
         if (value != null) {
           await this.set(key, value, ttlMs);
         }

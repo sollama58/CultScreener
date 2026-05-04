@@ -15,8 +15,10 @@
         const reg = await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
         console.log('[PWA] Service worker registered:', reg.scope);
 
-        // Check for updates every 5 min so the update banner appears promptly after a deploy
-        setInterval(() => reg.update(), 5 * 60 * 1000);
+        // Check for updates every 5 min — paused when tab is hidden to avoid wasted checks
+        const swUpdateInterval = setInterval(() => {
+          if (document.visibilityState === 'visible') reg.update();
+        }, 5 * 60 * 1000);
 
         // Handle updates — show refresh prompt when a new SW finishes installing
         reg.addEventListener('updatefound', () => {
