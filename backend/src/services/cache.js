@@ -187,22 +187,33 @@ class RedisCache {
     this.stats = { hits: 0, misses: 0, sets: 0 };
     this.isConnected = false;
     this.keyPrefix = 'cultscreener:';
+    this._reconnectAttempts = 0;
+    this._maxReconnectAttempts = 20;
 
     // Parse Redis URL and configure
     this.client = new Redis(redisUrl, {
-      maxRetriesPerRequest: 3,
-      retryDelayOnFailover: 100,
-      retryDelayOnClusterDown: 100,
-      retryDelayOnTryAgain: 100,
+      // Fail fast per-command — cache is non-critical, no point retrying a down server
+      maxRetriesPerRequest: 1,
       reconnectOnError: (err) => {
         const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT'];
         return targetErrors.some(e => err.message.includes(e));
+      },
+      // Cap reconnection attempts to prevent infinite log spam
+      retryStrategy: (times) => {
+        this._reconnectAttempts = times;
+        if (times > this._maxReconnectAttempts) {
+          console.error(`[Redis] Giving up after ${times} reconnection attempts`);
+          return null; // Stop retrying
+        }
+        // Exponential backoff capped at 30s
+        return Math.min(times * 500, 30000);
       },
       lazyConnect: false
     });
 
     this.client.on('connect', () => {
       console.log('[Redis] Connected to Redis server');
+      this._reconnectAttempts = 0;
       this.isConnected = true;
     });
 
@@ -211,17 +222,15 @@ class RedisCache {
     });
 
     this.client.on('error', (err) => {
-      console.error('[Redis] Error:', err.message);
+      // Only log the first error and then every 10th to avoid flooding
+      if (this._reconnectAttempts <= 1 || this._reconnectAttempts % 10 === 0) {
+        console.error('[Redis] Error:', err.message);
+      }
       this.isConnected = false;
     });
 
     this.client.on('close', () => {
-      console.log('[Redis] Connection closed');
       this.isConnected = false;
-    });
-
-    this.client.on('reconnecting', () => {
-      console.log('[Redis] Reconnecting...');
     });
   }
 
@@ -230,6 +239,10 @@ class RedisCache {
   }
 
   async get(key) {
+    if (!this.isConnected) {
+      this.stats.misses++;
+      return undefined;
+    }
     try {
       const data = await this.client.get(this._prefixKey(key));
 
@@ -248,6 +261,7 @@ class RedisCache {
   }
 
   async set(key, value, ttlMs = 60000) {
+    if (!this.isConnected) return;
     try {
       const ttlSeconds = Math.ceil(ttlMs / 1000);
       await this.client.setex(
@@ -265,6 +279,7 @@ class RedisCache {
    * Set-if-not-exists (atomic). Returns true if the key was set, false if it already existed.
    */
   async setNX(key, value, ttlMs = 60000) {
+    if (!this.isConnected) return false;
     try {
       const ttlSeconds = Math.ceil(ttlMs / 1000);
       // SET key value EX ttl NX — atomic set-if-not-exists with expiry
@@ -282,6 +297,7 @@ class RedisCache {
   }
 
   async delete(key) {
+    if (!this.isConnected) return;
     try {
       await this.client.del(this._prefixKey(key));
     } catch (err) {
@@ -290,6 +306,7 @@ class RedisCache {
   }
 
   async has(key) {
+    if (!this.isConnected) return false;
     try {
       const exists = await this.client.exists(this._prefixKey(key));
       return exists === 1;
@@ -312,6 +329,7 @@ class RedisCache {
   }
 
   async clear() {
+    if (!this.isConnected) return;
     try {
       const keys = await this._scanKeys(this._prefixKey('*'));
       if (keys.length > 0) {
@@ -327,6 +345,7 @@ class RedisCache {
   }
 
   async clearPattern(pattern) {
+    if (!this.isConnected) return;
     try {
       const keys = await this._scanKeys(this._prefixKey(pattern));
       if (keys.length > 0) {

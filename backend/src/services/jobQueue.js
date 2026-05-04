@@ -5,7 +5,7 @@
  * Jobs are processed by a separate worker process (src/worker.js)
  */
 
-const { Queue, QueueEvents } = require('bullmq');
+const { Queue } = require('bullmq');
 
 // Redis connection config (reuses existing REDIS_URL)
 const REDIS_URL = process.env.REDIS_URL;
@@ -20,7 +20,6 @@ const QUEUE_NAMES = {
 
 // Queues (initialized lazily)
 let queues = {};
-let queueEvents = {};
 let isInitialized = false;
 
 // Parse Redis URL for BullMQ connection
@@ -78,9 +77,6 @@ function initialize() {
           }
         }
       });
-
-      // Optional: Queue events for monitoring
-      queueEvents[name] = new QueueEvents(name, { connection: redisConfig });
     }
 
     isInitialized = true;
@@ -88,6 +84,11 @@ function initialize() {
     return true;
   } catch (err) {
     console.error('[JobQueue] Failed to initialize:', err.message);
+    // Close any queues that were created before the failure to avoid orphaned connections
+    for (const queue of Object.values(queues)) {
+      try { queue.close(); } catch (_) {}
+    }
+    queues = {};
     return false;
   }
 }
@@ -459,11 +460,6 @@ async function shutdown() {
     }
     await flushViewCountsDirect(viewUpdates);
     viewCountBuffer.clear();
-  }
-
-  // Close queue events
-  for (const events of Object.values(queueEvents)) {
-    await events.close();
   }
 
   // Close queues
