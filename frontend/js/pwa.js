@@ -15,10 +15,10 @@
         const reg = await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
         console.log('[PWA] Service worker registered:', reg.scope);
 
-        // Check for updates periodically (every 60 min)
-        setInterval(() => reg.update(), 60 * 60 * 1000);
+        // Check for updates every 5 min so the update banner appears promptly after a deploy
+        setInterval(() => reg.update(), 5 * 60 * 1000);
 
-        // Handle updates — show refresh prompt
+        // Handle updates — show refresh prompt when a new SW finishes installing
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
           if (!newWorker) return;
@@ -28,6 +28,18 @@
               showUpdateBanner(newWorker);
             }
           });
+        });
+
+        // SW_UPDATED message: new SW activated and claimed the page — reload to get fresh HTML.
+        // This fires when a newly installed SW calls skipWaiting + clients.claim().
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          if (event.data && event.data.type === 'SW_UPDATED') {
+            // Only reload if the page hasn't been interacted with (no unsaved state)
+            // and the SW has fully taken control of this client.
+            if (navigator.serviceWorker.controller) {
+              window.location.reload();
+            }
+          }
         });
       } catch (err) {
         console.warn('[PWA] Service worker registration failed:', err);

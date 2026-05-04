@@ -379,19 +379,18 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
     const lastGeckoPage = Math.floor(Math.max(0, requestEnd - 1) / geckoPageSize) + 1;
 
     try {
-      // Fetch all gecko pages needed to cover the requested window
-      let allTokens = [];
+      // Fetch all gecko pages needed to cover the requested window — in parallel
+      const geckoPages = [];
       for (let gp = firstGeckoPage; gp <= lastGeckoPage; gp++) {
-        let pageTokens;
-        switch (filter) {
-          case 'new':
-            pageTokens = await geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp);
-            break;
-          default: // trending, gainers, losers all fetch trending pools
-            pageTokens = await geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp });
-        }
-        if (pageTokens) allTokens = allTokens.concat(pageTokens);
+        geckoPages.push(gp);
       }
+      const pageResults = await Promise.all(geckoPages.map(gp => {
+        if (filter === 'new') {
+          return geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp).catch(() => null);
+        }
+        return geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp }).catch(() => null);
+      }));
+      let allTokens = pageResults.filter(Boolean).flat();
 
       // Apply filter-specific sorting before slicing
       if (filter === 'gainers') {
@@ -1844,11 +1843,17 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
       solanaService.getTokenSupply(mint).catch(catchUnlessOverloaded(null))
     ]);
 
-    // If standard RPC failed, try Helius DAS API as fallback
+    // If standard RPC failed, try Helius DAS API as fallback (capped at 3s to keep API responsive)
     let largestAccounts = rpcAccounts;
     if (!largestAccounts) {
       const decimals = supplyResult?.value?.decimals || 0;
-      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, decimals);
+      largestAccounts = await Promise.race([
+        solanaService.getTokenLargestAccountsDAS(mint, decimals),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('DAS timeout')), 3000)),
+      ]).catch((err) => {
+        if (err.message !== 'DAS timeout') console.warn(`[Tokens] DAS fallback failed for ${mint}:`, err.message);
+        return null;
+      });
     }
 
     if (!largestAccounts || largestAccounts.length === 0) {
@@ -1939,10 +1944,21 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
   }
 }));
 
+// Concurrency guard — only 1 inline classification runs at a time in the API process.
+// Without this, a worker outage + burst of requests creates a storm of concurrent RPC calls.
+let _inlineClassifyActive = 0;
+const MAX_INLINE_CLASSIFY = 1;
+
 // Inline fallback for holder classification when worker is unavailable.
 // Still runs in the API process but AFTER the response is sent (fire-and-forget).
+// Guarded by _inlineClassifyActive so at most 1 runs concurrently.
 async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, supplyResult, cacheKey) {
+  if (_inlineClassifyActive >= MAX_INLINE_CLASSIFY) {
+    console.warn(`[Tokens] Inline classify skipped for ${mint.slice(0, 8)} — ${_inlineClassifyActive} already running (worker may be down)`);
+    return;
+  }
   setImmediate(() => {
+    _inlineClassifyActive++;
     (async () => {
       try {
         const [mintAccount, tokenAuth] = await Promise.all([
@@ -2002,6 +2018,8 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
         await cache.set(cacheKey, result, TTL.HOUR);
       } catch (err) {
         console.error('[Tokens] Inline holder classify failed:', err.message);
+      } finally {
+        _inlineClassifyActive--;
       }
     })();
   });

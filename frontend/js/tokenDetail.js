@@ -588,8 +588,12 @@ const tokenDetail = {
       this._holdTimesData = null;
       this._tokenHoldTimesData = null;
       this._holdTimesLoaded = false;
+      this._holdTimesAutoRetried = false;
+      this._htLastComputedFalse = false;
+      if (this._metricsTimer) { clearTimeout(this._metricsTimer); this._metricsTimer = null; }
       this._diamondHandsData = null;
       this._diamondHandsLoaded = false;
+      this._dhIsAutoRetry = false;
       const shareBtn = document.getElementById('holders-share');
       if (shareBtn) { shareBtn.disabled = true; shareBtn.title = 'Waiting for holder data...'; }
       if (refreshBtn) refreshBtn.classList.add('spinning');
@@ -651,6 +655,14 @@ const tokenDetail = {
         if (t5 && metrics.top5Pct != null) t5.textContent = metrics.top5Pct.toFixed(1) + '%';
         if (t10 && metrics.top10Pct != null) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
         if (t20 && metrics.top20Pct != null) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
+
+        // If metrics are still pending (fast-path), show loading state and poll for worker result
+        if (metrics.top5Pct == null) {
+          if (t5) t5.textContent = '...';
+          if (t10) t10.textContent = '...';
+          if (t20) t20.textContent = '...';
+          this._pollForFullMetrics();
+        }
         // Avg Hold Time metric is populated by _updateAvgHoldTimeMetric after hold times load
         if (avgHoldTimeEl) avgHoldTimeEl.textContent = '...';
         if (tokenAgeEl) {
@@ -755,6 +767,72 @@ const tokenDetail = {
     }
   },
 
+  // Poll for full holder analytics once the fast-path returns null metrics.
+  // The compute-holder-analytics worker enriches metrics (LP/burn exclusion) within
+  // ~5-30s of the first request. Polls every few seconds until metrics populate,
+  // then updates the concentration metric boxes and re-renders the holder table
+  // with real percentages and LP/burn flags.
+  async _pollForFullMetrics(attempt = 0) {
+    const DELAYS = [4000, 6000, 8000, 10000, 12000, 15000, 15000, 15000]; // ~85s total
+    if (attempt === 0) {
+      if (this._metricsTimer) { clearTimeout(this._metricsTimer); this._metricsTimer = null; }
+    }
+
+    // Capture mint at call time — discard stale responses if user navigated away
+    const mintAtStart = this.mint;
+
+    try {
+      // Bypass frontend cache — we need the worker-enriched result, not the fast-path copy
+      const data = await api.request(`/api/tokens/${mintAtStart}/holders`);
+      if (this.mint !== mintAtStart) return;
+
+      if (!data || !data.metrics || data.metrics.top5Pct == null) {
+        if (attempt < DELAYS.length) {
+          this._metricsTimer = setTimeout(() => this._pollForFullMetrics(attempt + 1), DELAYS[attempt]);
+        } else {
+          // Give up — replace "..." with "--"
+          ['holders-top5', 'holders-top10', 'holders-top20'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el && el.textContent === '...') el.textContent = '--';
+          });
+        }
+        return;
+      }
+
+      // Worker completed — update concentration metric cells
+      const { metrics, holders } = data;
+      const t5 = document.getElementById('holders-top5');
+      const t10 = document.getElementById('holders-top10');
+      const t20 = document.getElementById('holders-top20');
+      if (t5 && metrics.top5Pct != null) t5.textContent = metrics.top5Pct.toFixed(1) + '%';
+      if (t10 && metrics.top10Pct != null) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
+      if (t20 && metrics.top20Pct != null) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
+
+      if (metrics.holderCount && metrics.holderCount > 0) {
+        const count = metrics.holderCount.toLocaleString();
+        const el1 = document.getElementById('stat-holders');
+        if (el1) el1.textContent = count;
+        const el2 = document.getElementById('holders-total-count');
+        if (el2) el2.textContent = count;
+      }
+
+      // Re-render holder table with worker-enriched data (real %ages + LP/burn flags)
+      if (holders && holders.length > 0) {
+        this._holdersData = holders;
+        this._renderHoldersTable(holders, this._holdersExpanded ? holders.length : 10);
+        // Re-apply any hold times that loaded while we were waiting for metrics
+        this._applyHoldTimesToDOM();
+      }
+
+      if (typeof config !== 'undefined' && config.app?.debug) console.log('[MetricsPoll] Full metrics received after', attempt + 1, 'poll(s)');
+    } catch (err) {
+      if (this.mint !== mintAtStart) return;
+      if (attempt < DELAYS.length) {
+        this._metricsTimer = setTimeout(() => this._pollForFullMetrics(attempt + 1), DELAYS[attempt]);
+      }
+    }
+  },
+
   // Render holder table rows with given limit
   _renderHoldersTable(holders, limit) {
     const tbody = document.getElementById('holders-tbody');
@@ -828,9 +906,14 @@ const tokenDetail = {
 
   // Lazy-load average hold times for holder wallets.
   // If the backend returns computed: false (worker still processing),
-  // re-poll up to MAX_POLLS times with increasing delay to pick up results.
+  // re-poll up to MAX_POLLS times with increasing delay, then continue with
+  // EXTENDED_POLLS at a slower cadence to cover the full worker execution window
+  // (~2-4 min for 250 wallets). If still computing after all polls, auto-retries
+  // once after a short pause so a slow worker never permanently shows "--".
   async _loadHoldTimes(attempt = 0) {
     const MAX_POLLS = 8;
+    const EXTENDED_POLLS = 5;      // Extra polls at slow cadence after MAX_POLLS
+    const EXTENDED_DELAY = 30000;  // 30s between extended polls
     // First delay is longer to give backend inline computation time to complete
     const POLL_DELAYS = [2000, 2000, 3000, 4000, 6000, 10000, 15000, 20000];
 
@@ -841,7 +924,17 @@ const tokenDetail = {
         this._holdTimesTimer = null;
       }
       this._holdTimesLoaded = false;
+      this._holdTimesAutoRetried = false;
+      this._htLastComputedFalse = false;
     }
+
+    const isExtended = attempt >= MAX_POLLS;
+    const extendedAttempt = attempt - MAX_POLLS;
+
+    const scheduleNext = (nextAttempt) => {
+      const delay = nextAttempt >= MAX_POLLS ? EXTENDED_DELAY : (POLL_DELAYS[nextAttempt] || 10000);
+      this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(nextAttempt), delay);
+    };
 
     try {
       // Bypass apiCache entirely — poll directly so we always hit the backend.
@@ -852,11 +945,12 @@ const tokenDetail = {
 
       if (!data) {
         console.warn(`[HoldTimes] No data returned from API`);
-        if (attempt < MAX_POLLS) {
-          this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(attempt + 1), POLL_DELAYS[attempt] || 10000);
+        const canRetry = (!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS);
+        if (canRetry) {
+          scheduleNext(attempt + 1);
         } else {
           this._holdTimesLoaded = true;
-          }
+        }
         return;
       }
 
@@ -884,11 +978,30 @@ const tokenDetail = {
       // Fill in pending placeholders with any data we have so far
       this._applyHoldTimesToDOM();
 
+      // Track whether the last response had computed: false (worker still running)
+      if (!data.computed) this._htLastComputedFalse = true;
+
       // Re-poll if worker is still computing and we haven't exhausted retries
-      if (!data.computed && attempt < MAX_POLLS) {
-        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Not computed yet, re-polling in ${POLL_DELAYS[attempt]}ms`);
-        this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(attempt + 1), POLL_DELAYS[attempt]);
+      const canContinue = !data.computed && ((!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS));
+      if (canContinue) {
+        if (typeof config !== 'undefined' && config.app?.debug) {
+          const delay = isExtended ? EXTENDED_DELAY : POLL_DELAYS[attempt];
+          console.log(`[HoldTimes] Not computed yet, re-polling in ${delay}ms (attempt ${attempt})`);
+        }
+        scheduleNext(attempt + 1);
       } else {
+        // All polls exhausted — show whatever we have
+        const totalAvg = this._holdTimesData ? Object.keys(this._holdTimesData).length : 0;
+
+        // If worker was still computing when we ran out of polls, auto-retry once after
+        // a short pause so a slow worker doesn't permanently show "--" without a refresh.
+        if (this._htLastComputedFalse && !this._holdTimesAutoRetried && totalAvg === 0) {
+          this._holdTimesAutoRetried = true;
+          if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Still computing — auto-retry in 30s`);
+          this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(0), 30000);
+          return;
+        }
+
         // Mark loading complete so expand/collapse renders "--" instead of "..."
         this._holdTimesLoaded = true;
         // Final pass — replace any remaining placeholders with dashes
@@ -901,16 +1014,16 @@ const tokenDetail = {
           el.classList.remove('hold-time-pending', 'token-hold-pending');
         });
         this._updateAvgHoldTimeMetric();
-        const totalAvg = this._holdTimesData ? Object.keys(this._holdTimesData).length : 0;
         const totalToken = this._tokenHoldTimesData ? Object.keys(this._tokenHoldTimesData).length : 0;
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Done: ${totalAvg} avg hold times, ${totalToken} token hold times loaded`);
       }
     } catch (error) {
       console.warn('[HoldTimes] Failed:', error.message);
       // On error, keep polling if we have retries left (could be transient)
-      if (attempt < MAX_POLLS) {
-        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Error on poll ${attempt}, retrying in ${POLL_DELAYS[attempt]}ms`);
-        this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(attempt + 1), POLL_DELAYS[attempt]);
+      const canRetryOnError = (!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS);
+      if (canRetryOnError) {
+        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Error on poll ${attempt}, retrying`);
+        scheduleNext(attempt + 1);
       } else {
         this._holdTimesLoaded = true;
         document.querySelectorAll('.hold-time-pending, .token-hold-pending').forEach(el => {
@@ -1218,7 +1331,11 @@ const tokenDetail = {
       this._diamondHandsLoaded = false;
       this._dhLastState = null;
       this._dhStalledCount = 0;
-      this._dhAutoRetried = false;
+      // Preserve _dhAutoRetried when called from the auto-retry itself (_dhIsAutoRetry flag).
+      // Without this, the auto-retry resets _dhAutoRetried = false, allowing a second
+      // auto-retry when polls exhaust again → infinite retry loop + bars stuck as shimmer.
+      if (!this._dhIsAutoRetry) this._dhAutoRetried = false;
+      this._dhIsAutoRetry = false;
     }
 
     const isExtended = attempt >= MAX_POLLS;
@@ -1303,6 +1420,7 @@ const tokenDetail = {
             // so a slow worker doesn't permanently show "Unavailable"
             if (!data.computed && (analyzed > 0 || total > 0) && !this._dhAutoRetried) {
               this._dhAutoRetried = true;
+              this._dhIsAutoRetry = true; // Prevents attempt=0 reset from clearing _dhAutoRetried
               const sampleEl = document.getElementById('diamond-hands-sample');
               if (sampleEl) sampleEl.textContent = 'Analysis still running — retrying shortly...';
               this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(0), 30000);

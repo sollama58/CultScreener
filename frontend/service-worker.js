@@ -1,27 +1,30 @@
 // CultScreener Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'cultscreener-v1';
+const CACHE_VERSION = 'cultscreener-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
 // Core app shell — cached on install for instant loads
+// HTML files are intentionally omitted here — they use network-first so users
+// always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/token.html',
-  '/community.html',
-  '/about.html',
-  '/css/styles.css',
-  '/js/config.js',
-  '/js/api.js',
-  '/js/wallet.js',
-  '/js/conviction.js',
-  '/js/tokenDetail.js',
-  '/js/watchlist.js',
-  '/js/communityPage.js',
-  '/js/sentiment.js',
+  '/css/styles.css?v=2',
+  '/js/config.js?v=2',
+  '/js/api.js?v=2',
+  '/js/wallet.js?v=2',
+  '/js/conviction.js?v=2',
+  '/js/tokenDetail.js?v=2',
+  '/js/watchlist.js?v=2',
+  '/js/communityPage.js?v=2',
+  '/js/sentiment.js?v=2',
+  '/js/holderBehavior.js?v=2',
+  '/js/announcements.js?v=2',
+  '/js/pwa.js?v=2',
+  '/js/cultify.js?v=10',
+  '/js/admin.js?v=2',
+  '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
   '/thisisfine8bit.jpg',
   '/CultScreenerBanner.jpg',
@@ -73,6 +76,13 @@ self.addEventListener('activate', (event) => {
           .map((key) => caches.delete(key))
       ))
       .then(() => self.clients.claim())
+      .then(() => {
+        // Notify all open tabs that a new version is active so they can reload
+        // to pick up fresh HTML and any updated cached assets.
+        return self.clients.matchAll({ type: 'window' }).then((clients) => {
+          clients.forEach((client) => client.postMessage({ type: 'SW_UPDATED' }));
+        });
+      })
   );
 });
 
@@ -99,7 +109,17 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Same-origin static assets → Cache First
+  // HTML documents → Network First so users always get fresh markup.
+  // Fresh HTML references versioned assets (?v=N), ensuring JS/CSS is also fresh
+  // after a deployment. Falls back to cache when offline.
+  if (request.destination === 'document') {
+    event.respondWith(networkFirstWithCache(request, STATIC_CACHE));
+    return;
+  }
+
+  // Same-origin static assets (JS, CSS, images) → Cache First.
+  // Assets use ?v=N versioning in their URLs, so cache-first is safe:
+  // a new deployment bumps the version → new URL → fresh cache miss → network fetch.
   if (url.origin === self.location.origin) {
     event.respondWith(cacheFirstWithNetwork(request, STATIC_CACHE));
     return;
