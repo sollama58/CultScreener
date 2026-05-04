@@ -42,6 +42,24 @@ const geckoAxios = axios.create({
   headers: geckoHeaders
 });
 
+// If a Pro API key is configured, intercept the first 401 and automatically
+// fall back to the free GeckoTerminal API rather than spamming 401 errors forever.
+if (COINGECKO_API_KEY) {
+  let authInterceptorId;
+  authInterceptorId = geckoAxios.interceptors.response.use(
+    response => response,
+    error => {
+      if (error.response?.status === 401) {
+        console.warn('[GeckoTerminal] CoinGecko Pro API key rejected (401) — falling back to free GeckoTerminal API (30 req/min). Check COINGECKO_API_KEY env var.');
+        geckoAxios.defaults.baseURL = 'https://api.geckoterminal.com/api/v2';
+        delete geckoAxios.defaults.headers.common['x-cg-pro-api-key'];
+        geckoAxios.interceptors.response.eject(authInterceptorId);
+      }
+      return Promise.reject(error);
+    }
+  );
+}
+
 // Retry configuration for 429 errors
 const RETRY_CONFIG = {
   maxRetries: 3,
