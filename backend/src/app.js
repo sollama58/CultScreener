@@ -17,7 +17,7 @@ const apiKeyRoutes = require('./routes/apiKeys');
 const publicApiRoutes = require('./routes/public');
 
 // Import middleware
-const { defaultLimiter } = require('./middleware/rateLimit');
+const { defaultLimiter, apiKeyLimiter } = require('./middleware/rateLimit');
 
 // Import database for cleanup jobs
 const db = require('./services/database');
@@ -304,8 +304,8 @@ app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/cultify', cultifyRoutes);
 app.use('/api/keys', apiKeyRoutes);
 
-// Public API Routes (protected by API key)
-app.use('/v1', publicApiRoutes);
+// Public API Routes (protected by API key + rate limited)
+app.use('/v1', apiKeyLimiter, publicApiRoutes);
 
 // Social media share routes (OG meta tags + OG image)
 app.use('/share', shareRoutes);
@@ -553,16 +553,22 @@ async function warmConviction() {
     const dbRowMap = {};
     for (const row of dbRows) dbRowMap[row.mint_address] = row;
 
-    for (const token of topTokens) {
+    // Batch-fetch all cache flags in parallel — avoids N sequential Redis round-trips
+    const cacheChecks = await Promise.all(
+      allMints.map(async mint => ({
+        mint,
+        existing: await cache.get(`diamond-hands:${mint}`).catch(() => null),
+        pending: await cache.get(`holder-metrics-pending:${mint}`).catch(() => null)
+      }))
+    );
+
+    for (const { mint, existing, pending } of cacheChecks) {
       if (triggered >= MAX_PER_CYCLE) break;
-      const mint = token.token_mint;
 
       // Skip if already cached (fresh)
-      const existing = await cache.get(`diamond-hands:${mint}`);
       if (existing) continue;
 
       // Skip if already pending
-      const pending = await cache.get(`holder-metrics-pending:${mint}`);
       if (pending) continue;
 
       // Check DB — skip if computed recently
@@ -610,13 +616,21 @@ async function warmCuratedConviction() {
     const dbRowMap = {};
     for (const row of dbRows) dbRowMap[row.mint_address] = row;
 
+    // Batch-fetch all pending flags in parallel — avoids N sequential Redis round-trips
+    const pendingFlags = await Promise.all(
+      allMints.map(async mint => ({
+        mint,
+        pending: await cache.get(`holder-metrics-pending:${mint}`).catch(() => null)
+      }))
+    );
+    const pendingSet = new Set(pendingFlags.filter(e => e.pending).map(e => e.mint));
+
     for (const token of curatedTokens) {
       const mint = token.mintAddress || token.mint_address;
       if (!mint) continue;
 
       // Skip if already pending
-      const pending = await cache.get(`holder-metrics-pending:${mint}`);
-      if (pending) continue;
+      if (pendingSet.has(mint)) continue;
 
       // Skip if conviction was computed recently
       const dbRow = dbRowMap[mint];

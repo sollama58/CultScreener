@@ -567,7 +567,7 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Missing transaction data' });
   }
   // Validate base64 format and size (max ~2KB for a Solana tx)
-  if (!/^[A-Za-z0-9+/=]+$/.test(transaction) || transaction.length > 2800) {
+  if (!/^[A-Za-z0-9+/=]+$/.test(transaction) || transaction.length > 1700) {
     return res.status(400).json({ error: 'Invalid transaction format' });
   }
 
@@ -576,7 +576,7 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
     res.json({ signature });
   } catch (err) {
     console.error('[Cultify] Send transaction error:', err.message);
-    res.status(502).json({ error: 'Failed to send transaction: ' + (err.message || 'RPC error') });
+    res.status(502).json({ error: 'Failed to send transaction. Please try again.' });
   }
 }));
 

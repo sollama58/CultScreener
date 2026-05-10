@@ -401,6 +401,10 @@ router.post('/announcements', strictLimiter, asyncHandler(async (req, res) => {
   const validTypes = ['info', 'warning', 'success', 'error'];
   const safeType = validTypes.includes(type) ? type : 'info';
 
+  if (expiresAt != null && expiresAt !== '' && isNaN(Date.parse(expiresAt))) {
+    return res.status(400).json({ error: 'Invalid expiresAt format. Use an ISO 8601 date string.' });
+  }
+
   const announcement = await db.createAnnouncement({
     title: title.trim(),
     message: message.trim(),

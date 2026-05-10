@@ -1290,7 +1290,7 @@ function createApiKeySignatureMessage(wallet, timestamp) {
  * Signature is optional — if not provided, skip validation
  */
 async function validateWatchlistSignature(req, res, next) {
-  if (!req.body) return next();
+  if (!req.body) return res.status(400).json({ error: 'Request body required' });
   const { wallet, signature, signatureTimestamp } = req.body;
 
   // Signature is required for write operations to prove wallet ownership
@@ -1321,7 +1321,7 @@ async function validateWatchlistSignature(req, res, next) {
     return res.status(400).json({ error: 'Invalid timestamp', message: 'Signature timestamp is in the future', code: 'INVALID_TIMESTAMP' });
   }
 
-  if (!Array.isArray(signature) || signature.length !== 64) {
+  if (!Array.isArray(signature) || signature.length !== 64 || !signature.every(b => Number.isInteger(b) && b >= 0 && b <= 255)) {
     return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
   }
 
@@ -1387,7 +1387,7 @@ async function validateSentimentSignature(req, res, next) {
     return res.status(400).json({ error: 'Invalid timestamp', message: 'Signature timestamp is in the future', code: 'INVALID_TIMESTAMP' });
   }
 
-  if (!Array.isArray(signature) || signature.length !== 64) {
+  if (!Array.isArray(signature) || signature.length !== 64 || !signature.every(b => Number.isInteger(b) && b >= 0 && b <= 255)) {
     return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
   }
 
@@ -1452,7 +1452,7 @@ async function validateCallSignature(req, res, next) {
     return res.status(400).json({ error: 'Invalid timestamp', message: 'Signature timestamp is in the future', code: 'INVALID_TIMESTAMP' });
   }
 
-  if (!Array.isArray(signature) || signature.length !== 64) {
+  if (!Array.isArray(signature) || signature.length !== 64 || !signature.every(b => Number.isInteger(b) && b >= 0 && b <= 255)) {
     return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
   }
 
@@ -1517,7 +1517,7 @@ async function validateApiKeySignature(req, res, next) {
     return res.status(400).json({ error: 'Invalid timestamp', message: 'Signature timestamp is in the future', code: 'INVALID_TIMESTAMP' });
   }
 
-  if (!Array.isArray(signature) || signature.length !== 64) {
+  if (!Array.isArray(signature) || signature.length !== 64 || !signature.every(b => Number.isInteger(b) && b >= 0 && b <= 255)) {
     return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
   }
 

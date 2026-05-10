@@ -95,7 +95,8 @@ router.get('/:mint', async (req, res) => {
   description += ' | CultScreener - Solana Diamond Hands Terminal';
 
   const tokenPageUrl = `${FRONTEND_URL}/token.html?mint=${encodeURIComponent(mint)}`;
-  const ogImageUrl = `${req.protocol}://${req.get('host')}/share/${encodeURIComponent(mint)}/og-image`;
+  const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://api.cultscreener.com`;
+  const ogImageUrl = `${apiBaseUrl}/share/${encodeURIComponent(mint)}/og-image`;
   // Twitter doesn't support SVG — use the static banner JPG as fallback
   const twitterImageUrl = `${FRONTEND_URL}/CultScreenerBanner.jpg`;
 

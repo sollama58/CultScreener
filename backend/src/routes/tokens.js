@@ -49,7 +49,7 @@ const VALID_SORTS = ['volume', 'price', 'priceChange24h', 'marketCap', 'views'];
 const VALID_ORDERS = ['asc', 'desc'];
 
 // BURN_WALLETS and LP_PROGRAMS imported from ../constants (shared with worker.js)
-const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website', 'other'];
+const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website'];
 const VALID_SUBMISSION_STATUSES = ['pending', 'approved', 'rejected', 'all'];
 const jobQueue = require('../services/jobQueue');
 
