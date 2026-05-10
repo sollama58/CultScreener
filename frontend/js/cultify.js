@@ -15,7 +15,18 @@
   const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
   // Access token from verify-burn (prevents wallet spoofing on analyze endpoint)
+  // Persisted to localStorage so page reloads don't force a re-burn within the 12h window.
   let currentAccessToken = null;
+
+  function _saveAccessToken(mint, token) {
+    try { if (token && mint) localStorage.setItem(`cultify-access-${mint}`, token); } catch (_) {}
+  }
+  function _loadAccessToken(mint) {
+    try { return (mint && localStorage.getItem(`cultify-access-${mint}`)) || null; } catch (_) { return null; }
+  }
+  function _clearAccessToken(mint) {
+    try { if (mint) localStorage.removeItem(`cultify-access-${mint}`); } catch (_) {}
+  }
 
   const statusEl = document.getElementById('cultify-status');
   const resultsEl = document.getElementById('cultify-results');
@@ -223,6 +234,8 @@
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
 
       // Step 1: Check access (pass both cache token and wallet for DB lookup)
+      // Load persisted token if in-memory token was lost (e.g. page reload)
+      if (!currentAccessToken) currentAccessToken = _loadAccessToken(mint);
       const walletAddr = (typeof wallet !== 'undefined' && wallet.connected) ? wallet.address : '';
       const tokenParam = currentAccessToken ? `&token=${currentAccessToken}` : '';
       const walletParam = walletAddr ? `&wallet=${walletAddr}` : '';
@@ -233,6 +246,8 @@
       if (checkData.access) {
         // Pick up fresh access token if one was issued (returning user within 12hr)
         if (checkData.accessToken) currentAccessToken = checkData.accessToken;
+        // Always persist to localStorage so page reloads within the 12h window don't lose access
+        if (currentAccessToken) _saveAccessToken(mint, currentAccessToken);
         // Free or already burned — go straight to analysis
         showStatus('<div class="cultify-gate"><p class="cultify-loading">Analyzing holders...</p></div>');
         await loadAnalysis(mint, checkData.reason === 'curated');
@@ -396,6 +411,7 @@
 
         if (resp.ok) {
           currentAccessToken = data.accessToken;
+          _saveAccessToken(mint, currentAccessToken);
           clearPendingBurn();
           return true;
         }
@@ -552,6 +568,7 @@
       const resp = await fetch(url);
 
       if (!resp.ok) {
+        if (resp.status === 403) { currentAccessToken = null; _clearAccessToken(mint); }
         const errData = await resp.json().catch(() => ({}));
         throw new Error(errData.error || 'Analysis failed');
       }
@@ -946,6 +963,7 @@
       const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${qs ? '?' + qs : ''}`);
 
       if (resp.status === 403) {
+        currentAccessToken = null; _clearAccessToken(mint);
         if (sampleEl) sampleEl.textContent = 'Access expired. Re-analyze to refresh.';
         finalizeDiamondBars();
         return;

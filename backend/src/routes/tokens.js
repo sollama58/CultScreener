@@ -2185,7 +2185,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       const pending = await cache.get(pendingKey);
 
       if (!pending) {
-        await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup — matches worker max runtime
+        await cache.set(pendingKey, Date.now(), 360000); // 6 min dedup — covers worst-case worker runtime (250 wallets × batched API calls)
         const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
           mint,
           wallets: staleWallets,
@@ -2280,14 +2280,14 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
 
     // Only clear a stale pending flag if it's been stuck for >3 minutes (matching TTL).
     // Must match the 180s TTL set below — and in cultify.js — so all routes agree.
-    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 180000);
+    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 360000);
     if (pending && !isStillPending) {
       console.log(`[DiamondHands] Pending expired after ${Math.round((Date.now() - pending) / 1000)}s — allowing re-dispatch`);
       await cache.delete(pendingKey);
     }
 
     if (!isStillPending) {
-      await cache.set(pendingKey, Date.now(), 180000); // 3 min dedup — matches worker max runtime
+      await cache.set(pendingKey, Date.now(), 360000); // 6 min dedup — covers worst-case worker runtime (250 wallets × batched API calls)
       const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
         mint,
         wallets: uncached,

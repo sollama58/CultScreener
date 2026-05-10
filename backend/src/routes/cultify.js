@@ -459,11 +459,11 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     // ── Dispatch worker job for uncached wallets ──
     const pendingKey = `holder-metrics-pending:${mint}`;
     const pending = await cache.get(pendingKey);
-    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 180000);
+    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 360000);
 
     if (!isStillPending) {
       if (pending) await cache.delete(pendingKey);
-      await cache.set(pendingKey, Date.now(), 180000);
+      await cache.set(pendingKey, Date.now(), 360000); // 6 min dedup — covers worst-case worker runtime (250 wallets × batched API calls)
       const jobQueue = require('../services/jobQueue');
       const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
         mint,
