@@ -818,6 +818,61 @@ const tokenDetail = {
       if (t10 && metrics.top10Pct != null) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
       if (t20 && metrics.top20Pct != null) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
 
+      // Color-code concentration metrics
+      [t5, t10, t20].forEach(el => {
+        if (!el) return;
+        el.classList.remove('concentration-low', 'concentration-medium', 'concentration-high');
+        const val = parseFloat(el.textContent);
+        if (isNaN(val)) return;
+        if (val > 80) el.classList.add('concentration-high');
+        else if (val > 50) el.classList.add('concentration-medium');
+        else el.classList.add('concentration-low');
+      });
+
+      // Update locked & burnt supply
+      if (data.supply) {
+        const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
+          : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
+          : v >= 1e3 ? (v / 1e3).toFixed(2) + 'K'
+          : v.toFixed(2);
+        const lockedEl = document.getElementById('holders-locked');
+        if (lockedEl) {
+          const lk = data.supply.locked;
+          if (lk > 0) {
+            lockedEl.textContent = fmtAmount(lk) + ' (' + data.supply.lockedPct.toFixed(1) + '%)';
+            lockedEl.className = 'holder-metric-value concentration-low';
+          } else {
+            lockedEl.textContent = 'None';
+            lockedEl.className = 'holder-metric-value';
+          }
+        }
+        const burntEl = document.getElementById('holders-burnt');
+        if (burntEl) {
+          const bt = data.supply.burnt;
+          if (bt > 0) {
+            let tooltip = '';
+            if (data.supply.splBurnt > 0 && data.supply.deadWalletBurnt > 0) {
+              tooltip = `SPL Burn: ${fmtAmount(data.supply.splBurnt)} · Dead Wallets: ${fmtAmount(data.supply.deadWalletBurnt)}`;
+            } else if (data.supply.splBurnt > 0) {
+              tooltip = 'Burned via SPL burn instruction';
+            } else {
+              tooltip = 'Sent to dead/burn wallet addresses';
+            }
+            burntEl.textContent = fmtAmount(bt) + ' (' + data.supply.burntPct.toFixed(1) + '%)';
+            burntEl.className = 'holder-metric-value burnt-highlight';
+            burntEl.title = tooltip;
+          } else if (data.supply.isPumpFun) {
+            burntEl.textContent = 'None';
+            burntEl.className = 'holder-metric-value';
+            burntEl.title = '';
+          } else {
+            burntEl.textContent = 'N/A';
+            burntEl.className = 'holder-metric-value holder-metric-na';
+            burntEl.title = 'Burn detection only available for Pump.fun tokens';
+          }
+        }
+      }
+
       if (metrics.holderCount && metrics.holderCount > 0) {
         const count = metrics.holderCount.toLocaleString();
         const el1 = document.getElementById('stat-holders');
