@@ -42,6 +42,7 @@ const DIAMOND_HANDS_BUCKETS = [
   { key: '3m',  label: '>3m',  ms: 90  * 86_400_000 },
   { key: '6m',  label: '>6m',  ms: 180 * 86_400_000 },
   { key: '9m',  label: '>9m',  ms: 270 * 86_400_000 },
+  { key: '1yr', label: '>1yr', ms: 365 * 86_400_000 },
 ];
 
 module.exports = { BURN_WALLETS, LP_PROGRAMS, DIAMOND_HANDS_BUCKETS };

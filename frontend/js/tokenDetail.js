@@ -1486,13 +1486,14 @@ const tokenDetail = {
 
     // Age-gated buckets: show if token is old enough OR if age is unknown but data exists
     const AGE_GATED = {
-      '3m': 90 * 86400000,
-      '6m': 180 * 86400000,
-      '9m': 270 * 86400000,
+      '3m':  90  * 86400000,
+      '6m':  180 * 86400000,
+      '9m':  270 * 86400000,
+      '1yr': 365 * 86400000,
     };
 
     // Update each bar
-    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m', '1yr'];
     for (const key of buckets) {
       const pct = data.distribution[key] ?? 0;
       const fillEl = document.getElementById(`dh-fill-${key}`);
@@ -1534,7 +1535,7 @@ const tokenDetail = {
     section.style.display = '';
     const sampleEl = document.getElementById('diamond-hands-sample');
     if (sampleEl) sampleEl.textContent = 'Analyzing holders...';
-    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m'];
+    const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m', '1yr'];
     for (const key of buckets) {
       const fillEl = document.getElementById(`dh-fill-${key}`);
       const pctEl = document.getElementById(`dh-pct-${key}`);
@@ -1548,7 +1549,7 @@ const tokenDetail = {
       }
     }
     // Re-hide age-gated rows
-    ['3m', '6m', '9m'].forEach(k => {
+    ['3m', '6m', '9m', '1yr'].forEach(k => {
       const row = document.getElementById(`dh-row-${k}`);
       if (row) row.style.display = 'none';
     });
