@@ -343,7 +343,7 @@ async function _doGetTokenHolderCount(mintAddress) {
     return await circuitBreakers.helius.execute(async () => {
     let totalCount = 0;
     let page = 1;
-    const MAX_PAGES = 50; // Safety cap: 50,000 holders max
+    const MAX_PAGES = 500; // Safety cap: 500,000 holders max
 
     while (page <= MAX_PAGES) {
       const response = await rateLimitedRequest('helius', () =>
