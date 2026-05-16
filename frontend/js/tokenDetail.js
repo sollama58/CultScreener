@@ -19,6 +19,8 @@ const tokenDetail = {
     return (typeof config !== 'undefined' && config.cache?.priceStaleThreshold) || 120000;
   },
 
+  shareTheme: 'default',
+
   // Initialize
   async init() {
     this.mint = utils.getUrlParam('mint');
@@ -29,6 +31,7 @@ const tokenDetail = {
     }
 
     this.bindEvents();
+    this.initThemeSelector();
 
     // Fire off pool and social fetches immediately — they only need this.mint,
     // not this.token, so they run in parallel with the main token load.
@@ -149,12 +152,15 @@ const tokenDetail = {
     const addressEl = document.getElementById('token-address');
     bindHandler(addressEl, 'click', copyHandler);
 
-    // Share button — copies a share URL with rich social media previews
+    // Share button — copies backend share URL for rich social media embeds
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      const shareUrl = `https://cultscreener.com/token.html?mint=${this.mint}`;
+      let shareUrl = `${config.api.baseUrl}/share/${this.mint}`;
+      if (this.shareTheme !== 'default') {
+        shareUrl += `?theme=${encodeURIComponent(this.shareTheme)}`;
+      }
       const copied = await utils.copyToClipboard(shareUrl);
-      if (copied) toast.success('Share link copied to clipboard');
+      if (copied) toast.success(`Share link copied (${this.shareTheme} theme)`);
     };
     bindHandler(shareBtn, 'click', shareHandler);
 
@@ -316,6 +322,20 @@ const tokenDetail = {
       if (priceContainer) priceContainer.classList.remove('price-refreshing');
       if (spinner) spinner.remove();
     }
+  },
+
+  initThemeSelector() {
+    const selector = document.getElementById('share-theme-selector');
+    if (!selector) return;
+
+    const opts = selector.querySelectorAll('.theme-opt');
+    opts.forEach(opt => {
+      opt.addEventListener('click', () => {
+        this.shareTheme = opt.dataset.theme;
+        opts.forEach(o => o.classList.remove('active'));
+        opt.classList.add('active');
+      });
+    });
   },
 
   // Load token data
