@@ -149,14 +149,27 @@ const tokenDetail = {
     const addressEl = document.getElementById('token-address');
     bindHandler(addressEl, 'click', copyHandler);
 
-    // Share button — copies a share URL with rich social media previews
+    // Share button — copies backend share URL (serves rich OG/Twitter meta to crawlers)
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      const shareUrl = `https://cultscreener.com/token.html?mint=${this.mint}`;
+      const theme = document.querySelector('.theme-dot.active')?.dataset?.theme || 'default';
+      const themeQ = theme !== 'default' ? `?theme=${theme}` : '';
+      const apiBase = window.location.hostname === 'localhost'
+        ? `${window.location.protocol}//${window.location.hostname}:3000`
+        : 'https://api.cultscreener.com';
+      const shareUrl = `${apiBase}/share/${this.mint}${themeQ}`;
       const copied = await utils.copyToClipboard(shareUrl);
       if (copied) toast.success('Share link copied to clipboard');
     };
     bindHandler(shareBtn, 'click', shareHandler);
+
+    // Theme selector dots
+    document.querySelectorAll('.theme-dot').forEach(dot => {
+      dot.addEventListener('click', () => {
+        document.querySelectorAll('.theme-dot').forEach(d => d.classList.remove('active'));
+        dot.classList.add('active');
+      });
+    });
 
     // Watchlist button
     const watchlistBtn = document.getElementById('watchlist-btn');
