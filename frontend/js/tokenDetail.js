@@ -703,7 +703,13 @@ const tokenDetail = {
       }
 
       // Render locked & burnt supply info (inside the metrics grid)
-      if (data.supply) {
+      if (!data.supply) {
+        // Fast-path response: supply data not yet enriched by worker — show loading state
+        const lockedEl = document.getElementById('holders-locked');
+        const burntEl = document.getElementById('holders-burnt');
+        if (lockedEl) lockedEl.textContent = '...';
+        if (burntEl) burntEl.textContent = '...';
+      } else if (data.supply) {
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
           : v >= 1e3 ? (v / 1e3).toFixed(2) + 'K'
@@ -801,7 +807,7 @@ const tokenDetail = {
           this._metricsTimer = setTimeout(() => this._pollForFullMetrics(attempt + 1), DELAYS[attempt]);
         } else {
           // Give up — replace "..." with "--"
-          ['holders-top5', 'holders-top10', 'holders-top20'].forEach(id => {
+          ['holders-top5', 'holders-top10', 'holders-top20', 'holders-locked', 'holders-burnt'].forEach(id => {
             const el = document.getElementById(id);
             if (el && el.textContent === '...') el.textContent = '--';
           });
