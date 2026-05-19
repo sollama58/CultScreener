@@ -1849,7 +1849,7 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
       const decimals = supplyResult?.value?.decimals || 0;
       largestAccounts = await Promise.race([
         solanaService.getTokenLargestAccountsDAS(mint, decimals),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('DAS timeout')), 3000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('DAS timeout')), 10000)),
       ]).catch((err) => {
         if (err.message !== 'DAS timeout') console.warn(`[Tokens] DAS fallback failed for ${mint}:`, err.message);
         return null;

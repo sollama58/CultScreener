@@ -114,15 +114,18 @@ async function withRpcRetry(requestFn, context = 'rpc') {
       const is429 = error.response?.status === 429;
       const isOverloaded = error.isOverloaded;
       if (!is429 && !isOverloaded) throw error;
-      if (attempt === RPC_RETRY_CONFIG.maxRetries) {
-        console.error(`[Solana] ${context}: Max retries (${RPC_RETRY_CONFIG.maxRetries}) exceeded for ${is429 ? '429' : 'queue overload'}`);
+      // For 429s, only retry once — fail fast so callers can use their DAS fallback
+      // rather than blocking for 21+ seconds across 3 retries.
+      const maxRetries = is429 ? 1 : RPC_RETRY_CONFIG.maxRetries;
+      if (attempt === maxRetries) {
+        console.error(`[Solana] ${context}: Max retries (${maxRetries}) exceeded for ${is429 ? '429' : 'queue overload'}`);
         throw error;
       }
       // Longer backoff: 3s base (up from 2s) to give Helius time to recover
       const baseDelay = 3000 * Math.pow(RPC_RETRY_CONFIG.backoffMultiplier, attempt);
       const jitter = Math.random() * 1500;
       const delay = Math.min(baseDelay + jitter, RPC_RETRY_CONFIG.maxDelay);
-      console.log(`[Solana] ${context}: Rate limited (${is429 ? '429' : 'queue'}), retry ${attempt + 1}/${RPC_RETRY_CONFIG.maxRetries} after ${Math.round(delay)}ms`);
+      console.log(`[Solana] ${context}: Rate limited (${is429 ? '429' : 'queue'}), retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms`);
       await sleep(delay);
     }
   }
