@@ -169,12 +169,13 @@ const tokenDetail = {
     };
     bindHandler(watchlistBtn, 'click', watchlistHandler);
 
-    // Holders refresh button — debounced to 10s to prevent spam
+    // Holders refresh button — debounced to 10s after a manual refresh to prevent spam
     const holdersRefreshBtn = document.getElementById('holders-refresh');
     const holdersRefreshHandler = () => {
       if (this._holdersRefreshing) return;
-      const elapsed = this._holdersUpdatedAt ? Date.now() - this._holdersUpdatedAt : Infinity;
+      const elapsed = this._holdersLastRefreshAt ? Date.now() - this._holdersLastRefreshAt : Infinity;
       if (elapsed < 10000) return;
+      this._holdersLastRefreshAt = Date.now();
       this._holdersRefreshing = true;
       this.loadHolderAnalytics(true).finally(() => {
         this._holdersRefreshing = false;
@@ -800,7 +801,10 @@ const tokenDetail = {
       const data = await api.request(`/api/tokens/${mintAtStart}/holders`);
       if (this.mint !== mintAtStart) return;
 
-      if (!data || !data.metrics || data.metrics.top5Pct == null) {
+      // Keep polling while supply is null — the worker always sets supply when it completes.
+      // Checking supply (not metrics.top5Pct) is correct because metrics can be null for
+      // tokens where all top holders are LP programs (metrics=null but supply is still computed).
+      if (!data || data.supply == null) {
         if (attempt < DELAYS.length) {
           this._metricsTimer = setTimeout(() => this._pollForFullMetrics(attempt + 1), DELAYS[attempt]);
         } else {
@@ -813,14 +817,19 @@ const tokenDetail = {
         return;
       }
 
-      // Worker completed — update concentration metric cells
+      // Worker completed — update concentration metric cells (metrics may be null for all-LP tokens)
       const { metrics, holders } = data;
       const t5 = document.getElementById('holders-top5');
       const t10 = document.getElementById('holders-top10');
       const t20 = document.getElementById('holders-top20');
-      if (t5 && metrics.top5Pct != null) t5.textContent = metrics.top5Pct.toFixed(1) + '%';
-      if (t10 && metrics.top10Pct != null) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
-      if (t20 && metrics.top20Pct != null) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
+      if (metrics) {
+        if (t5 && metrics.top5Pct != null) t5.textContent = metrics.top5Pct.toFixed(1) + '%';
+        if (t10 && metrics.top10Pct != null) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
+        if (t20 && metrics.top20Pct != null) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
+      } else {
+        // All top holders are LPs — no concentration data available
+        [t5, t10, t20].forEach(el => { if (el && el.textContent === '...') el.textContent = '--'; });
+      }
 
       // Color-code concentration metrics
       [t5, t10, t20].forEach(el => {
