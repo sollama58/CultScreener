@@ -180,10 +180,16 @@ router.delete('/:mint', strictLimiter, requireAdmin, asyncHandler(async (req, re
 }));
 
 // POST /api/curated/refresh - Refresh DexScreener data for all curated tokens (admin-only)
-router.post('/refresh', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/refresh', strictLimiter, requireAdmin, (req, res, next) => {
+  // Bulk refresh can take >30s; extend timeout beyond the global 30s default
+  res.setTimeout(300000, () => {
+    if (!res.headersSent) res.status(503).json({ error: 'Refresh timed out' });
+  });
+  next();
+}, asyncHandler(async (req, res) => {
   const results = await refreshAllDexScreener();
 
-  res.json({
+  if (!res.headersSent) res.json({
     success: true,
     message: 'DexScreener refresh complete',
     ...results

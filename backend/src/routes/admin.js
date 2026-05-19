@@ -342,7 +342,13 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   res.json({ success: true });
 }));
 
-router.post('/curated/refresh', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/curated/refresh', strictLimiter, (req, res, next) => {
+  // Bulk refresh can take >30s; extend timeout beyond the global 30s default
+  res.setTimeout(300000, () => {
+    if (!res.headersSent) res.status(503).json({ error: 'Refresh timed out' });
+  });
+  next();
+}, asyncHandler(async (req, res) => {
   const tokens = await db.getCuratedTokens();
   const results = { updated: 0, failed: 0, total: tokens.length };
   const axios = require('axios');
@@ -374,7 +380,7 @@ router.post('/curated/refresh', strictLimiter, asyncHandler(async (req, res) => 
     // Rate limit: 1 second between DexScreener calls
     if (i < tokens.length - 1) await new Promise(r => setTimeout(r, 1000));
   }
-  res.json({ success: true, ...results });
+  if (!res.headersSent) res.json({ success: true, ...results });
 }));
 
 // ==========================================
