@@ -249,6 +249,10 @@ app.use((req, res, next) => {
 // Rate limiting for API routes
 app.use('/api/', defaultLimiter);
 
+// Prevent browser HTTP caching of API responses — caching is managed at the app layer via Redis.
+// Without this, browsers apply heuristic caching and serve stale responses to fetch() calls.
+app.use('/api/', (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
+
 
 // Health check routes (no rate limiting)
 app.use('/health', healthRoutes);

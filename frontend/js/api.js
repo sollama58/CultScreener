@@ -226,6 +226,7 @@ const api = {
 
         const response = await fetch(url, {
           ...options,
+          cache: 'no-store',
           signal: controller.signal,
           headers
         });
