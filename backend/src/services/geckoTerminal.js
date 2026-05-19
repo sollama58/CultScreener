@@ -470,7 +470,12 @@ async function getTokenOverview(mintAddress) {
     await redisCache.set(overviewCacheKey, overviewResult, TTL.OHLCV || 120000);
     return overviewResult;
   } catch (error) {
-    console.error('[GeckoTerminal] getTokenOverview error:', error.message);
+    // 404 = token not indexed on GeckoTerminal — expected, not a real error
+    if (error.response?.status === 404) {
+      console.warn(`[GeckoTerminal] getTokenOverview: token not found on GeckoTerminal (${mintAddress.slice(0, 8)}...)`);
+    } else {
+      console.error('[GeckoTerminal] getTokenOverview error:', error.message);
+    }
     // Cache the error (but not 429 errors - those should retry)
     if (error.response?.status !== 429) {
       errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
@@ -963,6 +968,13 @@ async function getTokenPrice(mintAddress) {
 async function getTokenPools(mintAddress, options = {}) {
   const { limit = 10 } = options;
 
+  // Check error cache to avoid re-fetching known-missing tokens
+  const errorCacheKey = `pools:${mintAddress}`;
+  const cachedError = errorCache.get(errorCacheKey);
+  if (cachedError && Date.now() < cachedError.expiry) {
+    return [];
+  }
+
   console.log(`[GeckoTerminal] getTokenPools: ${mintAddress}, limit=${limit}`);
 
   try {
@@ -1014,7 +1026,13 @@ async function getTokenPools(mintAddress, options = {}) {
       };
     });
   } catch (error) {
-    console.error('[GeckoTerminal] getTokenPools error:', error.message);
+    // 404 = token not indexed on GeckoTerminal — expected, not a real error
+    if (error.response?.status === 404) {
+      console.warn(`[GeckoTerminal] getTokenPools: token not found on GeckoTerminal (${mintAddress.slice(0, 8)}...)`);
+      errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
+    } else {
+      console.error('[GeckoTerminal] getTokenPools error:', error.message);
+    }
     return [];
   }
 }

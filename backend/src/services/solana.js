@@ -121,8 +121,7 @@ async function withRpcRetry(requestFn, context = 'rpc') {
         console.error(`[Solana] ${context}: Max retries (${maxRetries}) exceeded for ${is429 ? '429' : 'queue overload'}`);
         throw error;
       }
-      // Longer backoff: 3s base (up from 2s) to give Helius time to recover
-      const baseDelay = 3000 * Math.pow(RPC_RETRY_CONFIG.backoffMultiplier, attempt);
+      const baseDelay = RPC_RETRY_CONFIG.baseDelay * Math.pow(RPC_RETRY_CONFIG.backoffMultiplier, attempt);
       const jitter = Math.random() * 1500;
       const delay = Math.min(baseDelay + jitter, RPC_RETRY_CONFIG.maxDelay);
       console.log(`[Solana] ${context}: Rate limited (${is429 ? '429' : 'queue'}), retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms`);
@@ -343,47 +342,50 @@ async function getTokenHolderCount(mintAddress) {
 
 async function _doGetTokenHolderCount(mintAddress) {
   try {
-    return await circuitBreakers.helius.execute(async () => {
-    let totalCount = 0;
-    let page = 1;
-    const MAX_PAGES = 500; // Safety cap: 500,000 holders max
+    return await circuitBreakers.heliusDas.execute(async () => {
+      let totalCount = 0;
+      let page = 1;
+      const MAX_PAGES = 500; // Safety cap: 500,000 holders max
 
-    while (page <= MAX_PAGES) {
-      const response = await rateLimitedRequest('helius', () =>
-        axios.post(HELIUS_DAS_URL, {
-          jsonrpc: '2.0',
-          id: `holder-count-p${page}`,
-          method: 'getTokenAccounts',
-          params: {
-            mint: mintAddress,
-            page,
-            limit: 1000,
-            options: { showZeroBalance: false }
-          }
-        }, {
-          timeout: 15000,
-          headers: HELIUS_HEADERS,
-          httpsAgent
-        })
-      );
+      while (page <= MAX_PAGES) {
+        const response = await rateLimitedRequest('helius', () =>
+          axios.post(HELIUS_DAS_URL, {
+            jsonrpc: '2.0',
+            id: `holder-count-p${page}`,
+            method: 'getTokenAccounts',
+            params: {
+              mint: mintAddress,
+              page,
+              limit: 1000,
+              options: { showZeroBalance: false }
+            }
+          }, {
+            timeout: 15000,
+            headers: HELIUS_HEADERS,
+            httpsAgent
+          })
+        );
 
-      if (response.data.error) break;
+        if (response.data.error) {
+          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — returning partial count (${totalCount})`);
+          break;
+        }
 
-      const accounts = response.data.result?.token_accounts;
-      if (!accounts || accounts.length === 0) break;
+        const accounts = response.data.result?.token_accounts;
+        if (!accounts || accounts.length === 0) break;
 
-      totalCount += accounts.length;
+        totalCount += accounts.length;
 
-      // If fewer than 1000 returned, we've reached the last page
-      if (accounts.length < 1000) break;
-      page++;
-    }
+        // If fewer than 1000 returned, we've reached the last page
+        if (accounts.length < 1000) break;
+        page++;
+      }
 
-    if (totalCount > 0) {
-      console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} (${page} pages)`);
-    }
-    return totalCount > 0 ? totalCount : null;
-    }); // end circuitBreakers.helius.execute
+      if (totalCount > 0) {
+        console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} (${page} pages)`);
+      }
+      return totalCount > 0 ? totalCount : null;
+    }); // end circuitBreakers.heliusDas.execute
   } catch (error) {
     console.error('[Solana] Helius holder count error:', error.message);
     return null;
@@ -708,23 +710,25 @@ async function getTokenLargestAccountsDAS(mintAddress, decimals = 0) {
   if (!HELIUS_DAS_URL) return null;
 
   try {
-    const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
-      axios.post(HELIUS_DAS_URL, {
-        jsonrpc: '2.0',
-        id: 'largest-holders',
-        method: 'getTokenAccounts',
-        params: {
-          mint: mintAddress,
-          page: 1,
-          limit: 20,
-          options: { showZeroBalance: false }
-        }
-      }, {
-        timeout: 15000,
-        headers: HELIUS_HEADERS,
-        httpsAgent
-      })
-    ), 'getTokenLargestAccountsDAS');
+    const response = await circuitBreakers.heliusDas.execute(() =>
+      withRpcRetry(() => rateLimitedRequest('helius', () =>
+        axios.post(HELIUS_DAS_URL, {
+          jsonrpc: '2.0',
+          id: 'largest-holders',
+          method: 'getTokenAccounts',
+          params: {
+            mint: mintAddress,
+            page: 1,
+            limit: 20,
+            options: { showZeroBalance: false }
+          }
+        }, {
+          timeout: 15000,
+          headers: HELIUS_HEADERS,
+          httpsAgent
+        })
+      ), 'getTokenLargestAccountsDAS')
+    );
 
     if (response.data.error) {
       console.error('[Solana] DAS getTokenAccounts error:', response.data.error.message);

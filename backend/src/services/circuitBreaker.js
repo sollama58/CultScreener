@@ -250,6 +250,19 @@ const circuitBreakers = {
     }
   }),
 
+  // Separate breaker for Helius DAS (getTokenAccounts, holder count pagination).
+  // Isolates long-running DAS paginations from the helius RPC breaker so that
+  // a DAS outage doesn't block price/metadata lookups (and vice-versa).
+  heliusDas: new CircuitBreaker({
+    name: 'heliusDas',
+    failureThreshold: 5,
+    resetTimeout: 30000,
+    isFailure: (error) => {
+      if (error.response?.status === 429) return false;
+      return error.response?.status >= 500 || !error.response;
+    }
+  }),
+
   solanaRpc: new CircuitBreaker({
     name: 'solanaRpc',
     failureThreshold: 3, // RPC failures are more critical

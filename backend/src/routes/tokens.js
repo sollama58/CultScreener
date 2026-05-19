@@ -138,7 +138,8 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
         try {
           heliusMetadata = await solanaService.getTokenMetadataBatch(missingMints);
         } catch (err) {
-          // Helius batch failed, continue without it
+          if (err.isOverloaded || err.isCircuitBreakerError) throw err;
+          console.warn('[Tokens] Helius batch metadata failed:', err.response?.status || err.message);
         }
       }
 
@@ -281,7 +282,8 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
         try {
           heliusMetadata = await solanaService.getTokenMetadataBatch(missingMints);
         } catch (err) {
-          // Helius batch failed, continue without it
+          if (err.isOverloaded || err.isCircuitBreakerError) throw err;
+          console.warn('[Tokens] Helius batch metadata failed:', err.response?.status || err.message);
         }
       }
 
@@ -388,9 +390,17 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
       }
       const pageResults = await Promise.all(geckoPages.map(gp => {
         if (filter === 'new') {
-          return geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp).catch(() => null);
+          return geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp).catch(err => {
+            if (err.isOverloaded || err.isCircuitBreakerError) throw err;
+            console.warn(`[Tokens] GeckoTerminal new page ${gp} failed: ${err.response?.status || err.message}`);
+            return null;
+          });
         }
-        return geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp }).catch(() => null);
+        return geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp }).catch(err => {
+          if (err.isOverloaded || err.isCircuitBreakerError) throw err;
+          console.warn(`[Tokens] GeckoTerminal trending page ${gp} failed: ${err.response?.status || err.message}`);
+          return null;
+        });
       }));
       let allTokens = pageResults.filter(Boolean).flat();
 
@@ -1386,7 +1396,11 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
 
       // Jupiter name fallback (only when Helius and GeckoTerminal both lack name)
       const jupiterMeta = (!helius.name && !gecko.name)
-        ? await jupiterService.getTokenInfo(mint).catch(() => null)
+        ? await jupiterService.getTokenInfo(mint).catch(err => {
+            if (err.isCircuitBreakerError || err.isOverloaded) throw err;
+            console.warn(`[Tokens] Jupiter metadata fallback failed for ${mint.slice(0, 8)}...: ${err.response?.status || err.message}`);
+            return null;
+          })
         : null;
       const jup = jupiterMeta || {};
 
