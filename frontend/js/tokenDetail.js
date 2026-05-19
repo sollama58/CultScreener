@@ -169,17 +169,12 @@ const tokenDetail = {
     };
     bindHandler(watchlistBtn, 'click', watchlistHandler);
 
-    // Holders refresh button — only allow if data is >1 minute stale
+    // Holders refresh button — debounced to 10s to prevent spam
     const holdersRefreshBtn = document.getElementById('holders-refresh');
     const holdersRefreshHandler = () => {
       if (this._holdersRefreshing) return;
       const elapsed = this._holdersUpdatedAt ? Date.now() - this._holdersUpdatedAt : Infinity;
-      if (elapsed < 60000) {
-        const secs = Math.ceil((60000 - elapsed) / 1000);
-        const updatedEl = document.getElementById('holders-updated');
-        if (updatedEl) updatedEl.textContent = `Refresh available in ${secs}s`;
-        return;
-      }
+      if (elapsed < 10000) return;
       this._holdersRefreshing = true;
       this.loadHolderAnalytics(true).finally(() => {
         this._holdersRefreshing = false;
@@ -612,7 +607,10 @@ const tokenDetail = {
     }
 
     try {
-      const data = await api.tokens.getHolders(this.mint, { fresh });
+      // Always fetch without ?fresh=true — we only bust the frontend cache above.
+      // Sending ?fresh=true would bypass the backend Redis cache and re-run the full
+      // RPC pipeline, discarding the already-computed worker-enriched result.
+      const data = await api.tokens.getHolders(this.mint);
       if (!data) return;
 
       // Show the section — even on RPC errors we display a message
@@ -709,7 +707,7 @@ const tokenDetail = {
         const burntEl = document.getElementById('holders-burnt');
         if (lockedEl) lockedEl.textContent = '...';
         if (burntEl) burntEl.textContent = '...';
-      } else if (data.supply) {
+      } else {
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
           : v >= 1e3 ? (v / 1e3).toFixed(2) + 'K'

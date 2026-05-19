@@ -1845,7 +1845,7 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
   const cacheKey = `holder-analytics:${mint}`;
 
   try {
-    // Allow ?fresh=true to bypass cache (rate-limited by frontend to 1 per minute)
+    // Allow ?fresh=true to bypass cache (supported for direct API calls; frontend uses backend cache)
     if (req.query.fresh !== 'true') {
       const cached = await cache.get(cacheKey);
       if (cached) return res.json(cached);
