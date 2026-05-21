@@ -37,6 +37,218 @@
 
   <link rel="stylesheet" href="css/styles.css?v=3">
 
+  <style>
+    /* ── View Tab Switcher ──────────────────────────────── */
+    .main-view-tabs {
+      display: flex;
+      gap: 0.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .main-view-tab {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.5rem 1.25rem;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+      letter-spacing: 0.01em;
+    }
+    .main-view-tab:hover {
+      border-color: var(--fire-primary);
+      color: var(--text-primary);
+    }
+    .main-view-tab.active {
+      background: rgba(255, 87, 34, 0.1);
+      border-color: var(--fire-primary);
+      color: var(--text-primary);
+    }
+
+    /* ── Performance Section ────────────────────────────── */
+    .perf-toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .perf-sort-group {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .perf-sort-label {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .perf-share-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 1rem;
+      background: linear-gradient(135deg, var(--fire-primary), #ff8c00);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.78rem;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity var(--transition-fast);
+      font-family: var(--font-sans);
+      margin-left: auto;
+      letter-spacing: 0.02em;
+    }
+    .perf-share-btn:hover { opacity: 0.88; }
+    .perf-share-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Sort buttons */
+    .perf-sort-btn {
+      padding: 0.35rem 0.85rem;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 0.76rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+    }
+    .perf-sort-btn:hover { border-color: var(--fire-primary); color: var(--text-primary); }
+    .perf-sort-btn.active {
+      background: rgba(255, 87, 34, 0.12);
+      border-color: var(--fire-primary);
+      color: var(--text-primary);
+    }
+
+    /* Status, loading, empty */
+    .perf-status {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      margin-bottom: 0.5rem;
+    }
+    .perf-loading-state {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 2rem;
+      color: var(--text-dim);
+      font-size: 0.82rem;
+    }
+    .perf-loading-spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border-color);
+      border-top-color: var(--fire-primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    .perf-empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 3rem;
+      color: var(--text-dim);
+      font-size: 0.82rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Table */
+    .perf-table th { white-space: nowrap; }
+    .perf-th-rank, td.perf-rank { width: 42px; text-align: center; }
+    .perf-rank {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      text-align: center;
+    }
+    td.perf-token { max-width: 220px; }
+    .perf-token-cell {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+    .perf-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: var(--bg-tertiary);
+      flex-shrink: 0;
+    }
+    .perf-token-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .perf-token-name {
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 160px;
+    }
+    .perf-token-symbol {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    td.perf-token-cell {
+      max-width: 220px;
+    }
+    td.perf-listed-mcap, td.perf-ath-mcap, td.perf-current-mcap, td.perf-mcap {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-align: right;
+      white-space: nowrap;
+    }
+    td.perf-ath-mcap { color: var(--text-secondary, #d1d5db); }
+    td.perf-ath-pct {
+      font-family: var(--font-mono);
+      font-size: 0.92rem;
+      font-weight: 700;
+      text-align: right;
+      white-space: nowrap;
+    }
+    td.perf-current-pct {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .pct-positive { color: var(--green); }
+    .pct-negative { color: var(--red); }
+    .pct-na { color: var(--text-dim); }
+    .perf-row:hover { background: rgba(255, 255, 255, 0.035) !important; }
+
+    /* ATH % cell gets a subtle highlight when it's the active sort */
+    .perf-sort-ath-active td.perf-ath-pct,
+    .perf-sort-current-active td.perf-current-pct {
+      background: rgba(255,87,34,0.04);
+    }
+
+    @media (max-width: 640px) {
+      td.perf-listed-mcap, th.perf-th-listed,
+      td.perf-ath-mcap, th.perf-th-ath-mcap,
+      td.perf-current-mcap, th.perf-th-current-mcap { display: none; }
+    }
+  </style>
+
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=2" as="script">
   <link rel="preload" href="js/api.js?v=3" as="script">
@@ -81,7 +293,25 @@
 
   <main class="main conviction-page terminal-page">
     <h1 class="sr-only">CultScreener - Diamond Hands Terminal</h1>
-    <section class="community-section conviction-section terminal-section">
+
+    <!-- View Tab Switcher -->
+    <div class="main-view-tabs" role="tablist" aria-label="Main view">
+      <button class="main-view-tab active" id="tab-diamond" role="tab" aria-selected="true" aria-controls="view-diamond" data-view="diamond">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+        Diamond Hands
+      </button>
+      <button class="main-view-tab" id="tab-performance" role="tab" aria-selected="false" aria-controls="view-performance" data-view="performance">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
+          <polyline points="16 7 22 7 22 13"/>
+        </svg>
+        Performance
+      </button>
+    </div>
+
+    <section id="view-diamond" class="community-section conviction-section terminal-section">
       <!-- Toolbar: Search + Filters toggle + Status -->
       <div class="terminal-toolbar">
         <div class="terminal-search-wrap">
@@ -195,6 +425,58 @@
         </div>
       </div>
     </section>
+
+    <!-- Performance Leaderboard View -->
+    <section id="view-performance" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-performance">
+      <!-- Toolbar -->
+      <div class="perf-toolbar">
+        <div class="perf-sort-group">
+          <span class="perf-sort-label">Sort by</span>
+          <button class="perf-sort-btn active" id="perf-sort-ath" data-sort="ath">ATH % since Listing</button>
+          <button class="perf-sort-btn" id="perf-sort-current" data-sort="current">Current % since Listing</button>
+        </div>
+        <button class="perf-share-btn" id="perf-share-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          Share Top 10
+        </button>
+      </div>
+
+      <!-- Status line -->
+      <div id="perf-status" class="perf-status"></div>
+
+      <!-- Loading state -->
+      <div id="perf-loading" class="perf-loading-state" style="display:none;">
+        <div class="perf-loading-spinner"></div>
+        <span>Loading performance data…</span>
+      </div>
+
+      <!-- Empty state -->
+      <div id="perf-empty" class="perf-empty-state" style="display:none;">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
+          <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>
+        </svg>
+        <p>No performance data yet. Add tokens and run the ATH backfill.</p>
+      </div>
+
+      <!-- Table -->
+      <div class="terminal-table-wrap" id="perf-table-wrap" style="display:none;">
+        <table class="terminal-table perf-table">
+          <thead>
+            <tr>
+              <th class="perf-th-rank">#</th>
+              <th class="perf-th-token">Token</th>
+              <th class="perf-th-ath">ATH % since Listing</th>
+              <th class="perf-th-current">Current % since Listing</th>
+              <th class="perf-th-mcap">Current MCap</th>
+            </tr>
+          </thead>
+          <tbody id="perf-table-body"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <footer class="footer">
@@ -211,6 +493,37 @@
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
   <script src="js/conviction.js?v=3"></script>
-  <script src="js/pwa.js?v=2"></script>
+  <script src="js/performance.js?v=1"></script>
+  <script>
+    // ── Tab Switcher ─────────────────────────────────────────
+    (function () {
+      var tabs = document.querySelectorAll('.main-view-tab');
+      var panels = {
+        diamond: document.getElementById('view-diamond'),
+        performance: document.getElementById('view-performance')
+      };
+      var perfLoaded = false;
+
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          var view = tab.dataset.view;
+          tabs.forEach(function (t) {
+            t.classList.remove('active');
+            t.setAttribute('aria-selected', 'false');
+          });
+          tab.classList.add('active');
+          tab.setAttribute('aria-selected', 'true');
+          Object.keys(panels).forEach(function (k) {
+            panels[k].style.display = k === view ? '' : 'none';
+          });
+          if (view === 'performance' && !perfLoaded) {
+            perfLoaded = true;
+            if (typeof performancePage !== 'undefined') performancePage.init();
+          }
+        });
+      });
+    })();
+  </script>
+  <script src="js/pwa.js?v=3"></script>
 </body>
 </html>

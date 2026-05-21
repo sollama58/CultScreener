@@ -32,15 +32,12 @@
           });
         });
 
-        // SW_UPDATED message: new SW activated and claimed the page — reload to get fresh HTML.
-        // This fires when a newly installed SW calls skipWaiting + clients.claim().
+        // SW_UPDATED message: new SW activated and claimed all clients.
+        // We no longer auto-reload here — the updatefound → banner flow lets the user
+        // choose when to reload, preventing unexpected interruptions during page loads.
         navigator.serviceWorker.addEventListener('message', (event) => {
           if (event.data && event.data.type === 'SW_UPDATED') {
-            // Only reload if the page hasn't been interacted with (no unsaved state)
-            // and the SW has fully taken control of this client.
-            if (navigator.serviceWorker.controller) {
-              window.location.reload();
-            }
+            // Silently acknowledge; banner (from updatefound) is already shown if applicable.
           }
         });
       } catch (err) {
