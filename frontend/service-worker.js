@@ -1,7 +1,7 @@
 // CultScreener Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'cultscreener-v2';
+const CACHE_VERSION = 'cultscreener-v3';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -10,12 +10,12 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=2',
+  '/css/styles.css?v=3',
   '/js/config.js?v=2',
-  '/js/api.js?v=2',
+  '/js/api.js?v=3',
   '/js/wallet.js?v=2',
-  '/js/conviction.js?v=2',
-  '/js/tokenDetail.js?v=2',
+  '/js/conviction.js?v=3',
+  '/js/tokenDetail.js?v=4',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=2',
   '/js/sentiment.js?v=2',
@@ -23,7 +23,7 @@ const APP_SHELL = [
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=2',
   '/js/cultify.js?v=10',
-  '/js/admin.js?v=2',
+  '/js/admin.js?v=3',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
   '/thisisfine8bit.jpg',
