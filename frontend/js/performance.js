@@ -169,299 +169,35 @@ const performancePage = {
   },
 
   // ---------------------------------------------------------------------------
-  // Share (Canvas)
+  // Share
   // ---------------------------------------------------------------------------
 
   /**
-   * Draw a 1200×675 share card with the top-10 performers and download it as PNG.
+   * Share the performance leaderboard URL — uses Web Share API on mobile,
+   * falls back to clipboard copy, matching the share button pattern used
+   * across the rest of the app.
    */
   async share() {
-    const btnShare = document.getElementById('perf-share-btn');
+    const shareUrl = 'https://cultscreener.com/';
+    const sortLabel = this.sortField === 'ath'
+      ? 'ATH % since listing'
+      : 'Current % since listing';
+    const title = '🔥 CultScreener Performance Leaderboard';
+    const text  = `Top performers sorted by ${sortLabel} — CultScreener`;
 
-    // Show loading state on button
-    let originalText = '';
-    if (btnShare) {
-      originalText = btnShare.textContent;
-      btnShare.textContent = 'Generating…';
-      btnShare.disabled = true;
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title, text, url: shareUrl });
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
     }
 
-    try {
-      // Wait for web fonts so Inter / system fonts are available
-      await document.fonts.ready;
-
-      const W = 1200;
-      const H = 675;
-
-      const canvas  = document.createElement('canvas');
-      canvas.width  = W;
-      canvas.height = H;
-      const ctx     = canvas.getContext('2d');
-
-      const sorted = this._getSortedTokens();
-      const top10  = sorted.slice(0, 10);
-
-      // ------------------------------------------------------------------
-      // 1. Background
-      // ------------------------------------------------------------------
-      ctx.fillStyle = '#09090b';
-      ctx.fillRect(0, 0, W, H);
-
-      // ------------------------------------------------------------------
-      // 2. Dot grid
-      // ------------------------------------------------------------------
-      ctx.fillStyle = 'rgba(255,255,255,0.04)';
-      const DOT_SPACING = 40;
-      for (let x = DOT_SPACING; x < W; x += DOT_SPACING) {
-        for (let y = DOT_SPACING; y < H; y += DOT_SPACING) {
-          ctx.beginPath();
-          ctx.arc(x, y, 1, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // 3. Top accent bar (y=0, h=5)
-      // ------------------------------------------------------------------
-      const accentGrad = ctx.createLinearGradient(0, 0, W, 0);
-      accentGrad.addColorStop(0,    '#ff4500');
-      accentGrad.addColorStop(0.5,  '#ff5722');
-      accentGrad.addColorStop(1,    '#ff8c00');
-      ctx.fillStyle = accentGrad;
-      ctx.fillRect(0, 0, W, 5);
-
-      // ------------------------------------------------------------------
-      // 4. Header area (y=5 to y=75)
-      // ------------------------------------------------------------------
-
-      // Left: "🔥 CultScreener"
-      ctx.font         = 'bold 26px Inter, system-ui, sans-serif';
-      ctx.fillStyle    = '#ffffff';
-      ctx.textAlign    = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('🔥 CultScreener', 48, 42);
-
-      // Right top: "TOP PERFORMERS"
-      ctx.font         = '700 11px Inter, system-ui, sans-serif';
-      ctx.fillStyle    = '#ff5722';
-      ctx.textAlign    = 'right';
-      ctx.textBaseline = 'alphabetic';
-      ctx.letterSpacing = '0.1em'; // may not work in all browsers but harmless
-      ctx.fillText('TOP PERFORMERS', 1152, 30);
-
-      // Right bottom: subtitle
-      ctx.font      = '11px Inter, system-ui, sans-serif';
-      ctx.fillStyle = '#6b7280';
-      ctx.fillText('Since Listing  •  cultscreener.com', 1152, 50);
-
-      // Reset letter spacing
-      ctx.letterSpacing = '0em';
-
-      // ------------------------------------------------------------------
-      // 5. Thin separator at y=75
-      // ------------------------------------------------------------------
-      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-      ctx.lineWidth   = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, 75);
-      ctx.lineTo(W, 75);
-      ctx.stroke();
-
-      // ------------------------------------------------------------------
-      // 6. Title block (y=75 to y=130)
-      // ------------------------------------------------------------------
-
-      // "Performance Leaderboard"
-      ctx.font         = 'bold 32px Inter, system-ui, sans-serif';
-      ctx.fillStyle    = '#ffffff';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText('Performance Leaderboard', W / 2, 115);
-
-      // Sub-label
-      const sortLabel = this.sortField === 'ath'
-        ? 'Sorted by ATH % since listing'
-        : 'Sorted by Current % since listing';
-      ctx.font      = '13px Inter, system-ui, sans-serif';
-      ctx.fillStyle = '#6b7280';
-      ctx.fillText(sortLabel, W / 2, 133);
-
-      // ------------------------------------------------------------------
-      // 7. Column header row (y=130 to y=158)
-      // ------------------------------------------------------------------
-      ctx.font         = '700 10px Inter, system-ui, sans-serif';
-      ctx.fillStyle    = '#4b5563';
-      ctx.textBaseline = 'middle';
-      const COL_HDR_Y  = 144;
-
-      ctx.textAlign = 'left';
-      ctx.fillText('RANK',         52,   COL_HDR_Y);
-      ctx.fillText('TOKEN',        120,  COL_HDR_Y);
-      ctx.fillText('LISTED MCAP',  460,  COL_HDR_Y);
-      ctx.fillText('ATH MCAP',     620,  COL_HDR_Y);
-      ctx.fillText('ATH %',        790,  COL_HDR_Y);
-      ctx.fillText('CURRENT MCAP', 910,  COL_HDR_Y);
-
-      ctx.textAlign = 'right';
-      ctx.fillText('VS LISTING',   1148, COL_HDR_Y);
-
-      // Separator under headers
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      ctx.lineWidth   = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, 158);
-      ctx.lineTo(W, 158);
-      ctx.stroke();
-
-      // ------------------------------------------------------------------
-      // 8. Token rows (y starting at 158, each 48px)
-      // ------------------------------------------------------------------
-      const ROW_START  = 158;
-      const ROW_HEIGHT = 48;
-
-      top10.forEach((token, i) => {
-        const rowY   = ROW_START + i * ROW_HEIGHT;
-        const rowMid = rowY + ROW_HEIGHT / 2;
-
-        // Alternating background
-        if (i % 2 === 0) {
-          ctx.fillStyle = 'rgba(255,255,255,0.02)';
-          ctx.fillRect(0, rowY, W, ROW_HEIGHT);
-        }
-
-        // --- Rank circle ---
-        const rankX = 70;
-        ctx.beginPath();
-        ctx.arc(rankX, rowMid, 13, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,87,34,0.15)';
-        ctx.fill();
-
-        ctx.font         = 'bold 11px Inter, system-ui, sans-serif';
-        ctx.fillStyle    = '#ff5722';
-        ctx.textAlign    = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(i + 1), rankX, rowMid);
-
-        // --- Token name + symbol ---
-        const nameMaxW = 160;
-        const nameY    = rowMid - 7;
-        const symY     = rowMid + 8;
-
-        // Clip name to avoid overflow
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(120, rowY, nameMaxW, ROW_HEIGHT);
-        ctx.clip();
-
-        ctx.font         = 'bold 13px Inter, system-ui, sans-serif';
-        ctx.fillStyle    = '#ffffff';
-        ctx.textAlign    = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(token.name || '—', 120, nameY);
-
-        ctx.font      = '11px Inter, system-ui, sans-serif';
-        ctx.fillStyle = '#6b7280';
-        ctx.fillText(token.symbol || '', 120, symY);
-
-        ctx.restore();
-
-        // --- Listed MCap ---
-        ctx.font         = '12px "Roboto Mono", "Courier New", monospace';
-        ctx.fillStyle    = '#9ca3af';
-        ctx.textAlign    = 'left';
-        ctx.textBaseline = 'middle';
-        const listedMcap = token.mcapAtAdded
-          ? utils.formatNumber(token.mcapAtAdded, '$')
-          : '—';
-        ctx.fillText(listedMcap, 460, rowMid);
-
-        // --- ATH MCap ---
-        ctx.fillStyle = '#d1d5db';
-        const athMcap = token.mcapAth
-          ? utils.formatNumber(token.mcapAth, '$')
-          : '—';
-        ctx.fillText(athMcap, 620, rowMid);
-
-        // --- ATH % ---
-        const athPct = this._athPct(token);
-        ctx.font         = 'bold 15px Inter, system-ui, sans-serif';
-        ctx.textAlign    = 'left';
-        ctx.textBaseline = 'middle';
-        if (athPct === null) {
-          ctx.fillStyle = '#6b7280';
-          ctx.fillText('—', 790, rowMid);
-        } else {
-          ctx.fillStyle = athPct >= 0 ? '#10b981' : '#ef4444';
-          ctx.fillText(this._formatPct(athPct), 790, rowMid);
-        }
-
-        // --- Current MCap ---
-        ctx.font         = '12px "Roboto Mono", "Courier New", monospace';
-        ctx.fillStyle    = '#9ca3af';
-        ctx.textAlign    = 'left';
-        ctx.textBaseline = 'middle';
-        const currentMcap = token.marketCap
-          ? utils.formatNumber(token.marketCap, '$')
-          : '—';
-        ctx.fillText(currentMcap, 910, rowMid);
-
-        // --- VS Listing % ---
-        const curPct = this._currentPct(token);
-        ctx.font         = 'bold 13px Inter, system-ui, sans-serif';
-        ctx.textAlign    = 'right';
-        ctx.textBaseline = 'middle';
-        if (curPct === null) {
-          ctx.fillStyle = '#6b7280';
-          ctx.fillText('—', 1148, rowMid);
-        } else {
-          ctx.fillStyle = curPct >= 0 ? '#10b981' : '#ef4444';
-          ctx.fillText(this._formatPct(curPct), 1148, rowMid);
-        }
-
-        // Row separator
-        ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-        ctx.lineWidth   = 1;
-        ctx.beginPath();
-        ctx.moveTo(24, rowY + ROW_HEIGHT);
-        ctx.lineTo(W - 24, rowY + ROW_HEIGHT);
-        ctx.stroke();
-      });
-
-      // ------------------------------------------------------------------
-      // 9. Footer
-      // ------------------------------------------------------------------
-
-      // Thin line at y=643
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      ctx.lineWidth   = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, 643);
-      ctx.lineTo(W, 643);
-      ctx.stroke();
-
-      // Footer text centered
-      ctx.font         = '11px Inter, system-ui, sans-serif';
-      ctx.fillStyle    = '#4b5563';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('cultscreener.com  •  Live Solana Token Analytics', W / 2, 659);
-
-      // ------------------------------------------------------------------
-      // 10. Download
-      // ------------------------------------------------------------------
-      const link    = document.createElement('a');
-      link.download = 'cultscreener-performance.png';
-      link.href     = canvas.toDataURL('image/png');
-      link.click();
-
-    } catch (err) {
-      console.error('[performancePage] share error:', err);
-    } finally {
-      // Restore share button
-      if (btnShare) {
-        btnShare.textContent = originalText;
-        btnShare.disabled    = false;
-      }
+    // Clipboard fallback
+    const copied = await utils.copyToClipboard(shareUrl);
+    if (copied && typeof toast !== 'undefined') {
+      toast.success('Share link copied to clipboard');
     }
   },
 
