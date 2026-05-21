@@ -37,6 +37,7 @@ async function initializeJobQueue() {
     // Conviction warming runs in the worker — no setInterval needed in API process
     await jobQueue.scheduleConvictionWarm();
     await jobQueue.scheduleCuratedConvictionWarm();
+    await jobQueue.scheduleRefreshCuratedPrices();
     console.log('[App] Job queue initialized - background jobs will be handled by worker');
   } else {
     // Fallback: run everything in-process when Redis is unavailable

@@ -3127,6 +3127,20 @@ async function updateCuratedTokenMcapAtAdded(mintAddress, mcap) {
   return result.rows[0] || null;
 }
 
+// Force-set mcap_ath regardless of existing value (admin override).
+// Allows setting historical ATH for tokens listed before the feature shipped.
+// Automatic updates (updateCuratedTokenATH) remain upward-only.
+async function setCuratedTokenAth(mintAddress, mcap) {
+  if (!pool || mcap == null) return null;
+  const result = await pool.query(`
+    UPDATE curated_tokens
+    SET mcap_ath = $2, mcap_ath_at = NOW()
+    WHERE mint_address = $1
+    RETURNING *
+  `, [mintAddress, mcap]);
+  return result.rows[0] || null;
+}
+
 // Force-set mcap_at_added regardless of existing value (admin override).
 // Also updates mcap_ath if the new listing mcap would be a higher ATH than stored.
 async function setCuratedTokenMcapAtAdded(mintAddress, mcap) {
@@ -3434,6 +3448,7 @@ module.exports = {
   updateCuratedTokenATH,
   updateCuratedTokenMcapAtAdded,
   setCuratedTokenMcapAtAdded,
+  setCuratedTokenAth,
   // Cultify burns
   recordCultifyBurn,
   hasCultifyAccess,

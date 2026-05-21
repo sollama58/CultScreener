@@ -707,6 +707,80 @@ const jobProcessors = {
   },
 
   // ==========================================
+  // Curated Price Refresh
+  // ==========================================
+
+  /**
+   * Refresh market cap and price data for all curated tokens every 10 minutes.
+   * Uses GeckoTerminal batch API (getMultiTokenInfo) — no extra API calls beyond
+   * what the leaderboard already uses. Updates tokens table and ATH tracking.
+   */
+  'refresh-curated-prices': async (job) => {
+    const curatedTokens = await db.getCuratedTokens().catch(() => []);
+    if (!curatedTokens || curatedTokens.length === 0) return { updated: 0, athUpdated: 0 };
+
+    const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
+    const CHUNK_SIZE = 30;
+    let updated = 0;
+    let athUpdated = 0;
+
+    for (let i = 0; i < allMints.length; i += CHUNK_SIZE) {
+      const chunk = allMints.slice(i, i + CHUNK_SIZE);
+
+      let batchInfo = {};
+      try {
+        batchInfo = await geckoService.getMultiTokenInfo(chunk);
+      } catch (err) {
+        console.warn(`[Worker] refresh-curated-prices batch ${i}–${i + chunk.length - 1} failed:`, err.message);
+        continue;
+      }
+
+      for (const mint of chunk) {
+        const data = batchInfo[mint];
+        if (!data) continue;
+
+        const marketCap = data.marketCap || data.fdv;
+        if (!marketCap || marketCap <= 0) continue;
+
+        // Update tokens table with fresh market data
+        try {
+          await db.upsertToken({
+            mintAddress: mint,
+            name: data.name || 'unknown',
+            symbol: data.symbol || 'UNKNOWN',
+            price: data.price,
+            marketCap,
+            volume24h: data.volume24h,
+            priceChange24h: data.priceChange24h,
+            logoUri: data.logoUri,
+          });
+          updated++;
+        } catch (err) {
+          console.warn(`[Worker] refresh-curated-prices upsert failed for ${mint.slice(0, 8)}:`, err.message);
+        }
+
+        // Backfill mcap_at_added for tokens listed before this feature shipped
+        const curatedToken = curatedTokens.find(t => (t.mintAddress || t.mint_address) === mint);
+        if (curatedToken?.mcapAtAdded == null) {
+          await db.updateCuratedTokenMcapAtAdded(mint, marketCap).catch(() => {});
+        }
+
+        // Update ATH (upward-only guard is inside updateCuratedTokenATH)
+        const athResult = await db.updateCuratedTokenATH(mint, marketCap).catch(() => null);
+        if (athResult) athUpdated++;
+      }
+
+      // Pause between chunks to respect GeckoTerminal's 30 req/min free-tier limit
+      if (i + CHUNK_SIZE < allMints.length) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    console.log(`[Worker] refresh-curated-prices: updated ${updated} prices, ${athUpdated} ATH records`);
+    return { updated, athUpdated };
+  },
+
+  // ==========================================
   // Conviction Warming (moved from app.js setInterval)
   // ==========================================
 

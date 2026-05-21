@@ -198,6 +198,32 @@ async function scheduleCuratedConvictionWarm() {
 }
 
 /**
+ * Schedule price refresh for all curated tokens (every 10 minutes).
+ * Uses GeckoTerminal batch API to keep market_cap and ATH up-to-date
+ * without relying on page visits.
+ */
+async function scheduleRefreshCuratedPrices() {
+  if (!isInitialized && !initialize()) return null;
+  try {
+    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
+    for (const job of existing) {
+      if (job.name === 'refresh-curated-prices') {
+        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
+      }
+    }
+    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
+      'refresh-curated-prices', {},
+      { repeat: { every: 10 * 60 * 1000 }, jobId: 'refresh-curated-prices-recurring' }
+    );
+    console.log('[JobQueue] Scheduled refresh-curated-prices (every 10 min)');
+    return job;
+  } catch (err) {
+    console.error('[JobQueue] Failed to schedule refresh-curated-prices:', err.message);
+    return null;
+  }
+}
+
+/**
  * Schedule recurring session cleanup job
  * Runs every 30 minutes to clean up expired admin sessions
  */
@@ -492,6 +518,7 @@ module.exports = {
   scheduleSessionCleanup,
   scheduleConvictionWarm,
   scheduleCuratedConvictionWarm,
+  scheduleRefreshCuratedPrices,
   incrementViewCount,
   getBufferedViewCounts,
   flushViewCounts,

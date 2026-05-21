@@ -153,9 +153,11 @@ const admin = {
   bindCuratedActions() {
     const addBtn = document.getElementById('curated-add-btn');
     const refreshBtn = document.getElementById('curated-refresh-btn');
+    const backfillAthBtn = document.getElementById('curated-backfill-ath-btn');
     const mintInput = document.getElementById('curated-mint-input');
     if (addBtn) addBtn.addEventListener('click', () => this.addCuratedToken());
     if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshAllCurated());
+    if (backfillAthBtn) backfillAthBtn.addEventListener('click', () => this.backfillHistoricalAth());
     if (mintInput) mintInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.addCuratedToken();
     });
@@ -283,12 +285,12 @@ const admin = {
 
   async loadCurated() {
     const tbody = document.getElementById('curated-table-body');
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">Loading...</td></tr>';
     try {
       const data = await this.request('/api/admin/curated');
       const tokens = data.tokens || [];
       if (tokens.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No curated tokens yet. Add one above.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">No curated tokens yet. Add one above.</td></tr>';
         return;
       }
       tbody.innerHTML = tokens.map(t => {
@@ -301,6 +303,9 @@ const admin = {
         const mcapDisplay = t.mcapAtAdded != null
           ? `$${Number(t.mcapAtAdded).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
           : '<span style="color:var(--text-dim)">--</span>';
+        const athDisplay = t.mcapAth != null
+          ? `$${Number(t.mcapAth).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+          : '<span style="color:var(--text-dim)">--</span>';
         return `<tr>
           <td title="${name}">${displayName}</td>
           <td class="mono truncate" title="${mint}">${mint.slice(0, 6)}...${mint.slice(-4)}</td>
@@ -309,6 +314,10 @@ const admin = {
           <td class="curated-mcap-cell" data-mint="${mint}">
             <span class="curated-mcap-display">${mcapDisplay}</span>
             <button class="action-btn" data-set-mcap-mint="${mint}" style="margin-left:0.4rem;font-size:0.7rem;padding:2px 6px;" title="Set listing MCap">Edit</button>
+          </td>
+          <td class="curated-ath-cell" data-mint="${mint}">
+            <span class="curated-ath-display">${athDisplay}</span>
+            <button class="action-btn" data-set-ath-mint="${mint}" style="margin-left:0.4rem;font-size:0.7rem;padding:2px 6px;" title="Set ATH MCap">Edit</button>
           </td>
           <td><button class="action-btn danger" data-remove-mint="${mint}">Remove</button></td>
         </tr>`;
@@ -323,8 +332,13 @@ const admin = {
       tbody.querySelectorAll('[data-set-mcap-mint]').forEach(btn => {
         btn.addEventListener('click', () => this.promptSetMcapAtAdded(btn.dataset.setMcapMint, btn));
       });
+
+      // Bind ATH edit buttons
+      tbody.querySelectorAll('[data-set-ath-mint]').forEach(btn => {
+        btn.addEventListener('click', () => this.promptSetAth(btn.dataset.setAthMint, btn));
+      });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="6" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
     }
   },
 
@@ -351,6 +365,34 @@ const admin = {
       }
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to update');
+    } finally {
+      triggerBtn.disabled = false;
+    }
+  },
+
+  async promptSetAth(mint, triggerBtn) {
+    const input = prompt('Enter the ATH market cap since listing (e.g. 5000000 for $5M):\n\nThis overrides the stored ATH. Future automatic updates will only increase it from here.');
+    if (input === null) return; // cancelled
+    const val = parseFloat(input.replace(/[^0-9.]/g, ''));
+    if (isNaN(val) || val < 0) {
+      if (typeof toast !== 'undefined') toast.error('Invalid value — enter a number like 5000000');
+      return;
+    }
+    triggerBtn.disabled = true;
+    try {
+      await this.request(`/api/admin/curated/${encodeURIComponent(mint)}/ath`, {
+        method: 'PATCH',
+        body: JSON.stringify({ mcapAth: val })
+      });
+      if (typeof toast !== 'undefined') toast.success('ATH MCap updated');
+      // Update the display cell without a full reload
+      const cell = triggerBtn.closest('.curated-ath-cell');
+      if (cell) {
+        const display = cell.querySelector('.curated-ath-display');
+        if (display) display.textContent = `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+      }
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to update ATH');
     } finally {
       triggerBtn.disabled = false;
     }
@@ -398,6 +440,23 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Refresh All DexScreener';
+    }
+  },
+
+  async backfillHistoricalAth() {
+    const btn = document.getElementById('curated-backfill-ath-btn');
+    if (!confirm('This will fetch daily OHLCV data for all curated tokens and update ATH MCap where the historical high exceeds the current stored ATH.\n\nThis may take a few minutes. Continue?')) return;
+    btn.disabled = true;
+    btn.textContent = 'Backfilling...';
+    try {
+      const result = await this.request('/api/admin/curated/backfill-ath', { method: 'POST' });
+      if (typeof toast !== 'undefined') toast.success(`ATH backfill complete: ${result.updated} updated, ${result.skipped} skipped, ${result.failed} failed`);
+      this.loadCurated();
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message || 'Backfill failed');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Backfill Historical ATH';
     }
   },
 

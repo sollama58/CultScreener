@@ -350,6 +350,80 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   res.json({ success: true });
 }));
 
+// POST /api/admin/curated/backfill-ath — OHLCV lookback to set historical ATH for curated tokens
+router.post('/curated/backfill-ath', strictLimiter, (req, res, next) => {
+  res.setTimeout(300000, () => {
+    if (!res.headersSent) res.status(503).json({ error: 'Backfill timed out' });
+  });
+  next();
+}, asyncHandler(async (req, res) => {
+  const tokens = await db.getCuratedTokens();
+  const results = { updated: 0, skipped: 0, failed: 0, total: tokens.length };
+
+  for (const token of tokens) {
+    const mint = token.mintAddress || token.mint_address;
+    if (!mint) { results.skipped++; continue; }
+
+    try {
+      // Get current market data to compute implied circulating supply
+      const marketData = await geckoService.getMarketData(mint);
+      const currentMcap = marketData?.marketCap;
+      const currentPrice = marketData?.price;
+
+      if (!currentMcap || !currentPrice || currentPrice <= 0) {
+        results.skipped++;
+        // Rate limit between tokens
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+
+      const impliedSupply = currentMcap / currentPrice;
+
+      // Fetch daily OHLCV — up to 100 candles (~100 days)
+      const ohlcv = await geckoService.getOHLCV(mint, { interval: '1d' });
+      const candles = ohlcv?.data || [];
+
+      if (candles.length === 0) {
+        results.skipped++;
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+
+      // Use only candles since the token was added to the curated list
+      const addedMs = token.addedAt ? new Date(token.addedAt).getTime() : 0;
+      const relevantCandles = addedMs > 0 ? candles.filter(c => c.timestamp >= addedMs) : candles;
+      const candlesToUse = relevantCandles.length > 0 ? relevantCandles : candles;
+
+      // Estimate ATH MCap = max daily high price × implied supply
+      const maxHighPrice = Math.max(...candlesToUse.map(c => c.high || 0));
+      const athMcap = maxHighPrice * impliedSupply;
+
+      if (athMcap <= 0) {
+        results.skipped++;
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+
+      // updateCuratedTokenATH is upward-only — won't overwrite a higher stored ATH
+      const updated = await db.updateCuratedTokenATH(mint, athMcap);
+      if (updated) {
+        results.updated++;
+      } else {
+        results.skipped++; // Stored ATH was already >= this estimate
+      }
+    } catch (err) {
+      console.warn(`[Admin] backfill-ath failed for ${mint?.slice(0, 8)}:`, err.message);
+      results.failed++;
+    }
+
+    // Rate limit between tokens to respect GeckoTerminal free-tier (30 req/min)
+    await new Promise(r => setTimeout(r, 2500));
+  }
+
+  console.log(`[Admin] backfill-ath complete: ${results.updated} updated, ${results.skipped} skipped, ${results.failed} failed`);
+  res.json({ success: true, ...results });
+}));
+
 // PATCH /api/admin/curated/:mint/mcap — Set the listing market cap for a curated token
 router.patch('/curated/:mint/mcap', strictLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
@@ -364,6 +438,27 @@ router.patch('/curated/:mint/mcap', strictLimiter, asyncHandler(async (req, res)
   }
 
   const updated = await db.setCuratedTokenMcapAtAdded(mint, mcap);
+  if (!updated) {
+    return res.status(404).json({ error: 'Token not found in curated list' });
+  }
+
+  res.json({ success: true, token: updated });
+}));
+
+// PATCH /api/admin/curated/:mint/ath — Admin force-set ATH market cap (manual override)
+router.patch('/curated/:mint/ath', strictLimiter, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+  if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
+    return res.status(400).json({ error: 'Invalid mint address' });
+  }
+
+  const raw = req.body.mcapAth;
+  const mcap = raw != null ? parseFloat(raw) : null;
+  if (mcap == null || isNaN(mcap) || mcap < 0) {
+    return res.status(400).json({ error: 'mcapAth must be a non-negative number' });
+  }
+
+  const updated = await db.setCuratedTokenAth(mint, mcap);
   if (!updated) {
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
