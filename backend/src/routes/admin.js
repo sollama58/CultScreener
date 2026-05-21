@@ -352,7 +352,7 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
 
 // POST /api/admin/curated/backfill-ath — OHLCV lookback to set historical ATH for curated tokens
 router.post('/curated/backfill-ath', strictLimiter, (req, res, next) => {
-  res.setTimeout(300000, () => {
+  res.setTimeout(600000, () => {
     if (!res.headersSent) res.status(503).json({ error: 'Backfill timed out' });
   });
   next();
@@ -360,47 +360,70 @@ router.post('/curated/backfill-ath', strictLimiter, (req, res, next) => {
   const tokens = await db.getCuratedTokens();
   const results = { updated: 0, skipped: 0, failed: 0, total: tokens.length };
 
-  for (const token of tokens) {
+  // Phase 1: Batch-fetch market data for all tokens via getMultiTokenInfo.
+  // This uses 1 API call per 30 tokens instead of 1 per token, saving rate limit budget
+  // for the OHLCV calls that follow.
+  const allMints = tokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
+  const batchInfo = {};
+  const CHUNK_SIZE = 30;
+  for (let i = 0; i < allMints.length; i += CHUNK_SIZE) {
+    const chunk = allMints.slice(i, i + CHUNK_SIZE);
+    try {
+      const info = await geckoService.getMultiTokenInfo(chunk);
+      Object.assign(batchInfo, info);
+    } catch (err) {
+      console.warn(`[Admin] backfill-ath batch info fetch failed:`, err.message);
+    }
+    // Pause between batch chunks (2s per request respects 30 req/min)
+    if (i + CHUNK_SIZE < allMints.length) {
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  // Phase 2: Fetch OHLCV per token. Each call may cost 1-2 API requests
+  // (pool lookup + candle data). Use a 5s delay to stay well within the
+  // 30 req/min (= 1 req/2s) free-tier limit even in the worst case.
+  const OHLCV_DELAY_MS = 5000;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
     const mint = token.mintAddress || token.mint_address;
     if (!mint) { results.skipped++; continue; }
 
+    const marketData = batchInfo[mint];
+    const currentMcap = marketData?.marketCap || marketData?.fdv;
+    const currentPrice = marketData?.price;
+
+    if (!currentMcap || !currentPrice || currentPrice <= 0) {
+      results.skipped++;
+      continue;
+    }
+
+    const impliedSupply = currentMcap / currentPrice;
+
+    if (i > 0) await new Promise(r => setTimeout(r, OHLCV_DELAY_MS));
+
     try {
-      // Get current market data to compute implied circulating supply
-      const marketData = await geckoService.getMarketData(mint);
-      const currentMcap = marketData?.marketCap;
-      const currentPrice = marketData?.price;
-
-      if (!currentMcap || !currentPrice || currentPrice <= 0) {
-        results.skipped++;
-        // Rate limit between tokens
-        await new Promise(r => setTimeout(r, 1500));
-        continue;
-      }
-
-      const impliedSupply = currentMcap / currentPrice;
-
       // Fetch daily OHLCV — up to 100 candles (~100 days)
       const ohlcv = await geckoService.getOHLCV(mint, { interval: '1d' });
       const candles = ohlcv?.data || [];
 
       if (candles.length === 0) {
         results.skipped++;
-        await new Promise(r => setTimeout(r, 1500));
         continue;
       }
 
-      // Use only candles since the token was added to the curated list
+      // Use only candles from after the token was added to the curated list
       const addedMs = token.addedAt ? new Date(token.addedAt).getTime() : 0;
       const relevantCandles = addedMs > 0 ? candles.filter(c => c.timestamp >= addedMs) : candles;
       const candlesToUse = relevantCandles.length > 0 ? relevantCandles : candles;
 
-      // Estimate ATH MCap = max daily high price × implied supply
+      // Estimate ATH MCap = max daily high price × implied circulating supply
       const maxHighPrice = Math.max(...candlesToUse.map(c => c.high || 0));
       const athMcap = maxHighPrice * impliedSupply;
 
       if (athMcap <= 0) {
         results.skipped++;
-        await new Promise(r => setTimeout(r, 1500));
         continue;
       }
 
@@ -408,16 +431,14 @@ router.post('/curated/backfill-ath', strictLimiter, (req, res, next) => {
       const updated = await db.updateCuratedTokenATH(mint, athMcap);
       if (updated) {
         results.updated++;
+        console.log(`[Admin] backfill-ath: ${mint.slice(0, 8)} ATH set to $${Math.round(athMcap).toLocaleString()}`);
       } else {
         results.skipped++; // Stored ATH was already >= this estimate
       }
     } catch (err) {
-      console.warn(`[Admin] backfill-ath failed for ${mint?.slice(0, 8)}:`, err.message);
+      console.warn(`[Admin] backfill-ath OHLCV failed for ${mint.slice(0, 8)}:`, err.message);
       results.failed++;
     }
-
-    // Rate limit between tokens to respect GeckoTerminal free-tier (30 req/min)
-    await new Promise(r => setTimeout(r, 2500));
   }
 
   console.log(`[Admin] backfill-ath complete: ${results.updated} updated, ${results.skipped} skipped, ${results.failed} failed`);

@@ -548,21 +548,21 @@ const tokenDetail = {
 
     section.style.display = '';
 
-    // Subtitle: "Listed on <date>"
+    // Date badge
     const dateEl = document.getElementById('curated-added-date');
     if (dateEl && addedAt) {
       const d = new Date(addedAt);
-      dateEl.textContent = `Listed on ${d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`;
+      dateEl.textContent = `Listed ${d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`;
     }
 
-    // MCap when listed
+    // MCap at listing
     const mcapAtAddedEl = document.getElementById('stat-mcap-at-added');
     if (mcapAtAddedEl) {
       mcapAtAddedEl.textContent = utils.formatNumber(mcapAtAdded);
       mcapAtAddedEl.classList.remove('stat-placeholder');
     }
 
-    // ATH mcap + % change from listed
+    // ATH mcap + % rise from listing
     const mcapAthEl = document.getElementById('stat-mcap-ath');
     const mcapAthPctEl = document.getElementById('stat-mcap-ath-pct');
     if (mcapAthEl) {
@@ -572,8 +572,8 @@ const tokenDetail = {
         if (mcapAthPctEl && mcapAtAdded > 0) {
           const pct = ((mcapAth - mcapAtAdded) / mcapAtAdded) * 100;
           const sign = pct >= 0 ? '+' : '';
-          mcapAthPctEl.textContent = `${sign}${pct.toFixed(1)}% from listed`;
-          mcapAthPctEl.className = `stat-change ${pct >= 0 ? 'positive' : 'negative'}`;
+          mcapAthPctEl.textContent = `${sign}${pct.toFixed(1)}% from listing`;
+          mcapAthPctEl.className = `perf-metric-sub ${pct >= 0 ? 'positive' : 'negative'}`;
         }
       } else {
         mcapAthEl.textContent = '--';
@@ -581,19 +581,17 @@ const tokenDetail = {
       }
     }
 
-    // Current mcap % change from listed
+    // Current vs listing %
     const currentPctEl = document.getElementById('stat-mcap-current-pct');
     if (currentPctEl) {
       if (currentMcap != null && mcapAtAdded > 0) {
         const pct = ((currentMcap - mcapAtAdded) / mcapAtAdded) * 100;
         const sign = pct >= 0 ? '+' : '';
         currentPctEl.textContent = `${sign}${pct.toFixed(1)}%`;
-        currentPctEl.className = `stat-value ${pct >= 0 ? 'positive' : 'negative'}`;
-        currentPctEl.style.color = pct >= 0 ? 'var(--green)' : 'var(--red)';
-        currentPctEl.classList.remove('stat-placeholder');
+        currentPctEl.className = `perf-metric-value ${pct >= 0 ? 'positive' : 'negative'}`;
       } else {
         currentPctEl.textContent = '--';
-        currentPctEl.classList.remove('stat-placeholder');
+        currentPctEl.className = 'perf-metric-value';
       }
     }
   },
