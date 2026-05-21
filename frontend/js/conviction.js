@@ -433,7 +433,7 @@ const convictionPage = {
         : 'No tokens match current filters. Adjust filters or visit token pages to trigger analysis.';
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="7">
+          <td colspan="8">
             <div class="empty-state">
               <span style="font-size: 1.5rem; margin-bottom: 0.5rem; opacity: 0.4;">${isWatchlist ? 'EMPTY WATCHLIST' : 'NO DATA'}</span>
               <span>${emptyMsg}</span>
@@ -483,6 +483,16 @@ const convictionPage = {
       const priceStr = utils.formatPrice(token.price, 6);
       const mcapStr = utils.formatNumber(token.marketCap, '$');
 
+      // ATH % change from listing mcap
+      let athPctHtml = '<span style="color:var(--text-dim)">--</span>';
+      if (token.mcapAtAdded != null && token.mcapAtAdded > 0 && token.mcapAth != null) {
+        const pct = ((token.mcapAth - token.mcapAtAdded) / token.mcapAtAdded) * 100;
+        const sign = pct >= 0 ? '+' : '';
+        const color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+        const athStr = utils.formatNumber(token.mcapAth, '$');
+        athPctHtml = `<span class="mono-num" style="color:${color}" title="ATH MCap: ${athStr}">${sign}${pct.toFixed(0)}%</span>`;
+      }
+
       return `
         <tr class="token-row terminal-row" data-mint="${safeAddress}">
           <td class="cell-rank">${rank}</td>
@@ -504,6 +514,7 @@ const convictionPage = {
             </div>
           </td>
           <td class="cell-conviction-bars" data-navigate="${safeAddress}">${barsHtml}</td>
+          <td class="cell-ath-pct" data-navigate="${safeAddress}">${athPctHtml}</td>
           <td class="cell-updated" data-navigate="${safeAddress}">${holdersHtml}</td>
         </tr>
       `;

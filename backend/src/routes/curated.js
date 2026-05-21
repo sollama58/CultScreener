@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const db = require('../services/database');
+const geckoService = require('../services/geckoTerminal');
 const { cache } = require('../services/cache');
 const { asyncHandler, requireDatabase, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { strictLimiter } = require('../middleware/rateLimit');
@@ -121,8 +122,15 @@ router.post('/', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid mint address' });
   }
 
+  // Fetch market cap before adding so we can record it at time of listing
+  let mcapAtAdded = null;
+  try {
+    const marketData = await geckoService.getMarketData(mintAddress);
+    mcapAtAdded = marketData?.marketCap || null;
+  } catch { /* non-critical — token can be added without mcap */ }
+
   // Add to database
-  const token = await db.addCuratedToken(mintAddress);
+  const token = await db.addCuratedToken(mintAddress, mcapAtAdded);
 
   // Invalidate the 'not allowed' cache entry so token is immediately accessible
   await cache.delete(`curated-allowed:${mintAddress}`).catch(() => {});

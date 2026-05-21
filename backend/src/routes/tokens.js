@@ -1105,6 +1105,8 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       sampleSize: row.conviction_sample_size || 0,
       analyzed: row.conviction_sample_size || 0,
       convictionUpdatedAt: row.conviction_computed_at || null,
+      mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
+      mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
       holders: null
     };
   });
@@ -1448,13 +1450,17 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         tokenResult.views = 0;
       }
 
-      // Include curated token DexScreener data (banner + socials) if available
+      // Include curated token DexScreener data (banner + socials) and mcap tracking if available
       const curated = await db.getCuratedToken(mint).catch(() => null);
       if (curated) {
         if (curated.bannerUrl) tokenResult.bannerUrl = curated.bannerUrl;
         if (curated.socials && Object.keys(curated.socials).length > 0) {
           tokenResult.socials = curated.socials;
         }
+        tokenResult.addedAt = curated.addedAt;
+        tokenResult.mcapAtAdded = curated.mcapAtAdded;
+        tokenResult.mcapAth = curated.mcapAth;
+        tokenResult.mcapAthAt = curated.mcapAthAt;
       }
 
       // Also save to database for future reference

@@ -789,6 +789,27 @@ const jobProcessors = {
     }
 
     if (triggered > 0) console.log(`[Worker] warm-curated-conviction: triggered ${triggered}/${curatedTokens.length} curated tokens`);
+
+    // Update ATH market cap for curated tokens using current market cap from the tokens table.
+    // This requires no extra API calls — the tokens table is kept fresh by price refresh jobs.
+    let athUpdated = 0;
+    for (const token of curatedTokens) {
+      const mint = token.mintAddress || token.mint_address;
+      if (!mint) continue;
+      const dbRow = dbRowMap[mint];
+      const currentMcap = dbRow?.market_cap != null ? parseFloat(dbRow.market_cap) : null;
+      if (currentMcap == null || currentMcap <= 0) continue;
+
+      // Also backfill mcap_at_added for tokens that were listed before this feature shipped
+      if (token.mcapAtAdded == null) {
+        await db.updateCuratedTokenMcapAtAdded(mint, currentMcap).catch(() => {});
+      }
+
+      const updated = await db.updateCuratedTokenATH(mint, currentMcap).catch(() => null);
+      if (updated) athUpdated++;
+    }
+    if (athUpdated > 0) console.log(`[Worker] warm-curated-conviction: updated ATH for ${athUpdated} curated tokens`);
+
     return { triggered };
   }
 };

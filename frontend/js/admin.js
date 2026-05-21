@@ -283,12 +283,12 @@ const admin = {
 
   async loadCurated() {
     const tbody = document.getElementById('curated-table-body');
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">Loading...</td></tr>';
     try {
       const data = await this.request('/api/admin/curated');
       const tokens = data.tokens || [];
       if (tokens.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No curated tokens yet. Add one above.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No curated tokens yet. Add one above.</td></tr>';
         return;
       }
       tbody.innerHTML = tokens.map(t => {
@@ -298,21 +298,61 @@ const admin = {
         const socials = t.socials || {};
         const socialLinks = Object.entries(socials).filter(([, v]) => v).map(([k]) => k).join(', ') || '--';
         const added = t.addedAt ? new Date(t.addedAt).toLocaleDateString() : '--';
+        const mcapDisplay = t.mcapAtAdded != null
+          ? `$${Number(t.mcapAtAdded).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+          : '<span style="color:var(--text-dim)">--</span>';
         return `<tr>
           <td title="${name}">${displayName}</td>
           <td class="mono truncate" title="${mint}">${mint.slice(0, 6)}...${mint.slice(-4)}</td>
           <td>${socialLinks}</td>
           <td>${added}</td>
+          <td class="curated-mcap-cell" data-mint="${mint}">
+            <span class="curated-mcap-display">${mcapDisplay}</span>
+            <button class="action-btn" data-set-mcap-mint="${mint}" style="margin-left:0.4rem;font-size:0.7rem;padding:2px 6px;" title="Set listing MCap">Edit</button>
+          </td>
           <td><button class="action-btn danger" data-remove-mint="${mint}">Remove</button></td>
         </tr>`;
       }).join('');
 
-      // Bind remove buttons via delegation
+      // Bind remove buttons
       tbody.querySelectorAll('[data-remove-mint]').forEach(btn => {
         btn.addEventListener('click', () => this.removeCurated(btn.dataset.removeMint));
       });
+
+      // Bind MCap edit buttons
+      tbody.querySelectorAll('[data-set-mcap-mint]').forEach(btn => {
+        btn.addEventListener('click', () => this.promptSetMcapAtAdded(btn.dataset.setMcapMint, btn));
+      });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="5" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+    }
+  },
+
+  async promptSetMcapAtAdded(mint, triggerBtn) {
+    const input = prompt('Enter the market cap at time of listing (e.g. 150000 for $150k):');
+    if (input === null) return; // cancelled
+    const val = parseFloat(input.replace(/[^0-9.]/g, ''));
+    if (isNaN(val) || val < 0) {
+      if (typeof toast !== 'undefined') toast.error('Invalid value — enter a number like 150000');
+      return;
+    }
+    triggerBtn.disabled = true;
+    try {
+      await this.request(`/api/admin/curated/${encodeURIComponent(mint)}/mcap`, {
+        method: 'PATCH',
+        body: JSON.stringify({ mcapAtAdded: val })
+      });
+      if (typeof toast !== 'undefined') toast.success('Listing MCap updated');
+      // Update the display cell without a full reload
+      const cell = triggerBtn.closest('.curated-mcap-cell');
+      if (cell) {
+        const display = cell.querySelector('.curated-mcap-display');
+        if (display) display.textContent = `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+      }
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to update');
+    } finally {
+      triggerBtn.disabled = false;
     }
   },
 

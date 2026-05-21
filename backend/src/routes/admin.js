@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
+const geckoService = require('../services/geckoTerminal');
 const { cache } = require('../services/cache');
 const {
   asyncHandler, requireDatabase, validateAdminSession,
@@ -274,7 +275,14 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid mint address' });
   }
 
-  await db.addCuratedToken(mintAddress);
+  // Fetch market cap at time of listing (non-critical)
+  let mcapAtAdded = null;
+  try {
+    const marketData = await geckoService.getMarketData(mintAddress);
+    mcapAtAdded = marketData?.marketCap || null;
+  } catch { /* non-critical */ }
+
+  await db.addCuratedToken(mintAddress, mcapAtAdded);
 
   // Invalidate any cached 'not allowed' entry so token is immediately accessible
   await cache.delete(`curated-allowed:${mintAddress}`).catch(() => {});
@@ -340,6 +348,27 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   }
 
   res.json({ success: true });
+}));
+
+// PATCH /api/admin/curated/:mint/mcap — Set the listing market cap for a curated token
+router.patch('/curated/:mint/mcap', strictLimiter, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+  if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
+    return res.status(400).json({ error: 'Invalid mint address' });
+  }
+
+  const raw = req.body.mcapAtAdded;
+  const mcap = raw != null ? parseFloat(raw) : null;
+  if (mcap == null || isNaN(mcap) || mcap < 0) {
+    return res.status(400).json({ error: 'mcapAtAdded must be a non-negative number' });
+  }
+
+  const updated = await db.setCuratedTokenMcapAtAdded(mint, mcap);
+  if (!updated) {
+    return res.status(404).json({ error: 'Token not found in curated list' });
+  }
+
+  res.json({ success: true, token: updated });
 }));
 
 router.post('/curated/refresh', strictLimiter, (req, res, next) => {

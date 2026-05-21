@@ -1295,6 +1295,12 @@ select:focus {
   min-width: 120px;
 }
 
+.cell-ath-pct {
+  min-width: 70px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .cell-updated {
   min-width: 80px;
   text-align: right;
@@ -2011,7 +2017,8 @@ select:focus {
 .chart-section,
 .holders-section,
 .community-section,
-.stats-section {
+.stats-section,
+.curated-performance-section {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -2023,7 +2030,8 @@ select:focus {
 /* Section container styles */
 .chart-section,
 .holders-section,
-.stats-section {
+.stats-section,
+.curated-performance-section {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -2031,6 +2039,21 @@ select:focus {
   transition: all var(--transition-fast);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
+
+.curated-performance-date {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: -0.25rem 0 0.75rem;
+}
+
+.stat-change {
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-top: 0.1rem;
+}
+
+.stat-change.positive { color: var(--green); }
+.stat-change.negative { color: var(--red); }
 
 
 .chart-section h2 svg,
@@ -4550,6 +4573,7 @@ select:focus {
 
   /* Hide less important columns */
   .cell-mcap,
+  .cell-ath-pct,
   .cell-conviction-bars { display: none; }
 
   .conviction-section,
@@ -4601,6 +4625,7 @@ select:focus {
   .chart-section,
   .holders-section,
   .stats-section,
+  .curated-performance-section,
   .pools-section {
     padding: 1rem;
     border-radius: var(--radius-md);

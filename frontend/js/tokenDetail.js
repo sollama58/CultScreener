@@ -526,6 +526,76 @@ const tokenDetail = {
       this._renderSocials(token.socials);
     }
 
+    // Curated listing performance
+    this._renderCuratedPerformance(token);
+
+  },
+
+  _renderCuratedPerformance(token) {
+    const section = document.getElementById('curated-performance-section');
+    if (!section) return;
+
+    const mcapAtAdded = token.mcapAtAdded;
+    const mcapAth = token.mcapAth;
+    const currentMcap = token.marketCap;
+    const addedAt = token.addedAt;
+
+    // Only show if we have at least the listing mcap
+    if (mcapAtAdded == null) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = '';
+
+    // Subtitle: "Listed on <date>"
+    const dateEl = document.getElementById('curated-added-date');
+    if (dateEl && addedAt) {
+      const d = new Date(addedAt);
+      dateEl.textContent = `Listed on ${d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`;
+    }
+
+    // MCap when listed
+    const mcapAtAddedEl = document.getElementById('stat-mcap-at-added');
+    if (mcapAtAddedEl) {
+      mcapAtAddedEl.textContent = utils.formatNumber(mcapAtAdded);
+      mcapAtAddedEl.classList.remove('stat-placeholder');
+    }
+
+    // ATH mcap + % change from listed
+    const mcapAthEl = document.getElementById('stat-mcap-ath');
+    const mcapAthPctEl = document.getElementById('stat-mcap-ath-pct');
+    if (mcapAthEl) {
+      if (mcapAth != null) {
+        mcapAthEl.textContent = utils.formatNumber(mcapAth);
+        mcapAthEl.classList.remove('stat-placeholder');
+        if (mcapAthPctEl && mcapAtAdded > 0) {
+          const pct = ((mcapAth - mcapAtAdded) / mcapAtAdded) * 100;
+          const sign = pct >= 0 ? '+' : '';
+          mcapAthPctEl.textContent = `${sign}${pct.toFixed(1)}% from listed`;
+          mcapAthPctEl.className = `stat-change ${pct >= 0 ? 'positive' : 'negative'}`;
+        }
+      } else {
+        mcapAthEl.textContent = '--';
+        mcapAthEl.classList.remove('stat-placeholder');
+      }
+    }
+
+    // Current mcap % change from listed
+    const currentPctEl = document.getElementById('stat-mcap-current-pct');
+    if (currentPctEl) {
+      if (currentMcap != null && mcapAtAdded > 0) {
+        const pct = ((currentMcap - mcapAtAdded) / mcapAtAdded) * 100;
+        const sign = pct >= 0 ? '+' : '';
+        currentPctEl.textContent = `${sign}${pct.toFixed(1)}%`;
+        currentPctEl.className = `stat-value ${pct >= 0 ? 'positive' : 'negative'}`;
+        currentPctEl.style.color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+        currentPctEl.classList.remove('stat-placeholder');
+      } else {
+        currentPctEl.textContent = '--';
+        currentPctEl.classList.remove('stat-placeholder');
+      }
+    }
   },
 
   // Load pools
