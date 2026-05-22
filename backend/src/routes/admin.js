@@ -179,6 +179,14 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
   res.json({ success: true, updated, failed, total: mints.length });
 }));
 
+router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
+  const jobQueue = require('../services/jobQueue');
+  // Enqueue an immediate (non-repeatable) record-holder-counts job so it runs right now
+  const job = await jobQueue.addAnalyticsJob('record-holder-counts', { backfill: true }, { priority: 5 });
+  console.log(`[Admin] Backfill holder counts job enqueued: ${job.id}`);
+  res.json({ success: true, jobId: job.id, message: 'Backfill job queued — current holder counts will be snapshotted to holder_history within seconds.' });
+}));
+
 // ==========================================
 // Per-Token Cache Wipe
 // ==========================================

@@ -204,9 +204,11 @@ const admin = {
   bindMaintenanceActions() {
     const flushBtn = document.getElementById('admin-flush-wallets');
     const refreshBtn = document.getElementById('admin-refresh-holders');
+    const backfillBtn = document.getElementById('admin-backfill-holder-history');
     const wipeBtn = document.getElementById('admin-wipe-token');
     if (flushBtn) flushBtn.addEventListener('click', () => this.flushFailedWallets());
     if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshHolderCounts());
+    if (backfillBtn) backfillBtn.addEventListener('click', () => this.backfillHolderHistory());
     if (wipeBtn) wipeBtn.addEventListener('click', () => this.wipeTokenCache());
   },
 
@@ -251,6 +253,28 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Refresh All Holder Counts';
+    }
+  },
+
+  async backfillHolderHistory() {
+    const btn = document.getElementById('admin-backfill-holder-history');
+    const status = document.getElementById('admin-flush-status');
+    btn.disabled = true;
+    btn.textContent = 'Snapshotting...';
+    status.textContent = '';
+
+    try {
+      const data = await this.request('/api/admin/backfill-holder-counts', { method: 'POST' });
+      status.textContent = `Queued (job ${data.jobId}): today's counts will be recorded in holder_history within seconds.`;
+      status.style.color = 'var(--green)';
+      if (typeof toast !== 'undefined') toast.success('Holder snapshot job queued');
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Snapshot Holders Now';
     }
   },
 
