@@ -76,13 +76,29 @@ const admin = {
 
   async verifySession() {
     try {
-      await this.request('/api/admin/stats');
+      const stats = await this.request('/api/admin/stats');
       this.showPanel();
-      this.loadTab('dashboard');
+      this.activeTab = 'dashboard';
+      // Populate stats directly from the verification call — avoids a second round-trip
+      this._applyStats(stats);
     } catch {
       this.token = null;
+      sessionStorage.removeItem('admin_token');
       this.showLogin();
     }
+  },
+
+  // Populate dashboard stat cards from a stats response object
+  _applyStats(s) {
+    if (!s) return;
+    this.setText('stat-tokens', s.tokens);
+    this.setText('stat-watchlist', s.watchlistEntries);
+    this.setText('stat-votes', s.votes);
+    this.setText('stat-pending', s.submissions?.pending);
+    this.setText('stat-approved', s.submissions?.approved);
+    this.setText('stat-bugs', s.bugReports);
+    this.setText('stat-recent-subs', s.recentSubmissions);
+    this.setText('stat-recent-votes', s.recentVotes);
   },
 
   showLogin() {
@@ -278,14 +294,7 @@ const admin = {
   async loadStats() {
     try {
       const s = await this.request('/api/admin/stats');
-      this.setText('stat-tokens', s.tokens);
-      this.setText('stat-watchlist', s.watchlistEntries);
-      this.setText('stat-votes', s.votes);
-      this.setText('stat-pending', s.submissions?.pending);
-      this.setText('stat-approved', s.submissions?.approved);
-      this.setText('stat-bugs', s.bugReports);
-      this.setText('stat-recent-subs', s.recentSubmissions);
-      this.setText('stat-recent-votes', s.recentVotes);
+      this._applyStats(s);
     } catch (err) {
       console.error('Stats load error:', err.message);
     }

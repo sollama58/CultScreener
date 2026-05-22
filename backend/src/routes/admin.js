@@ -284,6 +284,11 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
 
   await db.addCuratedToken(mintAddress, mcapAtAdded);
 
+  // Set initial ATH to the listing mcap (separate call — safe if column is missing)
+  if (mcapAtAdded) {
+    await db.updateCuratedTokenATH(mintAddress, mcapAtAdded).catch(() => {});
+  }
+
   // Invalidate any cached 'not allowed' entry so token is immediately accessible
   await cache.delete(`curated-allowed:${mintAddress}`).catch(() => {});
 
@@ -318,7 +323,7 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
     await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint: mintAddress }, { priority: 10 });
   } catch (_) { /* non-critical */ }
 
-  const token = await db.getCuratedToken(mintAddress);
+  const token = await db.getCuratedToken(mintAddress).catch(() => null);
   res.status(201).json({ success: true, token });
 }));
 
@@ -740,14 +745,10 @@ router.patch('/api-keys/:id/restore', strictLimiter, asyncHandler(async (req, re
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
-  const result = await db.pool.query(
-    `UPDATE api_keys SET is_active = true WHERE id = $1 RETURNING *`,
-    [id]
-  );
+  const result = await db.restoreApiKeyById(id);
+  if (!result) return res.status(404).json({ error: 'API key not found' });
 
-  if (!result.rows[0]) return res.status(404).json({ error: 'API key not found' });
-
-  res.json({ success: true, key: result.rows[0] });
+  res.json({ success: true, key: result });
 }));
 
 router.delete('/api-keys/:id', strictLimiter, asyncHandler(async (req, res) => {

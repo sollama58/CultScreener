@@ -178,7 +178,7 @@ const performancePage = {
    * across the rest of the app.
    */
   async share() {
-    const shareUrl = 'https://cultscreener.com/';
+    const shareUrl = window.location.origin + '/';
     const sortLabel = this.sortField === 'ath'
       ? 'ATH % since listing'
       : 'Current % since listing';

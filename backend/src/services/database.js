@@ -442,9 +442,12 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_utility_whitelist_wallet ON utility_whitelist(wallet_address);
 
       -- Market cap tracking for curated tokens
-      ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_at_added DECIMAL;
-      ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath DECIMAL;
-      ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath_at TIMESTAMP WITH TIME ZONE;
+      DO $mca$ BEGIN
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_at_added DECIMAL;
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath DECIMAL;
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath_at TIMESTAMP WITH TIME ZONE;
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $mca$;
     `);
 
     await client.query('COMMIT');
@@ -1911,6 +1914,17 @@ async function revokeApiKeyById(keyId) {
   return result.rows[0];
 }
 
+// Restore (re-activate) a revoked API key by ID (admin action)
+async function restoreApiKeyById(keyId) {
+  if (!pool) return null;
+
+  const result = await pool.query(
+    `UPDATE api_keys SET is_active = true WHERE id = $1 RETURNING *`,
+    [keyId]
+  );
+  return result.rows[0] || null;
+}
+
 // Delete API key by ID (admin action)
 async function deleteApiKeyById(keyId) {
   if (!pool) return null;
@@ -3093,9 +3107,13 @@ async function getCuratedToken(mintAddress) {
 }
 
 async function addCuratedToken(mintAddress, mcapAtAdded) {
+  if (!pool) return null;
+  // Keep the INSERT minimal — only columns that existed before the mcap_ath migration.
+  // ATH is initialised separately via updateCuratedTokenATH so that a missing column
+  // on an older schema does not block the insert.
   const result = await pool.query(`
-    INSERT INTO curated_tokens (mint_address, mcap_at_added, mcap_ath, mcap_ath_at)
-    VALUES ($1, $2, $2, CASE WHEN $2 IS NOT NULL THEN NOW() ELSE NULL END)
+    INSERT INTO curated_tokens (mint_address, mcap_at_added)
+    VALUES ($1, $2)
     ON CONFLICT (mint_address) DO NOTHING
     RETURNING *
   `, [mintAddress, mcapAtAdded != null ? mcapAtAdded : null]);
@@ -3363,6 +3381,7 @@ module.exports = {
   getAllSubmissions,
   getAllApiKeys,
   revokeApiKeyById,
+  restoreApiKeyById,
   deleteApiKeyById,
   // Token view tracking
   incrementTokenViews,
