@@ -224,6 +224,34 @@ async function scheduleRefreshCuratedPrices() {
 }
 
 /**
+ * Schedule daily holder count snapshot for all curated tokens.
+ * Runs once per day at 00:05 UTC so it fires shortly after midnight.
+ */
+async function scheduleRecordHolderCounts() {
+  if (!isInitialized && !initialize()) return null;
+  try {
+    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
+    for (const job of existing) {
+      if (job.name === 'record-holder-counts') {
+        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
+      }
+    }
+    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
+      'record-holder-counts', {},
+      {
+        repeat: { pattern: '5 0 * * *' }, // 00:05 UTC daily
+        jobId: 'record-holder-counts-recurring',
+      }
+    );
+    console.log('[JobQueue] Scheduled record-holder-counts (daily at 00:05 UTC)');
+    return job;
+  } catch (err) {
+    console.error('[JobQueue] Failed to schedule record-holder-counts:', err.message);
+    return null;
+  }
+}
+
+/**
  * Schedule recurring session cleanup job
  * Runs every 30 minutes to clean up expired admin sessions
  */
@@ -519,6 +547,7 @@ module.exports = {
   scheduleConvictionWarm,
   scheduleCuratedConvictionWarm,
   scheduleRefreshCuratedPrices,
+  scheduleRecordHolderCounts,
   incrementViewCount,
   getBufferedViewCounts,
   flushViewCounts,

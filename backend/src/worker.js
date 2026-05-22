@@ -716,6 +716,57 @@ const jobProcessors = {
   // ==========================================
 
   /**
+   * Record today's holder count for all curated tokens.
+   * Runs once per day. Reads the already-cached holder-total so no extra RPC
+   * calls are made — if the cache is cold for a token it is simply skipped
+   * (the next analytics run will warm it).
+   */
+  'record-holder-counts': async (job) => {
+    const curatedTokens = await db.getCuratedTokens().catch(() => []);
+    if (!curatedTokens || curatedTokens.length === 0) return { recorded: 0, skipped: 0 };
+
+    let recorded = 0;
+    let skipped  = 0;
+
+    for (const token of curatedTokens) {
+      const mint = token.mintAddress || token.mint_address;
+      if (!mint) { skipped++; continue; }
+
+      try {
+        // Prefer the precise paginated count; fall back to analytics cache
+        let count = await cache.get(`holder-total:${mint}`);
+        if (!count || count <= 0) {
+          const analytics = await cache.get(`holder-analytics:${mint}`);
+          count = analytics?.metrics?.holderCount || null;
+        }
+
+        if (!count || count <= 0) { skipped++; continue; }
+
+        await db.recordHolderCount(mint, count);
+        recorded++;
+      } catch (err) {
+        console.warn(`[Worker] record-holder-counts failed for ${mint.slice(0, 8)}:`, err.message);
+        skipped++;
+      }
+    }
+
+    // Invalidate holder-history cache for all recorded tokens so API returns fresh data
+    if (recorded > 0) {
+      for (const token of curatedTokens) {
+        const mint = token.mintAddress || token.mint_address;
+        if (mint) {
+          await cache.delete(`holder-history:${mint}:7`).catch(() => {});
+          await cache.delete(`holder-history:${mint}:30`).catch(() => {});
+          await cache.delete(`holder-history:${mint}:90`).catch(() => {});
+        }
+      }
+    }
+
+    console.log(`[Worker] record-holder-counts: ${recorded} recorded, ${skipped} skipped`);
+    return { recorded, skipped };
+  },
+
+  /**
    * Refresh market cap and price data for all curated tokens every 10 minutes.
    * Uses GeckoTerminal batch API (getMultiTokenInfo) — no extra API calls beyond
    * what the leaderboard already uses. Updates tokens table and ATH tracking.

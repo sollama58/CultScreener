@@ -495,6 +495,16 @@ const api = {
       );
     },
 
+    async getHolderHistory(mint, days = 30) {
+      const cacheKey = `tokens:holder-history:${mint}:${days}`;
+      return apiCache.getOrFetch(
+        cacheKey,
+        () => api.request(`/api/tokens/${mint}/holder-history?days=${days}`),
+        6 * 60 * 60 * 1000, // 6hr — data only changes once per day
+        true
+      );
+    },
+
     async getHolderBalance(mint, wallet) {
       // Don't cache holder balances - need fresh data for voting
       return api.request(`/api/tokens/${mint}/holder/${wallet}`);

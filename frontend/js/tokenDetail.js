@@ -37,6 +37,7 @@ const tokenDetail = {
     // already populated — no skeleton → data flash.
     this.loadPools().catch(() => {});
     this.loadDexScreenerData().catch(() => {});
+    this.loadHolderTrend().catch(() => {});
 
     try {
       // Load core token data. renderToken() depends on this.token being set.
@@ -232,6 +233,18 @@ const tokenDetail = {
       }
     };
     document.addEventListener('visibilitychange', this.visibilityHandler);
+
+    // Holder trend range buttons — delegated via section
+    const htSection = document.getElementById('holder-trend-section');
+    if (htSection) {
+      const htRangeHandler = (e) => {
+        const btn = e.target.closest('.ht-range-btn');
+        if (!btn) return;
+        this.loadHolderTrend(parseInt(btn.dataset.range));
+      };
+      htSection.addEventListener('click', htRangeHandler);
+      this.boundHandlers.set(htSection, [{ event: 'click', handler: htRangeHandler }]);
+    }
   },
 
   // Remove all bound event listeners
@@ -594,6 +607,125 @@ const tokenDetail = {
         currentPctEl.className = 'perf-metric-value';
       }
     }
+  },
+
+  // ── Holder Trend ──────────────────────────────────────────────────────────
+
+  async loadHolderTrend(range) {
+    const section  = document.getElementById('holder-trend-section');
+    if (!section) return;
+
+    // Default to 7-day view on first load
+    if (range == null) range = this._htRange || 7;
+    this._htRange = range;
+
+    // Sync button active state
+    section.querySelectorAll('.ht-range-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.range) === range);
+    });
+
+    try {
+      const data = await api.tokens.getHolderHistory(this.mint, range);
+      const history = (data && Array.isArray(data.history)) ? data.history : [];
+
+      // Reverse so oldest → newest (API returns newest first)
+      const rows = history.slice().reverse();
+
+      if (rows.length < 2) {
+        // Show section only if at least 1 row (so user knows it's coming)
+        if (rows.length === 1) {
+          section.style.display = '';
+          document.getElementById('ht-chart-wrap').style.display = 'none';
+          document.getElementById('ht-empty').style.display = '';
+          document.getElementById('ht-summary').textContent = '';
+        }
+        // No data at all — keep hidden
+        return;
+      }
+
+      section.style.display = '';
+      document.getElementById('ht-empty').style.display = 'none';
+      document.getElementById('ht-chart-wrap').style.display = '';
+
+      this._renderHolderSparkline(rows);
+      this._renderHolderSummary(rows);
+    } catch (_) {
+      // Non-critical — keep section hidden on error
+    }
+  },
+
+  _renderHolderSummary(rows) {
+    const el = document.getElementById('ht-summary');
+    if (!el || rows.length < 2) return;
+
+    const first = rows[0].holder_count;
+    const last  = rows[rows.length - 1].holder_count;
+    const delta = last - first;
+    const sign  = delta >= 0 ? '+' : '';
+    const cls   = delta >= 0 ? 'ht-delta--up' : 'ht-delta--down';
+    const arrow = delta >= 0 ? '▲' : '▼';
+
+    el.innerHTML =
+      `<span class="ht-current">${last.toLocaleString()}</span>` +
+      ` <span class="ht-delta ${cls}">${arrow} ${sign}${delta.toLocaleString()}</span>` +
+      ` <span class="ht-period">over ${rows.length} days</span>`;
+  },
+
+  _renderHolderSparkline(rows) {
+    const wrap = document.getElementById('ht-chart-wrap');
+    if (!wrap || rows.length < 2) return;
+
+    const W = wrap.getBoundingClientRect().width || wrap.clientWidth || 280;
+    const H = 72;
+    const PAD_X = 2;
+    const PAD_Y = 8;
+
+    const counts = rows.map(r => r.holder_count);
+    const minVal = Math.min(...counts);
+    const maxVal = Math.max(...counts);
+    const range  = maxVal - minVal || 1;
+
+    const toX = (i) => PAD_X + (i / (rows.length - 1)) * (W - PAD_X * 2);
+    const toY = (v) => PAD_Y + (1 - (v - minVal) / range) * (H - PAD_Y * 2);
+
+    // Build SVG polyline points
+    const points = rows.map((r, i) => `${toX(i).toFixed(1)},${toY(r.holder_count).toFixed(1)}`).join(' ');
+
+    // Build area fill path (line + close at bottom)
+    const firstX = toX(0).toFixed(1);
+    const lastX  = toX(rows.length - 1).toFixed(1);
+    const bottomY = (H - PAD_Y + 4).toFixed(1);
+    const areaD   = `M ${points.replace(/ /g, ' L ')} L ${lastX},${bottomY} L ${firstX},${bottomY} Z`;
+
+    // Date labels (first and last)
+    const fmtDate = (str) => {
+      const d = new Date(str);
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    };
+    const labelFirst = fmtDate(rows[0].recorded_date);
+    const labelLast  = fmtDate(rows[rows.length - 1].recorded_date);
+
+    const isUp    = counts[counts.length - 1] >= counts[0];
+    const lineClr = isUp ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
+    const areaId  = `ht-grad-${Math.random().toString(36).slice(2, 7)}`;
+
+    wrap.innerHTML = `
+      <svg class="ht-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="${areaId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${lineClr}" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="${lineClr}" stop-opacity="0.02"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaD}" fill="url(#${areaId})" stroke="none"/>
+        <polyline points="${points}" fill="none" stroke="${lineClr}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${toX(rows.length-1).toFixed(1)}" cy="${toY(counts[counts.length-1]).toFixed(1)}" r="3" fill="${lineClr}"/>
+      </svg>
+      <div class="ht-axis">
+        <span class="ht-axis-label">${labelFirst}</span>
+        <span class="ht-axis-label">${labelLast}</span>
+      </div>
+    `;
   },
 
   // Load pools
@@ -1577,7 +1709,7 @@ const tokenDetail = {
             }
           } else {
             const sampleEl = document.getElementById('diamond-hands-sample');
-            if (sampleEl && !data.computed) sampleEl.textContent = `${analyzed} of ${total} holders (partial)`;
+            if (sampleEl && !data.computed) sampleEl.textContent = `${analyzed} Analyzed of Top ${total} Holders (partial)`;
           }
         }
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Done: sample=${data.sampleSize}, analyzed=${data.analyzed}`);
@@ -1610,7 +1742,7 @@ const tokenDetail = {
     const sampleEl = document.getElementById('diamond-hands-sample');
     if (sampleEl) {
       if (data.computed) {
-        sampleEl.textContent = `${data.analyzed} of ${data.sampleSize} holders`;
+        sampleEl.textContent = `${data.analyzed} Analyzed of Top ${data.sampleSize} Holders`;
       } else {
         sampleEl.textContent = `${data.analyzed}/${data.totalCount || data.sampleSize} analyzed...`;
       }

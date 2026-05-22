@@ -448,6 +448,19 @@ async function initializeDatabase() {
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath_at TIMESTAMP WITH TIME ZONE;
       EXCEPTION WHEN OTHERS THEN NULL;
       END $mca$;
+
+      -- Daily holder count history — one row per token per day
+      CREATE TABLE IF NOT EXISTS holder_history (
+        id SERIAL PRIMARY KEY,
+        mint_address VARCHAR(44) NOT NULL,
+        holder_count INTEGER NOT NULL,
+        recorded_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        recorded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        UNIQUE(mint_address, recorded_date)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
+        ON holder_history(mint_address, recorded_date DESC);
     `);
 
     await client.query('COMMIT');
@@ -3327,6 +3340,41 @@ async function getWhitelistedWallets() {
   return result.rows;
 }
 
+// ─── Holder History ───────────────────────────────────────────────────────────
+
+/**
+ * Upsert one holder-count snapshot for today.
+ * Safe to call multiple times per day — subsequent calls update the value.
+ */
+async function recordHolderCount(mintAddress, holderCount) {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO holder_history (mint_address, holder_count, recorded_date, recorded_at)
+     VALUES ($1, $2, CURRENT_DATE, NOW())
+     ON CONFLICT (mint_address, recorded_date)
+     DO UPDATE SET holder_count = $2, recorded_at = NOW()
+     RETURNING *`,
+    [mintAddress, holderCount]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Return up to `days` daily snapshots for a token, newest first.
+ */
+async function getHolderHistory(mintAddress, days = 30) {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT recorded_date, holder_count
+     FROM holder_history
+     WHERE mint_address = $1
+     ORDER BY recorded_date DESC
+     LIMIT $2`,
+    [mintAddress, Math.min(days, 90)]
+  );
+  return result.rows;
+}
+
 module.exports = {
   get pool() { return pool; },
   initializeDatabase,
@@ -3479,5 +3527,8 @@ module.exports = {
   isWalletWhitelisted,
   addWhitelistedWallet,
   removeWhitelistedWallet,
-  getWhitelistedWallets
+  getWhitelistedWallets,
+  // Holder history
+  recordHolderCount,
+  getHolderHistory,
 };

@@ -38,6 +38,7 @@ async function initializeJobQueue() {
     await jobQueue.scheduleConvictionWarm();
     await jobQueue.scheduleCuratedConvictionWarm();
     await jobQueue.scheduleRefreshCuratedPrices();
+    await jobQueue.scheduleRecordHolderCounts();
     console.log('[App] Job queue initialized - background jobs will be handled by worker');
   } else {
     // Fallback: run everything in-process when Redis is unavailable

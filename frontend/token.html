@@ -34,7 +34,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/styles.css?v=4">
+  <link rel="stylesheet" href="css/styles.css?v=5">
   <link rel="dns-prefetch" href="https://api.jup.ag">
   <link rel="dns-prefetch" href="https://api.dexscreener.com">
 
@@ -146,9 +146,9 @@
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=2" as="script">
-  <link rel="preload" href="js/api.js?v=3" as="script">
+  <link rel="preload" href="js/api.js?v=4" as="script">
   <link rel="preload" href="js/wallet.js?v=2" as="script">
-  <link rel="preload" href="js/tokenDetail.js?v=6" as="script">
+  <link rel="preload" href="js/tokenDetail.js?v=8" as="script">
 </head>
 <body>
   <header class="header">
@@ -550,6 +550,25 @@
             </div>
           </section>
 
+          <!-- Holder Trend Section -->
+          <section class="holder-trend-section" id="holder-trend-section" style="display:none;">
+            <div class="ht-header">
+              <div class="ht-title-group">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="ht-icon" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span class="ht-title">Holder Trend</span>
+              </div>
+              <div class="ht-range-group">
+                <button class="ht-range-btn active" data-range="7">7D</button>
+                <button class="ht-range-btn" data-range="30">30D</button>
+              </div>
+            </div>
+            <div class="ht-summary" id="ht-summary"></div>
+            <div class="ht-chart-wrap" id="ht-chart-wrap">
+              <!-- SVG sparkline injected by JS -->
+            </div>
+            <div class="ht-empty" id="ht-empty" style="display:none;">No history yet — updates daily</div>
+          </section>
+
           <!-- Curated Performance Section -->
           <section class="curated-performance-section" id="curated-performance-section" style="display:none;">
             <div class="perf-header">
@@ -603,12 +622,12 @@
   </footer>
 
   <script src="js/config.js?v=2"></script>
-  <script src="js/api.js?v=3"></script>
+  <script src="js/api.js?v=4"></script>
   <script src="js/announcements.js?v=2"></script>
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
   <script src="js/sentiment.js?v=2"></script>
-  <script src="js/tokenDetail.js?v=6"></script>
+  <script src="js/tokenDetail.js?v=8"></script>
   <script src="js/holderBehavior.js?v=2"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>

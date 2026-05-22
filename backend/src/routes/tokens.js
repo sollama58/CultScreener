@@ -2111,6 +2111,22 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
 // (>24hr or missing), queues a background worker job to compute them.
 // Response includes `computed: false` when stale wallets are pending so the
 // frontend knows to re-poll.
+// ─── Holder History ──────────────────────────────────────────────────────────
+router.get('/:mint/holder-history', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+  const days = Math.min(parseInt(req.query.days) || 30, 90);
+
+  const cacheKey = `holder-history:${mint}:${days}`;
+  const cached = await cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  const history = await db.getHolderHistory(mint, days);
+  const result = { mint, history };
+  // Cache for 6 hours — data only changes once per day
+  await cache.set(cacheKey, result, 6 * TTL.HOUR);
+  res.json(result);
+}));
+
 router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
