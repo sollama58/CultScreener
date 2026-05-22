@@ -2002,9 +2002,16 @@ select:focus {
 .token-content-grid {
   display: grid;
   grid-template-columns: 1fr 360px;
+  grid-template-areas:
+    "left  right"
+    "left  pools";
   gap: 1.25rem;
   align-items: start;
 }
+
+.token-col-left  { grid-area: left; }
+.token-col-right { grid-area: right; }
+.pools-section   { grid-area: pools; }
 
 .token-col-left,
 .token-col-right {
@@ -3173,14 +3180,16 @@ select:focus {
   border-color: var(--border-color);
 }
 
-.stat-card .label {
+.stat-card .label,
+.stat-card .stat-label {
   font-size: 0.68rem;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.stat-card .value {
+.stat-card .value,
+.stat-card .stat-value {
   font-family: var(--font-mono);
   font-size: 0.92rem;
   font-weight: 600;
@@ -4581,8 +4590,10 @@ select:focus {
   .community-section { padding: 0.85rem; }
 
   /* Token detail — single column, reorder so stats appear before the heavy holders table */
-  .token-content-grid { grid-template-columns: 1fr; gap: 1rem; }
+  .token-content-grid { grid-template-columns: 1fr; grid-template-areas: none; gap: 1rem; }
+  .token-col-left, .token-col-right, .pools-section { grid-area: unset; }
   .token-col-right { order: -1; }
+  .pools-section { order: 10; } /* always last on mobile, below both columns */
 
   .token-banner-wrap { max-height: 130px; border-radius: var(--radius-md); margin-bottom: 0.85rem; }
   .token-banner-img { max-height: 130px; }
@@ -4768,8 +4779,8 @@ select:focus {
 
   .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 0.4rem; }
   .stat-card { padding: 0.45rem 0.55rem; }
-  .stat-card .label { font-size: 0.6rem; }
-  .stat-card .value { font-size: 0.82rem; }
+  .stat-card .label, .stat-card .stat-label { font-size: 0.6rem; }
+  .stat-card .value, .stat-card .stat-value { font-size: 0.82rem; }
 
   /* Holders */
   .holders-metrics { grid-template-columns: 1fr 1fr; gap: 0.4rem; }

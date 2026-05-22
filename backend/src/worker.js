@@ -571,14 +571,16 @@ const jobProcessors = {
     let computed = 0;
     let skipped = 0;
 
+    // Hoisted so the persist-to-DB block after try/finally can access them
+    let totalWallets = 0;
+    const liveHoldTimes = {};
+    let liveAnalyzedCount = 0;
+
+    try {
     // Pre-load full wallet sample and any already-cached hold times
     const allSample = await cache.get(`diamond-hands-wallets:${mint}`) || [];
     const allWallets = allSample.map(e => typeof e === 'object' ? e.wallet : e);
-    const totalWallets = allWallets.length;
-
-    // Snapshot of already-resolved hold times before this job (other wallets in the full sample)
-    const liveHoldTimes = {};
-    let liveAnalyzedCount = 0;
+    totalWallets = allWallets.length;
     if (totalWallets > 0) {
       const existingVals = await Promise.all(allWallets.map(w => cache.get(`wallet-token-hold:${w}:${mint}`)));
       allWallets.forEach((w, i) => {
@@ -647,8 +649,11 @@ const jobProcessors = {
       }
     }
 
-    // Clear unified pending flag
-    await cache.delete(`holder-metrics-pending:${mint}`);
+    } finally {
+    // Always clear the pending flag — even if the job threw mid-flight — so the next
+    // poll can re-dispatch rather than waiting for the 6-minute TTL to expire.
+    await cache.delete(`holder-metrics-pending:${mint}`).catch(() => {});
+    }
 
     // Rebuild diamond hands distribution and persist to DB
     try {

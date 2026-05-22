@@ -1104,13 +1104,12 @@ const tokenDetail = {
       const tokenCount = data.tokenHoldTimes ? Object.keys(data.tokenHoldTimes).length : 0;
       if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Poll ${attempt}: computed=${data.computed}, avg=${avgCount}, token=${tokenCount}`);
 
-      // If the backend returned no data (holders cache miss), ensure the backend
-      // holders cache gets repopulated by making a fresh holders request.
-      // Fire-and-forget — the next poll will find the cache populated.
+      // If the backend returned no data (holders cache miss), clear the frontend cache
+      // so the next poll picks up freshly-computed backend data. Avoid passing fresh:true
+      // to the backend — it forces a full RPC re-fetch that's already underway.
       if (!data.computed && avgCount === 0 && tokenCount === 0 && attempt < 2) {
-        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Empty response — refreshing backend holders cache`);
+        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Empty response — clearing frontend holders cache`);
         apiCache.clearPattern(`tokens:holders:${this.mint}`);
-        api.tokens.getHolders(this.mint, { fresh: true }).catch(() => {});
       }
 
       // Merge into existing data (re-polls add to previous results)
@@ -1258,14 +1257,17 @@ const tokenDetail = {
     try {
       // Dynamically load html2canvas if not already loaded
       if (typeof html2canvas === 'undefined') {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-          script.crossOrigin = 'anonymous';
-          script.onload = resolve;
-          script.onerror = () => reject(new Error('Failed to load screenshot library'));
-          document.head.appendChild(script);
-        });
+        await Promise.race([
+          new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            script.crossOrigin = 'anonymous';
+            script.onload = resolve;
+            script.onerror = () => reject(new Error('Failed to load screenshot library'));
+            document.head.appendChild(script);
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Screenshot library load timeout')), 8000)),
+        ]);
       }
 
       const esc = (s) => utils.escapeHtml(s || '');
@@ -1759,7 +1761,7 @@ const tokenDetail = {
     if (!container) return;
     const img = new Image();
     img.onload = () => {
-      container.innerHTML = `<img src="${utils.escapeHtml(url)}" alt="Token banner" class="token-banner-img">`;
+      container.innerHTML = `<img src="${utils.escapeHtml(url)}" alt="Token banner" class="token-banner-img" loading="lazy">`;
       container.style.display = '';
     };
     img.onerror = () => { container.style.display = 'none'; };
