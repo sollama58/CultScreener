@@ -1,7 +1,7 @@
 /* CultScreener Admin Panel */
 
 const admin = {
-  token: null,       // in-memory only — never written to sessionStorage
+  token: null,
   activeTab: 'dashboard',
   _boundTabs: false,
 
@@ -17,8 +17,15 @@ const admin = {
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
-    // Always attempt session verification — the httpOnly cookie is sent automatically
-    this.verifySession();
+    // Restore token from sessionStorage (survives page refresh within the same tab)
+    this.token = sessionStorage.getItem('admin_token') || null;
+
+    // If we have a token, verify it is still valid server-side; otherwise show login
+    if (this.token) {
+      this.verifySession();
+    } else {
+      this.showLogin();
+    }
   },
 
   // ── Auth ──────────────────────────────────────
@@ -47,6 +54,7 @@ const admin = {
         noAuth: true
       });
       this.token = data.token;
+      sessionStorage.setItem('admin_token', this.token);
       input.value = '';
       this.showPanel();
       this.loadTab('dashboard');
@@ -62,6 +70,7 @@ const admin = {
   async logout() {
     try { await this.request('/api/admin/logout', { method: 'POST' }); } catch (_) {}
     this.token = null;
+    sessionStorage.removeItem('admin_token');
     this.showLogin();
   },
 
@@ -107,6 +116,7 @@ const admin = {
     if (!res.ok) {
       if (res.status === 401 && !opts.noAuth) {
         this.token = null;
+        sessionStorage.removeItem('admin_token');
         this.showLogin();
       }
       const err = new Error(data.error || `HTTP ${res.status}`);
