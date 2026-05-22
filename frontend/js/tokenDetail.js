@@ -649,10 +649,10 @@ const tokenDetail = {
   // ── Holder Trend ──────────────────────────────────────────────────────────
 
   async loadHolderTrend(range) {
-    const section  = document.getElementById('holder-trend-section');
+    const section = document.getElementById('holder-trend-section');
     if (!section) return;
 
-    // Default to 7-day view on first load
+    // Default to 7-day chart view on first load
     if (range == null) range = this._htRange || 7;
     this._htRange = range;
 
@@ -662,105 +662,120 @@ const tokenDetail = {
     });
 
     try {
-      const data = await api.tokens.getHolderHistory(this.mint, range);
+      // Always fetch 30 days so 1D/7D/30D change stats can be computed regardless of chart range
+      const data = await api.tokens.getHolderHistory(this.mint, 30);
       const history = (data && Array.isArray(data.history)) ? data.history : [];
 
       // Reverse so oldest → newest (API returns newest first)
-      const rows = history.slice().reverse();
+      const allRows = history.slice().reverse();
 
-      if (rows.length < 2) {
-        // Show section only if at least 1 row (so user knows it's coming)
-        if (rows.length === 1) {
-          section.style.display = '';
-          document.getElementById('ht-chart-wrap').style.display = 'none';
-          document.getElementById('ht-empty').style.display = '';
-          document.getElementById('ht-summary').textContent = '';
-        }
-        // No data at all — keep hidden
-        return;
-      }
+      if (allRows.length === 0) return; // No data yet — keep section hidden
 
       section.style.display = '';
-      document.getElementById('ht-empty').style.display = 'none';
-      document.getElementById('ht-chart-wrap').style.display = '';
 
-      this._renderHolderSparkline(rows);
-      this._renderHolderSummary(rows);
+      // Change stats always use full 30-day window
+      this._renderHolderChangeStats(allRows);
+
+      // Bar chart shows only the selected range
+      const chartRows = allRows.slice(-range);
+      const chartWrap = document.getElementById('ht-chart-wrap');
+      const emptyEl   = document.getElementById('ht-empty');
+
+      if (chartRows.length >= 1) {
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (chartWrap) chartWrap.style.display = '';
+        this._renderHolderBarChart(chartRows);
+      } else {
+        if (chartWrap) chartWrap.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = '';
+      }
     } catch (_) {
       // Non-critical — keep section hidden on error
     }
   },
 
-  _renderHolderSummary(rows) {
-    const el = document.getElementById('ht-summary');
-    if (!el || rows.length < 2) return;
+  _renderHolderChangeStats(rows) {
+    const el = document.getElementById('ht-changes');
+    if (!el || rows.length === 0) return;
 
-    const first = rows[0].holder_count;
-    const last  = rows[rows.length - 1].holder_count;
-    const delta = last - first;
-    const sign  = delta >= 0 ? '+' : '';
-    const cls   = delta >= 0 ? 'ht-delta--up' : 'ht-delta--down';
-    const arrow = delta >= 0 ? '▲' : '▼';
+    const latest = rows[rows.length - 1].holder_count;
 
-    el.innerHTML =
-      `<span class="ht-current">${last.toLocaleString()}</span>` +
-      ` <span class="ht-delta ${cls}">${arrow} ${sign}${delta.toLocaleString()}</span>` +
-      ` <span class="ht-period">over ${rows.length} days</span>`;
+    // Returns { delta, pct } for a given days-ago offset, or null if not enough data
+    const getDelta = (daysAgo) => {
+      if (rows.length <= daysAgo) return null;
+      const past = rows[rows.length - 1 - daysAgo].holder_count;
+      const delta = latest - past;
+      const pct   = past > 0 ? (delta / past * 100) : 0;
+      return { delta, pct };
+    };
+
+    const fmtStat = (d) => {
+      if (!d) return { val: '--', pct: '', cls: '' };
+      const sign = d.delta >= 0 ? '+' : '';
+      const cls  = d.delta >= 0 ? 'ht-delta--up' : 'ht-delta--down';
+      return { val: `${sign}${d.delta.toLocaleString()}`, pct: `${sign}${d.pct.toFixed(1)}%`, cls };
+    };
+
+    const periods = [
+      { label: '1D', stat: fmtStat(getDelta(1)) },
+      { label: '7D', stat: fmtStat(getDelta(7)) },
+      { label: '30D', stat: fmtStat(getDelta(30)) },
+    ];
+
+    el.innerHTML = periods.map(({ label, stat }) => `
+      <div class="ht-change-item">
+        <span class="ht-change-label">${label}</span>
+        <span class="ht-change-value ${stat.cls}">${stat.val}</span>
+        ${stat.pct ? `<span class="ht-change-pct ${stat.cls}">${stat.pct}</span>` : ''}
+      </div>
+    `).join('');
   },
 
-  _renderHolderSparkline(rows) {
+  _renderHolderBarChart(rows) {
     const wrap = document.getElementById('ht-chart-wrap');
-    if (!wrap || rows.length < 2) return;
+    if (!wrap) return;
 
-    const W = wrap.getBoundingClientRect().width || wrap.clientWidth || 280;
-    const H = 72;
-    const PAD_X = 2;
-    const PAD_Y = 8;
+    const W      = wrap.getBoundingClientRect().width || wrap.clientWidth || 340;
+    const H      = 68;
+    const PAD_X  = 1;
+    const PAD_Y  = 4;
+    const GAP    = rows.length > 14 ? 1 : 2;
 
     const counts = rows.map(r => r.holder_count);
     const minVal = Math.min(...counts);
     const maxVal = Math.max(...counts);
-    const range  = maxVal - minVal || 1;
+    const span   = maxVal - minVal || 1;
+    const chartH = H - PAD_Y * 2;
+    const n      = rows.length;
+    const barW   = Math.max(2, (W - PAD_X * 2 - GAP * (n - 1)) / n);
 
-    const toX = (i) => PAD_X + (i / (rows.length - 1)) * (W - PAD_X * 2);
-    const toY = (v) => PAD_Y + (1 - (v - minVal) / range) * (H - PAD_Y * 2);
+    const bars = rows.map((r, i) => {
+      const x         = PAD_X + i * (barW + GAP);
+      // Single-bar or flat range: show at 70% height so it's visible
+      const normalized = n === 1 || span === 0 ? 0.7 : (r.holder_count - minVal) / span;
+      const barH       = Math.max(3, normalized * chartH);
+      const y          = PAD_Y + (chartH - barH);
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="1.5" fill="url(#ht-bar-grad)"/>`;
+    }).join('');
 
-    // Build SVG polyline points
-    const points = rows.map((r, i) => `${toX(i).toFixed(1)},${toY(r.holder_count).toFixed(1)}`).join(' ');
-
-    // Build area fill path (line + close at bottom)
-    const firstX = toX(0).toFixed(1);
-    const lastX  = toX(rows.length - 1).toFixed(1);
-    const bottomY = (H - PAD_Y + 4).toFixed(1);
-    const areaD   = `M ${points.replace(/ /g, ' L ')} L ${lastX},${bottomY} L ${firstX},${bottomY} Z`;
-
-    // Date labels (first and last)
     const fmtDate = (str) => {
-      const d = new Date(str);
+      const d = new Date(str + 'T00:00:00');
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     };
-    const labelFirst = fmtDate(rows[0].recorded_date);
-    const labelLast  = fmtDate(rows[rows.length - 1].recorded_date);
-
-    const isUp    = counts[counts.length - 1] >= counts[0];
-    const lineClr = isUp ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
-    const areaId  = `ht-grad-${Math.random().toString(36).slice(2, 7)}`;
 
     wrap.innerHTML = `
       <svg class="ht-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
-          <linearGradient id="${areaId}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${lineClr}" stop-opacity="0.25"/>
-            <stop offset="100%" stop-color="${lineClr}" stop-opacity="0.02"/>
+          <linearGradient id="ht-bar-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#ff9100" stop-opacity="0.95"/>
+            <stop offset="100%" stop-color="#ff4500" stop-opacity="0.75"/>
           </linearGradient>
         </defs>
-        <path d="${areaD}" fill="url(#${areaId})" stroke="none"/>
-        <polyline points="${points}" fill="none" stroke="${lineClr}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/>
-        <circle cx="${toX(rows.length-1).toFixed(1)}" cy="${toY(counts[counts.length-1]).toFixed(1)}" r="3" fill="${lineClr}"/>
+        ${bars}
       </svg>
       <div class="ht-axis">
-        <span class="ht-axis-label">${labelFirst}</span>
-        <span class="ht-axis-label">${labelLast}</span>
+        <span class="ht-axis-label">${fmtDate(rows[0].recorded_date)}</span>
+        <span class="ht-axis-label">${fmtDate(rows[rows.length - 1].recorded_date)}</span>
       </div>
     `;
   },

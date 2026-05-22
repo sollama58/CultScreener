@@ -3226,7 +3226,7 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.75rem;
 }
 
 .ht-title-group {
@@ -3277,50 +3277,66 @@ select:focus {
   color: var(--fire-primary);
 }
 
-.ht-summary {
-  font-size: 0.78rem;
-  margin-bottom: 0.6rem;
-  min-height: 1.1em;
-  line-height: 1.4;
+/* Change stat pills — 1D / 7D / 30D row */
+.ht-changes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
 }
 
-.ht-current {
-  font-family: var(--font-mono);
+.ht-change-item {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.ht-change-label {
+  font-size: 0.62rem;
   font-weight: 700;
-  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.ht-change-value {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
-.ht-delta {
-  font-weight: 600;
-  font-size: 0.72rem;
-}
-
-.ht-delta--up   { color: var(--green,  #10b981); }
-.ht-delta--down { color: var(--red,    #ef4444); }
-
-.ht-period {
-  color: var(--text-muted);
+.ht-change-pct {
   font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
+.ht-delta--up   { color: #ff9100; }
+.ht-delta--down { color: #ef4444; }
+
+/* Bar chart */
 .ht-chart-wrap {
   position: relative;
   width: 100%;
-  height: 72px;
+  height: 80px;
 }
 
 .ht-svg {
   display: block;
   width: 100%;
-  height: 64px;
+  height: 68px;
   overflow: visible;
 }
 
 .ht-axis {
   display: flex;
   justify-content: space-between;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .ht-axis-label {
@@ -4255,6 +4271,19 @@ select:focus {
   border-top: 1px solid var(--border-subtle);
   padding: 1.25rem 2rem;
   margin-top: auto;
+  position: relative;
+}
+.footer-donation {
+  position: absolute;
+  right: 2rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  opacity: 0.45;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .footer-content {
@@ -4805,6 +4834,7 @@ select:focus {
   .footer { padding: 1rem 0.85rem; }
   .footer-content { flex-direction: column; text-align: center; gap: 0.35rem; }
   .footer-divider { display: none; }
+  .footer-donation { display: none; }
 }
 
 
