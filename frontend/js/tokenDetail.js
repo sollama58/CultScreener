@@ -70,6 +70,12 @@ const tokenDetail = {
       };
       window.addEventListener('walletConnected', this._walletConnectedHandler);
 
+      // If GeckoTerminal was rate-limited on load, auto-retry market data after 15s
+      // so price/mcap/volume fill in without requiring a manual refresh.
+      if (this.token.geckoPartial) {
+        setTimeout(() => this._retryGeckoData(), 15_000);
+      }
+
       // Kick off holder analytics (fire-and-forget). this.token is now populated
       // so pairCreatedAt is available for token age and age-gated diamond-hands rows.
       this.loadHolderAnalytics().catch(() => {});
@@ -271,6 +277,28 @@ const tokenDetail = {
 
   // Start price refresh (configurable via config.cache.priceRefresh)
   // Circuit breaker: after 3 consecutive failures, double interval (up to 10min)
+  // Retry GeckoTerminal market data after a rate-limit delay on initial load.
+  // Fetches the price endpoint (which already has its own gecko timeout+Jupiter fallback)
+  // and patches the cached token object so price/mcap/volume/liquidity show correctly.
+  async _retryGeckoData() {
+    if (!this.token || !this.token.geckoPartial) return;
+    try {
+      const data = await api.tokens.getPrice(this.mint);
+      if (!data) return;
+      // Patch in whatever gecko fields came back
+      if (data.price) this.token.price = data.price;
+      if (data.priceChange24h != null) this.token.priceChange24h = data.priceChange24h;
+      if (data.volume24h != null) this.token.volume24h = data.volume24h;
+      if (data.liquidity != null) this.token.liquidity = data.liquidity;
+      if (data.marketCap != null) this.token.marketCap = data.marketCap;
+      if (data.fdv != null) this.token.fdv = data.fdv;
+      if (data.pairCreatedAt) this.token.pairCreatedAt = data.pairCreatedAt;
+      // Clear the partial flag so renderToken shows real values
+      delete this.token.geckoPartial;
+      this.renderToken();
+    } catch { /* silently ignore — normal price refresh will pick it up later */ }
+  },
+
   startPriceRefresh() {
     if (this.priceRefreshInterval) clearInterval(this.priceRefreshInterval);
     const baseInterval = this.refreshIntervalMs;
@@ -410,16 +438,22 @@ const tokenDetail = {
     // Price is now always a direct number from the API
     const price = this.token.price || 0;
     const change = this.token.priceChange24h || 0;
+    const partial = !!this.token.geckoPartial;
 
     if (typeof config !== 'undefined' && config.app?.debug) console.log('[TokenDetail] Price display:', { price, change, token: this.token });
 
     const changeEl = document.getElementById('price-change');
     const priceEl = document.getElementById('token-price');
 
-    if (priceEl) priceEl.textContent = utils.formatPrice(price);
+    if (priceEl) priceEl.textContent = partial && !price ? '--' : utils.formatPrice(price);
     if (changeEl) {
-      changeEl.textContent = utils.formatChange(change);
-      changeEl.className = `price-change-badge ${change >= 0 ? 'positive' : 'negative'}`;
+      if (partial && !change) {
+        changeEl.textContent = '--';
+        changeEl.className = 'price-change-badge';
+      } else {
+        changeEl.textContent = utils.formatChange(change);
+        changeEl.className = `price-change-badge ${change >= 0 ? 'positive' : 'negative'}`;
+      }
     }
   },
 
@@ -489,9 +523,12 @@ const tokenDetail = {
       el.classList.remove('stat-placeholder');
     };
 
-    setStat('stat-mcap', utils.formatNumber(token.marketCap));
-    setStat('stat-volume', utils.formatNumber(token.volume24h));
-    setStat('stat-liquidity', utils.formatNumber(token.liquidity));
+    // When GeckoTerminal was rate-limited on load, show dashes so users don't see
+    // misleading $0 values — _retryGeckoData() will fill these in after ~15s.
+    const partial = !!token.geckoPartial;
+    setStat('stat-mcap', partial ? '--' : utils.formatNumber(token.marketCap));
+    setStat('stat-volume', partial ? '--' : utils.formatNumber(token.volume24h));
+    setStat('stat-liquidity', partial ? '--' : utils.formatNumber(token.liquidity));
 
     const holdersCount = (typeof token.holders === 'number' && token.holders > 0) ? token.holders : null;
     setStat('stat-holders', holdersCount ? holdersCount.toLocaleString() : '--');

@@ -1356,13 +1356,26 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
     const result = await cache.getOrSetWithFreshness(cacheKey, async () => {
       // Fetch core data in parallel — holder count uses cache-first to avoid
       // blocking on paginated Helius DAS calls (which can take 2-30s for popular tokens).
+      let geckoTimedOut = false;
       const fetchPromises = [
         // Helius provides: metadata, supply, price (for top 10k tokens)
         solanaService.isHeliusConfigured()
           ? solanaService.getTokenMetadata(mint).catch(catchUnlessOverloaded(null))
           : Promise.resolve(null),
         // GeckoTerminal pools: volume, price change, liquidity + coingeckoId
-        geckoService.getTokenOverview(mint),
+        // 5s timeout — rate-limited Gecko shouldn't stall the entire page load.
+        // geckoPartial:true is set on the result so the frontend can retry market data.
+        Promise.race([
+          geckoService.getTokenOverview(mint),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(Object.assign(new Error('gecko-timeout'), { isGeckoTimeout: true })), 5000)
+          )
+        ]).catch(err => {
+          if (err.isOverloaded || err.isCircuitBreakerError) throw err;
+          geckoTimedOut = true;
+          console.warn(`[Tokens] GeckoTerminal unavailable (${err.message}) for ${mint.slice(0, 8)}... — serving partial data`);
+          return null;
+        }),
         db.getApprovedSubmissions(mint).catch(() => []),
         // Holder count: use cache (24h TTL) — never block on paginated DAS call
         cache.get(`holder-total:${mint}`).then(c => c || cache.get(keys.holderCount(mint)))
@@ -1481,8 +1494,16 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         }).catch(() => { /* Privacy: Don't log error details */ });
       }
 
+      if (geckoTimedOut) tokenResult.geckoPartial = true;
+
       return tokenResult;
     }); // Use standard caching with stampede prevention (was requireFresh=true)
+
+    // Partial result (Gecko rate-limited): re-cache with 30s TTL so the next
+    // request retries Gecko rather than serving stale zero-valued market data.
+    if (result && result.geckoPartial) {
+      await cache.set(cacheKey, result, 30_000).catch(() => {});
+    }
 
     if (!res.headersSent) res.json(result);
   } catch (error) {

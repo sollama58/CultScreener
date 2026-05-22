@@ -6,7 +6,7 @@ const { cache: redisCache, TTL } = require('./cache');
 
 // GeckoTerminal / CoinGecko Onchain API
 // Free tier: https://api.geckoterminal.com/api/v2 (30 req/min, no key)
-// Paid tier: https://pro-api.coingecko.com/api/v3/onchain (higher limits, key required)
+// Basic plan: https://pro-api.coingecko.com/api/v3/onchain (300 req/min, key required)
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || '';
 const GECKO_API = COINGECKO_API_KEY
   ? 'https://pro-api.coingecko.com/api/v3/onchain'
@@ -26,7 +26,7 @@ function ensureTokenMetadata(tokens) {
 if (COINGECKO_API_KEY) {
   console.log('[GeckoTerminal] Using CoinGecko Pro API (paid tier)');
 } else {
-  console.log('[GeckoTerminal] Using free GeckoTerminal API (30 req/min)');
+  console.log('[GeckoTerminal] Using free GeckoTerminal API (30 req/min) — set COINGECKO_API_KEY for Basic plan (300 req/min)');
 }
 
 // Create axios instance with connection pooling for GeckoTerminal
@@ -61,11 +61,12 @@ if (COINGECKO_API_KEY) {
 }
 
 // Retry configuration for 429 errors
+// CoinGecko Basic plan (300 req/min) resets quickly — shorter backoff is fine.
 const RETRY_CONFIG = {
-  maxRetries: 3,
-  baseDelay: 5000,      // 5 seconds initial delay
-  maxDelay: 30000,      // 30 seconds max delay
-  backoffMultiplier: 2  // Exponential backoff
+  maxRetries: 2,
+  baseDelay: 1000,      // 1 second initial delay (rate window resets in ~200ms)
+  maxDelay: 5000,       // 5 seconds max delay
+  backoffMultiplier: 2  // Exponential backoff: 1s → 2s → give up
 };
 
 /**
@@ -200,7 +201,7 @@ async function deduplicatedRequest(key, requestFn) {
 
 /**
  * Make a rate-limited request to GeckoTerminal API
- * Free tier: 30 requests/minute
+ * Basic plan: 300 requests/minute (free tier: 30 req/min)
  * Includes 429 retry logic with exponential backoff
  */
 async function geckoRequest(requestFn, context = 'geckoRequest') {
