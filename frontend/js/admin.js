@@ -205,10 +205,12 @@ const admin = {
     const flushBtn = document.getElementById('admin-flush-wallets');
     const refreshBtn = document.getElementById('admin-refresh-holders');
     const backfillBtn = document.getElementById('admin-backfill-holder-history');
+    const geckoBackfillBtn = document.getElementById('admin-backfill-holder-gecko');
     const wipeBtn = document.getElementById('admin-wipe-token');
     if (flushBtn) flushBtn.addEventListener('click', () => this.flushFailedWallets());
     if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshHolderCounts());
     if (backfillBtn) backfillBtn.addEventListener('click', () => this.backfillHolderHistory());
+    if (geckoBackfillBtn) geckoBackfillBtn.addEventListener('click', () => this.backfillHolderGecko());
     if (wipeBtn) wipeBtn.addEventListener('click', () => this.wipeTokenCache());
   },
 
@@ -275,6 +277,29 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Snapshot Holders Now';
+    }
+  },
+
+  async backfillHolderGecko() {
+    const btn = document.getElementById('admin-backfill-holder-gecko');
+    const status = document.getElementById('admin-flush-status');
+    btn.disabled = true;
+    btn.textContent = 'Backfilling… (may take ~1 min)';
+    status.textContent = '';
+
+    try {
+      const data = await this.request('/api/admin/backfill-holder-history', { method: 'POST' });
+      const tokenCount = data.tokens?.length ?? '?';
+      status.textContent = `Done: ${data.inserted} rows inserted, ${data.failed} failed across ${tokenCount} tokens.`;
+      status.style.color = 'var(--green)';
+      if (typeof toast !== 'undefined') toast.success(`Holder history backfilled: ${data.inserted} rows`);
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Backfill 40D History (CoinGecko)';
     }
   },
 

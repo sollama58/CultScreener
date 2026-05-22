@@ -3346,16 +3346,26 @@ async function getWhitelistedWallets() {
  * Upsert one holder-count snapshot for today.
  * Safe to call multiple times per day — subsequent calls update the value.
  */
-async function recordHolderCount(mintAddress, holderCount) {
+async function recordHolderCount(mintAddress, holderCount, date = null) {
   if (!pool) return null;
-  const result = await pool.query(
-    `INSERT INTO holder_history (mint_address, holder_count, recorded_date, recorded_at)
-     VALUES ($1, $2, CURRENT_DATE, NOW())
-     ON CONFLICT (mint_address, recorded_date)
-     DO UPDATE SET holder_count = $2, recorded_at = NOW()
-     RETURNING *`,
-    [mintAddress, holderCount]
-  );
+  // date can be a 'YYYY-MM-DD' string for backfill; omit to use today
+  const result = date
+    ? await pool.query(
+        `INSERT INTO holder_history (mint_address, holder_count, recorded_date, recorded_at)
+         VALUES ($1, $2, $3::date, NOW())
+         ON CONFLICT (mint_address, recorded_date)
+         DO UPDATE SET holder_count = $2, recorded_at = NOW()
+         RETURNING *`,
+        [mintAddress, holderCount, date]
+      )
+    : await pool.query(
+        `INSERT INTO holder_history (mint_address, holder_count, recorded_date, recorded_at)
+         VALUES ($1, $2, CURRENT_DATE, NOW())
+         ON CONFLICT (mint_address, recorded_date)
+         DO UPDATE SET holder_count = $2, recorded_at = NOW()
+         RETURNING *`,
+        [mintAddress, holderCount]
+      );
   return result.rows[0] || null;
 }
 

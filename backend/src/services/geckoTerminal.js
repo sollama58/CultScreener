@@ -1227,6 +1227,29 @@ async function getCoinSocialLinks(coingeckoId) {
   }
 }
 
+/**
+ * Fetch historical holder count chart for a token.
+ * Requires CoinGecko paid plan (Analyst or above).
+ * @param {string} mintAddress - Solana token mint address
+ * @param {'7'|'30'|'max'} days - Timeframe: '30' = daily for 30d, 'max' = weekly going further back
+ * @returns {Promise<Array<[number, number]>>} Array of [timestamp_ms, holder_count] pairs, oldest first
+ */
+async function getTokenHoldersChart(mintAddress, days = '30') {
+  if (!COINGECKO_API_KEY) {
+    throw new Error('getTokenHoldersChart requires a CoinGecko Pro API key');
+  }
+  return geckoRequest(
+    () => geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/holders_chart`, {
+      params: { days }
+    }).then(res => {
+      const list = res.data?.data?.attributes?.token_holders_list;
+      if (!Array.isArray(list)) return [];
+      return list; // [[timestamp_ms, holder_count], ...]
+    }),
+    `getTokenHoldersChart(${mintAddress}, days=${days})`
+  );
+}
+
 function stopCleanup() { clearInterval(_cacheCleanupTimer); clearInterval(_inFlightSweepTimer); }
 
 module.exports = {
@@ -1245,5 +1268,6 @@ module.exports = {
   getPriceHistory,
   getTokenPools,
   getCoinSocialLinks,
+  getTokenHoldersChart,
   stopCleanup
 };

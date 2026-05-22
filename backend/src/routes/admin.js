@@ -188,6 +188,87 @@ router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, r
 }));
 
 // ==========================================
+// Historical Holder Count Backfill (CoinGecko Pro)
+// ==========================================
+
+router.post('/backfill-holder-history', strictLimiter, asyncHandler(async (req, res) => {
+  const geckoService = require('../services/geckoTerminal');
+  const { sleep } = require('../services/rateLimiter');
+
+  const curatedTokens = await db.getCuratedTokens().catch(() => []);
+  if (!curatedTokens.length) {
+    return res.status(400).json({ error: 'No curated tokens found' });
+  }
+
+  const results = { inserted: 0, skipped: 0, failed: 0, tokens: [] };
+
+  for (const token of curatedTokens) {
+    const mint = token.mintAddress || token.mint_address;
+    if (!mint) continue;
+
+    const tokenResult = { mint, daily: 0, weekly: 0, errors: [] };
+
+    // ── 1. Daily data: last 30 days ──────────────────────────────────────────
+    // Collect all [date_string, count] pairs — deduplicate by date, prefer daily over weekly
+    const dateMap = new Map(); // 'YYYY-MM-DD' → holder_count
+
+    try {
+      const dailyPairs = await geckoService.getTokenHoldersChart(mint, '30');
+      for (const [tsMs, count] of dailyPairs) {
+        const date = new Date(tsMs).toISOString().slice(0, 10);
+        dateMap.set(date, count);
+      }
+      tokenResult.daily = dailyPairs.length;
+    } catch (err) {
+      tokenResult.errors.push(`daily: ${err.message}`);
+    }
+
+    // Small pause between the two calls for the same token
+    await sleep(400);
+
+    // ── 2. Weekly/max data: fills dates older than 30 days ───────────────────
+    try {
+      const maxPairs = await geckoService.getTokenHoldersChart(mint, 'max');
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      for (const [tsMs, count] of maxPairs) {
+        if (tsMs >= thirtyDaysAgo) continue; // already covered by daily
+        const date = new Date(tsMs).toISOString().slice(0, 10);
+        if (!dateMap.has(date)) dateMap.set(date, count);
+      }
+      tokenResult.weekly = maxPairs.length;
+    } catch (err) {
+      tokenResult.errors.push(`max: ${err.message}`);
+    }
+
+    // ── 3. Write all collected dates to holder_history ────────────────────────
+    for (const [date, count] of dateMap) {
+      try {
+        await db.recordHolderCount(mint, count, date);
+        results.inserted++;
+      } catch (err) {
+        results.failed++;
+        tokenResult.errors.push(`insert ${date}: ${err.message}`);
+      }
+    }
+
+    // Invalidate cached holder-history for this token so fresh data is served
+    const { cache } = require('../services/cache');
+    for (const d of [7, 30, 90]) {
+      await cache.delete(`holder-history:${mint}:${d}`).catch(() => {});
+    }
+
+    results.tokens.push(tokenResult);
+    console.log(`[Admin] Holder history backfill: ${mint.slice(0, 8)}... — ${dateMap.size} dates (${tokenResult.errors.length} errors)`);
+
+    // Rate-limit: ~300 req/min on Basic plan, 2 calls per token — stay well under
+    await sleep(500);
+  }
+
+  console.log(`[Admin] Holder history backfill complete: ${results.inserted} rows inserted, ${results.failed} failed across ${curatedTokens.length} tokens`);
+  res.json({ success: true, ...results });
+}));
+
+// ==========================================
 // Per-Token Cache Wipe
 // ==========================================
 

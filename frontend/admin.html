@@ -375,9 +375,10 @@
             <button class="btn btn-sm" id="admin-flush-wallets">Flush Failed Wallet Caches</button>
             <button class="btn btn-sm" id="admin-refresh-holders">Refresh All Holder Counts</button>
             <button class="btn btn-sm" id="admin-backfill-holder-history">Snapshot Holders Now</button>
+            <button class="btn btn-sm" id="admin-backfill-holder-gecko">Backfill 40D History (CoinGecko)</button>
             <span id="admin-flush-status" style="font-size:0.78rem;color:var(--text-muted);align-self:center;"></span>
           </div>
-          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Flush: Clears failed wallet caches so conviction re-computes. Refresh: Re-fetches total holder counts from Helius DAS. Snapshot: Records today's holder counts into the trend history immediately (same as the nightly cron, useful for backfilling).</p>
+          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Flush: Clears failed wallet caches so conviction re-computes. Refresh: Re-fetches total holder counts from Helius DAS. Snapshot: Records today's counts into trend history (same as nightly cron). Backfill: Pulls 30d daily + older weekly holder history from CoinGecko Pro for all curated tokens.</p>
         </div>
         <div style="margin-top:1.25rem;">
           <h3 style="font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Wipe Token Cache</h3>
@@ -531,7 +532,7 @@
 
   <script src="js/config.js?v=2"></script>
   <script src="js/api.js?v=4"></script>
-  <script src="js/admin.js?v=7"></script>
+  <script src="js/admin.js?v=8"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>
