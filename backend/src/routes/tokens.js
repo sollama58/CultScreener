@@ -2204,7 +2204,15 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       const pendingKey = `holder-metrics-pending:${mint}`;
       const pending = await cache.get(pendingKey);
 
-      if (!pending) {
+      // Treat any non-numeric pending value as expired so a stuck job can be re-dispatched
+      const pendingTs = typeof pending === 'number' ? pending : 0;
+      const stillPending = pendingTs > 0 && (Date.now() - pendingTs) < 360000;
+      if (pending && !stillPending) {
+        console.log(`[HoldTimes] Stale pending flag cleared for ${mint} — allowing re-dispatch`);
+        await cache.delete(pendingKey);
+      }
+
+      if (!stillPending) {
         await cache.set(pendingKey, Date.now(), 360000); // 6 min dedup — covers worst-case worker runtime (250 wallets × batched API calls)
         const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
           mint,
@@ -2298,11 +2306,14 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
     const pendingKey = `holder-metrics-pending:${mint}`;
     const pending = await cache.get(pendingKey);
 
-    // Only clear a stale pending flag if it's been stuck for >3 minutes (matching TTL).
-    // Must match the 180s TTL set below — and in cultify.js — so all routes agree.
-    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 360000);
+    // Only clear a stale pending flag if it's been stuck for >6 minutes (matching TTL).
+    // Treat any non-numeric pending value (e.g. boolean, string from stale Redis key) as expired
+    // so the job can be re-dispatched rather than staying stuck forever.
+    const pendingTimestamp = typeof pending === 'number' ? pending : 0;
+    const isStillPending = pendingTimestamp > 0 && (Date.now() - pendingTimestamp) < 360000;
     if (pending && !isStillPending) {
-      console.log(`[DiamondHands] Pending expired after ${Math.round((Date.now() - pending) / 1000)}s — allowing re-dispatch`);
+      const elapsed = pendingTimestamp > 0 ? Math.round((Date.now() - pendingTimestamp) / 1000) : '?';
+      console.log(`[DiamondHands] Pending expired after ${elapsed}s — allowing re-dispatch`);
       await cache.delete(pendingKey);
     }
 
