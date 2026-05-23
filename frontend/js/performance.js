@@ -497,14 +497,17 @@ const performancePage = {
     const avatar = this._letterAvatar(symbol);
     if (!url) return avatar;
 
+    // Route through our own backend proxy so CORS is never an issue —
+    // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
+    const proxied = `/api/tokens/image-proxy?url=${encodeURIComponent(url)}`;
+
     return new Promise((resolve) => {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
 
       const timer = setTimeout(() => {
         img.onload = img.onerror = null;
         resolve(avatar);
-      }, 4000);
+      }, 6000);
 
       img.onload = () => {
         clearTimeout(timer);
@@ -512,20 +515,18 @@ const performancePage = {
           const c = document.createElement('canvas');
           c.width = 30; c.height = 30;
           const ctx = c.getContext('2d');
-          // Clip to circle so logos look consistent
           ctx.beginPath();
           ctx.arc(15, 15, 15, 0, Math.PI * 2);
           ctx.clip();
           ctx.drawImage(img, 0, 0, 30, 30);
           resolve(c.toDataURL('image/png'));
         } catch (_) {
-          // Canvas tainted (no CORS headers) — use letter avatar
           resolve(avatar);
         }
       };
 
       img.onerror = () => { clearTimeout(timer); resolve(avatar); };
-      img.src = url;
+      img.src = proxied;
     });
   },
 

@@ -1334,6 +1334,47 @@ router.get('/spikes', searchLimiter, asyncHandler(async (req, res) => {
   }
 }));
 
+// GET /api/tokens/image-proxy?url=… — server-side image fetch with CORS headers.
+// Browsers cannot canvas-read images from CDNs that lack Access-Control-Allow-Origin.
+// This endpoint fetches the image server-side (no CORS restriction) and re-serves it
+// with the header set, so the frontend can draw it onto a canvas for share screenshots.
+// Only whitelisted CDN hostnames are accepted to prevent open-proxy abuse.
+const IMAGE_PROXY_ALLOWED = new Set([
+  'cdn.dexscreener.com',
+  'dd.dexscreener.com',
+  'assets.geckoterminal.com',
+  'coin-images.coingecko.com',
+  'raw.githubusercontent.com',
+  'arweave.net',
+  'www.arweave.net',
+  'ipfs.io',
+  'cloudflare-ipfs.com',
+  'nftstorage.link',
+]);
+router.get('/image-proxy', asyncHandler(async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
+
+  let parsed;
+  try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid url' }); }
+  if (parsed.protocol !== 'https:') return res.status(400).json({ error: 'https only' });
+  if (!IMAGE_PROXY_ALLOWED.has(parsed.hostname)) {
+    return res.status(403).json({ error: 'Host not allowed' });
+  }
+
+  const response = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 8000,
+    headers: { 'User-Agent': 'CultScreener/1.0' },
+  });
+
+  const contentType = response.headers['content-type'] || 'image/png';
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(Buffer.from(response.data));
+}));
+
 // GET /api/tokens/:mint - Get single token details
 // Uses 5-minute cache but requires data < 1 minute old (fresh) for individual token views
 // Optimized: Uses getOrSetWithFreshness for stampede prevention on concurrent requests
