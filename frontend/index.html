@@ -305,10 +305,20 @@
     .psg-table tbody tr:last-child td { border-bottom: none; }
     .psg-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.015); }
     .psg-rank { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #4b5563; width: 32px; }
-    .psg-token-cell { display: flex; align-items: center; gap: 8px; }
+    .psg-token-cell { display: flex; align-items: center; gap: 9px; }
+    .psg-token-logo {
+      width: 30px; height: 30px; border-radius: 50%;
+      object-fit: cover; flex-shrink: 0;
+      background: #1a1c22;
+    }
     .psg-token-name { font-weight: 600; color: #f3f4f6; font-size: 0.84rem; }
     .psg-token-symbol { font-size: 0.68rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; display: block; }
     .psg-hammer { font-size: 0.78rem; flex-shrink: 0; }
+    .psg-powered-by {
+      font-size: 0.6rem; color: #4b5563; letter-spacing: 0.03em;
+      margin-top: 4px; display: flex; align-items: center; gap: 3px;
+    }
+    .psg-powered-by strong { color: #ff9100; font-weight: 700; }
     .psg-pct {
       font-family: 'JetBrains Mono', monospace;
       font-weight: 700;
@@ -320,10 +330,10 @@
       font-weight: 600;
       font-size: 0.8rem;
       text-align: right;
-      color: #9ca3af;
     }
-    .psg-positive { color: #10b981; }
-    .psg-negative { color: #ef4444; }
+    /* Higher specificity (0,2,0) beats the generic tbody td rule (0,1,1) */
+    .psg-table .psg-positive { color: #10b981; }
+    .psg-table .psg-negative { color: #ef4444; }
     .psg-na { color: #374151; }
     .psg-footer {
       padding: 10px 20px;
@@ -590,7 +600,7 @@
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
   <script src="js/conviction.js?v=5"></script>
-  <script src="js/performance.js?v=5"></script>
+  <script src="js/performance.js?v=6"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────
     (function () {

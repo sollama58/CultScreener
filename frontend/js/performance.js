@@ -201,10 +201,27 @@ const performancePage = {
       this._buildShareGraphic(top10);
 
       const graphic = document.getElementById('perf-share-graphic');
+
+      // Wait for all token logos to load (or error out) before capturing.
+      // allowTaint is intentionally NOT set — useCORS keeps the canvas untainted
+      // so toBlob() works. Images without CORS headers fall back to the inline
+      // SVG avatar via the onerror handler set in _buildShareGraphic.
+      const imgs = [...graphic.querySelectorAll('img')];
+      if (imgs.length) {
+        await Promise.all(imgs.map(img =>
+          img.complete ? Promise.resolve() :
+          new Promise(resolve => {
+            img.addEventListener('load',  resolve, { once: true });
+            img.addEventListener('error', resolve, { once: true });
+            setTimeout(resolve, 3000);
+          })
+        ));
+      }
+
       const canvas = await html2canvas(graphic, {
         backgroundColor: '#0d0e11',
         scale: 2,
-        allowTaint: true,
+        useCORS: true,
         logging: false,
       });
 
@@ -259,14 +276,20 @@ const performancePage = {
         ? `<td class="psg-pct psg-na">—</td>`
         : `<td class="psg-pct ${pct >= 0 ? 'psg-positive' : 'psg-negative'} ${cls}">${this._formatPct(pct)}</td>`;
 
-      const hammer = token.emergingCult ? '<span class="psg-hammer">🛠️</span>' : '';
-      const name   = (token.name   || '').replace(/</g, '&lt;');
-      const symbol = (token.symbol || '').replace(/</g, '&lt;');
+      const hammer  = token.emergingCult ? '<span class="psg-hammer">🛠️</span>' : '';
+      const name    = (token.name   || '').replace(/</g, '&lt;');
+      const symbol  = (token.symbol || '').replace(/</g, '&lt;');
+      const sym1    = (token.symbol || '?').charAt(0).toUpperCase();
+      const logoSrc = utils.escapeHtml(token.logoUri || '');
+      // Inline SVG letter-avatar used as onerror fallback (no external request needed)
+      const fallbackSvg = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><circle cx='15' cy='15' r='15' fill='%231a1c22'/><text x='15' y='20' text-anchor='middle' fill='%23ff5722' font-size='13' font-weight='700' font-family='Inter,sans-serif'>${sym1}</text></svg>`;
+      const logoHtml = `<img class="psg-token-logo" src="${logoSrc || fallbackSvg}" crossorigin="anonymous" alt="${sym1}" onerror="this.onerror=null;this.src='${fallbackSvg}'">`;
 
       return `<tr>
         <td class="psg-rank">${i + 1}</td>
         <td>
           <div class="psg-token-cell">
+            ${logoHtml}
             <div>
               <div style="display:flex;align-items:center;gap:5px;">
                 <span class="psg-token-name">${name}</span>${hammer}
@@ -286,6 +309,7 @@ const performancePage = {
           <div>
             <div class="psg-logo">Cult<span>Screener</span></div>
             <div class="psg-subtitle">Performance Leaderboard · Top 10</div>
+            <div class="psg-powered-by">Powered by <strong>ASDFASDFA</strong></div>
           </div>
         </div>
         <div class="psg-sort-label">${sortLabel}</div>
