@@ -493,10 +493,22 @@ const performancePage = {
     });
   },
 
-  /** Return a base64-encoded SVG data URI showing the first letter of the symbol. */
+  /** Return a PNG data URI (canvas-drawn) showing the first letter of the symbol.
+   *  Using canvas PNG instead of SVG because html2canvas cannot render SVG data URIs. */
   _letterAvatar(symbol) {
     const s = (symbol || '?').charAt(0).toUpperCase();
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><circle cx="15" cy="15" r="15" fill="#1a1c22"/><text x="15" y="20" text-anchor="middle" fill="#ff5722" font-size="13" font-weight="700" font-family="Inter,sans-serif">${s}</text></svg>`;
-    return `data:image/svg+xml;base64,${btoa(svg)}`;
+    const c = document.createElement('canvas');
+    c.width = 30; c.height = 30;
+    const ctx = c.getContext('2d');
+    ctx.beginPath();
+    ctx.arc(15, 15, 15, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a1c22';
+    ctx.fill();
+    ctx.fillStyle = '#ff5722';
+    ctx.font = 'bold 14px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s, 15, 16);
+    return c.toDataURL('image/png');
   },
 };
