@@ -681,17 +681,22 @@ const tokenDetail = {
       // Reverse so oldest → newest (API returns newest first)
       const allRows = history.slice().reverse();
 
-      if (allRows.length === 0) return; // No data yet — keep section hidden
-
       section.style.display = '';
+
+      const chartWrap = document.getElementById('ht-chart-wrap');
+      const emptyEl   = document.getElementById('ht-empty');
+
+      if (allRows.length === 0) {
+        if (chartWrap) chartWrap.style.display = 'none';
+        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — use "Snapshot Holders Now" in admin to record today'; }
+        return;
+      }
 
       // Change stats always use full 30-day window
       this._renderHolderChangeStats(allRows);
 
       // Bar chart shows only the selected range
       const chartRows = allRows.slice(-range);
-      const chartWrap = document.getElementById('ht-chart-wrap');
-      const emptyEl   = document.getElementById('ht-empty');
 
       if (chartRows.length >= 1) {
         if (emptyEl) emptyEl.style.display = 'none';
@@ -699,10 +704,10 @@ const tokenDetail = {
         this._renderHolderBarChart(chartRows);
       } else {
         if (chartWrap) chartWrap.style.display = 'none';
-        if (emptyEl) emptyEl.style.display = '';
+        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — check back tomorrow'; }
       }
-    } catch (_) {
-      // Non-critical — keep section hidden on error
+    } catch (err) {
+      console.warn('[HolderTrend] load error:', err);
     }
   },
 

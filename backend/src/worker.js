@@ -762,9 +762,9 @@ const jobProcessors = {
       for (const token of curatedTokens) {
         const mint = token.mintAddress || token.mint_address;
         if (mint) {
-          await cache.delete(`holder-history:${mint}:7`).catch(() => {});
-          await cache.delete(`holder-history:${mint}:30`).catch(() => {});
-          await cache.delete(`holder-history:${mint}:90`).catch(() => {});
+          for (const days of [7, 30, 31, 90]) {
+            await cache.delete(`holder-history:${mint}:${days}`).catch(() => {});
+          }
         }
       }
     }

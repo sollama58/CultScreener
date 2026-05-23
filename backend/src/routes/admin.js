@@ -180,11 +180,47 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
 }));
 
 router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
-  const jobQueue = require('../services/jobQueue');
-  // Enqueue an immediate (non-repeatable) record-holder-counts job so it runs right now
-  const job = await jobQueue.addAnalyticsJob('record-holder-counts', { backfill: true }, { priority: 5 });
-  console.log(`[Admin] Backfill holder counts job enqueued: ${job.id}`);
-  res.json({ success: true, jobId: job.id, message: 'Backfill job queued — current holder counts will be snapshotted to holder_history within seconds.' });
+  const solanaService = require('../services/solana');
+
+  const curatedTokens = await db.getCuratedTokens().catch(() => []);
+  let recorded = 0;
+  let skipped  = 0;
+  const errors = [];
+
+  for (const token of curatedTokens) {
+    const mint = token.mintAddress || token.mint_address;
+    if (!mint) { skipped++; continue; }
+
+    try {
+      // 1. Prefer the precise paginated count already cached
+      let count = await cache.get(`holder-total:${mint}`);
+      // 2. Fall back to the analytics cache
+      if (!count || count <= 0) {
+        const analytics = await cache.get(`holder-analytics:${mint}`);
+        count = analytics?.metrics?.holderCount || null;
+      }
+      // 3. Live fetch from Helius when caches are cold
+      if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
+        count = await solanaService.getTokenHolderCount(mint).catch(() => null);
+      }
+
+      if (!count || count <= 0) { skipped++; continue; }
+
+      await db.recordHolderCount(mint, count);
+      recorded++;
+
+      // Clear all holder-history cache variants so fresh data is served immediately
+      for (const days of [7, 30, 31, 90]) {
+        await cache.delete(`holder-history:${mint}:${days}`).catch(() => {});
+      }
+    } catch (err) {
+      errors.push(`${mint.slice(0, 8)}: ${err.message}`);
+      skipped++;
+    }
+  }
+
+  console.log(`[Admin] Snapshot holder counts: ${recorded} recorded, ${skipped} skipped`);
+  res.json({ success: true, recorded, skipped, total: curatedTokens.length, errors: errors.slice(0, 5) });
 }));
 
 // ==========================================
