@@ -1107,6 +1107,7 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       convictionUpdatedAt: row.conviction_computed_at || null,
       mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
       mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
+      emergingCult: row.is_emerging_cult || false,
       holders: null
     };
   });
@@ -1474,6 +1475,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         tokenResult.mcapAtAdded = curated.mcapAtAdded;
         tokenResult.mcapAth = curated.mcapAth;
         tokenResult.mcapAthAt = curated.mcapAthAt;
+        tokenResult.emergingCult = curated.emergingCult || false;
       }
 
       // Also save to database for future reference

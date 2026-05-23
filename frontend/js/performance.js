@@ -117,6 +117,9 @@ const performancePage = {
       const name     = utils.escapeHtml(token.name   || '—');
       const symbol   = utils.escapeHtml(token.symbol || '');
       const mint     = utils.escapeHtml(token.mintAddress || token.address || '');
+      const emergingBadge = token.emergingCult
+        ? '<span class="emerging-cult-badge">🛠️ Emerging Cult</span>'
+        : '';
 
       // MCap values
       const currentMcap = token.marketCap ? utils.formatNumber(token.marketCap) : '—';
@@ -132,7 +135,9 @@ const performancePage = {
               onerror="this.src='${fallback}'"
             />
             <div class="perf-token-info">
-              <span class="perf-token-name">${name}</span>
+              <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                <span class="perf-token-name">${name}</span>${emergingBadge}
+              </div>
               <span class="perf-token-symbol">${symbol}</span>
             </div>
           </td>

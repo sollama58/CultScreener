@@ -494,6 +494,18 @@ const tokenDetail = {
     const nameEl = document.getElementById('token-name');
     if (nameEl) nameEl.textContent = token.name || `${this.mint.slice(0, 4)}...${this.mint.slice(-4)}`;
 
+    // Emerging Cult badge — inject/remove right after the token name h1
+    if (nameEl) {
+      const existing = nameEl.parentElement.querySelector('.emerging-cult-badge');
+      if (existing) existing.remove();
+      if (token.emergingCult) {
+        const badge = document.createElement('span');
+        badge.className = 'emerging-cult-badge';
+        badge.textContent = '🛠️ Emerging Cult';
+        nameEl.insertAdjacentElement('afterend', badge);
+      }
+    }
+
     const symbolEl = document.getElementById('token-symbol');
     if (symbolEl) symbolEl.textContent = token.symbol || this.mint.slice(0, 5).toUpperCase();
 

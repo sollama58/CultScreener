@@ -5117,6 +5117,25 @@ textarea {
   letter-spacing: 0.03em;
 }
 
+/* Emerging Cult label badge */
+.emerging-cult-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-xs);
+  vertical-align: middle;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* Table generic styles */
 table {
   width: 100%;

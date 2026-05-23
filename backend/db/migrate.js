@@ -72,6 +72,14 @@ async function runMigrations() {
 
     await client.query(initSql);
 
+    // Additive column migrations — safe to run on existing databases
+    const columnMigrations = [
+      `ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_emerging_cult BOOLEAN DEFAULT FALSE`,
+    ];
+    for (const sql of columnMigrations) {
+      await client.query(sql);
+    }
+
     log('Migrations completed successfully!', 'green');
 
     // Show table counts
