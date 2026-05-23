@@ -198,30 +198,14 @@ const performancePage = {
       }
 
       const top10 = this._getSortedTokens().slice(0, 10);
-      this._buildShareGraphic(top10);
+      // Pre-fetch logos as data URIs before building the graphic so html2canvas
+      // never has to deal with cross-origin image requests at capture time.
+      await this._buildShareGraphic(top10);
 
       const graphic = document.getElementById('perf-share-graphic');
-
-      // Wait for all token logos to load (or error out) before capturing.
-      // allowTaint is intentionally NOT set — useCORS keeps the canvas untainted
-      // so toBlob() works. Images without CORS headers fall back to the inline
-      // SVG avatar via the onerror handler set in _buildShareGraphic.
-      const imgs = [...graphic.querySelectorAll('img')];
-      if (imgs.length) {
-        await Promise.all(imgs.map(img =>
-          img.complete ? Promise.resolve() :
-          new Promise(resolve => {
-            img.addEventListener('load',  resolve, { once: true });
-            img.addEventListener('error', resolve, { once: true });
-            setTimeout(resolve, 3000);
-          })
-        ));
-      }
-
       const canvas = await html2canvas(graphic, {
         backgroundColor: '#0d0e11',
         scale: 2,
-        useCORS: true,
         logging: false,
       });
 
@@ -260,13 +244,19 @@ const performancePage = {
     }
   },
 
-  _buildShareGraphic(tokens) {
+  async _buildShareGraphic(tokens) {
     const graphic = document.getElementById('perf-share-graphic');
     if (!graphic) return;
 
     const isAth = this.sortField === 'ath';
     const sortLabel = isAth ? 'ATH % since Listing' : 'Current % since Listing';
     const now = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    // Pre-fetch all logos into data URIs so html2canvas sees only same-origin data
+    // and never has to make a cross-origin request at capture time.
+    const logoDataUris = await Promise.all(
+      tokens.map(t => this._logoToDataUri(t.logoUri, t.symbol))
+    );
 
     const rows = tokens.map((token, i) => {
       const athPct  = this._athPct(token);
@@ -279,11 +269,8 @@ const performancePage = {
       const hammer  = token.emergingCult ? '<span class="psg-hammer">🛠️</span>' : '';
       const name    = (token.name   || '').replace(/</g, '&lt;');
       const symbol  = (token.symbol || '').replace(/</g, '&lt;');
-      const sym1    = (token.symbol || '?').charAt(0).toUpperCase();
-      const logoSrc = utils.escapeHtml(token.logoUri || '');
-      // Inline SVG letter-avatar used as onerror fallback (no external request needed)
-      const fallbackSvg = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><circle cx='15' cy='15' r='15' fill='%231a1c22'/><text x='15' y='20' text-anchor='middle' fill='%23ff5722' font-size='13' font-weight='700' font-family='Inter,sans-serif'>${sym1}</text></svg>`;
-      const logoHtml = `<img class="psg-token-logo" src="${logoSrc || fallbackSvg}" crossorigin="anonymous" alt="${sym1}" onerror="this.onerror=null;this.src='${fallbackSvg}'">`;
+      const logoSrc = logoDataUris[i]; // already a data URI — no crossOrigin needed
+      const logoHtml = `<img class="psg-token-logo" src="${logoSrc}" alt="${symbol}">`;
 
       return `<tr>
         <td class="psg-rank">${i + 1}</td>
@@ -458,5 +445,58 @@ const performancePage = {
   _setStatusText(text) {
     const el = document.getElementById('perf-status');
     if (el) el.textContent = text;
+  },
+
+  /**
+   * Fetch a remote image and return it as a data URI so html2canvas can render
+   * it without any cross-origin restrictions. Falls back to a letter-avatar SVG
+   * if the URL is missing, times out, or the server lacks CORS headers.
+   *
+   * Strategy: try with crossOrigin='anonymous' first (works when the CDN sets
+   * Access-Control-Allow-Origin). If the canvas would be tainted (no CORS header
+   * on the server), the drawImage call throws a SecurityError and we fall through
+   * to the letter avatar.
+   */
+  async _logoToDataUri(url, symbol) {
+    const avatar = this._letterAvatar(symbol);
+    if (!url) return avatar;
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      const timer = setTimeout(() => {
+        img.onload = img.onerror = null;
+        resolve(avatar);
+      }, 4000);
+
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const c = document.createElement('canvas');
+          c.width = 30; c.height = 30;
+          const ctx = c.getContext('2d');
+          // Clip to circle so logos look consistent
+          ctx.beginPath();
+          ctx.arc(15, 15, 15, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.drawImage(img, 0, 0, 30, 30);
+          resolve(c.toDataURL('image/png'));
+        } catch (_) {
+          // Canvas tainted (no CORS headers) — use letter avatar
+          resolve(avatar);
+        }
+      };
+
+      img.onerror = () => { clearTimeout(timer); resolve(avatar); };
+      img.src = url;
+    });
+  },
+
+  /** Return a base64-encoded SVG data URI showing the first letter of the symbol. */
+  _letterAvatar(symbol) {
+    const s = (symbol || '?').charAt(0).toUpperCase();
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><circle cx="15" cy="15" r="15" fill="#1a1c22"/><text x="15" y="20" text-anchor="middle" fill="#ff5722" font-size="13" font-weight="700" font-family="Inter,sans-serif">${s}</text></svg>`;
+    return `data:image/svg+xml;base64,${btoa(svg)}`;
   },
 };
