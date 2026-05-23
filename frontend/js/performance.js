@@ -479,10 +479,14 @@ const performancePage = {
 
     // Route through our own backend proxy so CORS is never an issue —
     // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
-    const proxied = `/api/image-proxy?url=${encodeURIComponent(url)}`;
+    // Must use absolute URL: frontend (cultscreener.com) and API (cultscreener-api.onrender.com)
+    // are separate Render services; a relative /api/* path hits the static file server (404).
+    const apiBase = (typeof API_BASE_URL !== 'undefined') ? API_BASE_URL : '';
+    const proxied = `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
 
     return new Promise((resolve) => {
       const img = new Image();
+      img.crossOrigin = 'anonymous'; // required: proxy is cross-origin, canvas must stay untainted
 
       const timer = setTimeout(() => {
         img.onload = img.onerror = null;
