@@ -163,20 +163,26 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Table */
+    /* Table — fixed layout so token column doesn't crowd out data columns */
+    .perf-table {
+      table-layout: fixed;
+    }
     .perf-table th { white-space: nowrap; }
     .perf-th-rank, td.perf-rank { width: 42px; text-align: center; }
+    th.perf-th-token { width: 220px; }
+    th.perf-th-ath, th.perf-th-current { width: auto; }
+    th.perf-th-mcap { width: 130px; }
     .perf-rank {
       font-family: var(--font-mono);
       font-size: 0.78rem;
       color: var(--text-dim);
       text-align: center;
     }
-    td.perf-token { max-width: 220px; }
     .perf-token-cell {
       display: flex;
       align-items: center;
       gap: 0.55rem;
+      overflow: hidden;
     }
     .perf-logo {
       width: 28px;
@@ -190,6 +196,7 @@
       display: flex;
       flex-direction: column;
       min-width: 0;
+      overflow: hidden;
     }
     .perf-token-name {
       font-size: 0.84rem;
@@ -198,7 +205,6 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 160px;
     }
     .perf-token-symbol {
       font-size: 0.68rem;
@@ -206,17 +212,13 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    td.perf-token-cell {
-      max-width: 220px;
-    }
-    td.perf-listed-mcap, td.perf-ath-mcap, td.perf-current-mcap, td.perf-mcap {
+    td.perf-mcap {
       font-family: var(--font-mono);
       font-size: 0.8rem;
       color: var(--text-muted);
       text-align: right;
       white-space: nowrap;
     }
-    td.perf-ath-mcap { color: var(--text-secondary, #d1d5db); }
     td.perf-ath-pct {
       font-family: var(--font-mono);
       font-size: 0.92rem;
@@ -242,10 +244,100 @@
       background: rgba(255,87,34,0.04);
     }
 
+    /* Share screenshot card — rendered off-screen then captured */
+    #perf-share-graphic {
+      position: fixed;
+      left: -9999px;
+      top: 0;
+      width: 600px;
+      background: #0d0e11;
+      border: 1px solid #2a2b30;
+      border-radius: 12px;
+      overflow: hidden;
+      font-family: 'Inter', -apple-system, sans-serif;
+    }
+    .psg-header {
+      padding: 18px 20px 14px;
+      background: linear-gradient(135deg, #111317, #0d0e11);
+      border-bottom: 1px solid #1e2026;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .psg-brand { display: flex; align-items: center; gap: 8px; }
+    .psg-logo {
+      font-size: 1rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+    .psg-logo span { color: #ff5722; }
+    .psg-subtitle { font-size: 0.72rem; color: #6b7280; margin-top: 2px; }
+    .psg-sort-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #ff5722;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: rgba(255,87,34,0.1);
+      border: 1px solid rgba(255,87,34,0.25);
+      border-radius: 4px;
+      padding: 3px 8px;
+    }
+    .psg-table { width: 100%; border-collapse: collapse; }
+    .psg-table thead th {
+      padding: 8px 14px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #4b5563;
+      border-bottom: 1px solid #1e2026;
+      text-align: left;
+    }
+    .psg-table thead th.right { text-align: right; }
+    .psg-table tbody td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #161820;
+      font-size: 0.82rem;
+      color: #9ca3af;
+    }
+    .psg-table tbody tr:last-child td { border-bottom: none; }
+    .psg-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+    .psg-rank { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #4b5563; width: 32px; }
+    .psg-token-cell { display: flex; align-items: center; gap: 8px; }
+    .psg-token-name { font-weight: 600; color: #f3f4f6; font-size: 0.84rem; }
+    .psg-token-symbol { font-size: 0.68rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; display: block; }
+    .psg-hammer { font-size: 0.78rem; flex-shrink: 0; }
+    .psg-pct {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 0.9rem;
+      text-align: right;
+    }
+    .psg-pct-current {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-align: right;
+      color: #9ca3af;
+    }
+    .psg-positive { color: #10b981; }
+    .psg-negative { color: #ef4444; }
+    .psg-na { color: #374151; }
+    .psg-footer {
+      padding: 10px 20px;
+      border-top: 1px solid #1e2026;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .psg-url { font-size: 0.68rem; color: #4b5563; letter-spacing: 0.04em; }
+    .psg-ts { font-size: 0.65rem; color: #374151; }
+
     @media (max-width: 640px) {
-      td.perf-listed-mcap, th.perf-th-listed,
-      td.perf-ath-mcap, th.perf-th-ath-mcap,
-      td.perf-current-mcap, th.perf-th-current-mcap { display: none; }
+      td.perf-mcap, th.perf-th-mcap { display: none; }
+      th.perf-th-token { width: 180px; }
     }
   </style>
 
@@ -437,10 +529,11 @@
         </div>
         <button class="perf-share-btn" id="perf-share-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+            <polyline points="16 6 12 2 8 6"/>
+            <line x1="12" y1="2" x2="12" y2="15"/>
           </svg>
-          Share Top 10
+          Screenshot Top 10
         </button>
       </div>
 
@@ -477,6 +570,9 @@
         </table>
       </div>
     </section>
+
+    <!-- Off-screen share card — populated by performancePage.share() before html2canvas capture -->
+    <div id="perf-share-graphic"></div>
   </main>
 
   <footer class="footer">
@@ -494,7 +590,7 @@
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
   <script src="js/conviction.js?v=5"></script>
-  <script src="js/performance.js?v=4"></script>
+  <script src="js/performance.js?v=5"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────
     (function () {

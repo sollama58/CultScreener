@@ -174,36 +174,138 @@ const performancePage = {
   },
 
   // ---------------------------------------------------------------------------
-  // Share
+  // Share (screenshot)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Share the performance leaderboard URL — uses Web Share API on mobile,
-   * falls back to clipboard copy, matching the share button pattern used
-   * across the rest of the app.
-   */
   async share() {
-    const shareUrl = window.location.origin + '/';
-    const sortLabel = this.sortField === 'ath'
-      ? 'ATH % since listing'
-      : 'Current % since listing';
-    const title = '🔥 CultScreener Performance Leaderboard';
-    const text  = `Top performers sorted by ${sortLabel} — CultScreener`;
+    const btn = document.getElementById('perf-share-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Capturing…'; }
 
-    if (typeof navigator.share === 'function') {
-      try {
-        await navigator.share({ title, text, url: shareUrl });
-        return;
-      } catch (e) {
-        if (e.name === 'AbortError') return;
+    try {
+      // Lazily load html2canvas (same pattern as token detail page)
+      if (typeof html2canvas === 'undefined') {
+        await Promise.race([
+          new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.crossOrigin = 'anonymous';
+            s.onload = resolve;
+            s.onerror = () => reject(new Error('Failed to load screenshot library'));
+            document.head.appendChild(s);
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
+        ]);
       }
-    }
 
-    // Clipboard fallback
-    const copied = await utils.copyToClipboard(shareUrl);
-    if (copied && typeof toast !== 'undefined') {
-      toast.success('Share link copied to clipboard');
+      const top10 = this._getSortedTokens().slice(0, 10);
+      this._buildShareGraphic(top10);
+
+      const graphic = document.getElementById('perf-share-graphic');
+      const canvas = await html2canvas(graphic, {
+        backgroundColor: '#0d0e11',
+        scale: 2,
+        allowTaint: true,
+        logging: false,
+      });
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png');
+      });
+
+      const sortSlug = this.sortField === 'ath' ? 'ath' : 'current';
+      const filename = `cultscreener-performance-top10-${sortSlug}.png`;
+
+      // Try native share with file (mobile)
+      if (navigator.share && navigator.canShare) {
+        const file = new File([blob], filename, { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: 'CultScreener Performance Top 10' });
+          return;
+        }
+      }
+
+      // Fallback: trigger download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+      if (typeof toast !== 'undefined') toast.success('Screenshot saved!');
+    } catch (err) {
+      console.error('[performancePage] share error:', err);
+      if (typeof toast !== 'undefined') toast.error('Screenshot failed — try again');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg> Screenshot Top 10`; }
     }
+  },
+
+  _buildShareGraphic(tokens) {
+    const graphic = document.getElementById('perf-share-graphic');
+    if (!graphic) return;
+
+    const isAth = this.sortField === 'ath';
+    const sortLabel = isAth ? 'ATH % since Listing' : 'Current % since Listing';
+    const now = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    const rows = tokens.map((token, i) => {
+      const athPct  = this._athPct(token);
+      const curPct  = this._currentPct(token);
+
+      const fmtPct = (pct, cls) => pct === null
+        ? `<td class="psg-pct psg-na">—</td>`
+        : `<td class="psg-pct ${pct >= 0 ? 'psg-positive' : 'psg-negative'} ${cls}">${this._formatPct(pct)}</td>`;
+
+      const hammer = token.emergingCult ? '<span class="psg-hammer">🛠️</span>' : '';
+      const name   = (token.name   || '').replace(/</g, '&lt;');
+      const symbol = (token.symbol || '').replace(/</g, '&lt;');
+
+      return `<tr>
+        <td class="psg-rank">${i + 1}</td>
+        <td>
+          <div class="psg-token-cell">
+            <div>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <span class="psg-token-name">${name}</span>${hammer}
+              </div>
+              <span class="psg-token-symbol">${symbol}</span>
+            </div>
+          </div>
+        </td>
+        ${fmtPct(athPct, '')}
+        ${fmtPct(curPct, 'psg-pct-current')}
+      </tr>`;
+    }).join('');
+
+    graphic.innerHTML = `
+      <div class="psg-header">
+        <div class="psg-brand">
+          <div>
+            <div class="psg-logo">Cult<span>Screener</span></div>
+            <div class="psg-subtitle">Performance Leaderboard · Top 10</div>
+          </div>
+        </div>
+        <div class="psg-sort-label">${sortLabel}</div>
+      </div>
+      <table class="psg-table">
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th>Token</th>
+            <th class="right">ATH %</th>
+            <th class="right">Current %</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="psg-footer">
+        <span class="psg-url">cultscreener.com</span>
+        <span class="psg-ts">${now}</span>
+      </div>
+    `;
   },
 
   // ---------------------------------------------------------------------------
