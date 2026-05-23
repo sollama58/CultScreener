@@ -5117,7 +5117,7 @@ textarea {
   letter-spacing: 0.03em;
 }
 
-/* Emerging Cult label badge */
+/* Emerging Cult label badge — token detail page */
 .emerging-cult-badge {
   display: inline-flex;
   align-items: center;
@@ -5134,6 +5134,22 @@ textarea {
   vertical-align: middle;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* Emerging Cult hammer emoji — table rows */
+.cult-hammer {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+/* Name + hammer on the same flex row inside table token cells */
+.table-name-line {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
 }
 
 /* Table generic styles */

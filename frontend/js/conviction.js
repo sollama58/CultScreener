@@ -456,6 +456,9 @@ const convictionPage = {
       const safeLogo = utils.escapeHtml(token.logoUri || token.logoURI || defaultLogo);
       const safeName = utils.escapeHtml(token.name || `${address.slice(0, 4)}...${address.slice(-4)}`);
       const safeSymbol = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
+      const emergingBadge = token.emergingCult
+        ? '<span class="cult-hammer" title="Emerging Cult">🛠️</span>'
+        : '';
 
       // Conviction percentage
       const conviction1m = token.conviction1m != null ? token.conviction1m : 0;
@@ -500,7 +503,9 @@ const convictionPage = {
             <div class="token-cell">
               <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy">
               <div class="token-info">
-                <span class="token-name">${safeName}</span>
+                <div class="table-name-line">
+                  <span class="token-name">${safeName}</span>${emergingBadge}
+                </div>
                 <span class="token-symbol-cell">${safeSymbol}</span>
               </div>
             </div>
