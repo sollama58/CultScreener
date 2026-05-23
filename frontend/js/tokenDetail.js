@@ -674,8 +674,8 @@ const tokenDetail = {
     });
 
     try {
-      // Always fetch 30 days so 1D/7D/30D change stats can be computed regardless of chart range
-      const data = await api.tokens.getHolderHistory(this.mint, 30);
+      // Fetch 31 days so the 30D change stat has a baseline row to compare against
+      const data = await api.tokens.getHolderHistory(this.mint, 31);
       const history = (data && Array.isArray(data.history)) ? data.history : [];
 
       // Reverse so oldest → newest (API returns newest first)
@@ -710,14 +710,25 @@ const tokenDetail = {
     const el = document.getElementById('ht-changes');
     if (!el || rows.length === 0) return;
 
-    const latest = rows[rows.length - 1].holder_count;
+    const latestRow = rows[rows.length - 1];
+    const latest = latestRow.holder_count;
+    const latestDate = new Date(latestRow.recorded_date + 'T00:00:00');
 
-    // Returns { delta, pct } for a given days-ago offset, or null if not enough data
+    // Returns { delta, pct } for a given days-ago offset using actual date matching.
+    // Finds the row whose recorded_date is <= (today - daysAgo), so gaps in snapshots
+    // don't silently corrupt the percentage calculation.
     const getDelta = (daysAgo) => {
-      if (rows.length <= daysAgo) return null;
-      const past = rows[rows.length - 1 - daysAgo].holder_count;
-      const delta = latest - past;
-      const pct   = past > 0 ? (delta / past * 100) : 0;
+      const target = new Date(latestDate);
+      target.setDate(target.getDate() - daysAgo);
+      const targetStr = target.toISOString().slice(0, 10);
+      // rows are oldest→newest; walk backwards to find the closest row on or before target
+      let pastRow = null;
+      for (let i = rows.length - 2; i >= 0; i--) {
+        if (rows[i].recorded_date <= targetStr) { pastRow = rows[i]; break; }
+      }
+      if (!pastRow) return null;
+      const delta = latest - pastRow.holder_count;
+      const pct   = pastRow.holder_count > 0 ? (delta / pastRow.holder_count * 100) : 0;
       return { delta, pct };
     };
 

@@ -733,11 +733,18 @@ const jobProcessors = {
       if (!mint) { skipped++; continue; }
 
       try {
-        // Prefer the precise paginated count; fall back to analytics cache
+        // 1. Prefer the precise paginated count already cached
         let count = await cache.get(`holder-total:${mint}`);
+        // 2. Fall back to the analytics cache (2h TTL)
         if (!count || count <= 0) {
           const analytics = await cache.get(`holder-analytics:${mint}`);
           count = analytics?.metrics?.holderCount || null;
+        }
+        // 3. Live fetch from Helius when both caches are cold — this runs daily
+        //    at 00:05 UTC when caches are most likely expired, so we must be able
+        //    to fetch a fresh count rather than silently skipping the token.
+        if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
+          count = await solanaService.getTokenHolderCount(mint).catch(() => null);
         }
 
         if (!count || count <= 0) { skipped++; continue; }

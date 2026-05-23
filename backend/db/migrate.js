@@ -72,9 +72,20 @@ async function runMigrations() {
 
     await client.query(initSql);
 
-    // Additive column migrations — safe to run on existing databases
+    // Additive migrations — safe to run on existing databases
     const columnMigrations = [
       `ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_emerging_cult BOOLEAN DEFAULT FALSE`,
+      // Daily holder count history — one row per token per day
+      `CREATE TABLE IF NOT EXISTS holder_history (
+        id SERIAL PRIMARY KEY,
+        mint_address VARCHAR(44) NOT NULL,
+        holder_count INTEGER NOT NULL,
+        recorded_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        recorded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        UNIQUE(mint_address, recorded_date)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
+        ON holder_history(mint_address, recorded_date DESC)`,
     ];
     for (const sql of columnMigrations) {
       await client.query(sql);
