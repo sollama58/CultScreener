@@ -303,27 +303,38 @@ app.get('/api/announcements', async (req, res) => {
 
 // Image proxy — fetches token logo images server-side and re-serves them with
 // Access-Control-Allow-Origin: * so the frontend can canvas-read cross-origin images.
-// Only whitelisted CDN hostnames are accepted to prevent open-proxy abuse.
-const IMAGE_PROXY_ALLOWED = new Set([
-  'cdn.dexscreener.com', 'dd.dexscreener.com',
-  'assets.geckoterminal.com', 'coin-images.coingecko.com',
-  'raw.githubusercontent.com',
-  'arweave.net', 'www.arweave.net',
-  'ipfs.io', 'cloudflare-ipfs.com', 'nftstorage.link',
+// Suffix-based allowlist prevents open-proxy abuse while covering all known token CDNs.
+const IMAGE_PROXY_SUFFIX_ALLOWED = [
+  '.dexscreener.com', '.coingecko.com', '.geckoterminal.com',
+  '.githubusercontent.com', '.arweave.net', '.nftstorage.link',
+  '.ipfs.io', '.cloudflare-ipfs.com',
+];
+const IMAGE_PROXY_EXACT_ALLOWED = new Set([
+  'arweave.net', 'ipfs.io', 'cloudflare-ipfs.com', 'nftstorage.link',
+  'pbs.twimg.com', 'i.imgur.com', 'storage.googleapis.com',
+  's2.coinmarketcap.com', 'metadata.jup.ag',
 ]);
+function isImageHostAllowed(hostname) {
+  if (IMAGE_PROXY_EXACT_ALLOWED.has(hostname)) return true;
+  return IMAGE_PROXY_SUFFIX_ALLOWED.some(s => hostname.endsWith(s));
+}
 app.get('/api/image-proxy', async (req, res) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
   let parsed;
   try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid url' }); }
   if (parsed.protocol !== 'https:') return res.status(400).json({ error: 'https only' });
-  if (!IMAGE_PROXY_ALLOWED.has(parsed.hostname)) return res.status(403).json({ error: 'Host not allowed' });
+  if (!isImageHostAllowed(parsed.hostname)) return res.status(403).json({ error: 'Host not allowed' });
   try {
     const axios = require('axios');
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 8000,
-      headers: { 'User-Agent': 'CultScreener/1.0' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; CultScreener/1.0)',
+        'Accept': 'image/webp,image/png,image/jpeg,image/*',
+        'Referer': `https://${parsed.hostname}/`,
+      },
     });
     const contentType = response.headers['content-type'] || 'image/png';
     res.setHeader('Access-Control-Allow-Origin', '*');

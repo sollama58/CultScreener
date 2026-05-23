@@ -252,15 +252,11 @@ const performancePage = {
     const sortLabel = isAth ? 'ATH % since Listing' : 'Current % since Listing';
     const now = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-    // Fetch image URLs from DexScreener (dd.dexscreener.com has CORS headers).
-    // Fall back to the stored logoUri only if DexScreener doesn't have the token.
-    const dsImageMap = await this._fetchDexScreenerImages(tokens);
+    // Pre-fetch all logos as PNG data URIs via the backend image proxy.
+    // The proxy fetches server-side (no CORS restriction) and re-serves with
+    // Access-Control-Allow-Origin: *, so drawImage never taints the canvas.
     const logoDataUris = await Promise.all(
-      tokens.map(t => {
-        const mint = t.mintAddress || t.address || '';
-        const url  = dsImageMap[mint] || t.logoUri || '';
-        return this._logoToDataUri(url, t.symbol);
-      })
+      tokens.map(t => this._logoToDataUri(t.logoUri || '', t.symbol))
     );
 
     const rows = tokens.map((token, i) => {
@@ -322,6 +318,21 @@ const performancePage = {
         <span class="psg-ts">${now}</span>
       </div>
     `;
+
+    // Even though srcs are data URIs, browsers decode them asynchronously.
+    // Wait for every img to be ready before returning so html2canvas sees
+    // fully decoded pixel data, not blank placeholders.
+    const domImgs = [...graphic.querySelectorAll('img')];
+    if (domImgs.length) {
+      await Promise.all(domImgs.map(img =>
+        img.complete ? Promise.resolve() :
+        new Promise(resolve => {
+          img.addEventListener('load',  resolve, { once: true });
+          img.addEventListener('error', resolve, { once: true });
+          setTimeout(resolve, 2000);
+        })
+      ));
+    }
   },
 
   // ---------------------------------------------------------------------------
@@ -450,37 +461,6 @@ const performancePage = {
   _setStatusText(text) {
     const el = document.getElementById('perf-status');
     if (el) el.textContent = text;
-  },
-
-  /**
-   * Batch-fetch token image URLs from DexScreener for the given tokens.
-   * DexScreener's dd.dexscreener.com CDN serves images with CORS headers,
-   * unlike CoinGecko or other CDNs that block cross-origin canvas reads.
-   * Returns a map of { mintAddress -> imageUrl }.
-   */
-  async _fetchDexScreenerImages(tokens) {
-    const mints = tokens
-      .map(t => t.mintAddress || t.address || '')
-      .filter(Boolean);
-    if (!mints.length) return {};
-
-    try {
-      // DexScreener accepts up to 30 comma-separated addresses
-      const url = `https://api.dexscreener.com/latest/dex/tokens/${mints.join(',')}`;
-      const resp = await fetch(url);
-      if (!resp.ok) return {};
-      const data = await resp.json();
-
-      const map = {};
-      for (const pair of (data.pairs || [])) {
-        const addr = pair.baseToken?.address;
-        const img  = pair.info?.imageUrl;
-        if (addr && img && !map[addr]) map[addr] = img;
-      }
-      return map;
-    } catch (_) {
-      return {};
-    }
   },
 
   /**
