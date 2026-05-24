@@ -497,12 +497,17 @@ const api = {
 
     async getHolderHistory(mint, days = 30) {
       const cacheKey = `tokens:holder-history:${mint}:${days}`;
-      return apiCache.getOrFetch(
-        cacheKey,
-        () => api.request(`/api/tokens/${mint}/holder-history?days=${days}`),
-        6 * 60 * 60 * 1000, // 6hr — data only changes once per day
-        true
-      );
+      // Only serve from cache when the history is non-empty — an empty cached result
+      // means no snapshot has been taken yet and we must re-check on every page load.
+      const cached = apiCache.get(cacheKey);
+      if (cached && cached.fresh && cached.data?.history?.length > 0) {
+        return cached.data;
+      }
+      const data = await api.request(`/api/tokens/${mint}/holder-history?days=${days}`);
+      if (data?.history?.length > 0) {
+        apiCache.set(cacheKey, data, 6 * 60 * 60 * 1000);
+      }
+      return data;
     },
 
     async getHolderBalance(mint, wallet) {
