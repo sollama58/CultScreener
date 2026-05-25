@@ -460,7 +460,7 @@ const convictionPage = {
         ? '<span class="cult-hammer" title="Emerging Cult">🛠️</span>'
         : '';
       const techBadge = token.techCoin
-        ? '<span class="tech-coin-badge" title="Tech Coin">🤖 Tech Coin</span>'
+        ? '<span class="cult-hammer" title="Tech Coin">🤖</span>'
         : '';
 
       // Conviction percentage

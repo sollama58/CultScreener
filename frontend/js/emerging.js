@@ -1,6 +1,6 @@
-/* global api, apiCache, utils, convictionPage */
+/* global api, utils, convictionPage */
 
-const techPage = {
+const emergingPage = {
   tokens: [],
   _searchTimeout: null,
   _loaded: false,
@@ -13,7 +13,7 @@ const techPage = {
   },
 
   bindSearch() {
-    const search = document.getElementById('tech-search');
+    const search = document.getElementById('emerging-search');
     if (!search) return;
     search.addEventListener('input', () => {
       clearTimeout(this._searchTimeout);
@@ -22,8 +22,8 @@ const techPage = {
   },
 
   async loadData() {
-    const tbody = document.getElementById('tech-table-body');
-    const statusEl = document.getElementById('tech-status-text');
+    const tbody = document.getElementById('emerging-table-body');
+    const statusEl = document.getElementById('emerging-status-text');
     if (!tbody) return;
 
     if (statusEl) {
@@ -36,22 +36,21 @@ const techPage = {
         <td colspan="8">
           <div class="loading-state">
             <div class="loading-spinner"></div>
-            <span>Loading tech coins...</span>
+            <span>Loading emerging cults...</span>
           </div>
         </td>
       </tr>
     `;
 
     try {
-      // Fetch up to 100 curated tokens from the conviction leaderboard
       const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
       const allTokens = result?.tokens || [];
-      this.tokens = allTokens.filter(t => t.techCoin);
+      this.tokens = allTokens.filter(t => t.emergingCult);
 
       if (statusEl) {
         statusEl.textContent = this.tokens.length > 0
-          ? `${this.tokens.length} TECH COIN${this.tokens.length !== 1 ? 'S' : ''}`
-          : 'NO TECH COINS';
+          ? `${this.tokens.length} EMERGING CULT${this.tokens.length !== 1 ? 'S' : ''}`
+          : 'NO EMERGING CULTS';
         statusEl.parentElement.classList.remove('loading', 'error');
       }
 
@@ -66,7 +65,7 @@ const techPage = {
         <tr class="empty-row">
           <td colspan="8">
             <div class="empty-state">
-              <span>Failed to load tech coins. Please try again.</span>
+              <span>Failed to load emerging cults. Please try again.</span>
             </div>
           </td>
         </tr>
@@ -75,10 +74,10 @@ const techPage = {
   },
 
   render() {
-    const tbody = document.getElementById('tech-table-body');
+    const tbody = document.getElementById('emerging-table-body');
     if (!tbody) return;
 
-    const search = document.getElementById('tech-search');
+    const search = document.getElementById('emerging-search');
     const query = search ? search.value.trim().toLowerCase() : '';
 
     const filtered = query
@@ -93,8 +92,8 @@ const techPage = {
         <tr class="empty-row">
           <td colspan="8">
             <div class="empty-state">
-              <span style="font-size:1.5rem;margin-bottom:0.5rem;opacity:0.4;">NO TECH COINS</span>
-              <span>${query ? 'No tech coins match your search.' : 'No tech coins have been added yet. Use the admin panel to tag tokens as Tech Coins.'}</span>
+              <span style="font-size:1.5rem;margin-bottom:0.5rem;opacity:0.4;">NO EMERGING CULTS</span>
+              <span>${query ? 'No emerging cults match your search.' : 'No emerging cults have been added yet. Use the admin panel to tag tokens as Emerging Cult.'}</span>
             </div>
           </td>
         </tr>
@@ -113,7 +112,7 @@ const techPage = {
       const safeName = utils.escapeHtml(token.name || `${address.slice(0, 4)}...${address.slice(-4)}`);
       const safeSymbol = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
 
-      const techBadge = '<span class="cult-hammer" title="Tech Coin">🤖</span>';
+      const emergingBadge = '<span class="cult-hammer" title="Emerging Cult">🛠️</span>';
 
       const conviction1m = token.conviction1m != null ? token.conviction1m : 0;
       const convictionClass = conviction1m >= 75 ? 'conviction-elite'
@@ -155,7 +154,7 @@ const techPage = {
               <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy">
               <div class="token-info">
                 <div class="table-name-line">
-                  <span class="token-name">${safeName}</span>${techBadge}
+                  <span class="token-name">${safeName}</span>${emergingBadge}
                 </div>
                 <span class="token-symbol-cell">${safeSymbol}</span>
               </div>
@@ -176,7 +175,6 @@ const techPage = {
       `;
     }).join('');
 
-    // Click navigation — same URL pattern as conviction.js
     tbody.querySelectorAll('[data-navigate]').forEach(el => {
       el.addEventListener('click', () => {
         const mint = el.dataset.navigate;
@@ -185,7 +183,6 @@ const techPage = {
       el.style.cursor = 'pointer';
     });
 
-    // Logo error fallback
     const safeDefaultLogo = defaultLogo;
     tbody.querySelectorAll('.token-logo').forEach(img => {
       img.addEventListener('error', function () {

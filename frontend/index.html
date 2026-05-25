@@ -404,15 +404,18 @@
         </svg>
         Diamond Hands
       </button>
-      <button class="main-view-tab" id="tab-tech" role="tab" aria-selected="false" aria-controls="view-tech" data-view="tech">
-        🤖 TECH
-      </button>
       <button class="main-view-tab" id="tab-performance" role="tab" aria-selected="false" aria-controls="view-performance" data-view="performance">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
           <polyline points="16 7 22 7 22 13"/>
         </svg>
         Performance
+      </button>
+      <button class="main-view-tab" id="tab-tech" role="tab" aria-selected="false" aria-controls="view-tech" data-view="tech">
+        🤖 TECH
+      </button>
+      <button class="main-view-tab" id="tab-emerging" role="tab" aria-selected="false" aria-controls="view-emerging" data-view="emerging">
+        🛠️ EMERGING
       </button>
     </div>
 
@@ -566,6 +569,41 @@
       </div>
     </section>
 
+    <!-- Emerging Cult View -->
+    <section id="view-emerging" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-emerging">
+      <div class="terminal-toolbar">
+        <div class="terminal-search-wrap">
+          <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="text" id="emerging-search" placeholder="" maxlength="100" autocomplete="off" class="terminal-search" aria-label="Search emerging cult tokens">
+        </div>
+        <div class="terminal-status-inline">
+          <span class="terminal-dot"></span>
+          <span id="emerging-status-text">CONNECTING...</span>
+        </div>
+      </div>
+
+      <div class="community-table-container terminal-table-container">
+        <table class="token-table community-table conviction-table terminal-table">
+          <thead>
+            <tr>
+              <th class="cell-rank">#</th>
+              <th class="cell-token">Token</th>
+              <th class="cell-price">Price</th>
+              <th class="cell-mcap">MCap</th>
+              <th class="cell-conviction">CONVICTION</th>
+              <th class="cell-conviction-bars">Distribution</th>
+              <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th class="cell-updated">Holders</th>
+            </tr>
+          </thead>
+          <tbody id="emerging-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Performance Leaderboard View -->
     <section id="view-performance" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-performance">
       <!-- Toolbar -->
@@ -638,7 +676,8 @@
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
   <script src="js/conviction.js?v=6"></script>
-  <script src="js/tech.js?v=1"></script>
+  <script src="js/tech.js?v=2"></script>
+  <script src="js/emerging.js?v=1"></script>
   <script src="js/performance.js?v=14"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────
@@ -646,11 +685,13 @@
       var tabs = document.querySelectorAll('.main-view-tab');
       var panels = {
         diamond: document.getElementById('view-diamond'),
+        performance: document.getElementById('view-performance'),
         tech: document.getElementById('view-tech'),
-        performance: document.getElementById('view-performance')
+        emerging: document.getElementById('view-emerging')
       };
       var perfLoaded = false;
       var techLoaded = false;
+      var emergingLoaded = false;
 
       tabs.forEach(function (tab) {
         tab.addEventListener('click', function () {
@@ -671,6 +712,10 @@
           if (view === 'tech' && !techLoaded) {
             techLoaded = true;
             if (typeof techPage !== 'undefined') techPage.init();
+          }
+          if (view === 'emerging' && !emergingLoaded) {
+            emergingLoaded = true;
+            if (typeof emergingPage !== 'undefined') emergingPage.init();
           }
         });
       });
