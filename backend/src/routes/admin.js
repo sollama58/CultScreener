@@ -640,6 +640,29 @@ router.patch('/curated/:mint/emerging-cult', strictLimiter, asyncHandler(async (
   res.json({ success: true, emergingCult: value });
 }));
 
+// PATCH /api/admin/curated/:mint/tech-coin — Toggle the "Tech Coin" label
+router.patch('/curated/:mint/tech-coin', strictLimiter, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+  if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
+    return res.status(400).json({ error: 'Invalid mint address' });
+  }
+
+  const value = req.body.techCoin;
+  if (typeof value !== 'boolean') {
+    return res.status(400).json({ error: 'techCoin must be a boolean' });
+  }
+
+  const updated = await db.setTechCoin(mint, value);
+  if (!updated) {
+    return res.status(404).json({ error: 'Token not found in curated list' });
+  }
+
+  // Invalidate token cache so the label shows immediately
+  await cache.delete(`token:${mint}`).catch(() => {});
+
+  res.json({ success: true, techCoin: value });
+}));
+
 router.post('/curated/refresh', strictLimiter, (req, res, next) => {
   // Bulk refresh can take >30s; extend timeout beyond the global 30s default
   res.setTimeout(300000, () => {

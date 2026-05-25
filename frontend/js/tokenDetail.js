@@ -494,14 +494,19 @@ const tokenDetail = {
     const nameEl = document.getElementById('token-name');
     if (nameEl) nameEl.textContent = token.name || `${this.mint.slice(0, 4)}...${this.mint.slice(-4)}`;
 
-    // Emerging Cult badge — inject/remove right after the token name h1
+    // Emerging Cult / Tech Coin badges — inject/remove right after the token name h1
     if (nameEl) {
-      const existing = nameEl.parentElement.querySelector('.emerging-cult-badge');
-      if (existing) existing.remove();
+      nameEl.parentElement.querySelectorAll('.emerging-cult-badge, .tech-coin-detail-badge').forEach(el => el.remove());
       if (token.emergingCult) {
         const badge = document.createElement('span');
         badge.className = 'emerging-cult-badge';
         badge.textContent = '🛠️ Emerging Cult';
+        nameEl.insertAdjacentElement('afterend', badge);
+      }
+      if (token.techCoin) {
+        const badge = document.createElement('span');
+        badge.className = 'tech-coin-detail-badge';
+        badge.textContent = '🤖 Tech Coin';
         nameEl.insertAdjacentElement('afterend', badge);
       }
     }

@@ -120,6 +120,9 @@ const performancePage = {
       const emergingBadge = token.emergingCult
         ? '<span class="cult-hammer" title="Emerging Cult">🛠️</span>'
         : '';
+      const techBadge = token.techCoin
+        ? '<span class="tech-coin-badge" title="Tech Coin">🤖 Tech Coin</span>'
+        : '';
 
       // MCap values
       const currentMcap = token.marketCap ? utils.formatNumber(token.marketCap) : '—';
@@ -136,7 +139,7 @@ const performancePage = {
             />
             <div class="perf-token-info">
               <div class="table-name-line">
-                <span class="perf-token-name">${name}</span>${emergingBadge}
+                <span class="perf-token-name">${name}</span>${emergingBadge}${techBadge}
               </div>
               <span class="perf-token-symbol">${symbol}</span>
             </div>
@@ -268,6 +271,7 @@ const performancePage = {
         : `<td class="psg-pct ${pct >= 0 ? 'psg-positive' : 'psg-negative'} ${cls}">${this._formatPct(pct)}</td>`;
 
       const hammer  = token.emergingCult ? '<span class="psg-hammer">🛠️</span>' : '';
+      const techIcon = token.techCoin ? '<span class="psg-hammer">🤖</span>' : '';
       const name    = (token.name   || '').replace(/</g, '&lt;');
       const symbol  = (token.symbol || '').replace(/</g, '&lt;');
       const logoSrc = logoDataUris[i]; // already a data URI — no crossOrigin needed
@@ -280,7 +284,7 @@ const performancePage = {
             ${logoHtml}
             <div>
               <div style="display:flex;align-items:center;gap:5px;">
-                <span class="psg-token-name">${name}</span>${hammer}
+                <span class="psg-token-name">${name}</span>${hammer}${techIcon}
               </div>
               <span class="psg-token-symbol">${symbol}</span>
             </div>

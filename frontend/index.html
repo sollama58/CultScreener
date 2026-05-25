@@ -355,7 +355,7 @@
   <link rel="preload" href="js/config.js?v=2" as="script">
   <link rel="preload" href="js/api.js?v=5" as="script">
   <link rel="preload" href="js/wallet.js?v=2" as="script">
-  <link rel="preload" href="js/conviction.js?v=5" as="script">
+  <link rel="preload" href="js/conviction.js?v=6" as="script">
 </head>
 <body>
   <header class="header">
@@ -403,6 +403,9 @@
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
         </svg>
         Diamond Hands
+      </button>
+      <button class="main-view-tab" id="tab-tech" role="tab" aria-selected="false" aria-controls="view-tech" data-view="tech">
+        🤖 TECH
       </button>
       <button class="main-view-tab" id="tab-performance" role="tab" aria-selected="false" aria-controls="view-performance" data-view="performance">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -528,6 +531,41 @@
       </div>
     </section>
 
+    <!-- Tech Coins View -->
+    <section id="view-tech" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-tech">
+      <div class="terminal-toolbar">
+        <div class="terminal-search-wrap">
+          <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="text" id="tech-search" placeholder="" maxlength="100" autocomplete="off" class="terminal-search" aria-label="Search tech tokens">
+        </div>
+        <div class="terminal-status-inline">
+          <span class="terminal-dot"></span>
+          <span id="tech-status-text">CONNECTING...</span>
+        </div>
+      </div>
+
+      <div class="community-table-container terminal-table-container">
+        <table class="token-table community-table conviction-table terminal-table">
+          <thead>
+            <tr>
+              <th class="cell-rank">#</th>
+              <th class="cell-token">Token</th>
+              <th class="cell-price">Price</th>
+              <th class="cell-mcap">MCap</th>
+              <th class="cell-conviction">CONVICTION</th>
+              <th class="cell-conviction-bars">Distribution</th>
+              <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th class="cell-updated">Holders</th>
+            </tr>
+          </thead>
+          <tbody id="tech-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Performance Leaderboard View -->
     <section id="view-performance" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-performance">
       <!-- Toolbar -->
@@ -599,17 +637,20 @@
   <script src="js/announcements.js?v=2"></script>
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/conviction.js?v=5"></script>
-  <script src="js/performance.js?v=13"></script>
+  <script src="js/conviction.js?v=6"></script>
+  <script src="js/tech.js?v=1"></script>
+  <script src="js/performance.js?v=14"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────
     (function () {
       var tabs = document.querySelectorAll('.main-view-tab');
       var panels = {
         diamond: document.getElementById('view-diamond'),
+        tech: document.getElementById('view-tech'),
         performance: document.getElementById('view-performance')
       };
       var perfLoaded = false;
+      var techLoaded = false;
 
       tabs.forEach(function (tab) {
         tab.addEventListener('click', function () {
@@ -626,6 +667,10 @@
           if (view === 'performance' && !perfLoaded) {
             perfLoaded = true;
             if (typeof performancePage !== 'undefined') performancePage.init();
+          }
+          if (view === 'tech' && !techLoaded) {
+            techLoaded = true;
+            if (typeof techPage !== 'undefined') techPage.init();
           }
         });
       });

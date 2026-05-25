@@ -634,7 +634,7 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     WITH combined AS (
       SELECT t.mint_address, t.name, t.symbol, t.logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
              t.conviction_1m, t.conviction_data, t.conviction_sample_size, t.conviction_computed_at,
-             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult
+             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin
       FROM tokens t
       INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
       WHERE t.conviction_1m IS NOT NULL AND t.conviction_1m > 0
@@ -645,7 +645,7 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
              COALESCE(t.logo_uri, NULL) AS logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
              COALESCE(t.conviction_1m, 0) AS conviction_1m,
              t.conviction_data, t.conviction_sample_size, t.conviction_computed_at,
-             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult
+             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin
       FROM curated_tokens c
       LEFT JOIN tokens t ON t.mint_address = c.mint_address
       WHERE t.conviction_1m IS NULL OR t.conviction_1m = 0 OR t.mint_address IS NULL
@@ -3071,7 +3071,7 @@ async function getCuratedTokens() {
   if (!pool) return [];
   const result = await pool.query(`
     SELECT c.mint_address, c.banner_url, c.socials, c.dexscreener_updated_at, c.added_at,
-           c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult,
+           c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin,
            t.name, t.symbol, t.logo_uri
     FROM curated_tokens c
     LEFT JOIN tokens t ON t.mint_address = c.mint_address
@@ -3089,7 +3089,8 @@ async function getCuratedTokens() {
     mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
     mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
     mcapAthAt: row.mcap_ath_at,
-    emergingCult: row.is_emerging_cult || false
+    emergingCult: row.is_emerging_cult || false,
+    techCoin: row.is_tech_coin || false
   }));
 }
 
@@ -3097,7 +3098,7 @@ async function getCuratedToken(mintAddress) {
   if (!pool) return null;
   const result = await pool.query(`
     SELECT c.mint_address, c.banner_url, c.socials, c.dexscreener_updated_at, c.added_at,
-           c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult,
+           c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin,
            t.name, t.symbol, t.logo_uri
     FROM curated_tokens c
     LEFT JOIN tokens t ON t.mint_address = c.mint_address
@@ -3117,7 +3118,8 @@ async function getCuratedToken(mintAddress) {
     mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
     mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
     mcapAthAt: row.mcap_ath_at,
-    emergingCult: row.is_emerging_cult || false
+    emergingCult: row.is_emerging_cult || false,
+    techCoin: row.is_tech_coin || false
   };
 }
 
@@ -3229,6 +3231,17 @@ async function setEmergingCult(mintAddress, value) {
   const result = await pool.query(`
     UPDATE curated_tokens
     SET is_emerging_cult = $2
+    WHERE mint_address = $1
+    RETURNING *
+  `, [mintAddress, !!value]);
+  return result.rows[0] || null;
+}
+
+async function setTechCoin(mintAddress, value) {
+  if (!pool) return null;
+  const result = await pool.query(`
+    UPDATE curated_tokens
+    SET is_tech_coin = $2
     WHERE mint_address = $1
     RETURNING *
   `, [mintAddress, !!value]);
@@ -3540,6 +3553,7 @@ module.exports = {
   setCuratedTokenMcapAtAdded,
   setCuratedTokenAth,
   setEmergingCult,
+  setTechCoin,
   // Cultify burns
   recordCultifyBurn,
   hasCultifyAccess,

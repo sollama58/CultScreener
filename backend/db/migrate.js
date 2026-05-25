@@ -75,6 +75,7 @@ async function runMigrations() {
     // Additive migrations — safe to run on existing databases
     const columnMigrations = [
       `ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_emerging_cult BOOLEAN DEFAULT FALSE`,
+      `ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_tech_coin BOOLEAN DEFAULT FALSE`,
       // Daily holder count history — one row per token per day
       `CREATE TABLE IF NOT EXISTS holder_history (
         id SERIAL PRIMARY KEY,

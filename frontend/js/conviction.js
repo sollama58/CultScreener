@@ -459,6 +459,9 @@ const convictionPage = {
       const emergingBadge = token.emergingCult
         ? '<span class="cult-hammer" title="Emerging Cult">🛠️</span>'
         : '';
+      const techBadge = token.techCoin
+        ? '<span class="tech-coin-badge" title="Tech Coin">🤖 Tech Coin</span>'
+        : '';
 
       // Conviction percentage
       const conviction1m = token.conviction1m != null ? token.conviction1m : 0;
@@ -504,7 +507,7 @@ const convictionPage = {
               <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy">
               <div class="token-info">
                 <div class="table-name-line">
-                  <span class="token-name">${safeName}</span>${emergingBadge}
+                  <span class="token-name">${safeName}</span>${emergingBadge}${techBadge}
                 </div>
                 <span class="token-symbol-cell">${safeSymbol}</span>
               </div>

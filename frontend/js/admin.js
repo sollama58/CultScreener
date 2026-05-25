@@ -353,12 +353,12 @@ const admin = {
 
   async loadCurated() {
     const tbody = document.getElementById('curated-table-body');
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-msg">Loading...</td></tr>';
     try {
       const data = await this.request('/api/admin/curated');
       const tokens = data.tokens || [];
       if (tokens.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">No curated tokens yet. Add one above.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-msg">No curated tokens yet. Add one above.</td></tr>';
         return;
       }
       tbody.innerHTML = tokens.map(t => {
@@ -375,6 +375,7 @@ const admin = {
           ? `$${Number(t.mcapAth).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
           : '<span style="color:var(--text-dim)">--</span>';
         const isEmerging = !!t.emergingCult;
+        const isTech = !!t.techCoin;
         return `<tr>
           <td title="${name}">${displayName}</td>
           <td class="mono truncate" title="${mint}">${mint.slice(0, 6)}...${mint.slice(-4)}</td>
@@ -391,6 +392,11 @@ const admin = {
           <td>
             <button class="action-btn ${isEmerging ? 'success' : ''}" data-toggle-emerging="${mint}" data-emerging="${isEmerging}" title="Toggle Emerging Cult label">
               🛠️ ${isEmerging ? 'On' : 'Off'}
+            </button>
+          </td>
+          <td>
+            <button class="action-btn ${isTech ? 'success' : ''}" data-toggle-tech="${mint}" data-tech="${isTech}" title="Toggle Tech Coin label">
+              🤖 ${isTech ? 'On' : 'Off'}
             </button>
           </td>
           <td><button class="action-btn danger" data-remove-mint="${mint}">Remove</button></td>
@@ -416,8 +422,13 @@ const admin = {
       tbody.querySelectorAll('[data-toggle-emerging]').forEach(btn => {
         btn.addEventListener('click', () => this.toggleEmergingCult(btn.dataset.toggleEmerging, btn.dataset.emerging === 'true', btn));
       });
+
+      // Bind Tech Coin toggle buttons
+      tbody.querySelectorAll('[data-toggle-tech]').forEach(btn => {
+        btn.addEventListener('click', () => this.toggleTechCoin(btn.dataset.toggleTech, btn.dataset.tech === 'true', btn));
+      });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="8" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
     }
   },
 
@@ -489,6 +500,25 @@ const admin = {
       btn.textContent = `🛠️ ${newValue ? 'On' : 'Off'}`;
       btn.classList.toggle('success', newValue);
       if (typeof toast !== 'undefined') toast.success(`Emerging Cult label ${newValue ? 'enabled' : 'disabled'}`);
+    } catch (err) {
+      if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to update label');
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  async toggleTechCoin(mint, currentValue, btn) {
+    const newValue = !currentValue;
+    btn.disabled = true;
+    try {
+      await this.request(`/api/admin/curated/${encodeURIComponent(mint)}/tech-coin`, {
+        method: 'PATCH',
+        body: JSON.stringify({ techCoin: newValue })
+      });
+      btn.dataset.tech = String(newValue);
+      btn.textContent = `🤖 ${newValue ? 'On' : 'Off'}`;
+      btn.classList.toggle('success', newValue);
+      if (typeof toast !== 'undefined') toast.success(`Tech Coin label ${newValue ? 'enabled' : 'disabled'}`);
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to update label');
     } finally {
