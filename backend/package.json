@@ -26,6 +26,7 @@
   "author": "The Sol Penguin",
   "license": "MIT",
   "dependencies": {
+    "@asdf-forge/constants": "^0.1.1",
     "@solana/web3.js": "^1.87.0",
     "axios": "^1.6.0",
     "bs58": "^5.0.0",
