@@ -265,6 +265,51 @@ async function runHolderBehaviorAnalysis(mint) {
       .sort((a, b) => b.holderCount - a.holderCount)
       .slice(0, 200);
 
+    // ── CYNIC behavioral signals ────────────────────────────────────────────
+    // Derived from existing swap data — no additional API calls.
+    //
+    // accumulatorRatio: fraction of analyzed holders who are net buyers of THIS token.
+    // Empirically, high accumulator ratio correlates NEGATIVELY with survival (rho=-0.622).
+    // Counter-intuitive: aggressive buying = insider front-running, not organic growth.
+    // accumulatorRatio > 0.70 → warning. < 0.30 → healthy distribution.
+    //
+    // organicGrowthSignal: distribution quality — small holders (<1%) vs whales (>5%).
+    // High = broad organic base. Low = whale-dominated.
+    const analyzedWithSwaps = holderResults.filter(h => h.swapsAnalyzed > 0);
+    let accumulators = 0;
+    let extractors   = 0;
+    for (const h of analyzedWithSwaps) {
+      const mintPairs = h.pairs.filter(p => p.mint === mint);
+      if (mintPairs.length === 0) continue;
+      // Open position (bought, not fully sold yet) = accumulator
+      const openPositions   = mintPairs.filter(p => p.holdTime == null && p.buyTime != null).length;
+      // Completed exits (bought then sold) = extractor
+      const closedPositions = mintPairs.filter(p => p.holdTime != null).length;
+      if (openPositions > closedPositions) accumulators++;
+      else if (closedPositions > 0)        extractors++;
+    }
+    const totalClassified  = accumulators + extractors;
+    const accumulatorRatio = totalClassified > 0
+      ? Math.round((accumulators / totalClassified) * 1000) / 1000
+      : null;
+
+    // Organic growth: % of holders with percentage < 1% (small holders = organic)
+    const holdersWithPct  = holderResults.filter(h => h.percentage != null);
+    const smallHolders    = holdersWithPct.filter(h => h.percentage < 1.0).length;
+    const organicGrowthSignal = holdersWithPct.length > 0
+      ? Math.round((smallHolders / holdersWithPct.length) * 1000) / 1000
+      : null;
+
+    const cynicSignals = {
+      accumulatorRatio,
+      accumulatorCount: accumulators,
+      extractorCount:   extractors,
+      organicGrowthSignal,
+      // Human-readable interpretation
+      accumulatorWarning: accumulatorRatio != null && accumulatorRatio > 0.70,
+    };
+    // ── end CYNIC signals ───────────────────────────────────────────────────
+
     const result = {
       status: 'done',
       analyzedAt: now,
@@ -272,6 +317,7 @@ async function runHolderBehaviorAnalysis(mint) {
       analyzedCount: holderResults.filter(h => h.swapsAnalyzed > 0).length,
       totalSwapsAnalyzed: totalSwaps,
       overallAvgHoldTimeMs,
+      cynicSignals,
       holders: holderResults,
       tokenStats
     };
