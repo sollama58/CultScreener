@@ -24,7 +24,8 @@ const techPage = {
   async loadData() {
     const tbody = document.getElementById('tech-table-body');
     const statusEl = document.getElementById('tech-status-text');
-    if (!tbody) return;
+    if (!tbody || this._loading) return;
+    this._loading = true;
 
     if (statusEl) {
       statusEl.textContent = 'LOADING...';
@@ -44,7 +45,7 @@ const techPage = {
 
     try {
       const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
-      const allTokens = result?.tokens || [];
+      const allTokens = [...(result?.tokens || [])]; // clone to avoid mutating shared cache
       const filtered = allTokens.filter(t => t.techCoin);
       // Shuffle for random order
       for (let i = filtered.length - 1; i > 0; i--) {
@@ -76,6 +77,8 @@ const techPage = {
           </td>
         </tr>
       `;
+    } finally {
+      this._loading = false;
     }
   },
 

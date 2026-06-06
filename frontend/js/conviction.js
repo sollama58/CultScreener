@@ -243,8 +243,16 @@ const convictionPage = {
 
   async loadData() {
     const tbody = document.getElementById('conviction-table-body');
-    if (!tbody || this._loading) return;
+    if (!tbody) return;
+
+    // If already loading, queue a reload so filter/tier changes aren't silently dropped
+    if (this._loading) {
+      this._pendingReload = true;
+      return;
+    }
+
     this._loading = true;
+    this._pendingReload = false;
 
     const statusEl = document.getElementById('terminal-status-text');
     if (statusEl) {
@@ -320,7 +328,7 @@ const convictionPage = {
         // Fetch all tokens, shuffle client-side for random order
         const params = { limit: 100, offset: 0, ...this.getFilters() };
         const result = await api.tokens.leaderboardConviction(params);
-        const all = result.tokens || [];
+        const all = [...(result.tokens || [])]; // clone to avoid mutating the cached array
 
         this._shuffle(all);
         all.forEach((t, i) => { t._originalIndex = i; });
@@ -369,6 +377,11 @@ const convictionPage = {
     } finally {
       this._loading = false;
       if (typeof latencyTracker !== 'undefined') latencyTracker.record('conviction.loadData', performance.now() - _t0, _ok, 'frontend');
+      // If a filter/tier change arrived while we were loading, process it now
+      if (this._pendingReload) {
+        this._pendingReload = false;
+        this.loadData();
+      }
     }
   },
 

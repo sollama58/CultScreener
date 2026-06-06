@@ -355,7 +355,7 @@
   <link rel="preload" href="js/config.js?v=2" as="script">
   <link rel="preload" href="js/api.js?v=5" as="script">
   <link rel="preload" href="js/wallet.js?v=2" as="script">
-  <link rel="preload" href="js/conviction.js?v=9" as="script">
+  <link rel="preload" href="js/conviction.js?v=10" as="script">
 </head>
 <body>
   <header class="header">
@@ -486,7 +486,7 @@
           </thead>
           <tbody id="conviction-table-body">
             <tr class="loading-row">
-              <td colspan="6">
+              <td colspan="7">
                 <div class="loading-state">
                   <div class="loading-spinner"></div>
                   <span>Initializing terminal...</span>
@@ -658,9 +658,9 @@
   <script src="js/announcements.js?v=2"></script>
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/conviction.js?v=9"></script>
-  <script src="js/tech.js?v=3"></script>
-  <script src="js/emerging.js?v=2"></script>
+  <script src="js/conviction.js?v=10"></script>
+  <script src="js/tech.js?v=4"></script>
+  <script src="js/emerging.js?v=3"></script>
   <script src="js/performance.js?v=14"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────
@@ -686,7 +686,7 @@
           tab.classList.add('active');
           tab.setAttribute('aria-selected', 'true');
           Object.keys(panels).forEach(function (k) {
-            panels[k].style.display = k === view ? '' : 'none';
+            if (panels[k]) panels[k].style.display = k === view ? '' : 'none';
           });
           if (view === 'performance' && !perfLoaded) {
             perfLoaded = true;
