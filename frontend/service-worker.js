@@ -1,7 +1,7 @@
 // CultScreener Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'cultscreener-v18';
+const CACHE_VERSION = 'cultscreener-v19';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -10,11 +10,11 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=9',
+  '/css/styles.css?v=10',
   '/js/config.js?v=2',
   '/js/api.js?v=5',
   '/js/wallet.js?v=2',
-  '/js/conviction.js?v=8',
+  '/js/conviction.js?v=9',
   '/js/tech.js?v=3',
   '/js/emerging.js?v=2',
   '/js/tokenDetail.js?v=15',

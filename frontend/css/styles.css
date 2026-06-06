@@ -1476,6 +1476,14 @@ select:focus {
   white-space: nowrap;
 }
 
+.cell-dist {
+  width: 120px;
+  min-width: 110px;
+  text-align: center;
+  vertical-align: middle;
+  padding: 0.35rem 0.5rem;
+}
+
 
 /* =============================================
    12. Sample Info

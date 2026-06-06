@@ -258,7 +258,7 @@ const convictionPage = {
 
     tbody.innerHTML = `
       <tr class="loading-row">
-        <td colspan="6">
+        <td colspan="7">
           <div class="loading-state">
             <div class="loading-spinner"></div>
             <span>Scanning blockchain data...</span>
@@ -359,7 +359,7 @@ const convictionPage = {
       }
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="6">
+          <td colspan="7">
             <div class="empty-state">
               <span>Failed to load terminal data. Please try again.</span>
             </div>
@@ -409,7 +409,7 @@ const convictionPage = {
         : 'No tokens match current filters. Adjust filters or visit token pages to trigger analysis.';
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="6">
+          <td colspan="7">
             <div class="empty-state">
               <span style="font-size: 1.5rem; margin-bottom: 0.5rem; opacity: 0.4;">${isWatchlist ? 'EMPTY WATCHLIST' : 'NO DATA'}</span>
               <span>${emptyMsg}</span>
@@ -458,6 +458,12 @@ const convictionPage = {
         athPctHtml = `<span class="mono-num" style="color:${color}" title="ATH MCap: ${athStr}">${sign}${pct.toFixed(0)}%</span>`;
       }
 
+      // Conviction distribution mini bars (no score — just the bucket chart)
+      const dist = token.conviction || {};
+      const distHtml = Object.keys(dist).length > 0
+        ? this.renderMiniBars(dist)
+        : '<span style="color:var(--text-dim)">--</span>';
+
       return `
         <tr class="token-row terminal-row" data-mint="${safeAddress}">
           <td class="cell-rank">${rank}</td>
@@ -476,6 +482,7 @@ const convictionPage = {
           <td class="cell-mcap mono-num" data-navigate="${safeAddress}">${mcapStr}</td>
           <td class="cell-ath-pct" data-navigate="${safeAddress}">${athPctHtml}</td>
           <td class="cell-updated" data-navigate="${safeAddress}">${holdersHtml}</td>
+          <td class="cell-dist" data-navigate="${safeAddress}">${distHtml}</td>
         </tr>
       `;
     }).join('');
