@@ -542,6 +542,8 @@ const convictionPage = {
     if (page < 1 || page > totalPages) return;
     this.currentPage = page;
     this.sortAndRender();
+    this.updatePagination();
+    this.updateTerminalStats();
     document.querySelector('.conviction-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   },
 
