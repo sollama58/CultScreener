@@ -355,7 +355,7 @@
   <link rel="preload" href="js/config.js?v=2" as="script">
   <link rel="preload" href="js/api.js?v=5" as="script">
   <link rel="preload" href="js/wallet.js?v=2" as="script">
-  <link rel="preload" href="js/conviction.js?v=6" as="script">
+  <link rel="preload" href="js/conviction.js?v=8" as="script">
 </head>
 <body>
   <header class="header">
@@ -452,22 +452,10 @@
             WATCHLIST
           </button>
           <div class="terminal-pill-separator"></div>
-          <button class="terminal-pill pill-elite" data-tier="elite">ELITE 75%+</button>
-          <button class="terminal-pill pill-high" data-tier="high">HIGH 50%+</button>
-          <button class="terminal-pill pill-mid" data-tier="mid">MID 25%+</button>
-          <button class="terminal-pill pill-low" data-tier="low">LOW &lt;25%</button>
-          <div class="terminal-pill-separator"></div>
           <button class="terminal-pill pill-mcap" data-mcap="micro">MICRO &lt;$100K</button>
           <button class="terminal-pill pill-mcap" data-mcap="small">SMALL $100K-$1M</button>
           <button class="terminal-pill pill-mcap" data-mcap="mid">MID $1M-$10M</button>
           <button class="terminal-pill pill-mcap" data-mcap="large">LARGE $10M+</button>
-        </div>
-        <div class="terminal-filter-group">
-          <label for="conviction-min-pct">MIN CONVICTION</label>
-          <div class="terminal-range-wrap">
-            <input type="range" id="conviction-min-pct" min="0" max="100" step="5" value="0">
-            <span id="conviction-min-pct-val" class="terminal-range-val">0%</span>
-          </div>
         </div>
       </div>
 
@@ -487,19 +475,17 @@
         <table class="token-table community-table conviction-table terminal-table">
           <thead>
             <tr>
-              <th class="cell-rank sortable" data-sort="rank">#</th>
+              <th class="cell-rank">#</th>
               <th class="cell-token">Token</th>
               <th class="cell-price sortable" data-sort="price">Price <span class="sort-arrow"></span></th>
               <th class="cell-mcap sortable" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
-              <th class="cell-conviction sortable active-sort" data-sort="conviction">CONVICTION <span class="sort-arrow desc"></span></th>
-              <th class="cell-conviction-bars">Distribution</th>
               <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
               <th class="cell-updated sortable" data-sort="holders">Holders <span class="sort-arrow"></span></th>
             </tr>
           </thead>
           <tbody id="conviction-table-body">
             <tr class="loading-row">
-              <td colspan="8">
+              <td colspan="6">
                 <div class="loading-state">
                   <div class="loading-spinner"></div>
                   <span>Initializing terminal...</span>
@@ -558,8 +544,6 @@
               <th class="cell-token">Token</th>
               <th class="cell-price">Price</th>
               <th class="cell-mcap">MCap</th>
-              <th class="cell-conviction">CONVICTION</th>
-              <th class="cell-conviction-bars">Distribution</th>
               <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
               <th class="cell-updated">Holders</th>
             </tr>
@@ -593,8 +577,6 @@
               <th class="cell-token">Token</th>
               <th class="cell-price">Price</th>
               <th class="cell-mcap">MCap</th>
-              <th class="cell-conviction">CONVICTION</th>
-              <th class="cell-conviction-bars">Distribution</th>
               <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
               <th class="cell-updated">Holders</th>
             </tr>
@@ -675,9 +657,9 @@
   <script src="js/announcements.js?v=2"></script>
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/conviction.js?v=6"></script>
-  <script src="js/tech.js?v=2"></script>
-  <script src="js/emerging.js?v=1"></script>
+  <script src="js/conviction.js?v=8"></script>
+  <script src="js/tech.js?v=3"></script>
+  <script src="js/emerging.js?v=2"></script>
   <script src="js/performance.js?v=14"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────

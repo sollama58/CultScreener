@@ -192,16 +192,18 @@ router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, r
     if (!mint) { skipped++; continue; }
 
     try {
-      // 1. Prefer the precise paginated count already cached
-      let count = await cache.get(`holder-total:${mint}`);
-      // 2. Fall back to the analytics cache
+      let count = null;
+      // Always try Helius first — most accurate; getTokenHolderCount serves from its 24h cache when warm
+      if (solanaService.isHeliusConfigured()) {
+        count = await solanaService.getTokenHolderCount(mint).catch(() => null);
+      }
+      // Fall back to cached analytics when Helius is unavailable or not configured
+      if (!count || count <= 0) {
+        count = await cache.get(`holder-total:${mint}`);
+      }
       if (!count || count <= 0) {
         const analytics = await cache.get(`holder-analytics:${mint}`);
         count = analytics?.metrics?.holderCount || null;
-      }
-      // 3. Live fetch from Helius when caches are cold
-      if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
-        count = await solanaService.getTokenHolderCount(mint).catch(() => null);
       }
 
       if (!count || count <= 0) { skipped++; continue; }

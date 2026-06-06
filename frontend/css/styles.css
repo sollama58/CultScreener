@@ -5163,18 +5163,6 @@ textarea {
   opacity: 0.9;
 }
 
-/* Tech Coin badge — table rows */
-.tech-coin-badge {
-  flex-shrink: 0;
-  font-size: 0.7rem;
-  line-height: 1;
-  color: var(--blue, #3b82f6);
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  border-radius: 3px;
-  padding: 1px 5px;
-  white-space: nowrap;
-}
 
 /* Name + hammer on the same flex row inside table token cells */
 .table-name-line {

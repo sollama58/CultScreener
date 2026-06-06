@@ -5,9 +5,10 @@ const convictionPage = {
   pageSize: 25,
   totalItems: 0,
   tokens: [],
+  _allTokens: [],
   _searchTimeout: null,
-  _sortField: 'conviction',
-  _sortDir: 'desc',
+  _sortField: 'rank',
+  _sortDir: 'asc',
   _activeTier: 'all',
   _activeMcap: null,
 
@@ -58,8 +59,6 @@ const convictionPage = {
 
   bindFilters() {
     const search = document.getElementById('conviction-search');
-    const minPct = document.getElementById('conviction-min-pct');
-    const minPctVal = document.getElementById('conviction-min-pct-val');
     const minSample = document.getElementById('conviction-min-sample');
     const resetBtn = document.getElementById('conviction-filter-reset');
 
@@ -75,12 +74,6 @@ const convictionPage = {
           search.focus();
         }
       });
-    }
-    if (minPct) {
-      minPct.addEventListener('input', () => {
-        if (minPctVal) minPctVal.textContent = `${minPct.value}%`;
-      });
-      minPct.addEventListener('change', () => this.applyFilters());
     }
     if (minSample) minSample.addEventListener('change', () => this.applyFilters());
     if (resetBtn) resetBtn.addEventListener('click', () => this.resetFilters());
@@ -107,22 +100,9 @@ const convictionPage = {
           }
         }
 
-        // Tier pills are exclusive within their group
         container.querySelectorAll('[data-tier]').forEach(p => p.classList.remove('active'));
         pill.classList.add('active');
         this._activeTier = tier;
-
-        // Set the min conviction slider based on tier (skip for watchlist)
-        if (tier !== 'watchlist') {
-          const minPct = document.getElementById('conviction-min-pct');
-          const minPctVal = document.getElementById('conviction-min-pct-val');
-          const tierMap = { all: 0, elite: 75, high: 50, mid: 25, low: 0 };
-          if (minPct) {
-            minPct.value = tierMap[tier] || 0;
-            if (minPctVal) minPctVal.textContent = `${minPct.value}%`;
-          }
-        }
-        // For "low" tier, we need special handling (maxConviction)
         this.applyFilters();
       }
 
@@ -182,34 +162,43 @@ const convictionPage = {
     });
   },
 
+  _shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  },
+
   sortAndRender() {
     const field = this._sortField;
     const dir = this._sortDir === 'asc' ? 1 : -1;
 
-    this.tokens.sort((a, b) => {
-      let va, vb;
-      switch (field) {
-        case 'rank': return (a._originalIndex - b._originalIndex) * dir; // Preserve or reverse server order
-        case 'price': va = a.price || 0; vb = b.price || 0; break;
-        case 'mcap': va = a.marketCap || 0; vb = b.marketCap || 0; break;
-        case 'conviction': va = a.conviction1m || 0; vb = b.conviction1m || 0; break;
-        case 'holders': va = a.holders || 0; vb = b.holders || 0; break;
-        default: return 0;
-      }
-      return (va - vb) * dir;
-    });
+    if (field !== 'rank') {
+      this._allTokens.sort((a, b) => {
+        let va, vb;
+        switch (field) {
+          case 'price': va = a.price || 0; vb = b.price || 0; break;
+          case 'mcap': va = a.marketCap || 0; vb = b.marketCap || 0; break;
+          case 'holders': va = a.holders || 0; vb = b.holders || 0; break;
+          default: return 0;
+        }
+        return (va - vb) * dir;
+      });
+    }
+
+    const offset = (this.currentPage - 1) * this.pageSize;
+    this.tokens = this._allTokens.slice(offset, offset + this.pageSize);
     this.render();
   },
 
   getFilters() {
     const params = {};
     const search = document.getElementById('conviction-search');
-    const minPct = document.getElementById('conviction-min-pct');
     const mcap = document.getElementById('conviction-mcap');
     const minSample = document.getElementById('conviction-min-sample');
 
     if (search && search.value.trim()) params.search = search.value.trim();
-    if (minPct && parseInt(minPct.value) > 0) params.minConviction = minPct.value;
     if (mcap && mcap.value) {
       const [min, max] = mcap.value.split('-');
       if (min) params.minMcap = min;
@@ -229,14 +218,11 @@ const convictionPage = {
 
   resetFilters() {
     const search = document.getElementById('conviction-search');
-    const minPct = document.getElementById('conviction-min-pct');
-    const minPctVal = document.getElementById('conviction-min-pct-val');
     const mcap = document.getElementById('conviction-mcap');
     const minSample = document.getElementById('conviction-min-sample');
     const resetBtn = document.getElementById('conviction-filter-reset');
 
     if (search) search.value = '';
-    if (minPct) { minPct.value = 0; if (minPctVal) minPctVal.textContent = '0%'; }
     if (mcap) mcap.value = '';
     if (minSample) minSample.value = '';
     if (resetBtn) resetBtn.style.display = 'none';
@@ -272,7 +258,7 @@ const convictionPage = {
 
     tbody.innerHTML = `
       <tr class="loading-row">
-        <td colspan="7">
+        <td colspan="6">
           <div class="loading-state">
             <div class="loading-spinner"></div>
             <span>Scanning blockchain data...</span>
@@ -288,7 +274,7 @@ const convictionPage = {
         const wlTokens = wlData?.tokens || [];
 
         // Map watchlist tokens to the same shape as conviction leaderboard
-        this.tokens = wlTokens.map(t => ({
+        this._allTokens = wlTokens.map(t => ({
           mintAddress: t.mint,
           address: t.mint,
           name: t.name || `${t.mint.slice(0, 4)}...${t.mint.slice(-4)}`,
@@ -302,17 +288,19 @@ const convictionPage = {
           convictionUpdatedAt: null,
           addedAt: t.addedAt
         }));
-        this.totalItems = this.tokens.length;
+        this._shuffle(this._allTokens);
+        this._allTokens.forEach((t, i) => { t._originalIndex = i; });
+        this.totalItems = this._allTokens.length;
 
         // Enrich with batch price data if tokens exist
-        if (this.tokens.length > 0) {
+        if (this._allTokens.length > 0) {
           try {
-            const mints = this.tokens.map(t => t.mintAddress);
+            const mints = this._allTokens.map(t => t.mintAddress);
             const batchData = await api.tokens.getBatch(mints);
             if (Array.isArray(batchData)) {
               const dataMap = {};
               batchData.forEach(t => { if (t) dataMap[t.address || t.mintAddress] = t; });
-              this.tokens.forEach(t => {
+              this._allTokens.forEach(t => {
                 const d = dataMap[t.mintAddress];
                 if (d) {
                   t.price = d.price || 0;
@@ -329,31 +317,22 @@ const convictionPage = {
           } catch (_) { /* batch enrichment non-critical */ }
         }
       } else {
-        // Normal conviction leaderboard
-        const params = {
-          limit: this.pageSize,
-          offset: (this.currentPage - 1) * this.pageSize,
-          ...this.getFilters()
-        };
-
+        // Fetch all tokens, shuffle client-side for random order
+        const params = { limit: 100, offset: 0, ...this.getFilters() };
         const result = await api.tokens.leaderboardConviction(params);
-        this.tokens = result.tokens || [];
-        this.totalItems = result.total || 0;
+        const all = result.tokens || [];
 
-        // Client-side filter for "low" tier (< 25%) — adjust totalItems to match
-        if (this._activeTier === 'low') {
-          this.tokens = this.tokens.filter(t => (t.conviction1m || 0) < 25);
-          this.totalItems = this.tokens.length;
-        }
+        this._shuffle(all);
+        all.forEach((t, i) => { t._originalIndex = i; });
+        this._allTokens = all;
+        this.totalItems = all.length;
 
-        // If some tokens are missing holder counts, the backend is fetching them in the
-        // background. Schedule a silent re-fetch after 8s to pick up the results.
-        const missingHolders = this.tokens.some(t => !t.holders);
+        // If some tokens are missing holder counts, schedule a silent re-fetch
+        const missingHolders = all.some(t => !t.holders);
         if (missingHolders && !this._holderRefreshPending) {
           this._holderRefreshPending = true;
           setTimeout(() => {
             this._holderRefreshPending = false;
-            // Only re-fetch if not already loading
             if (!this._loading) {
               apiCache.clearPattern('tokens:leaderboard:conviction');
               this.loadData();
@@ -362,11 +341,8 @@ const convictionPage = {
         }
       }
 
-      // Tag original index for rank-based sorting
-      this.tokens.forEach((t, i) => { t._originalIndex = i; });
-
-      this.updateTerminalStats();
       this.sortAndRender();
+      this.updateTerminalStats();
       this.updatePagination();
 
       if (statusEl) {
@@ -383,7 +359,7 @@ const convictionPage = {
       }
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="7">
+          <td colspan="6">
             <div class="empty-state">
               <span>Failed to load terminal data. Please try again.</span>
             </div>
@@ -433,7 +409,7 @@ const convictionPage = {
         : 'No tokens match current filters. Adjust filters or visit token pages to trigger analysis.';
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="8">
+          <td colspan="6">
             <div class="empty-state">
               <span style="font-size: 1.5rem; margin-bottom: 0.5rem; opacity: 0.4;">${isWatchlist ? 'EMPTY WATCHLIST' : 'NO DATA'}</span>
               <span>${emptyMsg}</span>
@@ -462,23 +438,6 @@ const convictionPage = {
       const techBadge = token.techCoin
         ? '<span class="cult-hammer" title="Tech Coin">🤖</span>'
         : '';
-
-      // Conviction percentage
-      const conviction1m = token.conviction1m != null ? token.conviction1m : 0;
-      const convictionClass = conviction1m >= 75 ? 'conviction-elite'
-        : conviction1m >= 50 ? 'conviction-high'
-        : conviction1m >= 25 ? 'conviction-medium'
-        : 'conviction-low';
-
-      // Conviction tier badge
-      const tierBadge = conviction1m >= 75 ? '<span class="tier-badge tier-elite">ELITE</span>'
-        : conviction1m >= 50 ? '<span class="tier-badge tier-high">HIGH</span>'
-        : conviction1m >= 25 ? '<span class="tier-badge tier-mid">MID</span>'
-        : '<span class="tier-badge tier-low">LOW</span>';
-
-      // Mini bar distribution
-      const dist = token.conviction || {};
-      const barsHtml = this.renderMiniBars(dist);
 
       // Holders count
       const holdersHtml = token.holders
@@ -515,13 +474,6 @@ const convictionPage = {
           </td>
           <td class="cell-price mono-num" data-navigate="${safeAddress}">${priceStr}</td>
           <td class="cell-mcap mono-num" data-navigate="${safeAddress}">${mcapStr}</td>
-          <td class="cell-conviction ${convictionClass}" data-navigate="${safeAddress}">
-            <div class="conviction-cell">
-              <span class="conviction-pct">${conviction1m.toFixed(1)}%</span>
-              ${tierBadge}
-            </div>
-          </td>
-          <td class="cell-conviction-bars" data-navigate="${safeAddress}">${barsHtml}</td>
           <td class="cell-ath-pct" data-navigate="${safeAddress}">${athPctHtml}</td>
           <td class="cell-updated" data-navigate="${safeAddress}">${holdersHtml}</td>
         </tr>
@@ -569,7 +521,7 @@ const convictionPage = {
     const totalPages = Math.max(1, Math.ceil(this.totalItems / this.pageSize));
     if (page < 1 || page > totalPages) return;
     this.currentPage = page;
-    this.loadData();
+    this.sortAndRender();
     document.querySelector('.conviction-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   },
 

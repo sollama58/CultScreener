@@ -497,16 +497,18 @@ const tokenDetail = {
     // Emerging Cult / Tech Coin badges — inject/remove right after the token name h1
     if (nameEl) {
       nameEl.parentElement.querySelectorAll('.emerging-cult-badge, .tech-coin-detail-badge').forEach(el => el.remove());
-      if (token.emergingCult) {
-        const badge = document.createElement('span');
-        badge.className = 'emerging-cult-badge';
-        badge.textContent = '🛠️ Emerging Cult';
-        nameEl.insertAdjacentElement('afterend', badge);
-      }
+      // Insert in reverse visual order: each insertAdjacentElement('afterend') pushes
+      // the previous one right, so the last-inserted badge appears first after the name.
       if (token.techCoin) {
         const badge = document.createElement('span');
         badge.className = 'tech-coin-detail-badge';
         badge.textContent = '🤖 Tech Coin';
+        nameEl.insertAdjacentElement('afterend', badge);
+      }
+      if (token.emergingCult) {
+        const badge = document.createElement('span');
+        badge.className = 'emerging-cult-badge';
+        badge.textContent = '🛠️ Emerging Cult';
         nameEl.insertAdjacentElement('afterend', badge);
       }
     }
@@ -713,6 +715,14 @@ const tokenDetail = {
       }
     } catch (err) {
       console.warn('[HolderTrend] load error:', err);
+      // Show section with a soft error message rather than leaving it invisible
+      if (section) {
+        section.style.display = '';
+        const chartWrap = document.getElementById('ht-chart-wrap');
+        const emptyEl   = document.getElementById('ht-empty');
+        if (chartWrap) chartWrap.style.display = 'none';
+        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — holder trend data will appear after the first snapshot'; }
+      }
     }
   },
 

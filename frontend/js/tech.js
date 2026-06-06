@@ -33,7 +33,7 @@ const techPage = {
 
     tbody.innerHTML = `
       <tr class="loading-row">
-        <td colspan="8">
+        <td colspan="6">
           <div class="loading-state">
             <div class="loading-spinner"></div>
             <span>Loading tech coins...</span>
@@ -43,10 +43,15 @@ const techPage = {
     `;
 
     try {
-      // Fetch up to 100 curated tokens from the conviction leaderboard
       const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
       const allTokens = result?.tokens || [];
-      this.tokens = allTokens.filter(t => t.techCoin);
+      const filtered = allTokens.filter(t => t.techCoin);
+      // Shuffle for random order
+      for (let i = filtered.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
+      }
+      this.tokens = filtered;
 
       if (statusEl) {
         statusEl.textContent = this.tokens.length > 0
@@ -64,7 +69,7 @@ const techPage = {
       }
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="8">
+          <td colspan="6">
             <div class="empty-state">
               <span>Failed to load tech coins. Please try again.</span>
             </div>
@@ -91,7 +96,7 @@ const techPage = {
     if (filtered.length === 0) {
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="8">
+          <td colspan="6">
             <div class="empty-state">
               <span style="font-size:1.5rem;margin-bottom:0.5rem;opacity:0.4;">NO TECH COINS</span>
               <span>${query ? 'No tech coins match your search.' : 'No tech coins have been added yet. Use the admin panel to tag tokens as Tech Coins.'}</span>
@@ -114,22 +119,6 @@ const techPage = {
       const safeSymbol = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
 
       const techBadge = '<span class="cult-hammer" title="Tech Coin">🤖</span>';
-
-      const conviction1m = token.conviction1m != null ? token.conviction1m : 0;
-      const convictionClass = conviction1m >= 75 ? 'conviction-elite'
-        : conviction1m >= 50 ? 'conviction-high'
-        : conviction1m >= 25 ? 'conviction-medium'
-        : 'conviction-low';
-
-      const tierBadge = conviction1m >= 75 ? '<span class="tier-badge tier-elite">ELITE</span>'
-        : conviction1m >= 50 ? '<span class="tier-badge tier-high">HIGH</span>'
-        : conviction1m >= 25 ? '<span class="tier-badge tier-mid">MID</span>'
-        : '<span class="tier-badge tier-low">LOW</span>';
-
-      const dist = token.conviction || {};
-      const barsHtml = typeof convictionPage !== 'undefined'
-        ? convictionPage.renderMiniBars(dist)
-        : '';
 
       const holdersHtml = token.holders
         ? `<span class="mono-num">${token.holders.toLocaleString()}</span>`
@@ -163,13 +152,6 @@ const techPage = {
           </td>
           <td class="cell-price mono-num" data-navigate="${safeAddress}">${priceStr}</td>
           <td class="cell-mcap mono-num" data-navigate="${safeAddress}">${mcapStr}</td>
-          <td class="cell-conviction ${convictionClass}" data-navigate="${safeAddress}">
-            <div class="conviction-cell">
-              <span class="conviction-pct">${conviction1m.toFixed(1)}%</span>
-              ${tierBadge}
-            </div>
-          </td>
-          <td class="cell-conviction-bars" data-navigate="${safeAddress}">${barsHtml}</td>
           <td class="cell-ath-pct" data-navigate="${safeAddress}">${athPctHtml}</td>
           <td class="cell-updated" data-navigate="${safeAddress}">${holdersHtml}</td>
         </tr>

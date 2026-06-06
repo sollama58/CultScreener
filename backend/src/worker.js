@@ -503,7 +503,11 @@ const jobProcessors = {
               await cache.set(`holder-total:${mint}`, totalCount, TTL.DAY);
             }
           }
-          if (totalCount && totalCount > 0) metrics.holderCount = totalCount;
+          if (totalCount && totalCount > 0) {
+            metrics.holderCount = totalCount;
+            // Opportunistically record today's snapshot — no separate daily-job dependency
+            db.recordHolderCount(mint, totalCount).catch(() => {});
+          }
         } catch (_) {}
       }
 
@@ -733,18 +737,19 @@ const jobProcessors = {
       if (!mint) { skipped++; continue; }
 
       try {
-        // 1. Prefer the precise paginated count already cached
-        let count = await cache.get(`holder-total:${mint}`);
-        // 2. Fall back to the analytics cache (2h TTL)
+        let count = null;
+        // Always try Helius first for the daily job — it's the most accurate source
+        // and getTokenHolderCount() serves from its own 24h cache when warm.
+        if (solanaService.isHeliusConfigured()) {
+          count = await solanaService.getTokenHolderCount(mint).catch(() => null);
+        }
+        // Fall back to cached analytics when Helius is unavailable or not configured
+        if (!count || count <= 0) {
+          count = await cache.get(`holder-total:${mint}`);
+        }
         if (!count || count <= 0) {
           const analytics = await cache.get(`holder-analytics:${mint}`);
           count = analytics?.metrics?.holderCount || null;
-        }
-        // 3. Live fetch from Helius when both caches are cold — this runs daily
-        //    at 00:05 UTC when caches are most likely expired, so we must be able
-        //    to fetch a fresh count rather than silently skipping the token.
-        if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
-          count = await solanaService.getTokenHolderCount(mint).catch(() => null);
         }
 
         if (!count || count <= 0) { skipped++; continue; }
@@ -926,6 +931,27 @@ const jobProcessors = {
     }
 
     if (triggered > 0) console.log(`[Worker] warm-curated-conviction: triggered ${triggered}/${curatedTokens.length} curated tokens`);
+
+    // Opportunistically record holder counts for curated tokens where the count is cached.
+    // This fills holder_history without requiring a user page visit, ensuring daily snapshots
+    // accumulate even on low-traffic days between the midnight record-holder-counts job.
+    let holderRecorded = 0;
+    for (const token of curatedTokens) {
+      const mint = token.mintAddress || token.mint_address;
+      if (!mint) continue;
+      try {
+        let count = await cache.get(`holder-total:${mint}`);
+        if (!count || count <= 0) {
+          const analytics = await cache.get(`holder-analytics:${mint}`);
+          count = analytics?.metrics?.holderCount || null;
+        }
+        if (count && count > 0) {
+          await db.recordHolderCount(mint, count);
+          holderRecorded++;
+        }
+      } catch (_) {}
+    }
+    if (holderRecorded > 0) console.log(`[Worker] warm-curated-conviction: recorded holder counts for ${holderRecorded} curated tokens`);
 
     // Update ATH market cap for curated tokens using current market cap from the tokens table.
     // This requires no extra API calls — the tokens table is kept fresh by price refresh jobs.
