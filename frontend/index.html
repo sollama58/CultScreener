@@ -70,6 +70,95 @@
       color: var(--text-primary);
     }
 
+    /* ── vs SOL Section ─────────────────────────────────── */
+    .versus-benchmark-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 0.75rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .benchmark-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.82rem;
+    }
+    .benchmark-label {
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      font-size: 0.75rem;
+    }
+    .benchmark-price {
+      font-family: var(--font-mono);
+      color: var(--text-primary);
+    }
+    .benchmark-change { font-family: var(--font-mono); font-weight: 600; }
+    .benchmark-divider {
+      width: 1px;
+      height: 1.2rem;
+      background: var(--border-color);
+      margin: 0 0.25rem;
+    }
+    .vs-pos { color: var(--green, #10b981); }
+    .vs-neg { color: var(--red, #ef4444); }
+    .vs-na  { color: var(--text-dim); }
+    .vs-badge {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+    }
+    .vs-pos.vs-badge { background: rgba(34,197,94,0.1); }
+    .vs-neg.vs-badge { background: rgba(239,68,68,0.1); }
+
+    /* Podium */
+    .versus-podium {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    .podium-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 1rem 1.25rem 0.75rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      min-width: 130px;
+      transition: border-color var(--transition-fast), transform 0.15s ease;
+      text-align: center;
+    }
+    .podium-card:hover { border-color: var(--fire-primary); transform: translateY(-2px); }
+    .podium-gold   { border-color: rgba(255,215,0,0.35); padding-bottom: 1.25rem; }
+    .podium-silver { border-color: rgba(192,192,192,0.25); }
+    .podium-bronze { border-color: rgba(205,127,50,0.25); }
+    .podium-medal  { font-size: 1.5rem; line-height: 1; }
+    .podium-logo   { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--bg-tertiary); }
+    .podium-name   { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .podium-vs     { font-size: 0.85rem; font-weight: 700; font-family: var(--font-mono); }
+    .podium-raw    { font-size: 0.72rem; font-family: var(--font-mono); color: var(--text-dim); }
+
+    /* Table column widths */
+    .cell-change  { width: 80px; text-align: right; white-space: nowrap; }
+    .cell-vs-sol  { width: 90px; text-align: right; white-space: nowrap; }
+    .cell-vs-btc  { width: 90px; text-align: right; white-space: nowrap; }
+
+    @media (max-width: 640px) {
+      .versus-podium { flex-direction: column; align-items: center; }
+      .podium-card { min-width: 200px; width: 100%; max-width: 260px; }
+      .cell-vs-btc { display: none; }
+    }
+
     /* ── Performance Section ────────────────────────────── */
     .perf-toolbar {
       display: flex;
@@ -353,7 +442,7 @@
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=2" as="script">
-  <link rel="preload" href="js/api.js?v=5" as="script">
+  <link rel="preload" href="js/api.js?v=6" as="script">
   <link rel="preload" href="js/wallet.js?v=2" as="script">
   <link rel="preload" href="js/conviction.js?v=11" as="script">
 </head>
@@ -416,6 +505,9 @@
       </button>
       <button class="main-view-tab" id="tab-emerging" role="tab" aria-selected="false" aria-controls="view-emerging" data-view="emerging">
         🛠️ Emerging
+      </button>
+      <button class="main-view-tab" id="tab-versus" role="tab" aria-selected="false" aria-controls="view-versus" data-view="versus">
+        📈 vs SOL
       </button>
     </div>
 
@@ -642,6 +734,57 @@
 
     <!-- Off-screen share card — populated by performancePage.share() before html2canvas capture -->
     <div id="perf-share-graphic"></div>
+
+    <!-- vs SOL/BTC View -->
+    <section id="view-versus" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-versus">
+      <!-- Benchmark bar -->
+      <div id="versus-benchmark-bar" class="versus-benchmark-bar"></div>
+
+      <!-- Podium: top 3 vs SOL -->
+      <div id="versus-podium" class="versus-podium" style="display:none;"></div>
+
+      <!-- Toolbar -->
+      <div class="terminal-toolbar">
+        <div class="terminal-search-wrap">
+          <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="text" id="versus-search" placeholder="" maxlength="100" autocomplete="off" class="terminal-search" aria-label="Search tokens">
+        </div>
+        <div class="terminal-status-inline">
+          <span class="terminal-dot"></span>
+          <span id="versus-status-text">CONNECTING...</span>
+        </div>
+      </div>
+
+      <div class="community-table-container terminal-table-container">
+        <table id="versus-table" class="token-table community-table conviction-table terminal-table">
+          <thead>
+            <tr>
+              <th class="cell-rank">#</th>
+              <th class="cell-token">Token</th>
+              <th class="cell-change" data-sort="change24h">24h % <span class="sort-arrow"></span></th>
+              <th class="cell-vs-sol" data-sort="vsSol">vs SOL <span class="sort-arrow desc"></span></th>
+              <th class="cell-vs-btc" data-sort="vsBtc">vs BTC <span class="sort-arrow"></span></th>
+              <th class="cell-mcap" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
+              <th class="cell-updated" data-sort="holders">Holders <span class="sort-arrow"></span></th>
+              <th class="cell-dist">Distribution</th>
+            </tr>
+          </thead>
+          <tbody id="versus-table-body">
+            <tr class="loading-row">
+              <td colspan="8">
+                <div class="loading-state">
+                  <div class="loading-spinner"></div>
+                  <span>Loading...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <footer class="footer">
@@ -654,7 +797,7 @@
   </footer>
 
   <script src="js/config.js?v=2"></script>
-  <script src="js/api.js?v=5"></script>
+  <script src="js/api.js?v=6"></script>
   <script src="js/announcements.js?v=2"></script>
   <script src="js/wallet.js?v=2"></script>
   <script src="js/watchlist.js?v=2"></script>
@@ -662,6 +805,7 @@
   <script src="js/tech.js?v=4"></script>
   <script src="js/emerging.js?v=3"></script>
   <script src="js/performance.js?v=14"></script>
+  <script src="js/versus.js?v=2"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────
     (function () {
@@ -670,11 +814,13 @@
         diamond: document.getElementById('view-diamond'),
         performance: document.getElementById('view-performance'),
         tech: document.getElementById('view-tech'),
-        emerging: document.getElementById('view-emerging')
+        emerging: document.getElementById('view-emerging'),
+        versus: document.getElementById('view-versus')
       };
       var perfLoaded = false;
       var techLoaded = false;
       var emergingLoaded = false;
+      var versusLoaded = false;
 
       tabs.forEach(function (tab) {
         tab.addEventListener('click', function () {
@@ -699,6 +845,10 @@
           if (view === 'emerging' && !emergingLoaded) {
             emergingLoaded = true;
             if (typeof emergingPage !== 'undefined') emergingPage.init();
+          }
+          if (view === 'versus' && !versusLoaded) {
+            versusLoaded = true;
+            if (typeof versusPage !== 'undefined') versusPage.init();
           }
         });
       });

@@ -561,6 +561,15 @@ const api = {
         apiCache.TTL.tokenList,
         true
       );
+    },
+
+    async benchmarks() {
+      return apiCache.getOrFetch(
+        'tokens:benchmarks',
+        () => api.request('/api/tokens/benchmarks'),
+        5 * 60 * 1000,
+        true
+      );
     }
   },
 

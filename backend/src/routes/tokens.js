@@ -1138,6 +1138,42 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
+// GET /api/tokens/benchmarks - SOL and BTC 24h price change used by the "vs SOL" tab
+// Cached 5 minutes — CoinGecko simple/price endpoint, free tier, no key required.
+router.get('/benchmarks', asyncHandler(async (req, res) => {
+  const cacheKey = 'benchmarks:sol-btc';
+  const cached = await cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const response = await axios.get(
+      'https://api.coingecko.com/api/v3/simple/price',
+      {
+        params: { ids: 'solana,bitcoin', vs_currencies: 'usd', include_24hr_change: true },
+        timeout: 8000,
+        headers: { Accept: 'application/json' }
+      }
+    );
+    const data = response.data || {};
+    const result = {
+      sol: {
+        price: data.solana?.usd ?? null,
+        priceChange24h: data.solana?.usd_24h_change ?? null
+      },
+      btc: {
+        price: data.bitcoin?.usd ?? null,
+        priceChange24h: data.bitcoin?.usd_24h_change ?? null
+      }
+    };
+    await cache.set(cacheKey, result, TTL.LONG);
+    res.json(result);
+  } catch (err) {
+    console.warn('[benchmarks] CoinGecko fetch failed:', err.message);
+    // Return nulls so the frontend degrades gracefully
+    res.json({ sol: { price: null, priceChange24h: null }, btc: { price: null, priceChange24h: null } });
+  }
+}));
+
 // GET /api/tokens/spikes - Detect established tokens (>1d old) with unusual activity spikes
 // Scans trending pools, filters to tokens older than 1 day, and scores by spike indicators:
 // - Volume/MCap ratio (high ratio = unusual volume relative to size)
