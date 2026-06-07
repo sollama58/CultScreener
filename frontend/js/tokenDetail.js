@@ -732,7 +732,7 @@ const tokenDetail = {
 
     const latestRow = rows[rows.length - 1];
     const latest = latestRow.holder_count;
-    const latestDate = new Date(latestRow.recorded_date + 'T00:00:00');
+    const latestDate = new Date(latestRow.recorded_date.slice(0, 10) + 'T00:00:00');
 
     // Returns { delta, pct } for a given days-ago offset using actual date matching.
     // Finds the row whose recorded_date is <= (today - daysAgo), so gaps in snapshots
@@ -802,7 +802,7 @@ const tokenDetail = {
     }).join('');
 
     const fmtDate = (str) => {
-      const d = new Date(str + 'T00:00:00');
+      const d = new Date(str.slice(0, 10) + 'T00:00:00');
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     };
 

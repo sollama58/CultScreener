@@ -496,8 +496,7 @@ const versusPage = {
       ${benchHtml}
       <div class="vsg-podium-area">${cardsHtml}</div>
       <div class="vsg-footer">
-        <span class="vsg-url">cultscreener.com</span>
-        <span class="vsg-ts">via CultScreener</span>
+        <span class="vsg-url" style="margin-left:auto;">cultscreener.com</span>
       </div>
     `;
 

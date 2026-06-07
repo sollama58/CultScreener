@@ -2171,12 +2171,15 @@ router.get('/:mint/holder-history', validateMint, requireAllowedToken, asyncHand
 
   const cacheKey = `holder-history:${mint}:${days}`;
   const cached = await cache.get(cacheKey);
-  if (cached) return res.json(cached);
+  // Only serve from cache when there's actual history — empty results must not be
+  // cached for 6 hours or a freshly-taken snapshot will never surface to the user
+  if (cached && Array.isArray(cached.history) && cached.history.length > 0) return res.json(cached);
 
   const history = await db.getHolderHistory(mint, days);
   const result = { mint, history };
-  // Cache for 6 hours — data only changes once per day
-  await cache.set(cacheKey, result, 6 * TTL.HOUR);
+  // Cache for 6 hours only when there is data — skip caching empty results so
+  // a snapshot taken shortly after won't be hidden behind a stale cache entry
+  if (history.length > 0) await cache.set(cacheKey, result, 6 * TTL.HOUR);
   res.json(result);
 }));
 
