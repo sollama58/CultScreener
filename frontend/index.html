@@ -434,6 +434,91 @@
     .psg-url { font-size: 0.68rem; color: #4b5563; letter-spacing: 0.04em; }
     .psg-ts { font-size: 0.65rem; color: #374151; }
 
+    /* Versus share screenshot card */
+    #versus-share-graphic {
+      position: fixed;
+      left: -9999px;
+      top: 0;
+      width: 520px;
+      background: #0d0e11;
+      border: 1px solid #2a2b30;
+      border-radius: 12px;
+      overflow: hidden;
+      font-family: Inter, system-ui, sans-serif;
+      color: #f3f4f6;
+    }
+    .vsg-header {
+      padding: 16px 20px 12px;
+      background: linear-gradient(135deg, rgba(255,87,34,0.08) 0%, transparent 70%);
+      border-bottom: 1px solid #1f2028;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    .vsg-logo { font-size: 1rem; font-weight: 700; color: #f3f4f6; letter-spacing: -0.02em; }
+    .vsg-logo span { color: #ff5722; }
+    .vsg-subtitle { font-size: 0.72rem; color: #6b7280; margin-top: 2px; }
+    .vsg-powered-by { font-size: 0.6rem; color: #4b5563; letter-spacing: 0.03em; margin-top: 3px; }
+    .vsg-powered-by strong { color: #ff9100; font-weight: 700; }
+    .vsg-date { font-size: 0.65rem; color: #4b5563; text-align: right; white-space: nowrap; }
+    .vsg-benchmarks {
+      display: flex;
+      gap: 0;
+      background: #111318;
+      border-bottom: 1px solid #1f2028;
+    }
+    .vsg-bench-pill {
+      flex: 1;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .vsg-bench-pill + .vsg-bench-pill { border-left: 1px solid #1f2028; }
+    .vsg-bench-name { font-size: 0.68rem; font-weight: 700; color: #9ca3af; letter-spacing: 0.08em; }
+    .vsg-bench-price { font-size: 0.72rem; color: #d1d5db; font-family: 'JetBrains Mono', monospace; }
+    .vsg-bench-chg { font-size: 0.72rem; font-family: 'JetBrains Mono', monospace; margin-left: auto; }
+    .vsg-bench-chg.pos { color: #10b981; }
+    .vsg-bench-chg.neg { color: #ef4444; }
+    .vsg-podium-area {
+      display: flex;
+      gap: 10px;
+      padding: 16px 20px;
+      justify-content: center;
+      align-items: flex-end;
+      background: #0d0e11;
+    }
+    .vsg-card {
+      flex: 1;
+      border-radius: 10px;
+      padding: 12px 10px;
+      text-align: center;
+      border: 1px solid #2a2b30;
+      background: #111318;
+    }
+    .vsg-card.gold { border-color: #f59e0b; background: rgba(245,158,11,0.06); }
+    .vsg-card.silver { border-color: #94a3b8; background: rgba(148,163,184,0.05); }
+    .vsg-card.bronze { border-color: #b45309; background: rgba(180,83,9,0.05); }
+    .vsg-medal { font-size: 1.3rem; margin-bottom: 6px; }
+    .vsg-logo-img { width: 36px; height: 36px; border-radius: 50%; display: block; margin: 0 auto 6px; }
+    .vsg-token-name { font-size: 0.78rem; font-weight: 600; color: #f3f4f6; display: block; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .vsg-token-symbol { font-size: 0.62rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; display: block; margin-bottom: 8px; }
+    .vsg-vs-sol { font-size: 0.9rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; display: block; margin-bottom: 3px; }
+    .vsg-vs-sol.pos { color: #10b981; }
+    .vsg-vs-sol.neg { color: #ef4444; }
+    .vsg-vs-sol-label { font-size: 0.58rem; color: #4b5563; letter-spacing: 0.04em; display: block; margin-bottom: 6px; }
+    .vsg-raw-chg { font-size: 0.68rem; font-family: 'JetBrains Mono', monospace; color: #9ca3af; display: block; }
+    .vsg-footer {
+      padding: 8px 20px;
+      background: #080910;
+      border-top: 1px solid #1f2028;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .vsg-url { font-size: 0.65rem; color: #4b5563; letter-spacing: 0.04em; }
+    .vsg-ts { font-size: 0.62rem; color: #374151; }
+
     @media (max-width: 640px) {
       td.perf-mcap, th.perf-th-mcap { display: none; }
       th.perf-th-token { width: 180px; }
@@ -734,6 +819,8 @@
 
     <!-- Off-screen share card — populated by performancePage.share() before html2canvas capture -->
     <div id="perf-share-graphic"></div>
+    <!-- Off-screen versus share card — populated by versusPage.share() before html2canvas capture -->
+    <div id="versus-share-graphic"></div>
 
     <!-- vs SOL/BTC View -->
     <section id="view-versus" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-versus">
@@ -756,6 +843,14 @@
           <span class="terminal-dot"></span>
           <span id="versus-status-text">CONNECTING...</span>
         </div>
+        <button class="perf-share-btn" id="versus-share-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+            <polyline points="16 6 12 2 8 6"/>
+            <line x1="12" y1="2" x2="12" y2="15"/>
+          </svg>
+          Share Top 3
+        </button>
       </div>
 
       <div class="community-table-container terminal-table-container">
@@ -805,7 +900,7 @@
   <script src="js/tech.js?v=4"></script>
   <script src="js/emerging.js?v=3"></script>
   <script src="js/performance.js?v=14"></script>
-  <script src="js/versus.js?v=2"></script>
+  <script src="js/versus.js?v=4"></script>
   <script>
     // ── Tab Switcher ─────────────────────────────────────────
     (function () {
