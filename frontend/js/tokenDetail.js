@@ -778,46 +778,73 @@ const tokenDetail = {
     const wrap = document.getElementById('ht-chart-wrap');
     if (!wrap) return;
 
-    const W      = wrap.getBoundingClientRect().width || wrap.clientWidth || 340;
-    const H      = 68;
-    const PAD_X  = 1;
-    const PAD_Y  = 4;
-    const GAP    = rows.length > 14 ? 1 : 2;
+    const totalW = wrap.getBoundingClientRect().width || wrap.clientWidth || 340;
+    const H      = 160;
+    const PAD_L  = 46;   // space for y-axis labels
+    const PAD_R  = 6;
+    const PAD_T  = 10;
+    const PAD_B  = 6;
+    const chartW = totalW - PAD_L - PAD_R;
+    const chartH = H - PAD_T - PAD_B;
+    const n      = rows.length;
+    const GAP    = n > 20 ? 1 : n > 10 ? 2 : 3;
+    const barW   = Math.max(2, (chartW - GAP * (n - 1)) / n);
 
     const counts = rows.map(r => r.holder_count);
     const minVal = Math.min(...counts);
     const maxVal = Math.max(...counts);
     const span   = maxVal - minVal || 1;
-    const chartH = H - PAD_Y * 2;
-    const n      = rows.length;
-    const barW   = Math.max(2, (W - PAD_X * 2 - GAP * (n - 1)) / n);
 
-    const bars = rows.map((r, i) => {
-      const x         = PAD_X + i * (barW + GAP);
-      // Single-bar or flat range: show at 70% height so it's visible
-      const normalized = n === 1 || span === 0 ? 0.7 : (r.holder_count - minVal) / span;
-      const barH       = Math.max(3, normalized * chartH);
-      const y          = PAD_Y + (chartH - barH);
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="1.5" fill="url(#ht-bar-grad)"/>`;
-    }).join('');
+    const fmtCount = (v) => {
+      if (v >= 1_000_000) return +(v / 1_000_000).toFixed(1) + 'M';
+      if (v >= 1_000)     return +(v / 1_000).toFixed(1) + 'K';
+      return String(v);
+    };
 
     const fmtDate = (str) => {
       const d = new Date(str.slice(0, 10) + 'T00:00:00');
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     };
 
+    // 4 y-axis ticks evenly spaced from min → max
+    const ticks = Array.from({ length: 4 }, (_, i) => {
+      const frac = i / 3;
+      return {
+        val: minVal + frac * (maxVal - minVal),
+        y:   PAD_T + chartH * (1 - frac),
+      };
+    });
+
+    const gridLines = ticks.map(({ y }) =>
+      `<line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${(totalW - PAD_R).toFixed(1)}" y2="${y.toFixed(1)}" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>`
+    ).join('');
+
+    const yLabels = ticks.map(({ val, y }) =>
+      `<text x="${(PAD_L - 6).toFixed(1)}" y="${y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="#6b7280" font-size="9.5" font-family="monospace">${fmtCount(Math.round(val))}</text>`
+    ).join('');
+
+    const bars = rows.map((r, i) => {
+      const x          = PAD_L + i * (barW + GAP);
+      const normalized = n === 1 || span === 0 ? 0.7 : (r.holder_count - minVal) / span;
+      const barH       = Math.max(3, normalized * chartH);
+      const y          = PAD_T + (chartH - barH);
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="1.5" fill="url(#ht-bar-grad)"/>`;
+    }).join('');
+
     wrap.innerHTML = `
-      <svg class="ht-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      <svg class="ht-svg" width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" aria-hidden="true">
         <defs>
           <linearGradient id="ht-bar-grad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="#ff9100" stop-opacity="0.95"/>
             <stop offset="100%" stop-color="#ff4500" stop-opacity="0.75"/>
           </linearGradient>
         </defs>
+        ${gridLines}
+        ${yLabels}
         ${bars}
       </svg>
       <div class="ht-axis">
-        <span class="ht-axis-label">${fmtDate(rows[0].recorded_date)}</span>
+        <span class="ht-axis-label" style="padding-left:${PAD_L}px">${fmtDate(rows[0].recorded_date)}</span>
         <span class="ht-axis-label">${fmtDate(rows[rows.length - 1].recorded_date)}</span>
       </div>
     `;
