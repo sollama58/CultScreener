@@ -340,22 +340,12 @@ const jobProcessors = {
 
     for (const mint of mints) {
       try {
-        // Skip if already cached — solanaService.getTokenHolderCount checks Redis first
-        const [countA, countB] = await Promise.all([
-          cache.get(`holder-total:${mint}`),
-          cache.get(keys.holderCount(mint))
-        ]);
-        if (countA > 0 || countB > 0) { skipped++; continue; }
+        const cached = await cache.get(`holder-total:${mint}`);
+        if (cached && cached > 0) { skipped++; continue; }
 
         const count = await solanaService.getTokenHolderCount(mint);
-        if (count && count > 0) {
-          // solanaService already caches internally; belt-and-suspenders for both keys
-          await Promise.all([
-            cache.set(`holder-total:${mint}`, count, TTL.DAY),
-            cache.set(keys.holderCount(mint), count, TTL.DAY)
-          ]);
-          fetched++;
-        }
+        // getTokenHolderCount caches exact counts internally (TTL.HOLDER_COUNT)
+        if (count && count > 0) fetched++;
       } catch (err) {
         console.warn(`[Worker] Holder count failed for ${mint.slice(0, 8)}:`, err.message);
       }
@@ -498,10 +488,8 @@ const jobProcessors = {
         try {
           let totalCount = await cache.get(`holder-total:${mint}`);
           if (!totalCount && solanaService.isHeliusConfigured()) {
+            // getTokenHolderCount caches results internally (TTL.HOLDER_COUNT)
             totalCount = await solanaService.getTokenHolderCount(mint).catch(() => null);
-            if (totalCount && totalCount > 0) {
-              await cache.set(`holder-total:${mint}`, totalCount, TTL.DAY);
-            }
           }
           if (totalCount && totalCount > 0) {
             metrics.holderCount = totalCount;
@@ -512,7 +500,7 @@ const jobProcessors = {
       }
 
       const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
-      await cache.set(`holder-analytics:${mint}`, result, TTL.HOUR);
+      await cache.set(`holder-analytics:${mint}`, result, 3 * TTL.HOUR);
       await cache.delete(`holder-classify-pending:${mint}`);
 
       // Pre-fetch 250-holder sample for hold-times and diamond-hands endpoints.
@@ -524,11 +512,10 @@ const jobProcessors = {
           const sampleResult = await solanaService.getTokenHolderSample(mint, 250, new Set([...BURN_WALLETS, ...LP_PROGRAMS]));
           if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
             await cache.set(sampleCacheKey, sampleResult.holders, TTL.DAY);
-            // Only cache totalHolders from sample if we don't already have a precise count.
-            // getTokenHolderSample returns a lower-bound (1000) for large tokens;
-            // the precise paginated count is fetched separately above.
-            if (sampleResult.totalHolders && sampleResult.totalHolders > 1000) {
-              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
+            // Cache exact holder count when sample is the complete set (< 1000 = all holders fit one page).
+            // When totalHolders === 1000 it is only a lower bound — don't cache it as the true count.
+            if (sampleResult.totalHolders && sampleResult.totalHolders < 1000) {
+              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.HOLDER_COUNT).catch(() => {});
             }
             console.log(`[Worker] Pre-fetched ${sampleResult.holders.length} holder sample for ${mint}`);
           }
@@ -738,10 +725,10 @@ const jobProcessors = {
 
       try {
         let count = null;
-        // Always try Helius first for the daily job — it's the most accurate source
-        // and getTokenHolderCount() serves from its own 24h cache when warm.
+        // Always bypass cache for the daily job — skipCache ensures we re-paginate
+        // rather than returning a stale or capped value. maxPages:500 covers up to 500k holders.
         if (solanaService.isHeliusConfigured()) {
-          count = await solanaService.getTokenHolderCount(mint).catch(() => null);
+          count = await solanaService.getTokenHolderCount(mint, { skipCache: true, maxPages: 500 }).catch(() => null);
         }
         // Fall back to cached analytics when Helius is unavailable or not configured
         if (!count || count <= 0) {

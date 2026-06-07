@@ -253,7 +253,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
           // Fire-and-forget: fetch real holder count in background
           solanaService.getTokenHolderCount(mint).then(count => {
             if (count && count > 0) {
-              cache.set(`holder-total:${mint}`, count, TTL.DAY);
+              cache.set(`holder-total:${mint}`, count, TTL.HOLDER_COUNT);
             }
           }).catch(err => {
             console.warn(`[Cultify] Background holder count failed for ${mint.slice(0, 8)}:`, err.message);
@@ -410,8 +410,10 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
         sampleFetch.then(async (sampleResult) => {
           if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
             await cache.set(walletsCacheKey, sampleResult.holders, TTL.DAY);
-            if (sampleResult.totalHolders && sampleResult.totalHolders > 0) {
-              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.DAY);
+            // Only cache when totalHolders is an exact count (< 1000 means all holders fit one page).
+            // totalHolders === 1000 is a lower-bound placeholder — don't cache it as the true count.
+            if (sampleResult.totalHolders && sampleResult.totalHolders < 1000) {
+              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.HOLDER_COUNT);
             }
             console.log(`[Cultify] Fetched ${sampleResult.holders.length} holder sample for ${mint.slice(0, 8)}...`);
           }

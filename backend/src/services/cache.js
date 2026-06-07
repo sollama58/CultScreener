@@ -20,6 +20,7 @@ const TTL = {
   METADATA: 3600000,    // 1 hour - for stable token metadata (name, symbol, logo)
   HOUR: 3600000,        // 1 hour
   DAY: 86400000,        // 24 hours
+  HOLDER_COUNT: 93600000, // 26 hours — 2h buffer over daily record-holder-counts job so cache outlasts the run
   ERROR: 60000          // 1 minute - cache failed lookups to prevent repeated API calls
 };
 

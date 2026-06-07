@@ -308,46 +308,50 @@ async function checkHealth() {
 // mint, callers get the same Promise instead of launching a second identical scan.
 const _holderCountInFlight = new Map();
 
-async function getTokenHolderCount(mintAddress) {
+// opts.maxPages  — cap pagination (default 100 = 100k holders). Pass 500 for curated daily job.
+// opts.skipCache — bypass Redis read; used by record-holder-counts to always get a fresh count.
+// Only caches when the count is exact (last page was partial, not a cap hit).
+async function getTokenHolderCount(mintAddress, opts = {}) {
   if (!HELIUS_DAS_URL) return null;
+  const { maxPages = 100, skipCache = false } = opts;
 
-  // Check Redis cache first — holder counts change slowly, 24h TTL is fine
-  try {
-    const [countA, countB] = await Promise.all([
-      cache.get(`holder-total:${mintAddress}`),
-      cache.get(`holders:${mintAddress}`)
-    ]);
-    const cached = countA || countB;
-    if (cached && cached > 0) return cached;
-  } catch (_) {}
+  if (!skipCache) {
+    try {
+      const cached = await cache.get(`holder-total:${mintAddress}`);
+      if (cached && cached > 0) return cached;
+    } catch (_) {}
 
-  if (_holderCountInFlight.has(mintAddress)) {
-    return _holderCountInFlight.get(mintAddress);
+    if (_holderCountInFlight.has(mintAddress)) {
+      return _holderCountInFlight.get(mintAddress);
+    }
   }
 
-  const promise = _doGetTokenHolderCount(mintAddress).then(async (count) => {
+  const promise = _doGetTokenHolderCount(mintAddress, maxPages).then(async ({ count, isExact }) => {
+    // Always cache — even capped counts prevent repeated expensive pagination.
+    // skipCache=true (used by the daily job) bypasses this cache on the next read,
+    // so capped values don't persist for curated tokens that need accurate counts.
     if (count && count > 0) {
-      await Promise.all([
-        cache.set(`holder-total:${mintAddress}`, count, TTL.DAY),
-        cache.set(`holders:${mintAddress}`, count, TTL.DAY)
-      ]).catch(() => {});
+      await cache.set(`holder-total:${mintAddress}`, count, TTL.HOLDER_COUNT).catch(() => {});
     }
     return count;
   }).finally(() => {
-    _holderCountInFlight.delete(mintAddress);
+    if (!skipCache) _holderCountInFlight.delete(mintAddress);
   });
-  _holderCountInFlight.set(mintAddress, promise);
+
+  if (!skipCache) _holderCountInFlight.set(mintAddress, promise);
   return promise;
 }
 
-async function _doGetTokenHolderCount(mintAddress) {
+// Returns { count, isExact }.
+// isExact=false when we hit maxPages — used for logging; count is cached regardless.
+async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
   try {
     return await circuitBreakers.heliusDas.execute(async () => {
       let totalCount = 0;
       let page = 1;
-      const MAX_PAGES = 500; // Safety cap: 500,000 holders max
+      let isExact = false;
 
-      while (page <= MAX_PAGES) {
+      while (page <= maxPages) {
         const response = await rateLimitedRequest('helius', () =>
           axios.post(HELIUS_DAS_URL, {
             jsonrpc: '2.0',
@@ -372,23 +376,22 @@ async function _doGetTokenHolderCount(mintAddress) {
         }
 
         const accounts = response.data.result?.token_accounts;
-        if (!accounts || accounts.length === 0) break;
+        if (!accounts || accounts.length === 0) { isExact = true; break; }
 
         totalCount += accounts.length;
 
-        // If fewer than 1000 returned, we've reached the last page
-        if (accounts.length < 1000) break;
+        if (accounts.length < 1000) { isExact = true; break; }
         page++;
       }
 
       if (totalCount > 0) {
-        console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} (${page} pages)`);
+        console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} (${page} pages${isExact ? '' : ', capped at maxPages'})`);
       }
-      return totalCount > 0 ? totalCount : null;
+      return { count: totalCount > 0 ? totalCount : null, isExact };
     }); // end circuitBreakers.heliusDas.execute
   } catch (error) {
     console.error('[Solana] Helius holder count error:', error.message);
-    return null;
+    return { count: null, isExact: false };
   }
 }
 

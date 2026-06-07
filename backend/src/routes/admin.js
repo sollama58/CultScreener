@@ -116,7 +116,7 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
 }));
 
 router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
-  const { cache, keys } = require('../services/cache');
+  const { cache, keys, TTL } = require('../services/cache');
   const solanaService = require('../services/solana');
 
   // Collect all token mints: curated + leaderboard
@@ -147,8 +147,7 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
     try {
       const count = await solanaService.getTokenHolderCount(mint);
       if (count && count > 0) {
-        await cache.set(`holder-total:${mint}`, count, 86400000);
-        await cache.set(keys.holderCount(mint), count, 86400000);
+        await cache.set(`holder-total:${mint}`, count, TTL.HOLDER_COUNT);
         results[mint] = count;
         updated++;
       } else {
@@ -193,9 +192,8 @@ router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, r
 
     try {
       let count = null;
-      // Always try Helius first — most accurate; getTokenHolderCount serves from its 24h cache when warm
       if (solanaService.isHeliusConfigured()) {
-        count = await solanaService.getTokenHolderCount(mint).catch(() => null);
+        count = await solanaService.getTokenHolderCount(mint, { skipCache: true, maxPages: 500 }).catch(() => null);
       }
       // Fall back to cached analytics when Helius is unavailable or not configured
       if (!count || count <= 0) {

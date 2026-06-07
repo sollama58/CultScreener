@@ -13,8 +13,8 @@ const { DIAMOND_HANDS_BUCKETS } = require('../constants');
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const HB_MAX_HOLDERS          = 50;
-const HB_MAX_SWAPS_PER_HOLDER = 150;
-const HB_ANALYSIS_CACHE_TTL   = 7200 * 1000; // 2 hours
+const HB_MAX_SWAPS_PER_HOLDER = 100;           // 1 page max (100 swaps) — halves Enhanced TX API calls
+const HB_ANALYSIS_CACHE_TTL   = 43200 * 1000; // 12 hours — holder behavior changes slowly
 const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analysis crashes
 
 // Tokens to exclude from hold-time analysis: wrapped SOL, stablecoins, and liquid

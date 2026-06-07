@@ -1070,8 +1070,7 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
     if (cached.tokens && cached.tokens.length > 0) {
       await Promise.all(cached.tokens.map(async (t) => {
         if (!t.holders) {
-          const count = await cache.get(`holder-total:${t.mintAddress}`)
-            || await cache.get(keys.holderCount(t.mintAddress));
+          const count = await cache.get(`holder-total:${t.mintAddress}`);
           if (count && count > 0) t.holders = count;
         }
       }));
@@ -1117,8 +1116,7 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   // Sequential fallback avoids a redundant second Redis GET on cache hit (common case)
   if (tokens.length > 0) {
     await Promise.all(tokens.map(async (t) => {
-      const countA = await cache.get(`holder-total:${t.mintAddress}`);
-      const count = countA || await cache.get(keys.holderCount(t.mintAddress));
+      const count = await cache.get(`holder-total:${t.mintAddress}`);
       if (count && count > 0) t.holders = count;
     }));
   }
@@ -1415,8 +1413,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
           return null;
         }),
         db.getApprovedSubmissions(mint).catch(() => []),
-        // Holder count: use cache (24h TTL) — never block on paginated DAS call
-        cache.get(`holder-total:${mint}`).then(c => c || cache.get(keys.holderCount(mint)))
+        cache.get(`holder-total:${mint}`)
       ];
 
       const results = await Promise.all(fetchPromises);
@@ -1973,13 +1970,8 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
         holderCount: null
       };
 
-      // Use cached holder count — check both keys in parallel
       try {
-        const [countA, countB] = await Promise.all([
-          cache.get(`holder-total:${mint}`),
-          cache.get(keys.holderCount(mint))
-        ]);
-        const totalCount = countA || countB;
+        const totalCount = await cache.get(`holder-total:${mint}`);
         if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
         } else if (solanaService.isHeliusConfigured()) {
