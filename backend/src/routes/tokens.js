@@ -1139,7 +1139,9 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
 // GET /api/tokens/benchmarks - SOL and BTC 24h price change used by the "vs SOL" tab
 // Cached 5 minutes — CoinGecko simple/price endpoint, free tier, no key required.
 router.get('/benchmarks', asyncHandler(async (req, res) => {
-  const cacheKey = 'benchmarks:sol-btc';
+  const cacheKey    = 'benchmarks:sol-btc';
+  const lastGoodKey = 'benchmarks:sol-btc:last-good';
+
   const cached = await cache.get(cacheKey);
   if (cached) return res.json(cached);
 
@@ -1164,10 +1166,19 @@ router.get('/benchmarks', asyncHandler(async (req, res) => {
       }
     };
     await cache.set(cacheKey, result, TTL.LONG);
+    // Keep a long-lived copy so CoinGecko outages can serve stale-but-real data
+    if (result.sol.price != null || result.btc.price != null) {
+      await cache.set(lastGoodKey, result, TTL.DAY);
+    }
     res.json(result);
   } catch (err) {
     console.warn('[benchmarks] CoinGecko fetch failed:', err.message);
-    // Return nulls so the frontend degrades gracefully
+    // Prefer stale real data over nulls — the frontend will display it with existing context
+    const lastGood = await cache.get(lastGoodKey);
+    if (lastGood) {
+      console.warn('[benchmarks] Serving last-known-good benchmark data');
+      return res.json(lastGood);
+    }
     res.json({ sol: { price: null, priceChange24h: null }, btc: { price: null, priceChange24h: null } });
   }
 }));

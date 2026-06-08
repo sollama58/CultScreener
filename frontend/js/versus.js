@@ -90,7 +90,14 @@ const versusPage = {
         api.tokens.benchmarks()
       ]);
 
-      this.benchmarks = benchmarks || { sol: null, btc: null };
+      const freshBenchmarks = benchmarks || { sol: null, btc: null };
+      // Only replace benchmarks when the new data is actually valid — if CoinGecko is
+      // temporarily down the response comes back with all-null fields, and we should
+      // keep whatever previously-good data we already have in memory rather than
+      // wiping it out and showing -- for every vs-SOL/BTC column
+      const hasValidData = freshBenchmarks.sol?.priceChange24h != null
+                        || freshBenchmarks.btc?.priceChange24h != null;
+      if (hasValidData) this.benchmarks = freshBenchmarks;
       this.tokens = [...(leaderboard?.tokens || [])];
 
       this.renderBenchmarkBar();
