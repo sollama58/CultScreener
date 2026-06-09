@@ -385,6 +385,42 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
 }));
 
 // ==========================================
+// Benchmark Price Refresh (SOL / BTC)
+// ==========================================
+
+router.post('/refresh-benchmarks', validateAdminSession, strictLimiter, asyncHandler(async (req, res) => {
+  // Bust the short-lived cache so the next call to /api/tokens/benchmarks re-fetches from CoinGecko
+  await cache.delete('benchmarks:sol-btc');
+  // Fetch fresh data immediately so the caller gets the result right away
+  const axios = require('axios');
+  try {
+    const response = await axios.get(
+      'https://api.coingecko.com/api/v3/simple/price',
+      {
+        params: { ids: 'solana,bitcoin', vs_currencies: 'usd', include_24hr_change: true },
+        timeout: 8000,
+        headers: { Accept: 'application/json' }
+      }
+    );
+    const data = response.data || {};
+    const result = {
+      sol: { price: data.solana?.usd ?? null, priceChange24h: data.solana?.usd_24h_change ?? null },
+      btc: { price: data.bitcoin?.usd ?? null, priceChange24h: data.bitcoin?.usd_24h_change ?? null },
+      updatedAt: Date.now(),
+    };
+    const TTL_LONG = 300000;
+    await cache.set('benchmarks:sol-btc', result, TTL_LONG);
+    if (result.sol.price != null || result.btc.price != null) {
+      await cache.set('benchmarks:sol-btc:last-good', result, 86400000);
+    }
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[Admin] refresh-benchmarks CoinGecko error:', err.message);
+    res.status(502).json({ error: `CoinGecko fetch failed: ${err.message}` });
+  }
+}));
+
+// ==========================================
 // Curated Tokens (session-based proxy)
 // ==========================================
 

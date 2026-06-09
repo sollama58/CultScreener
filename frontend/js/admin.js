@@ -206,11 +206,13 @@ const admin = {
     const refreshBtn = document.getElementById('admin-refresh-holders');
     const backfillBtn = document.getElementById('admin-backfill-holder-history');
     const geckoBackfillBtn = document.getElementById('admin-backfill-holder-gecko');
+    const benchmarksBtn = document.getElementById('admin-refresh-benchmarks');
     const wipeBtn = document.getElementById('admin-wipe-token');
     if (flushBtn) flushBtn.addEventListener('click', () => this.flushFailedWallets());
     if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshHolderCounts());
     if (backfillBtn) backfillBtn.addEventListener('click', () => this.backfillHolderHistory());
     if (geckoBackfillBtn) geckoBackfillBtn.addEventListener('click', () => this.backfillHolderGecko());
+    if (benchmarksBtn) benchmarksBtn.addEventListener('click', () => this.refreshBenchmarks());
     if (wipeBtn) wipeBtn.addEventListener('click', () => this.wipeTokenCache());
   },
 
@@ -300,6 +302,32 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Backfill 40D History (CoinGecko)';
+    }
+  },
+
+  async refreshBenchmarks() {
+    const btn = document.getElementById('admin-refresh-benchmarks');
+    const status = document.getElementById('admin-flush-status');
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+    status.textContent = '';
+
+    try {
+      const data = await this.request('/api/admin/refresh-benchmarks', { method: 'POST' });
+      const sol = data.data?.sol;
+      const btc = data.data?.btc;
+      const solStr = sol?.price != null ? `$${sol.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--';
+      const btcStr = btc?.price != null ? `$${btc.price.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '--';
+      status.textContent = `SOL/BTC prices refreshed — SOL: ${solStr}, BTC: ${btcStr}`;
+      status.style.color = 'var(--green)';
+      if (typeof toast !== 'undefined') toast.success(`Benchmarks refreshed — SOL: ${solStr}  BTC: ${btcStr}`);
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Refresh SOL/BTC Prices';
     }
   },
 

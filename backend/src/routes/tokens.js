@@ -1163,7 +1163,8 @@ router.get('/benchmarks', asyncHandler(async (req, res) => {
       btc: {
         price: data.bitcoin?.usd ?? null,
         priceChange24h: data.bitcoin?.usd_24h_change ?? null
-      }
+      },
+      updatedAt: Date.now(),
     };
     await cache.set(cacheKey, result, TTL.LONG);
     // Keep a long-lived copy so CoinGecko outages can serve stale-but-real data

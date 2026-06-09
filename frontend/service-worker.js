@@ -1,7 +1,7 @@
 // CultScreener Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'cultscreener-v30';
+const CACHE_VERSION = 'cultscreener-v31';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -17,7 +17,7 @@ const APP_SHELL = [
   '/js/conviction.js?v=11',
   '/js/tech.js?v=4',
   '/js/emerging.js?v=3',
-  '/js/versus.js?v=6',
+  '/js/versus.js?v=7',
   '/js/tokenDetail.js?v=17',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=2',
@@ -27,7 +27,7 @@ const APP_SHELL = [
   '/js/pwa.js?v=3',
   '/js/performance.js?v=14',
   '/js/cultify.js?v=10',
-  '/js/admin.js?v=10',
+  '/js/admin.js?v=11',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
   '/thisisfine8bit.jpg',

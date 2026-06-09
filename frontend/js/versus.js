@@ -85,9 +85,17 @@ const versusPage = {
     `;
 
     try {
+      // Fetch benchmarks directly (bypasses apiCache) when we have no valid data yet,
+      // so a stale frontend-cache entry with all-null values can't permanently block us.
+      const hasPriorData = this.benchmarks.sol?.priceChange24h != null
+                        || this.benchmarks.btc?.priceChange24h != null;
+      const benchmarksFetch = hasPriorData
+        ? api.tokens.benchmarks()
+        : api.request('/api/tokens/benchmarks');
+
       const [leaderboard, benchmarks] = await Promise.all([
         api.tokens.leaderboardConviction({ limit: 100, offset: 0 }),
-        api.tokens.benchmarks()
+        benchmarksFetch,
       ]);
 
       const freshBenchmarks = benchmarks || { sol: null, btc: null };
@@ -143,10 +151,20 @@ const versusPage = {
       return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
     };
 
-    const solPrice = this.benchmarks.sol?.price;
-    const btcPrice = this.benchmarks.btc?.price;
-    const solPct   = this.benchmarks.sol?.priceChange24h;
-    const btcPct   = this.benchmarks.btc?.priceChange24h;
+    const solPrice  = this.benchmarks.sol?.price;
+    const btcPrice  = this.benchmarks.btc?.price;
+    const solPct    = this.benchmarks.sol?.priceChange24h;
+    const btcPct    = this.benchmarks.btc?.priceChange24h;
+    const updatedAt = this.benchmarks.updatedAt;
+
+    const ageLabel = (() => {
+      if (!updatedAt) return '';
+      const mins = Math.round((Date.now() - updatedAt) / 60000);
+      if (mins < 1)  return 'updated just now';
+      if (mins < 60) return `updated ${mins}m ago`;
+      const hrs = Math.round(mins / 60);
+      return `updated ${hrs}h ago`;
+    })();
 
     bar.innerHTML = `
       <div class="benchmark-pill">
@@ -160,6 +178,7 @@ const versusPage = {
         <span class="benchmark-price">${btcPrice != null ? utils.formatPrice(btcPrice, 2) : '--'}</span>
         <span class="benchmark-change">${fmt(btcPct)}</span>
       </div>
+      ${ageLabel ? `<span class="benchmark-age">${ageLabel}</span>` : ''}
     `;
   },
 
