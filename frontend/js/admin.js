@@ -163,7 +163,7 @@ const admin = {
 
   loadTab(name) {
     switch (name) {
-      case 'dashboard': this.loadStats(); break;
+      case 'dashboard': this.loadStats(); this.loadKingOfPill(); break;
       case 'curated': this.loadCurated(); break;
       case 'announcements': this.loadAnnouncements(); break;
       case 'bugs': this.loadBugReports(); break;
