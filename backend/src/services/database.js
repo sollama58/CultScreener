@@ -626,7 +626,7 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     paramIndex++;
   }
   if (filters.search) {
-    filterConditions.push(`(LOWER(name) LIKE $${paramIndex} OR LOWER(symbol) LIKE $${paramIndex})`);
+    filterConditions.push(`(LOWER(name) LIKE $${paramIndex} OR LOWER(symbol) LIKE $${paramIndex} OR mint_address ILIKE $${paramIndex})`);
     const escaped = filters.search.replace(/[%_\\]/g, '\\$&');
     params.push(`%${escaped.toLowerCase()}%`);
     paramIndex++;

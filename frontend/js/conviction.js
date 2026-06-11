@@ -296,6 +296,15 @@ const convictionPage = {
           convictionUpdatedAt: null,
           addedAt: t.addedAt
         }));
+        const { search: wlSearch } = this.getFilters();
+        if (wlSearch) {
+          const q = wlSearch.toLowerCase();
+          this._allTokens = this._allTokens.filter(t =>
+            (t.name || '').toLowerCase().includes(q) ||
+            (t.symbol || '').toLowerCase().includes(q) ||
+            (t.mintAddress || '').toLowerCase().includes(q)
+          );
+        }
         this._shuffle(this._allTokens);
         this._allTokens.forEach((t, i) => { t._originalIndex = i; });
         this.totalItems = this._allTokens.length;
