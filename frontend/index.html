@@ -53,6 +53,8 @@
       text-decoration: none;
       transition: background 0.15s, border-color 0.15s;
       color: inherit;
+      position: relative;
+      overflow: visible;
     }
     .kotp-widget:hover {
       background: rgba(168, 85, 247, 0.06);
@@ -123,49 +125,43 @@
       margin-left: 0.35rem;
     }
     .kotp-tooltip-icon {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
-      border: 1.5px solid rgba(168, 85, 247, 0.65);
-      background: rgba(168, 85, 247, 0.1);
-      color: #c084fc;
-      font-size: 0.68rem;
+      border: 1px solid rgba(168, 85, 247, 0.5);
+      color: #a855f7;
+      font-size: 0.6rem;
       font-weight: 700;
       font-style: normal;
       display: flex;
       align-items: center;
       justify-content: center;
-      cursor: pointer;
       flex-shrink: 0;
       line-height: 1;
       user-select: none;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    .kotp-tooltip-icon:hover,
-    .kotp-tooltip-wrap.open .kotp-tooltip-icon {
-      background: rgba(168, 85, 247, 0.22);
-      border-color: rgba(168, 85, 247, 0.9);
     }
     .kotp-tooltip-box {
       display: none;
-      position: fixed;
-      width: 220px;
+      position: absolute;
+      bottom: calc(100% + 8px);
+      right: 0;
+      width: 240px;
       background: #1a1c24;
       border: 1px solid rgba(168, 85, 247, 0.45);
       border-radius: 6px;
-      padding: 0.55rem 0.7rem;
-      font-size: 0.72rem;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.75rem;
       font-weight: 400;
-      color: var(--text-secondary, #c0c0cc);
+      color: #c0c0cc;
       line-height: 1.5;
       text-transform: none;
       letter-spacing: 0;
       z-index: 9999;
       pointer-events: none;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      white-space: normal;
     }
-    .kotp-tooltip-wrap:hover .kotp-tooltip-box,
-    .kotp-tooltip-wrap.open .kotp-tooltip-box {
+    .kotp-widget:hover .kotp-tooltip-box {
       display: block;
     }
 
@@ -1167,42 +1163,17 @@
             (sym ? '<span class="kotp-symbol">$' + sym + '</span>' : '') +
           '</span>' +
           (chg.text ? '<span class="kotp-change ' + chg.cls + '">' + chg.text + '</span>' : '') +
-          '<span class="kotp-tooltip-wrap" id="kotp-tt-wrap">' +
-            '<i class="kotp-tooltip-icon" id="kotp-tt-icon">?</i>' +
-            '<span class="kotp-tooltip-box" id="kotp-tt-box">King of the Pill is chosen by the most-raided community token, including their CultScreener link. Winner determined by ASDF CultRaid Tech.</span>' +
-          '</span>';
+          '<span class="kotp-tooltip-wrap">' +
+            '<i class="kotp-tooltip-icon">?</i>' +
+          '</span>' +
+          '<span class="kotp-tooltip-box">King of the Pill is chosen by the most-raided community token, including their CultScreener link. Winner determined by ASDF CultRaid Tech.</span>';
         wrap.innerHTML = '';
         wrap.appendChild(el);
       }
 
-      function bindTooltip() {
-        var icon = document.getElementById('kotp-tt-icon');
-        var box  = document.getElementById('kotp-tt-box');
-        var ttw  = document.getElementById('kotp-tt-wrap');
-        if (!icon || !box || !ttw) return;
-        icon.addEventListener('click', function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          var open = ttw.classList.toggle('open');
-          if (open) {
-            var r = icon.getBoundingClientRect();
-            box.style.top  = (r.bottom + 6) + 'px';
-            box.style.right = (window.innerWidth - r.right) + 'px';
-            box.style.left  = 'auto';
-            if (r.right - 220 < 8) {
-              box.style.left  = Math.max(8, r.left) + 'px';
-              box.style.right = 'auto';
-            }
-          }
-        });
-        document.addEventListener('click', function (e) {
-          if (!ttw.contains(e.target)) ttw.classList.remove('open');
-        });
-      }
-
       fetch(apiBase + '/api/tokens/king-of-pill')
         .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (d) { if (d) { render(d.token); bindTooltip(); } })
+        .then(function (d) { if (d) render(d.token); })
         .catch(function () {});
     })();
   </script>
