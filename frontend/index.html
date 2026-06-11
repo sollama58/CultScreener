@@ -38,6 +38,84 @@
   <link rel="stylesheet" href="css/styles.css?v=10">
 
   <style>
+    /* ── King of the Pill widget ────────────────────────── */
+    .kotp-widget {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.5rem 0.85rem;
+      background: var(--bg-secondary);
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      border-left: 3px solid #a855f7;
+      border-radius: var(--radius-md);
+      margin-bottom: 0.75rem;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, border-color 0.15s;
+      color: inherit;
+    }
+    .kotp-widget:hover {
+      background: rgba(168, 85, 247, 0.06);
+      border-color: rgba(168, 85, 247, 0.5);
+      border-left-color: #c084fc;
+    }
+    .kotp-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.6rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #a855f7;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .kotp-divider {
+      width: 1px;
+      height: 1.1rem;
+      background: var(--border-color);
+      flex-shrink: 0;
+    }
+    .kotp-logo {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .kotp-info {
+      display: flex;
+      align-items: baseline;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .kotp-name {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 160px;
+    }
+    .kotp-symbol {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .kotp-change {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .kotp-change.pos { color: #10b981; }
+    .kotp-change.neg { color: #ef4444; }
+    .kotp-change.na  { color: var(--text-dim); }
+
     /* ── View Tab Switcher ──────────────────────────────── */
     .main-view-tabs {
       display: flex;
@@ -576,6 +654,9 @@
   <main class="main conviction-page terminal-page">
     <h1 class="sr-only">CultScreener - Diamond Hands Terminal</h1>
 
+    <!-- King of the Pill -->
+    <div id="kotp-wrap"></div>
+
     <!-- View Tab Switcher -->
     <div class="main-view-tabs" role="tablist" aria-label="Main view">
       <button class="main-view-tab active" id="tab-diamond" role="tab" aria-selected="true" aria-controls="view-diamond" data-view="diamond">
@@ -956,5 +1037,52 @@
     })();
   </script>
   <script src="js/pwa.js?v=3"></script>
+  <script>
+    // ── King of the Pill widget ───────────────────────────────
+    (function () {
+      var wrap = document.getElementById('kotp-wrap');
+      if (!wrap) return;
+
+      var apiBase = (typeof API_BASE_URL !== 'undefined') ? API_BASE_URL : '';
+
+      function esc(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      }
+
+      function fmtChange(v) {
+        if (v == null) return { text: '', cls: 'na' };
+        var sign = v >= 0 ? '+' : '';
+        return { text: sign + v.toFixed(2) + '% 24h', cls: v >= 0 ? 'pos' : 'neg' };
+      }
+
+      function render(token) {
+        if (!token) { wrap.innerHTML = ''; return; }
+        var logo = token.logoUri || '';
+        var chg  = fmtChange(token.priceChange24h);
+        var mint = token.mintAddress || '';
+        var name = esc(token.name || token.symbol || '');
+        var sym  = esc(token.symbol || '');
+        var el   = document.createElement('a');
+        el.className  = 'kotp-widget';
+        el.href       = 'token.html?mint=' + encodeURIComponent(mint);
+        el.innerHTML  =
+          '<span class="kotp-badge">💊 King of the Pill</span>' +
+          '<span class="kotp-divider"></span>' +
+          (logo ? '<img class="kotp-logo" src="' + esc(logo) + '" alt="" onerror="this.style.display=\'none\'">' : '') +
+          '<span class="kotp-info">' +
+            '<span class="kotp-name">' + name + '</span>' +
+            (sym ? '<span class="kotp-symbol">$' + sym + '</span>' : '') +
+          '</span>' +
+          (chg.text ? '<span class="kotp-change ' + chg.cls + '">' + chg.text + '</span>' : '');
+        wrap.innerHTML = '';
+        wrap.appendChild(el);
+      }
+
+      fetch(apiBase + '/api/tokens/king-of-pill')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { if (d) render(d.token); })
+        .catch(function () {});
+    })();
+  </script>
 </body>
 </html>

@@ -385,6 +385,43 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
 }));
 
 // ==========================================
+// King of the Pill
+// ==========================================
+
+router.get('/king-of-pill', validateAdminSession, asyncHandler(async (req, res) => {
+  const mint = await db.getSetting('king_of_pill_mint');
+  if (!mint) return res.json({ mint: null, token: null });
+  const row = await db.getToken(mint);
+  const token = row ? {
+    mintAddress: mint,
+    name: row.name || null,
+    symbol: row.symbol || null,
+    logoUri: row.logo_uri || null,
+  } : null;
+  res.json({ mint, token });
+}));
+
+router.post('/king-of-pill', validateAdminSession, strictLimiter, asyncHandler(async (req, res) => {
+  const { mint } = req.body;
+
+  if (mint && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint.trim())) {
+    return res.status(400).json({ error: 'Invalid mint address' });
+  }
+
+  const value = mint ? mint.trim() : null;
+  await db.setSetting('king_of_pill_mint', value);
+  // Bust the public cache so the widget refreshes immediately
+  await cache.delete('king-of-pill:featured');
+
+  const token = value ? await db.getToken(value) : null;
+  res.json({
+    success: true,
+    mint: value,
+    token: token ? { mintAddress: value, name: token.name, symbol: token.symbol, logoUri: token.logo_uri } : null,
+  });
+}));
+
+// ==========================================
 // Benchmark Price Refresh (SOL / BTC)
 // ==========================================
 

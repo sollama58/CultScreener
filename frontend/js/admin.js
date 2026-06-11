@@ -81,6 +81,7 @@ const admin = {
       this.activeTab = 'dashboard';
       // Populate stats directly from the verification call — avoids a second round-trip
       this._applyStats(stats);
+      this.loadKingOfPill();
     } catch {
       this.token = null;
       sessionStorage.removeItem('admin_token');
@@ -213,6 +214,10 @@ const admin = {
     if (backfillBtn) backfillBtn.addEventListener('click', () => this.backfillHolderHistory());
     if (geckoBackfillBtn) geckoBackfillBtn.addEventListener('click', () => this.backfillHolderGecko());
     if (benchmarksBtn) benchmarksBtn.addEventListener('click', () => this.refreshBenchmarks());
+    const kotpSetBtn   = document.getElementById('admin-kotp-set');
+    const kotpClearBtn = document.getElementById('admin-kotp-clear');
+    if (kotpSetBtn)   kotpSetBtn.addEventListener('click', () => this.setKingOfPill());
+    if (kotpClearBtn) kotpClearBtn.addEventListener('click', () => this.clearKingOfPill());
     if (wipeBtn) wipeBtn.addEventListener('click', () => this.wipeTokenCache());
   },
 
@@ -302,6 +307,85 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Backfill 40D History (CoinGecko)';
+    }
+  },
+
+  async loadKingOfPill() {
+    const el = document.getElementById('kotp-current');
+    if (!el) return;
+    try {
+      const data = await this.request('/api/admin/king-of-pill');
+      if (!data.mint) {
+        el.textContent = 'No token set — widget is hidden.';
+      } else {
+        const t = data.token;
+        const name = t ? (t.name || t.symbol || data.mint) : data.mint;
+        const sym  = t?.symbol ? ` ($${t.symbol})` : '';
+        el.innerHTML = `Currently: <strong>${name}${sym}</strong> — <code style="font-size:0.75rem;color:var(--text-dim)">${data.mint}</code>`;
+        const input = document.getElementById('kotp-mint-input');
+        if (input && !input.value) input.value = data.mint;
+      }
+    } catch {
+      el.textContent = 'Could not load current setting.';
+    }
+  },
+
+  async setKingOfPill() {
+    const btn    = document.getElementById('admin-kotp-set');
+    const input  = document.getElementById('kotp-mint-input');
+    const status = document.getElementById('admin-kotp-status');
+    const mint   = input?.value.trim();
+
+    if (!mint || mint.length < 32 || mint.length > 44) {
+      status.textContent = 'Please enter a valid mint address.';
+      status.style.color = 'var(--red)';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    status.textContent = '';
+
+    try {
+      const data = await this.request('/api/admin/king-of-pill', { method: 'POST', body: JSON.stringify({ mint }) });
+      const name = data.token?.name || data.token?.symbol || mint;
+      status.textContent = `Set! ${name} is now King of the Pill.`;
+      status.style.color = 'var(--green)';
+      if (typeof toast !== 'undefined') toast.success(`${name} crowned King of the Pill 💊`);
+      this.loadKingOfPill();
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Set King';
+    }
+  },
+
+  async clearKingOfPill() {
+    const btn    = document.getElementById('admin-kotp-clear');
+    const status = document.getElementById('admin-kotp-status');
+
+    btn.disabled = true;
+    btn.textContent = 'Clearing…';
+    status.textContent = '';
+
+    try {
+      await this.request('/api/admin/king-of-pill', { method: 'POST', body: JSON.stringify({ mint: null }) });
+      status.textContent = 'Cleared — widget is now hidden.';
+      status.style.color = 'var(--text-muted)';
+      const input = document.getElementById('kotp-mint-input');
+      if (input) input.value = '';
+      if (typeof toast !== 'undefined') toast.success('King of the Pill cleared');
+      this.loadKingOfPill();
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Clear';
     }
   },
 

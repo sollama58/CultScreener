@@ -1136,6 +1136,38 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
+// GET /api/tokens/king-of-pill - Admin-featured token shown as a persistent widget on the main page
+router.get('/king-of-pill', asyncHandler(async (req, res) => {
+  const cacheKey = 'king-of-pill:featured';
+  const cached = await cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  const mint = await db.getSetting('king_of_pill_mint');
+  if (!mint) return res.json({ token: null });
+
+  // Fetch basic token data from DB (name, symbol, logo)
+  const row = await db.getToken(mint);
+  if (!row) return res.json({ token: null });
+
+  // Layer in live price/change from cache if available.
+  // Price cache uses setWithTimestamp so we need getWithMeta to unwrap the _data envelope.
+  const priceMeta = await cache.getWithMeta(`price:${mint}`);
+  const priceData = priceMeta?.value;
+
+  const token = {
+    mintAddress: mint,
+    name: row.name || null,
+    symbol: row.symbol || null,
+    logoUri: row.logo_uri || null,
+    price: priceData?.price ?? (row.price ? parseFloat(row.price) : null),
+    priceChange24h: priceData?.priceChange24h ?? (row.price_change_24h != null ? parseFloat(row.price_change_24h) : null),
+  };
+
+  const result = { token };
+  await cache.set(cacheKey, result, TTL.LONG);
+  res.json(result);
+}));
+
 // GET /api/tokens/benchmarks - SOL and BTC 24h price change used by the "vs SOL" tab
 // Cached 5 minutes — CoinGecko simple/price endpoint, free tier, no key required.
 router.get('/benchmarks', asyncHandler(async (req, res) => {

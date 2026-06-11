@@ -393,6 +393,20 @@
           <span id="admin-wipe-status" style="font-size:0.78rem;color:var(--text-muted);display:block;margin-top:0.4rem;"></span>
           <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Removes ALL cached data for a specific token: price, holders, diamond hands, conviction, charts, wallet hold times, and list/leaderboard caches. Use when a token's data is stale or stuck.</p>
         </div>
+        <div style="margin-top:1.25rem;">
+          <h3 style="font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">💊 King of the Pill</h3>
+          <div id="kotp-current" style="margin-bottom:0.75rem;font-size:0.82rem;color:var(--text-muted);">Loading…</div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;">
+            <div class="field" style="flex:1;min-width:250px;margin:0;">
+              <label for="kotp-mint-input" style="font-size:0.72rem;">Token Mint Address</label>
+              <input type="text" id="kotp-mint-input" placeholder="Paste contract address to crown…" maxlength="44" style="font-size:0.82rem;">
+            </div>
+            <button class="btn btn-primary btn-sm" id="admin-kotp-set">Set King</button>
+            <button class="btn btn-sm" id="admin-kotp-clear">Clear</button>
+          </div>
+          <span id="admin-kotp-status" style="font-size:0.78rem;color:var(--text-muted);display:block;margin-top:0.4rem;"></span>
+          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Sets the featured token shown in the "King of the Pill" widget at the top of the main page. Visible to all users. Leave blank to hide the widget.</p>
+        </div>
       </div>
 
       <!-- Curated Tokens -->
@@ -533,7 +547,7 @@
 
   <script src="js/config.js?v=2"></script>
   <script src="js/api.js?v=6"></script>
-  <script src="js/admin.js?v=11"></script>
+  <script src="js/admin.js?v=13"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>

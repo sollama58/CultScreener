@@ -461,6 +461,13 @@ async function initializeDatabase() {
 
       CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
         ON holder_history(mint_address, recorded_date DESC);
+
+      -- Generic key-value store for admin-configurable settings
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
     `);
 
     await client.query('COMMIT');
@@ -3411,6 +3418,28 @@ async function getHolderHistory(mintAddress, days = 30) {
   return result.rows;
 }
 
+async function getSetting(key) {
+  if (!pool) return null;
+  const result = await pool.query(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [key]
+  );
+  return result.rows[0]?.value ?? null;
+}
+
+async function setSetting(key, value) {
+  if (!pool) return;
+  if (value == null) {
+    await pool.query('DELETE FROM app_settings WHERE key = $1', [key]);
+  } else {
+    await pool.query(
+      `INSERT INTO app_settings(key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, String(value)]
+    );
+  }
+}
+
 module.exports = {
   get pool() { return pool; },
   initializeDatabase,
@@ -3569,4 +3598,7 @@ module.exports = {
   // Holder history
   recordHolderCount,
   getHolderHistory,
+  // App settings
+  getSetting,
+  setSetting,
 };
