@@ -142,9 +142,7 @@
     }
     .kotp-tooltip-box {
       display: none;
-      position: absolute;
-      bottom: calc(100% + 8px);
-      right: 0;
+      position: fixed;
       width: 240px;
       background: #1a1c24;
       border: 1px solid rgba(168, 85, 247, 0.45);
@@ -161,7 +159,8 @@
       box-shadow: 0 4px 20px rgba(0,0,0,0.6);
       white-space: normal;
     }
-    .kotp-widget:hover .kotp-tooltip-box {
+    .kotp-widget:hover .kotp-tooltip-box,
+    .kotp-widget.kotp-tt-open .kotp-tooltip-box {
       display: block;
     }
 
@@ -1169,6 +1168,35 @@
           '<span class="kotp-tooltip-box">King of the Pill is chosen by the most-raided community token, including their CultScreener link. Winner determined by ASDF CultRaid Tech.</span>';
         wrap.innerHTML = '';
         wrap.appendChild(el);
+
+        var box  = el.querySelector('.kotp-tooltip-box');
+        var icon = el.querySelector('.kotp-tooltip-icon');
+
+        function positionTooltip() {
+          var r = el.getBoundingClientRect();
+          box.style.top  = (r.bottom + 8) + 'px';
+          var rightEdge = window.innerWidth - r.right;
+          if (rightEdge + 240 > window.innerWidth - 8) {
+            box.style.left  = '8px';
+            box.style.right = 'auto';
+          } else {
+            box.style.right = Math.max(8, rightEdge) + 'px';
+            box.style.left  = 'auto';
+          }
+        }
+
+        el.addEventListener('mouseenter', positionTooltip);
+
+        icon.addEventListener('touchstart', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var isOpen = el.classList.toggle('kotp-tt-open');
+          if (isOpen) positionTooltip();
+        }, { passive: false });
+
+        document.addEventListener('touchstart', function (e) {
+          if (!el.contains(e.target)) el.classList.remove('kotp-tt-open');
+        }, { passive: true });
       }
 
       fetch(apiBase + '/api/tokens/king-of-pill')
