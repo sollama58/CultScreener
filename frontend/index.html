@@ -35,7 +35,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/styles.css?v=10">
+  <link rel="stylesheet" href="css/styles.css?v=12">
 
   <style>
     /* ── King of the Pill widget ────────────────────────── */
@@ -115,6 +115,53 @@
     .kotp-change.pos { color: #10b981; }
     .kotp-change.neg { color: #ef4444; }
     .kotp-change.na  { color: var(--text-dim); }
+    .kotp-tooltip-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      margin-left: 0.35rem;
+    }
+    .kotp-tooltip-icon {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      border: 1px solid rgba(168, 85, 247, 0.45);
+      color: #a855f7;
+      font-size: 0.6rem;
+      font-weight: 700;
+      font-style: normal;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: default;
+      flex-shrink: 0;
+      line-height: 1;
+      user-select: none;
+    }
+    .kotp-tooltip-box {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      width: 220px;
+      background: #1a1c24;
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      border-radius: 6px;
+      padding: 0.55rem 0.7rem;
+      font-size: 0.72rem;
+      font-weight: 400;
+      color: var(--text-secondary, #c0c0cc);
+      line-height: 1.5;
+      text-transform: none;
+      letter-spacing: 0;
+      z-index: 100;
+      pointer-events: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    .kotp-tooltip-wrap:hover .kotp-tooltip-box {
+      display: block;
+    }
 
     /* ── View Tab Switcher ──────────────────────────────── */
     .main-view-tabs {
@@ -607,6 +654,46 @@
       td.perf-mcap, th.perf-th-mcap { display: none; }
       th.perf-th-token { width: 180px; }
     }
+
+    @media (max-width: 480px) {
+      /* ── Tab switcher — horizontal scroll so all 5 tabs are reachable ── */
+      .main-view-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+        margin-bottom: 0.6rem;
+        gap: 0.2rem;
+      }
+      .main-view-tabs::-webkit-scrollbar { display: none; }
+      .main-view-tab { flex-shrink: 0; padding: 0.4rem 0.75rem; font-size: 0.74rem; }
+
+      /* ── Benchmark bar — compact single row, drop the age label ── */
+      .versus-benchmark-bar { padding: 0.45rem 0.6rem; gap: 0.35rem; flex-wrap: nowrap; }
+      .benchmark-pill { font-size: 0.76rem; gap: 0.3rem; }
+      .benchmark-price { font-size: 0.76rem; }
+      .benchmark-age { display: none; }
+
+      /* ── vs SOL table — hide 24h % column (vs SOL already shows relative perf) ── */
+      .cell-change { display: none; }
+      /* Tighten rank on this table too */
+      .cell-rank { width: 26px; min-width: 26px; }
+
+      /* ── Podium — shrink cards a bit more ── */
+      .podium-card { padding: 0.65rem 0.85rem 0.65rem; }
+      .podium-logo { width: 32px; height: 32px; }
+      .podium-name { font-size: 0.75rem; max-width: 100px; }
+      .podium-medal { font-size: 1.2rem; }
+
+      /* ── Performance table — hide ATH % column, keep Current % ── */
+      td.perf-ath-pct, th.perf-th-ath { display: none; }
+      th.perf-th-token { width: 150px; }
+      td.perf-current-pct { font-size: 0.82rem; }
+
+      /* ── Performance share button — keep accessible but compact ── */
+      .perf-share-btn { padding: 0.4rem 0.7rem; font-size: 0.72rem; }
+    }
   </style>
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
@@ -1073,7 +1160,11 @@
             '<span class="kotp-name">' + name + '</span>' +
             (sym ? '<span class="kotp-symbol">$' + sym + '</span>' : '') +
           '</span>' +
-          (chg.text ? '<span class="kotp-change ' + chg.cls + '">' + chg.text + '</span>' : '');
+          (chg.text ? '<span class="kotp-change ' + chg.cls + '">' + chg.text + '</span>' : '') +
+          '<span class="kotp-tooltip-wrap" onclick="event.preventDefault();event.stopPropagation();">' +
+            '<i class="kotp-tooltip-icon">?</i>' +
+            '<span class="kotp-tooltip-box">King of the Pill chosen by most-raided token including their CultScreener link</span>' +
+          '</span>';
         wrap.innerHTML = '';
         wrap.appendChild(el);
       }
