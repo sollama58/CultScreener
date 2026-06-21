@@ -159,7 +159,7 @@ const tokenDetail = {
     // Share button — copies a share URL with rich social media previews
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      const shareUrl = `https://HolDEX.com/token.html?mint=${this.mint}`;
+      const shareUrl = `https://holdex.live/share/${this.mint}`;
       const copied = await utils.copyToClipboard(shareUrl);
       if (copied) toast.success('Share link copied to clipboard');
     };

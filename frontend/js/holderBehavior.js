@@ -95,7 +95,7 @@
       `Swaps analyzed: ${(data.totalSwapsAnalyzed || 0).toLocaleString()}`,
       `Overall avg hold: ${avgHold}`,
       ``,
-      `HolDEX.com`,
+      `holdex.live`,
     ].join('\n');
   }
 
@@ -112,7 +112,7 @@
 
     if (typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title: `${ticker} Holder Behavior — HolDEX`, text, url: 'https://HolDEX.com' });
+        await navigator.share({ title: `${ticker} Holder Behavior — HolDEX`, text, url: 'https://holdex.live' });
         return;
       } catch (e) {
         if (e.name === 'AbortError') return;
@@ -583,8 +583,8 @@
       ${summaryHtml}
       ${tabsHtml}
       <div class="hb-watermark">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.5"><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
-        HolDEX.com
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.5"><polygon points="12,2 22,12 12,22 2,12"/></svg>
+        holdex.live
       </div>
     `);
 
