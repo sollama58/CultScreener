@@ -1,4 +1,4 @@
-// Token Detail Page Logic
+﻿// Token Detail Page Logic
 const tokenDetail = {
   mint: null,
   token: null,
@@ -30,11 +30,11 @@ const tokenDetail = {
 
     this.bindEvents();
 
-    // Fire off pool and social fetches immediately — they only need this.mint,
+    // Fire off pool and social fetches immediately â€” they only need this.mint,
     // not this.token, so they run in parallel with the main token load.
     // Their DOM updates land on elements inside #token-content (still hidden at
     // this point), so when hideLoading() reveals the page these sections are
-    // already populated — no skeleton → data flash.
+    // already populated â€” no skeleton â†’ data flash.
     this.loadPools().catch(() => {});
     this.loadDexScreenerData().catch(() => {});
     this.loadHolderTrend().catch(() => {});
@@ -56,7 +56,7 @@ const tokenDetail = {
         this.recordView();
       }
 
-      // Start price refresh and freshness timer immediately — don't wait for
+      // Start price refresh and freshness timer immediately â€” don't wait for
       // holder analytics to complete. The holders section already shows skeleton
       // rows; hold times and diamond hands fill in via their own polling loops.
       this.startPriceRefresh();
@@ -156,7 +156,7 @@ const tokenDetail = {
     const addressEl = document.getElementById('token-address');
     bindHandler(addressEl, 'click', copyHandler);
 
-    // Share button — copies a share URL with rich social media previews
+    // Share button â€” copies a share URL with rich social media previews
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
       const shareUrl = `https://holdex.live/share/${this.mint}`;
@@ -176,7 +176,7 @@ const tokenDetail = {
     };
     bindHandler(watchlistBtn, 'click', watchlistHandler);
 
-    // Holders refresh button — debounced to 10s after a manual refresh to prevent spam
+    // Holders refresh button â€” debounced to 10s after a manual refresh to prevent spam
     const holdersRefreshBtn = document.getElementById('holders-refresh');
     const holdersRefreshHandler = () => {
       if (this._holdersRefreshing) return;
@@ -240,7 +240,7 @@ const tokenDetail = {
     };
     document.addEventListener('visibilitychange', this.visibilityHandler);
 
-    // Holder trend range buttons — delegated via section
+    // Holder trend range buttons â€” delegated via section
     const htSection = document.getElementById('holder-trend-section');
     if (htSection) {
       const htRangeHandler = (e) => {
@@ -296,7 +296,7 @@ const tokenDetail = {
       // Clear the partial flag so renderToken shows real values
       delete this.token.geckoPartial;
       this.renderToken();
-    } catch { /* silently ignore — normal price refresh will pick it up later */ }
+    } catch { /* silently ignore â€” normal price refresh will pick it up later */ }
   },
 
   startPriceRefresh() {
@@ -323,7 +323,7 @@ const tokenDetail = {
     if (freshnessEl) {
       spinner = document.createElement('span');
       spinner.className = 'price-refresh-spinner';
-      spinner.title = 'Refreshing price…';
+      spinner.title = 'Refreshing priceâ€¦';
       freshnessEl.appendChild(spinner);
     }
 
@@ -494,7 +494,7 @@ const tokenDetail = {
     const nameEl = document.getElementById('token-name');
     if (nameEl) nameEl.textContent = token.name || `${this.mint.slice(0, 4)}...${this.mint.slice(-4)}`;
 
-    // Emerging Cult / Tech Coin badges — inject/remove right after the token name h1
+    // Emerging Cult / Tech Coin badges â€” inject/remove right after the token name h1
     if (nameEl) {
       nameEl.parentElement.querySelectorAll('.emerging-cult-badge, .tech-coin-detail-badge').forEach(el => el.remove());
       // Insert in reverse visual order: each insertAdjacentElement('afterend') pushes
@@ -502,13 +502,13 @@ const tokenDetail = {
       if (token.techCoin) {
         const badge = document.createElement('span');
         badge.className = 'tech-coin-detail-badge';
-        badge.textContent = '🤖 Tech Coin';
+        badge.textContent = 'ðŸ¤– Tech Coin';
         nameEl.insertAdjacentElement('afterend', badge);
       }
       if (token.emergingCult) {
         const badge = document.createElement('span');
         badge.className = 'emerging-cult-badge';
-        badge.textContent = '🛠️ Emerging Cult';
+        badge.textContent = 'ðŸ› ï¸ Emerging Cult';
         nameEl.insertAdjacentElement('afterend', badge);
       }
     }
@@ -534,7 +534,7 @@ const tokenDetail = {
     // Price
     this.updatePriceDisplay();
 
-    // Stats — populate and remove placeholder styling
+    // Stats â€” populate and remove placeholder styling
     const setStat = (id, value) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -543,7 +543,7 @@ const tokenDetail = {
     };
 
     // When GeckoTerminal was rate-limited on load, show dashes so users don't see
-    // misleading $0 values — _retryGeckoData() will fill these in after ~15s.
+    // misleading $0 values â€” _retryGeckoData() will fill these in after ~15s.
     const partial = !!token.geckoPartial;
     setStat('stat-mcap', partial ? '--' : utils.formatNumber(token.marketCap));
     setStat('stat-volume', partial ? '--' : utils.formatNumber(token.volume24h));
@@ -665,7 +665,7 @@ const tokenDetail = {
     }
   },
 
-  // ── Holder Trend ──────────────────────────────────────────────────────────
+  // â”€â”€ Holder Trend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async loadHolderTrend(range) {
     const section = document.getElementById('holder-trend-section');
@@ -685,7 +685,7 @@ const tokenDetail = {
       const data = await api.tokens.getHolderHistory(this.mint, 31);
       const history = (data && Array.isArray(data.history)) ? data.history : [];
 
-      // Reverse so oldest → newest (API returns newest first)
+      // Reverse so oldest â†’ newest (API returns newest first)
       const allRows = history.slice().reverse();
 
       section.style.display = '';
@@ -695,7 +695,7 @@ const tokenDetail = {
 
       if (allRows.length === 0) {
         if (chartWrap) chartWrap.style.display = 'none';
-        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — use "Snapshot Holders Now" in admin to record today'; }
+        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet â€” use "Snapshot Holders Now" in admin to record today'; }
         return;
       }
 
@@ -711,7 +711,7 @@ const tokenDetail = {
         this._renderHolderBarChart(chartRows);
       } else {
         if (chartWrap) chartWrap.style.display = 'none';
-        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — check back tomorrow'; }
+        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet â€” check back tomorrow'; }
       }
     } catch (err) {
       console.warn('[HolderTrend] load error:', err);
@@ -721,7 +721,7 @@ const tokenDetail = {
         const chartWrap = document.getElementById('ht-chart-wrap');
         const emptyEl   = document.getElementById('ht-empty');
         if (chartWrap) chartWrap.style.display = 'none';
-        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — holder trend data will appear after the first snapshot'; }
+        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet â€” holder trend data will appear after the first snapshot'; }
       }
     }
   },
@@ -741,7 +741,7 @@ const tokenDetail = {
       const target = new Date(latestDate);
       target.setDate(target.getDate() - daysAgo);
       const targetStr = target.toISOString().slice(0, 10);
-      // rows are oldest→newest; walk backwards to find the closest row on or before target
+      // rows are oldestâ†’newest; walk backwards to find the closest row on or before target
       let pastRow = null;
       for (let i = rows.length - 2; i >= 0; i--) {
         if (rows[i].recorded_date <= targetStr) { pastRow = rows[i]; break; }
@@ -806,7 +806,7 @@ const tokenDetail = {
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     };
 
-    // 4 y-axis ticks evenly spaced from min → max
+    // 4 y-axis ticks evenly spaced from min â†’ max
     const ticks = Array.from({ length: 4 }, (_, i) => {
       const frac = i / 3;
       return {
@@ -835,8 +835,8 @@ const tokenDetail = {
       <svg class="ht-svg" width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" aria-hidden="true">
         <defs>
           <linearGradient id="ht-bar-grad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.95"/>
-            <stop offset="100%" stop-color="#0369a1" stop-opacity="0.75"/>
+            <stop offset="0%" stop-color="#ff9100" stop-opacity="0.95"/>
+            <stop offset="100%" stop-color="#e64a19" stop-opacity="0.75"/>
           </linearGradient>
         </defs>
         ${gridLines}
@@ -930,13 +930,13 @@ const tokenDetail = {
     }
 
     try {
-      // Always fetch without ?fresh=true — we only bust the frontend cache above.
+      // Always fetch without ?fresh=true â€” we only bust the frontend cache above.
       // Sending ?fresh=true would bypass the backend Redis cache and re-run the full
       // RPC pipeline, discarding the already-computed worker-enriched result.
       const data = await api.tokens.getHolders(this.mint);
       if (!data) return;
 
-      // Show the section — even on RPC errors we display a message
+      // Show the section â€” even on RPC errors we display a message
       if (section) section.style.display = '';
 
       // Show current ticker in header
@@ -945,7 +945,7 @@ const tokenDetail = {
         tickerEl.textContent = '$' + (this.token.symbol || '').toUpperCase();
       }
 
-      // Handle RPC unavailable — show section with retry message
+      // Handle RPC unavailable â€” show section with retry message
       if (data.error === 'rpc_unavailable' || !data.holders || data.holders.length === 0) {
         const tbody = document.getElementById('holders-tbody');
         if (tbody) {
@@ -1025,7 +1025,7 @@ const tokenDetail = {
 
       // Render locked & burnt supply info (inside the metrics grid)
       if (!data.supply) {
-        // Fast-path response: supply data not yet enriched by worker — show loading state
+        // Fast-path response: supply data not yet enriched by worker â€” show loading state
         const lockedEl = document.getElementById('holders-locked');
         const burntEl = document.getElementById('holders-burnt');
         if (lockedEl) lockedEl.textContent = '...';
@@ -1054,7 +1054,7 @@ const tokenDetail = {
           if (bt > 0) {
             let tooltip = '';
             if (data.supply.splBurnt > 0 && data.supply.deadWalletBurnt > 0) {
-              tooltip = `SPL Burn: ${fmtAmount(data.supply.splBurnt)} · Dead Wallets: ${fmtAmount(data.supply.deadWalletBurnt)}`;
+              tooltip = `SPL Burn: ${fmtAmount(data.supply.splBurnt)} Â· Dead Wallets: ${fmtAmount(data.supply.deadWalletBurnt)}`;
             } else if (data.supply.splBurnt > 0) {
               tooltip = 'Burned via SPL burn instruction';
             } else {
@@ -1115,22 +1115,22 @@ const tokenDetail = {
       if (this._metricsTimer) { clearTimeout(this._metricsTimer); this._metricsTimer = null; }
     }
 
-    // Capture mint at call time — discard stale responses if user navigated away
+    // Capture mint at call time â€” discard stale responses if user navigated away
     const mintAtStart = this.mint;
 
     try {
-      // Bypass frontend cache — we need the worker-enriched result, not the fast-path copy
+      // Bypass frontend cache â€” we need the worker-enriched result, not the fast-path copy
       const data = await api.request(`/api/tokens/${mintAtStart}/holders`);
       if (this.mint !== mintAtStart) return;
 
-      // Keep polling while supply is null — the worker always sets supply when it completes.
+      // Keep polling while supply is null â€” the worker always sets supply when it completes.
       // Checking supply (not metrics.top5Pct) is correct because metrics can be null for
       // tokens where all top holders are LP programs (metrics=null but supply is still computed).
       if (!data || data.supply == null) {
         if (attempt < DELAYS.length) {
           this._metricsTimer = setTimeout(() => this._pollForFullMetrics(attempt + 1), DELAYS[attempt]);
         } else {
-          // Give up — replace "..." with "--"
+          // Give up â€” replace "..." with "--"
           ['holders-top5', 'holders-top10', 'holders-top20', 'holders-locked', 'holders-burnt'].forEach(id => {
             const el = document.getElementById(id);
             if (el && el.textContent === '...') el.textContent = '--';
@@ -1139,7 +1139,7 @@ const tokenDetail = {
         return;
       }
 
-      // Worker completed — update concentration metric cells (metrics may be null for all-LP tokens)
+      // Worker completed â€” update concentration metric cells (metrics may be null for all-LP tokens)
       const { metrics, holders } = data;
       const t5 = document.getElementById('holders-top5');
       const t10 = document.getElementById('holders-top10');
@@ -1149,7 +1149,7 @@ const tokenDetail = {
         if (t10 && metrics.top10Pct != null) t10.textContent = metrics.top10Pct.toFixed(1) + '%';
         if (t20 && metrics.top20Pct != null) t20.textContent = metrics.top20Pct.toFixed(1) + '%';
       } else {
-        // All top holders are LPs — no concentration data available
+        // All top holders are LPs â€” no concentration data available
         [t5, t10, t20].forEach(el => { if (el && el.textContent === '...') el.textContent = '--'; });
       }
 
@@ -1187,7 +1187,7 @@ const tokenDetail = {
           if (bt > 0) {
             let tooltip = '';
             if (data.supply.splBurnt > 0 && data.supply.deadWalletBurnt > 0) {
-              tooltip = `SPL Burn: ${fmtAmount(data.supply.splBurnt)} · Dead Wallets: ${fmtAmount(data.supply.deadWalletBurnt)}`;
+              tooltip = `SPL Burn: ${fmtAmount(data.supply.splBurnt)} Â· Dead Wallets: ${fmtAmount(data.supply.deadWalletBurnt)}`;
             } else if (data.supply.splBurnt > 0) {
               tooltip = 'Burned via SPL burn instruction';
             } else {
@@ -1257,8 +1257,8 @@ const tokenDetail = {
           : usdVal >= 1e3 ? (usdVal / 1e3).toFixed(2) + 'K'
           : usdVal.toFixed(2))
         : '--';
-      const label = h.isLP ? ' <span class="holder-label lp-label" title="Liquidity Pool">💧LP</span>'
-        : h.isBurnt ? ' <span class="holder-label burnt-label" title="Burn Wallet">🔥Burn</span>'
+      const label = h.isLP ? ' <span class="holder-label lp-label" title="Liquidity Pool">ðŸ’§LP</span>'
+        : h.isBurnt ? ' <span class="holder-label burnt-label" title="Burn Wallet">ðŸ”¥Burn</span>'
         : '';
       const rowClass = h.isLP || h.isBurnt ? ' class="holder-excluded"' : '';
       const tokenHoldStr = (h.isLP || h.isBurnt) ? '--'
@@ -1337,7 +1337,7 @@ const tokenDetail = {
     };
 
     try {
-      // Bypass apiCache entirely — poll directly so we always hit the backend.
+      // Bypass apiCache entirely â€” poll directly so we always hit the backend.
       // The apiCache.getOrFetch pattern can return stale cached responses during
       // rapid polling, which prevents us from seeing newly computed data.
       if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Poll ${attempt}/${MAX_POLLS} for ${this.mint.slice(0, 8)}...`);
@@ -1360,9 +1360,9 @@ const tokenDetail = {
 
       // If the backend returned no data (holders cache miss), clear the frontend cache
       // so the next poll picks up freshly-computed backend data. Avoid passing fresh:true
-      // to the backend — it forces a full RPC re-fetch that's already underway.
+      // to the backend â€” it forces a full RPC re-fetch that's already underway.
       if (!data.computed && avgCount === 0 && tokenCount === 0 && attempt < 2) {
-        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Empty response — clearing frontend holders cache`);
+        if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Empty response â€” clearing frontend holders cache`);
         apiCache.clearPattern(`tokens:holders:${this.mint}`);
       }
 
@@ -1389,24 +1389,24 @@ const tokenDetail = {
         }
         scheduleNext(attempt + 1);
       } else {
-        // All polls exhausted — show whatever we have
+        // All polls exhausted â€” show whatever we have
         const totalAvg = this._holdTimesData ? Object.keys(this._holdTimesData).length : 0;
 
         // If worker was still computing when we ran out of polls, auto-retry once after
         // a short pause so a slow worker doesn't permanently show "--" without a refresh.
         if (this._htLastComputedFalse && !this._holdTimesAutoRetried && totalAvg === 0) {
           this._holdTimesAutoRetried = true;
-          if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Still computing — auto-retry in 30s`);
+          if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Still computing â€” auto-retry in 30s`);
           this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(0), 30000);
           return;
         }
 
         // Mark loading complete so expand/collapse renders "--" instead of "..."
         this._holdTimesLoaded = true;
-        // Final pass — replace any remaining placeholders with dashes
+        // Final pass â€” replace any remaining placeholders with dashes
         const remaining = document.querySelectorAll('.hold-time-pending, .token-hold-pending');
         if (remaining.length > 0) {
-          if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Final: ${remaining.length} placeholders still pending → showing --`);
+          if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Final: ${remaining.length} placeholders still pending â†’ showing --`);
         }
         remaining.forEach(el => {
           el.textContent = '--';
@@ -1474,14 +1474,14 @@ const tokenDetail = {
     el.textContent = this._formatHoldTime(avgMs);
   },
 
-  // Public entry point called from holderBehavior.js share button —
+  // Public entry point called from holderBehavior.js share button â€”
   // passes the already-fetched HB data so we don't need a second API call.
   async shareWithHBData(hbData) {
     return this._shareHolderAnalytics(hbData);
   },
 
   // Share holder analytics as a screenshot image.
-  // @param {Object|null} preloadedHBData — HB analysis result if already available
+  // @param {Object|null} preloadedHBData â€” HB analysis result if already available
   async _shareHolderAnalytics(preloadedHBData = null) {
     const graphic = document.getElementById('holders-graphic');
     if (!graphic) return;
@@ -1619,7 +1619,7 @@ const tokenDetail = {
           if (h >= 1) return m > 0 ? `${h}h ${m}m` : `${h}h`;
           return `${m}m`;
         };
-        const avgHold = hbData.overallAvgHoldTimeMs ? fmt(hbData.overallAvgHoldTimeMs) : '—';
+        const avgHold = hbData.overallAvgHoldTimeMs ? fmt(hbData.overallAvgHoldTimeMs) : 'â€”';
         const statStyle = 'background:#1c1c21;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:0.65rem 0.75rem;';
         const valStyle  = 'font-size:1rem;font-weight:700;color:#f0f0f2;font-family:\'JetBrains Mono\',monospace;line-height:1.2;';
         const lblStyle  = 'font-size:0.68rem;color:#6b6b74;margin-top:0.2rem;';
@@ -1637,11 +1637,11 @@ const tokenDetail = {
               <div style="${lblStyle}">Swaps analyzed</div>
             </div>
             <div style="${statStyle}">
-              <div style="${valStyle};color:#00c6ff;">${avgHold}</div>
+              <div style="${valStyle};color:#ff5722;">${avgHold}</div>
               <div style="${lblStyle}">Average Hold Time (all tokens)</div>
             </div>
           </div>`;
-        // .diamond-hands-footer is a child of .diamond-hands-section, not graphic —
+        // .diamond-hands-footer is a child of .diamond-hands-section, not graphic â€”
         // use its actual parent so insertBefore doesn't throw "not a child" error.
         const dhFooter = graphic.querySelector('.diamond-hands-footer');
         if (dhFooter) dhFooter.parentNode.insertBefore(hbSection, dhFooter);
@@ -1735,7 +1735,7 @@ const tokenDetail = {
       this._dhStalledCount = 0;
       // Preserve _dhAutoRetried when called from the auto-retry itself (_dhIsAutoRetry flag).
       // Without this, the auto-retry resets _dhAutoRetried = false, allowing a second
-      // auto-retry when polls exhaust again → infinite retry loop + bars stuck as shimmer.
+      // auto-retry when polls exhaust again â†’ infinite retry loop + bars stuck as shimmer.
       if (!this._dhIsAutoRetry) this._dhAutoRetried = false;
       this._dhIsAutoRetry = false;
     }
@@ -1743,7 +1743,7 @@ const tokenDetail = {
     const isExtended = attempt >= MAX_POLLS;
     const extendedAttempt = attempt - MAX_POLLS;
 
-    // Capture mint at call time — if the user navigates to a different token while this
+    // Capture mint at call time â€” if the user navigates to a different token while this
     // request is in-flight, we discard the stale response instead of rendering it onto
     // the wrong token's DOM.
     const mintAtStart = this.mint;
@@ -1754,7 +1754,7 @@ const tokenDetail = {
     };
 
     try {
-      // Bypass apiCache — poll directly so we always get fresh data from backend
+      // Bypass apiCache â€” poll directly so we always get fresh data from backend
       if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Poll ${attempt}/${MAX_POLLS + EXTENDED_POLLS} for ${mintAtStart.slice(0, 8)}...`);
       const data = await api.request(`/api/tokens/${mintAtStart}/holders/diamond-hands`);
 
@@ -1787,14 +1787,14 @@ const tokenDetail = {
         const sampleEl = document.getElementById('diamond-hands-sample');
         if (sampleEl) {
           if (total === 0) {
-            sampleEl.textContent = attempt > 2 ? 'Fetching holder list — taking longer than usual...' : 'Fetching holder list...';
+            sampleEl.textContent = attempt > 2 ? 'Fetching holder list â€” taking longer than usual...' : 'Fetching holder list...';
           } else if (analyzed === 0) {
-            sampleEl.textContent = this._dhStalledCount >= 3 ? 'Queuing analysis — taking longer than usual...' : 'Queuing analysis...';
+            sampleEl.textContent = this._dhStalledCount >= 3 ? 'Queuing analysis â€” taking longer than usual...' : 'Queuing analysis...';
           } else {
             if (this._dhStalledCount >= 3) {
-              sampleEl.textContent = `${analyzed}/${total} — taking longer than usual...`;
+              sampleEl.textContent = `${analyzed}/${total} â€” taking longer than usual...`;
             } else if (isExtended) {
-              sampleEl.textContent = `${analyzed}/${total} — still analyzing...`;
+              sampleEl.textContent = `${analyzed}/${total} â€” still analyzing...`;
             } else {
               sampleEl.textContent = `${analyzed}/${total} analyzed...`;
             }
@@ -1814,17 +1814,17 @@ const tokenDetail = {
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] ${analyzed}/${total} analyzed, re-polling in ${nextDelay}ms`);
         this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), nextDelay);
       } else {
-        // All polls exhausted — show whatever we have
+        // All polls exhausted â€” show whatever we have
         this._diamondHandsLoaded = true;
         if (!data.distribution || !analyzed) {
           if (!this._diamondHandsData) {
-            // Backend was still computing when we ran out of polls — auto-retry once after 30s
+            // Backend was still computing when we ran out of polls â€” auto-retry once after 30s
             // so a slow worker doesn't permanently show "Unavailable"
             if (!data.computed && (analyzed > 0 || total > 0) && !this._dhAutoRetried) {
               this._dhAutoRetried = true;
               this._dhIsAutoRetry = true; // Prevents attempt=0 reset from clearing _dhAutoRetried
               const sampleEl = document.getElementById('diamond-hands-sample');
-              if (sampleEl) sampleEl.textContent = 'Analysis still running — retrying shortly...';
+              if (sampleEl) sampleEl.textContent = 'Analysis still running â€” retrying shortly...';
               this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(0), 30000);
             } else {
               this._showDiamondHandsUnavailable();
@@ -1839,7 +1839,7 @@ const tokenDetail = {
     } catch (error) {
       console.warn('[DiamondHands] Failed:', error.message);
       if (this.mint !== mintAtStart) return;
-      // Always retry on error up to max polls — a single network hiccup should not
+      // Always retry on error up to max polls â€” a single network hiccup should not
       // permanently show "Unavailable" on the very first attempt.
       const canRetry = (!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS);
       if (canRetry) {
@@ -1973,7 +1973,7 @@ const tokenDetail = {
     });
   },
 
-  // ── Banner & Social Links (client-side DexScreener fetch) ──
+  // â”€â”€ Banner & Social Links (client-side DexScreener fetch) â”€â”€
 
   // Fetch banner and social links directly from DexScreener API (client-side).
   // Avoids backend round-trip and fire-and-forget cache miss on first visit.
@@ -2005,7 +2005,7 @@ const tokenDetail = {
         this._renderSocials(socialMap);
       }
     } catch {
-      // DexScreener unavailable — silent fail, non-critical
+      // DexScreener unavailable â€” silent fail, non-critical
     }
   },
 
@@ -2179,3 +2179,4 @@ window.addEventListener('pageshow', (event) => {
 window.addEventListener('pagehide', () => {
   tokenDetail.destroy();
 });
+

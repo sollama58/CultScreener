@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const { cache, TTL } = require('../services/cache');
@@ -97,7 +97,7 @@ router.get('/:mint', async (req, res) => {
   const tokenPageUrl = `${FRONTEND_URL}/token.html?mint=${encodeURIComponent(mint)}`;
   const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://api.HolDEX.com`;
   const ogImageUrl = `${apiBaseUrl}/share/${encodeURIComponent(mint)}/og-image`;
-  // Twitter doesn't support SVG — use the static banner JPG as fallback
+  // Twitter doesn't support SVG â€” use the static banner JPG as fallback
   const twitterImageUrl = `${FRONTEND_URL}/CultScreenerBanner.jpg`;
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -180,7 +180,7 @@ router.get('/:mint/og-image', async (req, res) => {
 
   // Conviction bar width (clamped 0-100)
   const convBarWidth = conviction !== null ? Math.min(100, Math.max(0, Math.round(conviction))) : 0;
-  const convBarColor = convBarWidth >= 50 ? '#00c6ff' : convBarWidth >= 20 ? '#0ea5e9' : '#3a3a42';
+  const convBarColor = convBarWidth >= 50 ? '#ff5722' : convBarWidth >= 20 ? '#ff9100' : '#3a3a42';
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs>
@@ -189,12 +189,12 @@ router.get('/:mint/og-image', async (req, res) => {
       <stop offset="100%" stop-color="#0f1012"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0%" stop-color="#0369a1"/>
-      <stop offset="100%" stop-color="#00c6ff"/>
+      <stop offset="0%" stop-color="#e64a19"/>
+      <stop offset="100%" stop-color="#ff5722"/>
     </linearGradient>
     <linearGradient id="convGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#0284c7"/>
-      <stop offset="100%" stop-color="#00c6ff"/>
+      <stop offset="0%" stop-color="#ff3d00"/>
+      <stop offset="100%" stop-color="#ff5722"/>
     </linearGradient>
   </defs>
 
@@ -202,10 +202,10 @@ router.get('/:mint/og-image', async (req, res) => {
   <rect width="1200" height="630" fill="url(#bg)"/>
 
   <!-- Subtle top glow -->
-  <ellipse cx="600" cy="0" rx="700" ry="250" fill="rgba(0,198,255,0.04)"/>
+  <ellipse cx="600" cy="0" rx="700" ry="250" fill="rgba(255,87,34,0.04)"/>
 
   <!-- Border -->
-  <rect x="1" y="1" width="1198" height="628" rx="16" ry="16" fill="none" stroke="rgba(0,198,255,0.12)" stroke-width="1"/>
+  <rect x="1" y="1" width="1198" height="628" rx="16" ry="16" fill="none" stroke="rgba(255,87,34,0.12)" stroke-width="1"/>
 
   <!-- Header bar -->
   <rect x="0" y="0" width="1200" height="80" rx="16" ry="16" fill="rgba(255,255,255,0.02)"/>
@@ -225,7 +225,7 @@ router.get('/:mint/og-image', async (req, res) => {
 
   <!-- Token name + symbol -->
   <text x="52" y="155" font-family="Inter,-apple-system,sans-serif" font-size="48" font-weight="700" fill="#f0f0f2">${displayName}</text>
-  ${symbol ? `<text x="52" y="190" font-family="Inter,-apple-system,sans-serif" font-size="20" font-weight="500" fill="#6b6b74">${symbol} · ${mintShort}</text>` : `<text x="52" y="190" font-family="'JetBrains Mono',monospace" font-size="18" fill="#6b6b74">${mintShort}</text>`}
+  ${symbol ? `<text x="52" y="190" font-family="Inter,-apple-system,sans-serif" font-size="20" font-weight="500" fill="#6b6b74">${symbol} Â· ${mintShort}</text>` : `<text x="52" y="190" font-family="'JetBrains Mono',monospace" font-size="18" fill="#6b6b74">${mintShort}</text>`}
 
   <!-- Price -->
   <text x="52" y="275" font-family="Inter,-apple-system,sans-serif" font-size="56" font-weight="800" fill="#f0f0f2">${esc(price)}</text>
@@ -244,8 +244,8 @@ router.get('/:mint/og-image', async (req, res) => {
   <text x="340" y="430" font-family="Inter,-apple-system,sans-serif" font-size="28" font-weight="700" fill="#a0a0a8">${esc(holdersStr)}</text>
 
   <!-- Diamond Hands conviction section -->
-  <text x="620" y="400" font-family="Inter,-apple-system,sans-serif" font-size="13" font-weight="600" fill="#00c6ff" letter-spacing="1">DIAMOND HANDS (1M+)</text>
-  <text x="620" y="430" font-family="Inter,-apple-system,sans-serif" font-size="28" font-weight="800" fill="${conviction !== null && conviction >= 50 ? '#00c6ff' : conviction !== null && conviction >= 20 ? '#0ea5e9' : '#a0a0a8'}">${esc(convictionStr)}</text>
+  <text x="620" y="400" font-family="Inter,-apple-system,sans-serif" font-size="13" font-weight="600" fill="#ff5722" letter-spacing="1">DIAMOND HANDS (1M+)</text>
+  <text x="620" y="430" font-family="Inter,-apple-system,sans-serif" font-size="28" font-weight="800" fill="${conviction !== null && conviction >= 50 ? '#ff5722' : conviction !== null && conviction >= 20 ? '#ff9100' : '#a0a0a8'}">${esc(convictionStr)}</text>
 
   <!-- Conviction bar -->
   <rect x="620" y="448" width="530" height="10" rx="5" fill="rgba(255,255,255,0.04)"/>
@@ -266,3 +266,5 @@ router.get('/:mint/og-image', async (req, res) => {
 });
 
 module.exports = router;
+
+

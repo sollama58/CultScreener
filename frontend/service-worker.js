@@ -1,4 +1,4 @@
-// HolDEX Service Worker
+﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
 const CACHE_VERSION = 'holdex-v40';
@@ -6,8 +6,8 @@ const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
-// Core app shell — cached on install for instant loads
-// HTML files are intentionally omitted here — they use network-first so users
+// Core app shell â€” cached on install for instant loads
+// HTML files are intentionally omitted here â€” they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=12',
@@ -39,7 +39,7 @@ const API_PATTERNS = [
   /\/api\//,
 ];
 
-// Font CDN patterns — cache long-term
+// Font CDN patterns â€” cache long-term
 const FONT_PATTERNS = [
   /fonts\.googleapis\.com/,
   /fonts\.gstatic\.com/,
@@ -52,12 +52,12 @@ const MAX_API_ENTRIES = 50;
 // API cache TTL (5 minutes)
 const API_CACHE_TTL = 5 * 60 * 1000;
 
-// ─── Install ─────────────────────────────────────────────
+// â”€â”€â”€ Install â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
       .then((cache) => {
-        // Cache app shell — don't fail install if some resources are missing
+        // Cache app shell â€” don't fail install if some resources are missing
         return cache.addAll(APP_SHELL).catch((err) => {
           console.warn('[SW] Some app shell resources failed to cache:', err);
           // Try caching individually so one failure doesn't block all
@@ -70,7 +70,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// ─── Activate ────────────────────────────────────────────
+// â”€â”€â”€ Activate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
@@ -90,7 +90,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// ─── Fetch Strategy ──────────────────────────────────────
+// â”€â”€â”€ Fetch Strategy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -101,19 +101,19 @@ self.addEventListener('fetch', (event) => {
   // Skip chrome-extension and other non-http(s) schemes
   if (!url.protocol.startsWith('http')) return;
 
-  // API requests → Network First with cache fallback
+  // API requests â†’ Network First with cache fallback
   if (API_PATTERNS.some((p) => p.test(url.pathname))) {
     event.respondWith(networkFirstWithCache(request, API_CACHE, API_CACHE_TTL));
     return;
   }
 
-  // Google Fonts → Cache First (long-lived)
+  // Google Fonts â†’ Cache First (long-lived)
   if (FONT_PATTERNS.some((p) => p.test(url.href))) {
     event.respondWith(cacheFirstWithNetwork(request, DYNAMIC_CACHE));
     return;
   }
 
-  // HTML documents → Network First so users always get fresh markup.
+  // HTML documents â†’ Network First so users always get fresh markup.
   // Fresh HTML references versioned assets (?v=N), ensuring JS/CSS is also fresh
   // after a deployment. Falls back to cache when offline.
   if (request.destination === 'document') {
@@ -121,19 +121,19 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Same-origin static assets (JS, CSS, images) → Cache First.
+  // Same-origin static assets (JS, CSS, images) â†’ Cache First.
   // Assets use ?v=N versioning in their URLs, so cache-first is safe:
-  // a new deployment bumps the version → new URL → fresh cache miss → network fetch.
+  // a new deployment bumps the version â†’ new URL â†’ fresh cache miss â†’ network fetch.
   if (url.origin === self.location.origin) {
     event.respondWith(cacheFirstWithNetwork(request, STATIC_CACHE));
     return;
   }
 
-  // Everything else → Network First
+  // Everything else â†’ Network First
   event.respondWith(networkFirstWithCache(request, DYNAMIC_CACHE));
 });
 
-// ─── Caching Strategies ──────────────────────────────────
+// â”€â”€â”€ Caching Strategies â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function cacheFirstWithNetwork(request, cacheName) {
   const cached = await caches.match(request);
@@ -170,7 +170,7 @@ async function networkFirstWithCache(request, cacheName, ttl) {
     }
     return response;
   } catch {
-    // Network failed — try cache
+    // Network failed â€” try cache
     const cached = await caches.match(request);
     if (cached) {
       // Check TTL if specified
@@ -189,7 +189,7 @@ async function networkFirstWithCache(request, cacheName, ttl) {
   }
 }
 
-// ─── Offline Fallback ────────────────────────────────────
+// â”€â”€â”€ Offline Fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function offlineFallback(request) {
   if (request.destination === 'document') {
@@ -227,7 +227,7 @@ function offlineFallback(request) {
             font-size: 1.5rem;
             font-weight: 700;
             margin-bottom: 0.75rem;
-            background: linear-gradient(135deg, #0369a1, #00c6ff);
+            background: linear-gradient(135deg, #e64a19, #ff5722);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
           }
@@ -237,7 +237,7 @@ function offlineFallback(request) {
             margin-bottom: 1.5rem;
           }
           button {
-            background: linear-gradient(135deg, #0369a1, #00c6ff);
+            background: linear-gradient(135deg, #e64a19, #ff5722);
             color: white;
             border: none;
             padding: 12px 32px;
@@ -249,13 +249,13 @@ function offlineFallback(request) {
           }
           button:hover {
             transform: translateY(-1px);
-            box-shadow: 0 8px 24px rgba(0, 198, 255, 0.3);
+            box-shadow: 0 8px 24px rgba(255, 87, 34, 0.3);
           }
         </style>
       </head>
       <body>
         <div class="offline-container">
-          <div class="offline-icon">💎</div>
+          <div class="offline-icon">ðŸ’Ž</div>
           <h1>You're Offline</h1>
           <p>HolDEX needs an internet connection to fetch live Solana data. Check your connection and try again.</p>
           <button onclick="window.location.reload()">Try Again</button>
@@ -271,7 +271,7 @@ function offlineFallback(request) {
   return new Response('Offline', { status: 503 });
 }
 
-// ─── Cache Management ────────────────────────────────────
+// â”€â”€â”€ Cache Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function trimCache(cacheName, maxEntries) {
   const cache = await caches.open(cacheName);
@@ -283,10 +283,11 @@ async function trimCache(cacheName, maxEntries) {
   }
 }
 
-// ─── Background Sync (future) ────────────────────────────
+// â”€â”€â”€ Background Sync (future) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Placeholder for background sync support when watchlist changes are made offline
 self.addEventListener('message', (event) => {
   if (event.data === 'skipWaiting') {
     self.skipWaiting();
   }
 });
+

@@ -1,6 +1,6 @@
-/**
+﻿/**
  * performance.js
- * HolDEX — Performance Leaderboard Page Module
+ * HolDEX â€” Performance Leaderboard Page Module
  *
  * Displays token performance since listing, sortable by ATH % or current %.
  * Provides a Canvas-based share card export.
@@ -56,7 +56,7 @@ const performancePage = {
    */
   async loadData() {
     this._showLoading(true);
-    this._setStatusText('Loading…');
+    this._setStatusText('Loadingâ€¦');
 
     try {
       const data = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
@@ -114,18 +114,18 @@ const performancePage = {
       // Logo
       const logo     = utils.escapeHtml(token.logoUri || '');
       const fallback = utils.escapeHtml(utils.getDefaultLogo ? utils.getDefaultLogo() : '');
-      const name     = utils.escapeHtml(token.name   || '—');
+      const name     = utils.escapeHtml(token.name   || 'â€”');
       const symbol   = utils.escapeHtml(token.symbol || '');
       const mint     = utils.escapeHtml(token.mintAddress || token.address || '');
       const emergingBadge = token.emergingCult
-        ? '<span class="cult-hammer" title="Emerging Cult">🛠️</span>'
+        ? '<span class="cult-hammer" title="Emerging Cult">ðŸ› ï¸</span>'
         : '';
       const techBadge = token.techCoin
-        ? '<span class="cult-hammer" title="Tech Coin">🤖</span>'
+        ? '<span class="cult-hammer" title="Tech Coin">ðŸ¤–</span>'
         : '';
 
       // MCap values
-      const currentMcap = token.marketCap ? utils.formatNumber(token.marketCap) : '—';
+      const currentMcap = token.marketCap ? utils.formatNumber(token.marketCap) : 'â€”';
 
       return `
         <tr class="perf-row" data-mint="${mint}" style="cursor:pointer;">
@@ -151,7 +151,7 @@ const performancePage = {
       `;
     }).join('');
 
-    // Row click → token page
+    // Row click â†’ token page
     tbody.querySelectorAll('.perf-row').forEach(row => {
       row.addEventListener('click', () => {
         const mint = row.dataset.mint;
@@ -182,7 +182,7 @@ const performancePage = {
 
   async share() {
     const btn = document.getElementById('perf-share-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Capturing…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Capturingâ€¦'; }
 
     try {
       // Lazily load html2canvas (same pattern as token detail page)
@@ -241,7 +241,7 @@ const performancePage = {
       if (typeof toast !== 'undefined') toast.success('Screenshot saved!');
     } catch (err) {
       console.error('[performancePage] share error:', err);
-      if (typeof toast !== 'undefined') toast.error('Screenshot failed — try again');
+      if (typeof toast !== 'undefined') toast.error('Screenshot failed â€” try again');
     } finally {
       if (btn) { btn.disabled = false; btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg> Screenshot Top 10`; }
     }
@@ -267,14 +267,14 @@ const performancePage = {
       const curPct  = this._currentPct(token);
 
       const fmtPct = (pct, cls) => pct === null
-        ? `<td class="psg-pct psg-na">—</td>`
+        ? `<td class="psg-pct psg-na">â€”</td>`
         : `<td class="psg-pct ${pct >= 0 ? 'psg-positive' : 'psg-negative'} ${cls}">${this._formatPct(pct)}</td>`;
 
-      const hammer  = token.emergingCult ? '<span class="psg-hammer">🛠️</span>' : '';
-      const techIcon = token.techCoin ? '<span class="psg-hammer">🤖</span>' : '';
+      const hammer  = token.emergingCult ? '<span class="psg-hammer">ðŸ› ï¸</span>' : '';
+      const techIcon = token.techCoin ? '<span class="psg-hammer">ðŸ¤–</span>' : '';
       const name    = (token.name   || '').replace(/</g, '&lt;');
       const symbol  = (token.symbol || '').replace(/</g, '&lt;');
-      const logoSrc = logoDataUris[i]; // already a data URI — no crossOrigin needed
+      const logoSrc = logoDataUris[i]; // already a data URI â€” no crossOrigin needed
       const logoHtml = `<img class="psg-token-logo" src="${logoSrc}" alt="${symbol}">`;
 
       return `<tr>
@@ -300,7 +300,7 @@ const performancePage = {
         <div class="psg-brand">
           <div>
             <div class="psg-logo">Hol<span>DEX</span></div>
-            <div class="psg-subtitle">Performance Leaderboard · Top 10</div>
+            <div class="psg-subtitle">Performance Leaderboard Â· Top 10</div>
             <div class="psg-powered-by">holdex.live</div>
           </div>
         </div>
@@ -400,7 +400,7 @@ const performancePage = {
    */
   _formatPct(pct) {
     const abs    = Math.abs(pct);
-    const sign   = pct >= 0 ? '+' : '−';
+    const sign   = pct >= 0 ? '+' : 'âˆ’';
     const numStr = abs.toLocaleString('en-US', { maximumFractionDigits: 0 });
     return `${sign}${numStr}%`;
   },
@@ -408,12 +408,12 @@ const performancePage = {
   /**
    * Return an HTML string for a percentage cell, colored green/red/grey.
    * @param {number|null} pct
-   * @param {boolean}     isAth  — if true, grey out when null (no ATH data)
+   * @param {boolean}     isAth  â€” if true, grey out when null (no ATH data)
    * @returns {string}
    */
   _pctHtml(pct, isAth) {
     if (pct === null) {
-      return `<span class="pct-na">—</span>`;
+      return `<span class="pct-na">â€”</span>`;
     }
     const cls = pct >= 0 ? 'pct-positive' : 'pct-negative';
     return `<span class="${cls}">${this._formatPct(pct)}</span>`;
@@ -481,7 +481,7 @@ const performancePage = {
     const avatar = this._letterAvatar(symbol);
     if (!url) return avatar;
 
-    // Route through our own backend proxy so CORS is never an issue —
+    // Route through our own backend proxy so CORS is never an issue â€”
     // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
     // Must use absolute URL: frontend (HolDEX.com) and API (HolDEX-api.onrender.com)
     // are separate Render services; a relative /api/* path hits the static file server (404).
@@ -529,7 +529,7 @@ const performancePage = {
     ctx.arc(15, 15, 15, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1c22';
     ctx.fill();
-    ctx.fillStyle = '#00c6ff';
+    ctx.fillStyle = '#ff5722';
     ctx.font = 'bold 14px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -537,3 +537,4 @@ const performancePage = {
     return c.toDataURL('image/png');
   },
 };
+

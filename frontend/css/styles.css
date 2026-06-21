@@ -1,6 +1,6 @@
-/* =============================================
-   HolDEX - Electric Blue / Cyan DEX Theme
-   Professional dark trading terminal with cyan accents
+﻿/* =============================================
+   HolDEX - Fire / Ember Trading Terminal
+   Professional dark trading terminal with fire accents
    ============================================= */
 
 /* =============================================
@@ -8,7 +8,7 @@
    ============================================= */
 
 :root {
-  /* Backgrounds — refined dark palette with more depth */
+  /* Backgrounds â€” refined dark palette with more depth */
   --bg-primary: #09090b;
   --bg-secondary: #0f1012;
   --bg-tertiary: #161719;
@@ -16,28 +16,28 @@
   --bg-base: #060607;
   --bg-elevated: #1a1b1e;
 
-  /* HolDEX accent palette — electric blue / cyan */
-  --fire-primary: #00c6ff;
-  --fire-secondary: #38bdf8;
-  --fire-dim: #0284c7;
-  --fire-glow: rgba(0, 198, 255, 0.14);
-  --ember: #0ea5e9;
-  --ember-dim: rgba(14, 165, 233, 0.08);
-  --hot: #0369a1;
+  /* HolDEX accent palette â€” electric blue / cyan */
+  --fire-primary: #ff5722;
+  --fire-secondary: #ff9100;
+  --fire-dim: #ff3d00;
+  --fire-glow: rgba(255, 87, 34, 0.14);
+  --ember: #ff9100;
+  --ember-dim: rgba(255, 87, 34, 0.08);
+  --hot: #ff3d00;
 
-  /* Text — better contrast hierarchy */
+  /* Text â€” better contrast hierarchy */
   --text-primary: #f0f0f2;
   --text-secondary: #a0a0a8;
   --text-muted: #6b6b74;
   --text-dim: #45454d;
 
-  /* Borders — subtle, layered */
+  /* Borders â€” subtle, layered */
   --border-color: #1e1f22;
   --border-subtle: #17181b;
   --border-default: #2a2b2f;
-  --border-fire: rgba(0, 198, 255, 0.22);
+  --border-fire: rgba(255, 87, 34, 0.22);
 
-  /* Status colors — vibrant, accessible */
+  /* Status colors â€” vibrant, accessible */
   --green: #10b981;
   --green-light: rgba(16, 185, 129, 0.1);
   --green-glow: rgba(16, 185, 129, 0.25);
@@ -48,13 +48,13 @@
   --yellow-light: rgba(245, 158, 11, 0.1);
   --blue: #3b82f6;
   --blue-light: rgba(59, 130, 246, 0.1);
-  --accent: #00c6ff;
-  --accent-primary: #00c6ff;
-  --accent-hover: #38bdf8;
-  --accent-muted: rgba(0, 198, 255, 0.12);
-  --accent-glow: rgba(0, 198, 255, 0.35);
+  --accent: #ff5722;
+  --accent-primary: #ff5722;
+  --accent-hover: #ff9100;
+  --accent-muted: rgba(255, 87, 34, 0.12);
+  --accent-glow: rgba(255, 87, 34, 0.35);
 
-  /* UI — more generous radii for modern feel */
+  /* UI â€” more generous radii for modern feel */
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -65,19 +65,19 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0, 0, 0, 0.25);
-  --shadow-fire: 0 0 24px rgba(0, 198, 255, 0.08);
+  --shadow-fire: 0 0 24px rgba(255, 87, 34, 0.08);
   --shadow-glow: 0 0 48px var(--accent-glow);
 
-  /* Transitions — snappier */
+  /* Transitions â€” snappier */
   --transition-fast: 0.12s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.35s ease;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Glass — refined frosted effect */
+  /* Glass â€” refined frosted effect */
   --glass-bg: rgba(9, 9, 11, 0.65);
-  --glass-border: rgba(0, 198, 255, 0.06);
+  --glass-border: rgba(255, 87, 34, 0.06);
 
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -139,15 +139,15 @@ body {
   min-height: 100vh;
 }
 
-/* Subtle ambient glow — adds depth without distraction */
+/* Subtle ambient glow â€” adds depth without distraction */
 body::before {
   content: '';
   position: fixed;
   top: 0; right: 0; bottom: 0; left: 0;
   background:
-    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(0, 198, 255, 0.05), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(14, 165, 233, 0.025), transparent 70%),
-    radial-gradient(ellipse 30% 25% at 0% 100%, rgba(0, 198, 255, 0.015), transparent 60%);
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(255, 87, 34, 0.05), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(255, 145, 0, 0.025), transparent 70%),
+    radial-gradient(ellipse 30% 25% at 0% 100%, rgba(255, 87, 34, 0.015), transparent 60%);
   pointer-events: none;
   z-index: -1;
 }
@@ -168,11 +168,11 @@ img {
 }
 
 ::selection {
-  background: rgba(0, 198, 255, 0.28);
+  background: rgba(255, 87, 34, 0.28);
   color: #fff;
 }
 
-/* Custom scrollbar — minimal, barely visible until hovered */
+/* Custom scrollbar â€” minimal, barely visible until hovered */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -189,7 +189,7 @@ img {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 198, 255, 0.35);
+  background: rgba(255, 87, 34, 0.35);
 }
 
 * {
@@ -284,19 +284,19 @@ img {
 .powered-badge:hover {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(0, 198, 255, 0.04);
+  background: rgba(255, 87, 34, 0.04);
 }
 
 .flame-icon {
   flex-shrink: 0;
-  filter: drop-shadow(0 0 2px rgba(0, 198, 255, 0.3));
+  filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.3));
   animation: flameFlicker 3s ease-in-out infinite alternate;
 }
 
 @keyframes flameFlicker {
-  0% { filter: drop-shadow(0 0 2px rgba(0, 198, 255, 0.2)); }
-  50% { filter: drop-shadow(0 0 4px rgba(14, 165, 233, 0.4)); }
-  100% { filter: drop-shadow(0 0 2px rgba(0, 198, 255, 0.3)); }
+  0% { filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.2)); }
+  50% { filter: drop-shadow(0 0 4px rgba(255, 145, 0, 0.4)); }
+  100% { filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.3)); }
 }
 
 /* Navigation */
@@ -339,7 +339,7 @@ img {
   height: 2px;
   background: var(--fire-primary);
   border-radius: var(--radius-full);
-  box-shadow: 0 0 6px rgba(0, 198, 255, 0.4);
+  box-shadow: 0 0 6px rgba(255, 87, 34, 0.4);
 }
 
 .header-actions {
@@ -507,7 +507,7 @@ img {
   background: linear-gradient(135deg, var(--fire-secondary), var(--fire-primary));
   border-color: transparent;
   color: #fff;
-  box-shadow: 0 2px 12px rgba(0, 198, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 12px rgba(255, 87, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .btn-secondary {
@@ -659,7 +659,7 @@ img {
 .terminal-diamond {
   color: var(--fire-primary);
   font-size: 1rem;
-  text-shadow: 0 0 10px rgba(0, 198, 255, 0.5);
+  text-shadow: 0 0 10px rgba(255, 87, 34, 0.5);
 }
 
 .terminal-name {
@@ -731,7 +731,7 @@ img {
 
 .terminal-stat-value.stat-high {
   color: var(--fire-primary);
-  text-shadow: 0 0 8px rgba(0, 198, 255, 0.3);
+  text-shadow: 0 0 8px rgba(255, 87, 34, 0.3);
 }
 
 .terminal-stat-value.stat-mid {
@@ -785,7 +785,7 @@ img {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
   background: var(--fire-glow);
-  box-shadow: 0 0 8px rgba(0, 198, 255, 0.1);
+  box-shadow: 0 0 8px rgba(255, 87, 34, 0.1);
 }
 
 .terminal-pill.pill-watchlist {
@@ -845,7 +845,7 @@ img {
    8. Terminal Controls (Search, Filters)
    ============================================= */
 
-/* Toolbar — search + filters toggle + status */
+/* Toolbar â€” search + filters toggle + status */
 .terminal-toolbar {
   display: flex;
   gap: 0.5rem;
@@ -897,7 +897,7 @@ img {
 .terminal-filters-toggle.active {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(0, 198, 255, 0.06);
+  background: rgba(255, 87, 34, 0.06);
 }
 
 .terminal-filters-toggle.active svg {
@@ -990,7 +990,7 @@ img {
 
 .terminal-search:focus {
   border-color: var(--fire-primary);
-  box-shadow: 0 0 0 2px rgba(0, 198, 255, 0.1);
+  box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.1);
 }
 
 /* Icon highlights when search input is focused or has text */
@@ -1035,10 +1035,10 @@ img {
   color: var(--fire-primary);
   min-width: 2.2rem;
   text-align: center;
-  background: rgba(0, 198, 255, 0.06);
+  background: rgba(255, 87, 34, 0.06);
   padding: 0.15rem 0.35rem;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(0, 198, 255, 0.12);
+  border: 1px solid rgba(255, 87, 34, 0.12);
 }
 
 /* Range slider */
@@ -1061,14 +1061,14 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--fire-primary);
   border-radius: 50%;
   border: 2px solid var(--bg-primary);
-  box-shadow: 0 0 8px rgba(0, 198, 255, 0.3);
+  box-shadow: 0 0 8px rgba(255, 87, 34, 0.3);
   cursor: pointer;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.15);
-  box-shadow: 0 0 12px rgba(0, 198, 255, 0.5);
+  box-shadow: 0 0 12px rgba(255, 87, 34, 0.5);
 }
 
 input[type="range"]::-moz-range-thumb {
@@ -1077,7 +1077,7 @@ input[type="range"]::-moz-range-thumb {
   background: var(--fire-primary);
   border-radius: 50%;
   border: 2px solid var(--bg-primary);
-  box-shadow: 0 0 8px rgba(0, 198, 255, 0.3);
+  box-shadow: 0 0 8px rgba(255, 87, 34, 0.3);
   cursor: pointer;
 }
 
@@ -1116,7 +1116,7 @@ select {
 .terminal-select:focus,
 select:focus {
   border-color: var(--fire-primary);
-  box-shadow: 0 0 0 3px rgba(0, 198, 255, 0.1);
+  box-shadow: 0 0 0 3px rgba(255, 87, 34, 0.1);
 }
 
 .terminal-clear-btn {
@@ -1404,13 +1404,13 @@ select:focus {
 .tier-elite {
   background: linear-gradient(135deg, var(--fire-primary), var(--ember));
   color: #fff;
-  box-shadow: 0 1px 6px rgba(0, 198, 255, 0.25);
+  box-shadow: 0 1px 6px rgba(255, 87, 34, 0.25);
 }
 
 .tier-high {
-  background: rgba(14, 165, 233, 0.12);
+  background: rgba(255, 145, 0, 0.12);
   color: var(--ember);
-  border: 1px solid rgba(14, 165, 233, 0.25);
+  border: 1px solid rgba(255, 145, 0, 0.25);
 }
 
 .tier-mid {
@@ -1457,7 +1457,7 @@ select:focus {
 
 .conviction-mini-fill.bar-high {
   background: linear-gradient(to top, var(--fire-dim), var(--fire-primary));
-  box-shadow: 0 0 4px rgba(0, 198, 255, 0.3);
+  box-shadow: 0 0 4px rgba(255, 87, 34, 0.3);
 }
 
 .conviction-mini-fill.bar-mid {
@@ -1596,7 +1596,7 @@ select:focus {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
   font-weight: 700;
-  box-shadow: 0 0 6px rgba(0, 198, 255, 0.15);
+  box-shadow: 0 0 6px rgba(255, 87, 34, 0.15);
 }
 
 .page-ellipsis {
@@ -1786,15 +1786,15 @@ select:focus {
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--fire-primary);
-  background: rgba(0, 198, 255, 0.08);
-  border: 1px solid rgba(0, 198, 255, 0.12);
+  background: rgba(255, 87, 34, 0.08);
+  border: 1px solid rgba(255, 87, 34, 0.12);
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-/* Action bar — links, socials, watchlist */
+/* Action bar â€” links, socials, watchlist */
 .token-actions-bar {
   display: flex;
   align-items: center;
@@ -1848,7 +1848,7 @@ select:focus {
 .token-action-chip.watchlist-btn-header.active {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(0, 198, 255, 0.06);
+  background: rgba(255, 87, 34, 0.06);
 }
 
 .token-action-chip.watchlist-btn-header.active svg {
@@ -2028,7 +2028,7 @@ select:focus {
   gap: 1.25rem;
 }
 
-/* Cards — fire terminal panels */
+/* Cards â€” fire terminal panels */
 .chart-section,
 .holders-section,
 .community-section,
@@ -2593,7 +2593,7 @@ select:focus {
 .holders-expand-btn:hover {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(0, 198, 255, 0.04);
+  background: rgba(255, 87, 34, 0.04);
 }
 
 .holders-expand-btn svg {
@@ -2616,7 +2616,7 @@ select:focus {
   50% { opacity: 0.4; }
 }
 
-/* Holders watermark (legacy — replaced by .diamond-hands-watermark) */
+/* Holders watermark (legacy â€” replaced by .diamond-hands-watermark) */
 
 
 /* =============================================
@@ -2626,8 +2626,8 @@ select:focus {
 .diamond-hands-section {
   margin-top: 0.75rem;
   padding: 1rem;
-  background: rgba(0, 198, 255, 0.02);
-  border: 1px solid rgba(0, 198, 255, 0.08);
+  background: rgba(255, 87, 34, 0.02);
+  border: 1px solid rgba(255, 87, 34, 0.08);
   border-radius: var(--radius-md);
 }
 
@@ -2698,7 +2698,7 @@ select:focus {
 }
 
 .diamond-bar-fill.dh-mid {
-  background: linear-gradient(90deg, rgba(14, 165, 233, 0.3), rgba(14, 165, 233, 0.6));
+  background: linear-gradient(90deg, rgba(255, 145, 0, 0.3), rgba(255, 145, 0, 0.6));
 }
 
 .diamond-bar-fill.dh-low {
@@ -2774,7 +2774,7 @@ select:focus {
   justify-content: center;
   margin-top: 0.85rem;
   padding-top: 0.7rem;
-  border-top: 1px solid rgba(0, 198, 255, 0.06);
+  border-top: 1px solid rgba(255, 87, 34, 0.06);
 }
 
 .diamond-hands-watermark {
@@ -2782,15 +2782,15 @@ select:focus {
   align-items: center;
   gap: 0.35rem;
   padding: 0.28rem 0.75rem;
-  border: 1px solid rgba(0, 198, 255, 0.12);
+  border: 1px solid rgba(255, 87, 34, 0.12);
   border-radius: var(--radius-full);
-  background: rgba(0, 198, 255, 0.03);
+  background: rgba(255, 87, 34, 0.03);
 
 }
 
 .dh-watermark-flame {
   flex-shrink: 0;
-  filter: drop-shadow(0 0 2px rgba(0, 198, 255, 0.3));
+  filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.3));
   animation: flameFlicker 3s ease-in-out infinite alternate;
 }
 
@@ -3280,12 +3280,12 @@ select:focus {
 }
 
 .ht-range-btn.active {
-  background: rgba(0, 198, 255, 0.12);
+  background: rgba(255, 87, 34, 0.12);
   border-color: var(--fire-primary);
   color: var(--fire-primary);
 }
 
-/* Change stat pills — 1D / 7D / 30D row */
+/* Change stat pills â€” 1D / 7D / 30D row */
 .ht-changes {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -3324,7 +3324,7 @@ select:focus {
   color: var(--text-muted);
 }
 
-.ht-delta--up   { color: #0ea5e9; }
+.ht-delta--up   { color: #ff9100; }
 .ht-delta--down { color: #ef4444; }
 
 /* Bar chart */
@@ -4101,7 +4101,7 @@ select:focus {
 .social-chip:hover {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(0, 198, 255, 0.06);
+  background: rgba(255, 87, 34, 0.06);
 }
 
 .social-chip svg {
@@ -4587,12 +4587,12 @@ select:focus {
 
 @keyframes fireGlow {
   0%, 100% {
-    box-shadow: 0 0 8px rgba(0, 198, 255, 0.06),
-                0 0 16px rgba(0, 198, 255, 0.03);
+    box-shadow: 0 0 8px rgba(255, 87, 34, 0.06),
+                0 0 16px rgba(255, 87, 34, 0.03);
   }
   50% {
-    box-shadow: 0 0 12px rgba(0, 198, 255, 0.1),
-                0 0 24px rgba(0, 198, 255, 0.05);
+    box-shadow: 0 0 12px rgba(255, 87, 34, 0.1),
+                0 0 24px rgba(255, 87, 34, 0.05);
   }
 }
 
@@ -4662,7 +4662,7 @@ select:focus {
 }
 
 .toast.info {
-  border-color: rgba(0, 198, 255, 0.3);
+  border-color: rgba(255, 87, 34, 0.3);
   border-left: 3px solid var(--fire-primary);
 }
 
@@ -4672,7 +4672,7 @@ select:focus {
    ============================================= */
 
 @media (max-width: 768px) {
-  /* Header — compact */
+  /* Header â€” compact */
   .header-content {
     padding: 0 0.85rem;
     height: 52px;
@@ -4683,7 +4683,7 @@ select:focus {
 
   .powered-badge { display: none; }
 
-  /* Hide header-actions on mobile — wallet moves into dropdown */
+  /* Hide header-actions on mobile â€” wallet moves into dropdown */
   .header-actions {
     display: none;
   }
@@ -4695,7 +4695,7 @@ select:focus {
     margin-left: auto;
   }
 
-  /* Hide desktop nav on mobile — the hamburger menu replaces it */
+  /* Hide desktop nav on mobile â€” the hamburger menu replaces it */
   .header .nav {
     display: none;
   }
@@ -4706,7 +4706,7 @@ select:focus {
     right: 0.85rem;
   }
 
-  /* Main — tighter padding */
+  /* Main â€” tighter padding */
   .main { padding: 0.75rem 0.85rem 2.5rem; }
 
   /* Terminal header */
@@ -4714,7 +4714,7 @@ select:focus {
   .terminal-title-row { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
   .terminal-stats { gap: 0.75rem; }
 
-  /* Quick filters — horizontal scroll, no wrap */
+  /* Quick filters â€” horizontal scroll, no wrap */
   .terminal-quick-filters {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -4734,7 +4734,7 @@ select:focus {
   .terminal-status-inline { padding: 0.25rem 0.55rem; font-size: 0.6rem; }
   .terminal-controls { flex-direction: column; align-items: stretch; }
 
-  /* Table — edge-to-edge scroll */
+  /* Table â€” edge-to-edge scroll */
   .terminal-table-container,
   .community-table-container {
     margin: 0 -0.85rem;
@@ -4750,7 +4750,7 @@ select:focus {
   .terminal-section,
   .community-section { padding: 0.85rem; }
 
-  /* Token detail — single column, reorder so stats appear before the heavy holders table */
+  /* Token detail â€” single column, reorder so stats appear before the heavy holders table */
   .token-content-grid { grid-template-columns: 1fr; grid-template-areas: none; gap: 1rem; }
   .token-col-left, .token-col-right, .pools-section { grid-area: unset; }
   .token-col-right { order: -1; }
@@ -4886,7 +4886,7 @@ select:focus {
   .terminal-section,
   .community-section { padding: 0.6rem; border-radius: var(--radius-sm); }
 
-  /* Table — ultra compact */
+  /* Table â€” ultra compact */
   .terminal-table-container,
   .community-table-container {
     margin: 0 -0.6rem;
@@ -4966,7 +4966,7 @@ select:focus {
   .holders-table { font-size: 0.75rem; }
   .holders-table thead th { font-size: 0.62rem; padding: 0.35rem 0.4rem; }
   .holders-table tbody td { padding: 0.3rem 0.4rem; }
-  /* Hide Value column on small screens — too many columns */
+  /* Hide Value column on small screens â€” too many columns */
   .holders-table thead th:nth-child(4),
   .holders-table tbody td:nth-child(4) { display: none; }
   .holder-address { font-size: 0.68rem; }
@@ -4976,7 +4976,7 @@ select:focus {
   .token-banner-wrap { max-height: 100px; border-radius: var(--radius-sm); margin-bottom: 0.6rem; }
   .token-banner-img { max-height: 100px; }
 
-  /* Pagination — 36px meets minimum touch target size */
+  /* Pagination â€” 36px meets minimum touch target size */
   .page-tab { min-width: 36px; height: 36px; font-size: 0.72rem; }
 
   /* Wallet modal */
@@ -4991,7 +4991,7 @@ select:focus {
   /* Pools */
   .pool-card { padding: 0.5rem 0.6rem; font-size: 0.78rem; }
 
-  /* Holder Behavior modal — full-width on narrow screens */
+  /* Holder Behavior modal â€” full-width on narrow screens */
   .hb-modal { max-width: 95vw; padding: 1rem; max-height: 92vh; }
 
   /* Footer */
@@ -5101,7 +5101,7 @@ input[type="email"]:focus,
 input[type="search"]:focus,
 textarea:focus {
   border-color: var(--fire-primary);
-  box-shadow: 0 0 0 3px rgba(0, 198, 255, 0.1);
+  box-shadow: 0 0 0 3px rgba(255, 87, 34, 0.1);
 }
 
 input::placeholder,
@@ -5125,7 +5125,7 @@ textarea {
   letter-spacing: 0.03em;
 }
 
-/* Emerging Cult label badge — token detail page */
+/* Emerging Cult label badge â€” token detail page */
 .emerging-cult-badge {
   display: inline-flex;
   align-items: center;
@@ -5144,7 +5144,7 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Tech Coin label badge — token detail page */
+/* Tech Coin label badge â€” token detail page */
 .tech-coin-detail-badge {
   display: inline-flex;
   align-items: center;
@@ -5163,7 +5163,7 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Emerging Cult hammer emoji — table rows */
+/* Emerging Cult hammer emoji â€” table rows */
 .cult-hammer {
   flex-shrink: 0;
   font-size: 0.85rem;
@@ -5306,7 +5306,7 @@ strong {
   border-radius: var(--radius-sm);
 }
 
-/* ── Token Page Skeleton ── */
+/* â”€â”€ Token Page Skeleton â”€â”€ */
 .token-skeleton {
   animation: fadeIn 0.2s ease-out;
 }
@@ -5458,7 +5458,7 @@ strong {
 }
 
 /* ==============================================
-   Mobile nav dropdown — appended to <body> by JS.
+   Mobile nav dropdown â€” appended to <body> by JS.
    Uses position:fixed + high z-index.
    (overflow-x:hidden removed from html/body so
    position:fixed works correctly on mobile.)
@@ -5537,10 +5537,10 @@ strong {
 }
 
 /* =============================================
-   PWA — Install Banner, Update Banner, Standalone
+   PWA â€” Install Banner, Update Banner, Standalone
    ============================================= */
 
-/* Install App — nav item (hidden by default, shown via .installable on mobile) */
+/* Install App â€” nav item (hidden by default, shown via .installable on mobile) */
 .nav-install-item {
   display: none;
   align-items: center;
@@ -5550,7 +5550,7 @@ strong {
   font-weight: 600;
   color: var(--fire-primary);
   border: none;
-  background: rgba(0, 198, 255, 0.06);
+  background: rgba(255, 87, 34, 0.06);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
@@ -5570,7 +5570,7 @@ strong {
 }
 
 .nav-install-item:hover {
-  background: rgba(0, 198, 255, 0.12);
+  background: rgba(255, 87, 34, 0.12);
   color: var(--ember);
 }
 
@@ -5579,7 +5579,7 @@ strong {
   color: var(--fire-primary);
 }
 
-/* Never show install button on desktop — even if JS creates it */
+/* Never show install button on desktop â€” even if JS creates it */
 @media (min-width: 769px) {
   .nav-install-item,
   .nav-install-item.installable {
@@ -5612,7 +5612,7 @@ strong {
   justify-content: center;
   gap: 1rem;
   padding: 0.75rem 1.25rem;
-  background: linear-gradient(135deg, rgba(0, 198, 255, 0.12), rgba(14, 165, 233, 0.08));
+  background: linear-gradient(135deg, rgba(255, 87, 34, 0.12), rgba(255, 145, 0, 0.08));
   border-bottom: 1px solid var(--border-fire);
   font-size: 0.82rem;
   color: var(--text-secondary);
@@ -5658,7 +5658,7 @@ strong {
 }
 
 /* =============================================
-   Holder Behavior Analysis — Card & Modal
+   Holder Behavior Analysis â€” Card & Modal
    ============================================= */
 
 /* Card */
@@ -5715,7 +5715,7 @@ strong {
 }
 
 .hb-analyze-btn:hover {
-  background: rgba(0, 198, 255, 0.16);
+  background: rgba(255, 87, 34, 0.16);
   border-color: var(--fire-secondary);
 }
 
@@ -6144,3 +6144,4 @@ strong {
     max-height: 94vh;
   }
 }
+

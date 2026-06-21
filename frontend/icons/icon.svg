@@ -1,16 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#111215"/>
       <stop offset="100%" stop-color="#09090b"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0%" stop-color="#0369a1"/>
-      <stop offset="40%" stop-color="#00c6ff"/>
-      <stop offset="100%" stop-color="#38bdf8"/>
+      <stop offset="0%" stop-color="#e64a19"/>
+      <stop offset="40%" stop-color="#ff9100"/>
+      <stop offset="100%" stop-color="#ff5722"/>
     </linearGradient>
     <linearGradient id="innerAccent" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="0%" stop-color="#ff9100"/>
       <stop offset="100%" stop-color="#e0f2fe"/>
     </linearGradient>
     <filter id="glow">
@@ -24,7 +24,7 @@
   <!-- Background -->
   <rect width="512" height="512" rx="96" fill="url(#bg)"/>
   <!-- Subtle ring -->
-  <circle cx="256" cy="270" r="160" fill="none" stroke="rgba(0,198,255,0.08)" stroke-width="2"/>
+  <circle cx="256" cy="270" r="160" fill="none" stroke="rgba(255,87,34,0.08)" stroke-width="2"/>
   <!-- Diamond shape (diamond hands) -->
   <g filter="url(#glow)" transform="translate(256,260)">
     <polygon points="0,-90 80,0 0,90 -80,0" fill="url(#accent)" opacity="0.9"/>
@@ -33,3 +33,5 @@
   <!-- "HD" text -->
   <text x="256" y="430" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-weight="800" font-size="64" fill="#f0f0f2" letter-spacing="6">HD</text>
 </svg>
+
+

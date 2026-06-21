@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>🔥 HolDEX - Diamond Hands Terminal</title>
+  <title>ðŸ”¥ HolDEX - Diamond Hands Terminal</title>
   <meta name="description" content="HolDEX is a Solana token conviction analyzer. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.">
   <meta name="theme-color" content="#07080a">
   <meta name="color-scheme" content="dark">
@@ -38,7 +38,7 @@
   <link rel="stylesheet" href="css/styles.css?v=12">
 
   <style>
-    /* ── King of the Pill widget ────────────────────────── */
+    /* â”€â”€ King of the Pill widget â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .kotp-widget {
       display: flex;
       align-items: center;
@@ -164,7 +164,7 @@
       display: block;
     }
 
-    /* ── View Tab Switcher ──────────────────────────────── */
+    /* â”€â”€ View Tab Switcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .main-view-tabs {
       display: flex;
       gap: 0.25rem;
@@ -191,12 +191,12 @@
       color: var(--text-primary);
     }
     .main-view-tab.active {
-      background: rgba(0, 198, 255, 0.1);
+      background: rgba(255, 87, 34, 0.1);
       border-color: var(--fire-primary);
       color: var(--text-primary);
     }
 
-    /* ── vs SOL Section ─────────────────────────────────── */
+    /* â”€â”€ vs SOL Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .versus-benchmark-bar {
       display: flex;
       align-items: center;
@@ -291,7 +291,7 @@
       .cell-vs-btc { display: none; }
     }
 
-    /* ── Performance Section ────────────────────────────── */
+    /* â”€â”€ Performance Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .perf-toolbar {
       display: flex;
       align-items: center;
@@ -345,7 +345,7 @@
     }
     .perf-sort-btn:hover { border-color: var(--fire-primary); color: var(--text-primary); }
     .perf-sort-btn.active {
-      background: rgba(0, 198, 255, 0.12);
+      background: rgba(255, 87, 34, 0.12);
       border-color: var(--fire-primary);
       color: var(--text-primary);
     }
@@ -384,7 +384,7 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Table — fixed layout so token column doesn't crowd out data columns */
+    /* Table â€” fixed layout so token column doesn't crowd out data columns */
     .perf-table {
       table-layout: fixed;
     }
@@ -462,10 +462,10 @@
     /* ATH % cell gets a subtle highlight when it's the active sort */
     .perf-sort-ath-active td.perf-ath-pct,
     .perf-sort-current-active td.perf-current-pct {
-      background: rgba(0,198,255,0.04);
+      background: rgba(255,87,34,0.04);
     }
 
-    /* Share screenshot card — rendered off-screen then captured */
+    /* Share screenshot card â€” rendered off-screen then captured */
     #perf-share-graphic {
       position: fixed;
       left: -9999px;
@@ -492,16 +492,16 @@
       color: #fff;
       letter-spacing: -0.02em;
     }
-    .psg-logo span { color: #00c6ff; }
+    .psg-logo span { color: #ff5722; }
     .psg-subtitle { font-size: 0.72rem; color: #6b7280; margin-top: 2px; }
     .psg-sort-label {
       font-size: 0.7rem;
       font-weight: 600;
-      color: #00c6ff;
+      color: #ff5722;
       letter-spacing: 0.06em;
       text-transform: uppercase;
-      background: rgba(0,198,255,0.1);
-      border: 1px solid rgba(0,198,255,0.25);
+      background: rgba(255,87,34,0.1);
+      border: 1px solid rgba(255,87,34,0.25);
       border-radius: 4px;
       padding: 3px 8px;
     }
@@ -539,7 +539,7 @@
       font-size: 0.6rem; color: #4b5563; letter-spacing: 0.03em;
       margin-top: 4px; display: flex; align-items: center; gap: 3px;
     }
-    .psg-powered-by strong { color: #0ea5e9; font-weight: 700; }
+    .psg-powered-by strong { color: #ff9100; font-weight: 700; }
     .psg-pct {
       font-family: 'JetBrains Mono', monospace;
       font-weight: 700;
@@ -581,17 +581,17 @@
     }
     .vsg-header {
       padding: 16px 20px 12px;
-      background: linear-gradient(135deg, rgba(0,198,255,0.08) 0%, transparent 70%);
+      background: linear-gradient(135deg, rgba(255,87,34,0.08) 0%, transparent 70%);
       border-bottom: 1px solid #1f2028;
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
     }
     .vsg-logo { font-size: 1rem; font-weight: 700; color: #f3f4f6; letter-spacing: -0.02em; }
-    .vsg-logo span { color: #00c6ff; }
+    .vsg-logo span { color: #ff5722; }
     .vsg-subtitle { font-size: 0.72rem; color: #6b7280; margin-top: 2px; }
     .vsg-powered-by { font-size: 0.6rem; color: #4b5563; letter-spacing: 0.03em; margin-top: 3px; }
-    .vsg-powered-by strong { color: #0ea5e9; font-weight: 700; }
+    .vsg-powered-by strong { color: #ff9100; font-weight: 700; }
     .vsg-date { font-size: 0.65rem; color: #4b5563; text-align: right; white-space: nowrap; }
     .vsg-benchmarks {
       display: flex;
@@ -657,7 +657,7 @@
     }
 
     @media (max-width: 480px) {
-      /* ── Tab switcher — horizontal scroll so all 5 tabs are reachable ── */
+      /* â”€â”€ Tab switcher â€” horizontal scroll so all 5 tabs are reachable â”€â”€ */
       .main-view-tabs {
         flex-wrap: nowrap;
         overflow-x: auto;
@@ -670,29 +670,29 @@
       .main-view-tabs::-webkit-scrollbar { display: none; }
       .main-view-tab { flex-shrink: 0; padding: 0.4rem 0.75rem; font-size: 0.74rem; }
 
-      /* ── Benchmark bar — compact single row, drop the age label ── */
+      /* â”€â”€ Benchmark bar â€” compact single row, drop the age label â”€â”€ */
       .versus-benchmark-bar { padding: 0.45rem 0.6rem; gap: 0.35rem; flex-wrap: nowrap; }
       .benchmark-pill { font-size: 0.76rem; gap: 0.3rem; }
       .benchmark-price { font-size: 0.76rem; }
       .benchmark-age { display: none; }
 
-      /* ── vs SOL table — hide 24h % column (vs SOL already shows relative perf) ── */
+      /* â”€â”€ vs SOL table â€” hide 24h % column (vs SOL already shows relative perf) â”€â”€ */
       .cell-change { display: none; }
       /* Tighten rank on this table too */
       .cell-rank { width: 26px; min-width: 26px; }
 
-      /* ── Podium — shrink cards a bit more ── */
+      /* â”€â”€ Podium â€” shrink cards a bit more â”€â”€ */
       .podium-card { padding: 0.65rem 0.85rem 0.65rem; }
       .podium-logo { width: 32px; height: 32px; }
       .podium-name { font-size: 0.75rem; max-width: 100px; }
       .podium-medal { font-size: 1.2rem; }
 
-      /* ── Performance table — hide ATH % column, keep Current % ── */
+      /* â”€â”€ Performance table â€” hide ATH % column, keep Current % â”€â”€ */
       td.perf-ath-pct, th.perf-th-ath { display: none; }
       th.perf-th-token { width: 150px; }
       td.perf-current-pct { font-size: 0.82rem; }
 
-      /* ── Performance share button — keep accessible but compact ── */
+      /* â”€â”€ Performance share button â€” keep accessible but compact â”€â”€ */
       .perf-share-btn { padding: 0.4rem 0.7rem; font-size: 0.72rem; }
     }
   </style>
@@ -709,7 +709,7 @@
       <a href="/" class="logo">
         <span class="logo-text">HolDEX</span>
       </a>
-      <a href="token.html?mint=9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump" class="powered-badge"><svg class="flame-icon" width="14" height="14" viewBox="0 0 24 24" fill="url(#flameGrad)"><defs><linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#0369a1"/><stop offset="100%" stop-color="#00c6ff"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>Powered by ASDFASDFA</a>
+      <a href="token.html?mint=9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump" class="powered-badge"><svg class="flame-icon" width="14" height="14" viewBox="0 0 24 24" fill="url(#flameGrad)"><defs><linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#e64a19"/><stop offset="100%" stop-color="#ff5722"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>Powered by ASDFASDFA</a>
 
       <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle navigation" aria-expanded="false">
         <svg class="icon-hamburger" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -761,13 +761,13 @@
         Performance
       </button>
       <button class="main-view-tab" id="tab-tech" role="tab" aria-selected="false" aria-controls="view-tech" data-view="tech">
-        🤖 Tech
+        ðŸ¤– Tech
       </button>
       <button class="main-view-tab" id="tab-emerging" role="tab" aria-selected="false" aria-controls="view-emerging" data-view="emerging">
-        🛠️ Emerging
+        ðŸ› ï¸ Emerging
       </button>
       <button class="main-view-tab" id="tab-versus" role="tab" aria-selected="false" aria-controls="view-versus" data-view="versus">
-        📈 vs SOL
+        ðŸ“ˆ vs SOL
       </button>
     </div>
 
@@ -964,7 +964,7 @@
       <!-- Loading state -->
       <div id="perf-loading" class="perf-loading-state" style="display:none;">
         <div class="perf-loading-spinner"></div>
-        <span>Loading performance data…</span>
+        <span>Loading performance dataâ€¦</span>
       </div>
 
       <!-- Empty state -->
@@ -992,9 +992,9 @@
       </div>
     </section>
 
-    <!-- Off-screen share card — populated by performancePage.share() before html2canvas capture -->
+    <!-- Off-screen share card â€” populated by performancePage.share() before html2canvas capture -->
     <div id="perf-share-graphic"></div>
-    <!-- Off-screen versus share card — populated by versusPage.share() before html2canvas capture -->
+    <!-- Off-screen versus share card â€” populated by versusPage.share() before html2canvas capture -->
     <div id="versus-share-graphic"></div>
 
     <!-- vs SOL/BTC View -->
@@ -1077,7 +1077,7 @@
   <script src="js/performance.js?v=14"></script>
   <script src="js/versus.js?v=7"></script>
   <script>
-    // ── Tab Switcher ─────────────────────────────────────────
+    // â”€â”€ Tab Switcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     (function () {
       var tabs = document.querySelectorAll('.main-view-tab');
       var panels = {
@@ -1126,7 +1126,7 @@
   </script>
   <script src="js/pwa.js?v=3"></script>
   <script>
-    // ── King of the Pill widget ───────────────────────────────
+    // â”€â”€ King of the Pill widget â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     (function () {
       var wrap = document.getElementById('kotp-wrap');
       if (!wrap) return;
@@ -1154,7 +1154,7 @@
         el.className  = 'kotp-widget';
         el.href       = 'token.html?mint=' + encodeURIComponent(mint);
         el.innerHTML  =
-          '<span class="kotp-badge">💊 King of the Pill</span>' +
+          '<span class="kotp-badge">ðŸ’Š King of the Pill</span>' +
           '<span class="kotp-divider"></span>' +
           (logo ? '<img class="kotp-logo" src="' + esc(logo) + '" alt="" onerror="this.style.display=\'none\'">' : '') +
           '<span class="kotp-info">' +
@@ -1207,3 +1207,5 @@
   </script>
 </body>
 </html>
+
+
