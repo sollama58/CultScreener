@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>ðŸ”¥ HolDEX - Diamond Hands Terminal</title>
+  <title>💎 HolDEX - Diamond Hands Terminal</title>
   <meta name="description" content="HolDEX is a Solana token conviction analyzer. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.">
   <meta name="theme-color" content="#07080a">
   <meta name="color-scheme" content="dark">
@@ -38,7 +38,7 @@
   <link rel="stylesheet" href="css/styles.css?v=12">
 
   <style>
-    /* â”€â”€ King of the Pill widget â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── King of the Pill widget ────────────────────────── */
     .kotp-widget {
       display: flex;
       align-items: center;
@@ -164,7 +164,7 @@
       display: block;
     }
 
-    /* â”€â”€ View Tab Switcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── View Tab Switcher ──────────────────────────────── */
     .main-view-tabs {
       display: flex;
       gap: 0.25rem;
@@ -196,7 +196,7 @@
       color: var(--text-primary);
     }
 
-    /* â”€â”€ vs SOL Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── vs SOL Section ─────────────────────────────────── */
     .versus-benchmark-bar {
       display: flex;
       align-items: center;
@@ -291,7 +291,7 @@
       .cell-vs-btc { display: none; }
     }
 
-    /* â”€â”€ Performance Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Performance Section ────────────────────────────── */
     .perf-toolbar {
       display: flex;
       align-items: center;
@@ -384,7 +384,7 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Table â€” fixed layout so token column doesn't crowd out data columns */
+    /* Table — fixed layout so token column doesn't crowd out data columns */
     .perf-table {
       table-layout: fixed;
     }
@@ -465,7 +465,7 @@
       background: rgba(255,87,34,0.04);
     }
 
-    /* Share screenshot card â€” rendered off-screen then captured */
+    /* Share screenshot card — rendered off-screen then captured */
     #perf-share-graphic {
       position: fixed;
       left: -9999px;
@@ -657,7 +657,7 @@
     }
 
     @media (max-width: 480px) {
-      /* â”€â”€ Tab switcher â€” horizontal scroll so all 5 tabs are reachable â”€â”€ */
+      /* ── Tab switcher — horizontal scroll so all 5 tabs are reachable ── */
       .main-view-tabs {
         flex-wrap: nowrap;
         overflow-x: auto;
@@ -670,29 +670,29 @@
       .main-view-tabs::-webkit-scrollbar { display: none; }
       .main-view-tab { flex-shrink: 0; padding: 0.4rem 0.75rem; font-size: 0.74rem; }
 
-      /* â”€â”€ Benchmark bar â€” compact single row, drop the age label â”€â”€ */
+      /* ── Benchmark bar — compact single row, drop the age label ── */
       .versus-benchmark-bar { padding: 0.45rem 0.6rem; gap: 0.35rem; flex-wrap: nowrap; }
       .benchmark-pill { font-size: 0.76rem; gap: 0.3rem; }
       .benchmark-price { font-size: 0.76rem; }
       .benchmark-age { display: none; }
 
-      /* â”€â”€ vs SOL table â€” hide 24h % column (vs SOL already shows relative perf) â”€â”€ */
+      /* ── vs SOL table — hide 24h % column (vs SOL already shows relative perf) ── */
       .cell-change { display: none; }
       /* Tighten rank on this table too */
       .cell-rank { width: 26px; min-width: 26px; }
 
-      /* â”€â”€ Podium â€” shrink cards a bit more â”€â”€ */
+      /* ── Podium — shrink cards a bit more ── */
       .podium-card { padding: 0.65rem 0.85rem 0.65rem; }
       .podium-logo { width: 32px; height: 32px; }
       .podium-name { font-size: 0.75rem; max-width: 100px; }
       .podium-medal { font-size: 1.2rem; }
 
-      /* â”€â”€ Performance table â€” hide ATH % column, keep Current % â”€â”€ */
+      /* ── Performance table — hide ATH % column, keep Current % ── */
       td.perf-ath-pct, th.perf-th-ath { display: none; }
       th.perf-th-token { width: 150px; }
       td.perf-current-pct { font-size: 0.82rem; }
 
-      /* â”€â”€ Performance share button â€” keep accessible but compact â”€â”€ */
+      /* ── Performance share button — keep accessible but compact ── */
       .perf-share-btn { padding: 0.4rem 0.7rem; font-size: 0.72rem; }
     }
   </style>
@@ -761,13 +761,13 @@
         Performance
       </button>
       <button class="main-view-tab" id="tab-tech" role="tab" aria-selected="false" aria-controls="view-tech" data-view="tech">
-        ðŸ¤– Tech
+        🤖 Tech
       </button>
       <button class="main-view-tab" id="tab-emerging" role="tab" aria-selected="false" aria-controls="view-emerging" data-view="emerging">
-        ðŸ› ï¸ Emerging
+        🛠️ Emerging
       </button>
       <button class="main-view-tab" id="tab-versus" role="tab" aria-selected="false" aria-controls="view-versus" data-view="versus">
-        ðŸ“ˆ vs SOL
+        📈 vs SOL
       </button>
     </div>
 
@@ -964,7 +964,7 @@
       <!-- Loading state -->
       <div id="perf-loading" class="perf-loading-state" style="display:none;">
         <div class="perf-loading-spinner"></div>
-        <span>Loading performance dataâ€¦</span>
+        <span>Loading performance data…</span>
       </div>
 
       <!-- Empty state -->
@@ -992,9 +992,9 @@
       </div>
     </section>
 
-    <!-- Off-screen share card â€” populated by performancePage.share() before html2canvas capture -->
+    <!-- Off-screen share card — populated by performancePage.share() before html2canvas capture -->
     <div id="perf-share-graphic"></div>
-    <!-- Off-screen versus share card â€” populated by versusPage.share() before html2canvas capture -->
+    <!-- Off-screen versus share card — populated by versusPage.share() before html2canvas capture -->
     <div id="versus-share-graphic"></div>
 
     <!-- vs SOL/BTC View -->
@@ -1077,7 +1077,7 @@
   <script src="js/performance.js?v=14"></script>
   <script src="js/versus.js?v=7"></script>
   <script>
-    // â”€â”€ Tab Switcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Tab Switcher ─────────────────────────────────────────
     (function () {
       var tabs = document.querySelectorAll('.main-view-tab');
       var panels = {
@@ -1126,7 +1126,7 @@
   </script>
   <script src="js/pwa.js?v=3"></script>
   <script>
-    // â”€â”€ King of the Pill widget â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── King of the Pill widget ───────────────────────────────
     (function () {
       var wrap = document.getElementById('kotp-wrap');
       if (!wrap) return;
@@ -1154,7 +1154,7 @@
         el.className  = 'kotp-widget';
         el.href       = 'token.html?mint=' + encodeURIComponent(mint);
         el.innerHTML  =
-          '<span class="kotp-badge">ðŸ’Š King of the Pill</span>' +
+          '<span class="kotp-badge">💊 King of the Pill</span>' +
           '<span class="kotp-divider"></span>' +
           (logo ? '<img class="kotp-logo" src="' + esc(logo) + '" alt="" onerror="this.style.display=\'none\'">' : '') +
           '<span class="kotp-info">' +

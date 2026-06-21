@@ -8,7 +8,7 @@
    ============================================= */
 
 :root {
-  /* Backgrounds â€” refined dark palette with more depth */
+  /* Backgrounds — refined dark palette with more depth */
   --bg-primary: #09090b;
   --bg-secondary: #0f1012;
   --bg-tertiary: #161719;
@@ -16,7 +16,7 @@
   --bg-base: #060607;
   --bg-elevated: #1a1b1e;
 
-  /* HolDEX accent palette â€” electric blue / cyan */
+  /* HolDEX accent palette — electric blue / cyan */
   --fire-primary: #ff5722;
   --fire-secondary: #ff9100;
   --fire-dim: #ff3d00;
@@ -25,19 +25,19 @@
   --ember-dim: rgba(255, 87, 34, 0.08);
   --hot: #ff3d00;
 
-  /* Text â€” better contrast hierarchy */
+  /* Text — better contrast hierarchy */
   --text-primary: #f0f0f2;
   --text-secondary: #a0a0a8;
   --text-muted: #6b6b74;
   --text-dim: #45454d;
 
-  /* Borders â€” subtle, layered */
+  /* Borders — subtle, layered */
   --border-color: #1e1f22;
   --border-subtle: #17181b;
   --border-default: #2a2b2f;
   --border-fire: rgba(255, 87, 34, 0.22);
 
-  /* Status colors â€” vibrant, accessible */
+  /* Status colors — vibrant, accessible */
   --green: #10b981;
   --green-light: rgba(16, 185, 129, 0.1);
   --green-glow: rgba(16, 185, 129, 0.25);
@@ -54,7 +54,7 @@
   --accent-muted: rgba(255, 87, 34, 0.12);
   --accent-glow: rgba(255, 87, 34, 0.35);
 
-  /* UI â€” more generous radii for modern feel */
+  /* UI — more generous radii for modern feel */
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -68,14 +68,14 @@
   --shadow-fire: 0 0 24px rgba(255, 87, 34, 0.08);
   --shadow-glow: 0 0 48px var(--accent-glow);
 
-  /* Transitions â€” snappier */
+  /* Transitions — snappier */
   --transition-fast: 0.12s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.35s ease;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Glass â€” refined frosted effect */
+  /* Glass — refined frosted effect */
   --glass-bg: rgba(9, 9, 11, 0.65);
   --glass-border: rgba(255, 87, 34, 0.06);
 
@@ -139,7 +139,7 @@ body {
   min-height: 100vh;
 }
 
-/* Subtle ambient glow â€” adds depth without distraction */
+/* Subtle ambient glow — adds depth without distraction */
 body::before {
   content: '';
   position: fixed;
@@ -172,7 +172,7 @@ img {
   color: #fff;
 }
 
-/* Custom scrollbar â€” minimal, barely visible until hovered */
+/* Custom scrollbar — minimal, barely visible until hovered */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -845,7 +845,7 @@ img {
    8. Terminal Controls (Search, Filters)
    ============================================= */
 
-/* Toolbar â€” search + filters toggle + status */
+/* Toolbar — search + filters toggle + status */
 .terminal-toolbar {
   display: flex;
   gap: 0.5rem;
@@ -1794,7 +1794,7 @@ select:focus {
   letter-spacing: 0.05em;
 }
 
-/* Action bar â€” links, socials, watchlist */
+/* Action bar — links, socials, watchlist */
 .token-actions-bar {
   display: flex;
   align-items: center;
@@ -2028,7 +2028,7 @@ select:focus {
   gap: 1.25rem;
 }
 
-/* Cards â€” fire terminal panels */
+/* Cards — fire terminal panels */
 .chart-section,
 .holders-section,
 .community-section,
@@ -2616,7 +2616,7 @@ select:focus {
   50% { opacity: 0.4; }
 }
 
-/* Holders watermark (legacy â€” replaced by .diamond-hands-watermark) */
+/* Holders watermark (legacy — replaced by .diamond-hands-watermark) */
 
 
 /* =============================================
@@ -3285,7 +3285,7 @@ select:focus {
   color: var(--fire-primary);
 }
 
-/* Change stat pills â€” 1D / 7D / 30D row */
+/* Change stat pills — 1D / 7D / 30D row */
 .ht-changes {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -4672,7 +4672,7 @@ select:focus {
    ============================================= */
 
 @media (max-width: 768px) {
-  /* Header â€” compact */
+  /* Header — compact */
   .header-content {
     padding: 0 0.85rem;
     height: 52px;
@@ -4683,7 +4683,7 @@ select:focus {
 
   .powered-badge { display: none; }
 
-  /* Hide header-actions on mobile â€” wallet moves into dropdown */
+  /* Hide header-actions on mobile — wallet moves into dropdown */
   .header-actions {
     display: none;
   }
@@ -4695,7 +4695,7 @@ select:focus {
     margin-left: auto;
   }
 
-  /* Hide desktop nav on mobile â€” the hamburger menu replaces it */
+  /* Hide desktop nav on mobile — the hamburger menu replaces it */
   .header .nav {
     display: none;
   }
@@ -4706,7 +4706,7 @@ select:focus {
     right: 0.85rem;
   }
 
-  /* Main â€” tighter padding */
+  /* Main — tighter padding */
   .main { padding: 0.75rem 0.85rem 2.5rem; }
 
   /* Terminal header */
@@ -4714,7 +4714,7 @@ select:focus {
   .terminal-title-row { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
   .terminal-stats { gap: 0.75rem; }
 
-  /* Quick filters â€” horizontal scroll, no wrap */
+  /* Quick filters — horizontal scroll, no wrap */
   .terminal-quick-filters {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -4734,7 +4734,7 @@ select:focus {
   .terminal-status-inline { padding: 0.25rem 0.55rem; font-size: 0.6rem; }
   .terminal-controls { flex-direction: column; align-items: stretch; }
 
-  /* Table â€” edge-to-edge scroll */
+  /* Table — edge-to-edge scroll */
   .terminal-table-container,
   .community-table-container {
     margin: 0 -0.85rem;
@@ -4750,7 +4750,7 @@ select:focus {
   .terminal-section,
   .community-section { padding: 0.85rem; }
 
-  /* Token detail â€” single column, reorder so stats appear before the heavy holders table */
+  /* Token detail — single column, reorder so stats appear before the heavy holders table */
   .token-content-grid { grid-template-columns: 1fr; grid-template-areas: none; gap: 1rem; }
   .token-col-left, .token-col-right, .pools-section { grid-area: unset; }
   .token-col-right { order: -1; }
@@ -4886,7 +4886,7 @@ select:focus {
   .terminal-section,
   .community-section { padding: 0.6rem; border-radius: var(--radius-sm); }
 
-  /* Table â€” ultra compact */
+  /* Table — ultra compact */
   .terminal-table-container,
   .community-table-container {
     margin: 0 -0.6rem;
@@ -4966,7 +4966,7 @@ select:focus {
   .holders-table { font-size: 0.75rem; }
   .holders-table thead th { font-size: 0.62rem; padding: 0.35rem 0.4rem; }
   .holders-table tbody td { padding: 0.3rem 0.4rem; }
-  /* Hide Value column on small screens â€” too many columns */
+  /* Hide Value column on small screens — too many columns */
   .holders-table thead th:nth-child(4),
   .holders-table tbody td:nth-child(4) { display: none; }
   .holder-address { font-size: 0.68rem; }
@@ -4976,7 +4976,7 @@ select:focus {
   .token-banner-wrap { max-height: 100px; border-radius: var(--radius-sm); margin-bottom: 0.6rem; }
   .token-banner-img { max-height: 100px; }
 
-  /* Pagination â€” 36px meets minimum touch target size */
+  /* Pagination — 36px meets minimum touch target size */
   .page-tab { min-width: 36px; height: 36px; font-size: 0.72rem; }
 
   /* Wallet modal */
@@ -4991,7 +4991,7 @@ select:focus {
   /* Pools */
   .pool-card { padding: 0.5rem 0.6rem; font-size: 0.78rem; }
 
-  /* Holder Behavior modal â€” full-width on narrow screens */
+  /* Holder Behavior modal — full-width on narrow screens */
   .hb-modal { max-width: 95vw; padding: 1rem; max-height: 92vh; }
 
   /* Footer */
@@ -5125,7 +5125,7 @@ textarea {
   letter-spacing: 0.03em;
 }
 
-/* Emerging Cult label badge â€” token detail page */
+/* Emerging Cult label badge — token detail page */
 .emerging-cult-badge {
   display: inline-flex;
   align-items: center;
@@ -5144,7 +5144,7 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Tech Coin label badge â€” token detail page */
+/* Tech Coin label badge — token detail page */
 .tech-coin-detail-badge {
   display: inline-flex;
   align-items: center;
@@ -5163,7 +5163,7 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Emerging Cult hammer emoji â€” table rows */
+/* Emerging Cult hammer emoji — table rows */
 .cult-hammer {
   flex-shrink: 0;
   font-size: 0.85rem;
@@ -5306,7 +5306,7 @@ strong {
   border-radius: var(--radius-sm);
 }
 
-/* â”€â”€ Token Page Skeleton â”€â”€ */
+/* ── Token Page Skeleton ── */
 .token-skeleton {
   animation: fadeIn 0.2s ease-out;
 }
@@ -5458,7 +5458,7 @@ strong {
 }
 
 /* ==============================================
-   Mobile nav dropdown â€” appended to <body> by JS.
+   Mobile nav dropdown — appended to <body> by JS.
    Uses position:fixed + high z-index.
    (overflow-x:hidden removed from html/body so
    position:fixed works correctly on mobile.)
@@ -5537,10 +5537,10 @@ strong {
 }
 
 /* =============================================
-   PWA â€” Install Banner, Update Banner, Standalone
+   PWA — Install Banner, Update Banner, Standalone
    ============================================= */
 
-/* Install App â€” nav item (hidden by default, shown via .installable on mobile) */
+/* Install App — nav item (hidden by default, shown via .installable on mobile) */
 .nav-install-item {
   display: none;
   align-items: center;
@@ -5579,7 +5579,7 @@ strong {
   color: var(--fire-primary);
 }
 
-/* Never show install button on desktop â€” even if JS creates it */
+/* Never show install button on desktop — even if JS creates it */
 @media (min-width: 769px) {
   .nav-install-item,
   .nav-install-item.installable {
@@ -5658,7 +5658,7 @@ strong {
 }
 
 /* =============================================
-   Holder Behavior Analysis â€” Card & Modal
+   Holder Behavior Analysis — Card & Modal
    ============================================= */
 
 /* Card */

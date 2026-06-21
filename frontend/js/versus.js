@@ -99,7 +99,7 @@ const versusPage = {
       ]);
 
       const freshBenchmarks = benchmarks || { sol: null, btc: null };
-      // Only replace benchmarks when the new data is actually valid â€” if CoinGecko is
+      // Only replace benchmarks when the new data is actually valid — if CoinGecko is
       // temporarily down the response comes back with all-null fields, and we should
       // keep whatever previously-good data we already have in memory rather than
       // wiping it out and showing -- for every vs-SOL/BTC column
@@ -231,7 +231,7 @@ const versusPage = {
     }
 
     const defaultLogo = utils.getDefaultLogo();
-    const medals = ['ðŸ¥‡', 'ðŸ¥ˆ', 'ðŸ¥‰'];
+    const medals = ['🥇', '🥈', '🥉'];
     const labelClass = ['podium-gold', 'podium-silver', 'podium-bronze'];
 
     // Order: 2nd | 1st | 3rd for visual podium layout
@@ -379,7 +379,7 @@ const versusPage = {
 
   async share() {
     const btn = document.getElementById('versus-share-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Capturingâ€¦'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Capturing…'; }
 
     try {
       if (typeof html2canvas === 'undefined') {
@@ -421,7 +421,7 @@ const versusPage = {
       if (navigator.share && navigator.canShare) {
         const file = new File([blob], filename, { type: 'image/png' });
         if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: 'HolDEX â€” Top 3 vs SOL' });
+          await navigator.share({ files: [file], title: 'HolDEX — Top 3 vs SOL' });
           return;
         }
       }
@@ -438,7 +438,7 @@ const versusPage = {
       if (typeof toast !== 'undefined') toast.success('Screenshot saved!');
     } catch (err) {
       console.error('[versusPage] share error:', err);
-      if (typeof toast !== 'undefined') toast.error('Screenshot failed â€” try again');
+      if (typeof toast !== 'undefined') toast.error('Screenshot failed — try again');
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -483,9 +483,9 @@ const versusPage = {
       </div>
     `;
 
-    const medals = ['ðŸ¥‡', 'ðŸ¥ˆ', 'ðŸ¥‰'];
+    const medals = ['🥇', '🥈', '🥉'];
     const cardClass = ['gold', 'silver', 'bronze'];
-    // Visual podium order: 2nd | 1st | 3rd â€” build slots then drop any undefined slots
+    // Visual podium order: 2nd | 1st | 3rd — build slots then drop any undefined slots
     const slots = [
       { token: top3[1], logo: logoDataUris[1], medal: medals[1], cls: cardClass[1] },
       { token: top3[0], logo: logoDataUris[0], medal: medals[0], cls: cardClass[0] },

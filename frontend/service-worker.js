@@ -1,13 +1,13 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'holdex-v40';
+const CACHE_VERSION = 'holdex-v41';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
-// Core app shell â€” cached on install for instant loads
-// HTML files are intentionally omitted here â€” they use network-first so users
+// Core app shell — cached on install for instant loads
+// HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=12',
@@ -39,7 +39,7 @@ const API_PATTERNS = [
   /\/api\//,
 ];
 
-// Font CDN patterns â€” cache long-term
+// Font CDN patterns — cache long-term
 const FONT_PATTERNS = [
   /fonts\.googleapis\.com/,
   /fonts\.gstatic\.com/,
@@ -52,12 +52,12 @@ const MAX_API_ENTRIES = 50;
 // API cache TTL (5 minutes)
 const API_CACHE_TTL = 5 * 60 * 1000;
 
-// â”€â”€â”€ Install â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Install ─────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
       .then((cache) => {
-        // Cache app shell â€” don't fail install if some resources are missing
+        // Cache app shell — don't fail install if some resources are missing
         return cache.addAll(APP_SHELL).catch((err) => {
           console.warn('[SW] Some app shell resources failed to cache:', err);
           // Try caching individually so one failure doesn't block all
@@ -70,7 +70,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// â”€â”€â”€ Activate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Activate ────────────────────────────────────────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
@@ -90,7 +90,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// â”€â”€â”€ Fetch Strategy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Fetch Strategy ──────────────────────────────────────
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -133,7 +133,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(networkFirstWithCache(request, DYNAMIC_CACHE));
 });
 
-// â”€â”€â”€ Caching Strategies â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Caching Strategies ──────────────────────────────────
 
 async function cacheFirstWithNetwork(request, cacheName) {
   const cached = await caches.match(request);
@@ -170,7 +170,7 @@ async function networkFirstWithCache(request, cacheName, ttl) {
     }
     return response;
   } catch {
-    // Network failed â€” try cache
+    // Network failed — try cache
     const cached = await caches.match(request);
     if (cached) {
       // Check TTL if specified
@@ -189,7 +189,7 @@ async function networkFirstWithCache(request, cacheName, ttl) {
   }
 }
 
-// â”€â”€â”€ Offline Fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Offline Fallback ────────────────────────────────────
 
 function offlineFallback(request) {
   if (request.destination === 'document') {
@@ -255,7 +255,7 @@ function offlineFallback(request) {
       </head>
       <body>
         <div class="offline-container">
-          <div class="offline-icon">ðŸ’Ž</div>
+          <div class="offline-icon">💎</div>
           <h1>You're Offline</h1>
           <p>HolDEX needs an internet connection to fetch live Solana data. Check your connection and try again.</p>
           <button onclick="window.location.reload()">Try Again</button>
@@ -271,7 +271,7 @@ function offlineFallback(request) {
   return new Response('Offline', { status: 503 });
 }
 
-// â”€â”€â”€ Cache Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Cache Management ────────────────────────────────────
 
 async function trimCache(cacheName, maxEntries) {
   const cache = await caches.open(cacheName);
@@ -283,7 +283,7 @@ async function trimCache(cacheName, maxEntries) {
   }
 }
 
-// â”€â”€â”€ Background Sync (future) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Background Sync (future) ────────────────────────────
 // Placeholder for background sync support when watchlist changes are made offline
 self.addEventListener('message', (event) => {
   if (event.data === 'skipWaiting') {

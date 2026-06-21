@@ -97,7 +97,7 @@ router.get('/:mint', async (req, res) => {
   const tokenPageUrl = `${FRONTEND_URL}/token.html?mint=${encodeURIComponent(mint)}`;
   const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://api.HolDEX.com`;
   const ogImageUrl = `${apiBaseUrl}/share/${encodeURIComponent(mint)}/og-image`;
-  // Twitter doesn't support SVG â€” use the static banner JPG as fallback
+  // Twitter doesn't support SVG — use the static banner JPG as fallback
   const twitterImageUrl = `${FRONTEND_URL}/CultScreenerBanner.jpg`;
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -225,7 +225,7 @@ router.get('/:mint/og-image', async (req, res) => {
 
   <!-- Token name + symbol -->
   <text x="52" y="155" font-family="Inter,-apple-system,sans-serif" font-size="48" font-weight="700" fill="#f0f0f2">${displayName}</text>
-  ${symbol ? `<text x="52" y="190" font-family="Inter,-apple-system,sans-serif" font-size="20" font-weight="500" fill="#6b6b74">${symbol} Â· ${mintShort}</text>` : `<text x="52" y="190" font-family="'JetBrains Mono',monospace" font-size="18" fill="#6b6b74">${mintShort}</text>`}
+  ${symbol ? `<text x="52" y="190" font-family="Inter,-apple-system,sans-serif" font-size="20" font-weight="500" fill="#6b6b74">${symbol} · ${mintShort}</text>` : `<text x="52" y="190" font-family="'JetBrains Mono',monospace" font-size="18" fill="#6b6b74">${mintShort}</text>`}
 
   <!-- Price -->
   <text x="52" y="275" font-family="Inter,-apple-system,sans-serif" font-size="56" font-weight="800" fill="#f0f0f2">${esc(price)}</text>

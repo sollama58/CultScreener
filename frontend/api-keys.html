@@ -36,7 +36,7 @@
       margin-bottom: 1.25rem;
     }
 
-    /* â”€â”€ Wallet badge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Wallet badge ─────────────────────────────────────── */
     .wallet-badge {
       display: inline-flex;
       align-items: center;
@@ -59,7 +59,7 @@
       flex-shrink: 0;
     }
 
-    /* â”€â”€ Loading skeleton â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Loading skeleton ─────────────────────────────────── */
     #key-loading {
       display: none;
       align-items: center;
@@ -81,7 +81,7 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* â”€â”€ Key info grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Key info grid ────────────────────────────────────── */
     .key-info-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -141,7 +141,7 @@
       margin-top: 0.25rem;
     }
 
-    /* â”€â”€ Key reveal box â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Key reveal box ───────────────────────────────────── */
     .key-reveal-box {
       background: var(--bg-tertiary);
       border: 1px solid var(--border-fire);
@@ -188,7 +188,7 @@
       line-height: 1.4;
     }
 
-    /* â”€â”€ API Tester â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── API Tester ───────────────────────────────────────── */
     .tester-key-row {
       margin-bottom: 1.25rem;
     }
@@ -339,7 +339,7 @@
     .tester-response.success pre { color: var(--text-primary); }
     .tester-response.error pre { color: #f87171; }
 
-    /* â”€â”€ Documentation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Documentation ────────────────────────────────────── */
     .doc-section {
       margin-bottom: 2rem;
     }
@@ -457,7 +457,7 @@
       width: 60px;
     }
 
-    /* â”€â”€ Connect prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Connect prompt ───────────────────────────────────── */
     .connect-prompt {
       display: flex;
       flex-direction: column;
@@ -473,7 +473,7 @@
       margin: 0;
     }
 
-    /* â”€â”€ No-key prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── No-key prompt ────────────────────────────────────── */
     .no-key-prompt {
       padding: 0.5rem 0;
     }
@@ -513,14 +513,14 @@
   <main class="main terminal-page">
     <div class="api-page">
 
-      <!-- â”€â”€ API Key Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+      <!-- ── API Key Management ─────────────────────────────────── -->
       <div class="api-card">
         <h2>API Key</h2>
 
         <!-- Not connected -->
         <div id="key-not-connected" style="display: none;">
           <div class="connect-prompt">
-            <p>Connect your Solana wallet to generate an API key. You'll sign a message to prove wallet ownership â€” no transaction or gas required.</p>
+            <p>Connect your Solana wallet to generate an API key. You'll sign a message to prove wallet ownership — no transaction or gas required.</p>
             <button class="btn btn-primary connect-wallet-btn">Connect Wallet</button>
           </div>
         </div>
@@ -529,7 +529,7 @@
         <div id="key-management" style="display: none;">
           <div class="wallet-badge">
             <span class="wallet-dot"></span>
-            <span id="wallet-address-display">â€”</span>
+            <span id="wallet-address-display">—</span>
           </div>
 
           <!-- Loading -->
@@ -543,11 +543,11 @@
             <div class="key-info-grid">
               <div class="key-info-item">
                 <div class="key-info-label">Key Prefix</div>
-                <div class="key-info-value" id="key-prefix">â€”</div>
+                <div class="key-info-value" id="key-prefix">—</div>
               </div>
               <div class="key-info-item">
                 <div class="key-info-label">Created</div>
-                <div class="key-info-value" id="key-created">â€”</div>
+                <div class="key-info-value" id="key-created">—</div>
               </div>
               <div class="key-info-item">
                 <div class="key-info-label">Last Used</div>
@@ -566,7 +566,7 @@
             </div>
 
             <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">
-              Key counts and last-used time update with API usage â€” refresh the page to see updates.
+              Key counts and last-used time update with API usage — refresh the page to see updates.
             </p>
 
             <div class="btn-group">
@@ -578,7 +578,7 @@
           <!-- No key yet -->
           <div id="no-key" style="display: none;">
             <div class="no-key-prompt">
-              <p>You don't have an API key yet. Generate one by signing with your wallet â€” takes seconds and requires no transaction.</p>
+              <p>You don't have an API key yet. Generate one by signing with your wallet — takes seconds and requires no transaction.</p>
               <button class="btn btn-primary" id="generate-key-btn">Generate API Key</button>
             </div>
           </div>
@@ -586,15 +586,15 @@
           <!-- Key just generated / rotated -->
           <div id="key-generated" style="display: none;">
             <div class="key-reveal-box">
-              <div class="key-reveal-label">Your API Key â€” save it now, it won't be shown again</div>
-              <div class="key-reveal-value" id="new-key-value">â€”</div>
+              <div class="key-reveal-label">Your API Key — save it now, it won't be shown again</div>
+              <div class="key-reveal-value" id="new-key-value">—</div>
               <div class="key-reveal-actions">
                 <button class="btn btn-sm btn-secondary" id="copy-key-btn">Copy Key</button>
               </div>
             </div>
             <div class="key-warning">
-              <span>âš ï¸</span>
-              <span>This is the only time your key will be shown. Copy it now and store it securely â€” if you lose it, rotate to get a new one.</span>
+              <span>⚠️</span>
+              <span>This is the only time your key will be shown. Copy it now and store it securely — if you lose it, rotate to get a new one.</span>
             </div>
             <div style="margin-top: 1rem;">
               <button class="btn btn-primary" id="key-generated-confirm">I've Saved My Key</button>
@@ -603,11 +603,11 @@
         </div>
       </div>
 
-      <!-- â”€â”€ API Tester â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+      <!-- ── API Tester ──────────────────────────────────────────── -->
       <div class="api-card">
         <h2>API Tester</h2>
 
-        <!-- API key input â€” always visible, prefilled from session when available -->
+        <!-- API key input — always visible, prefilled from session when available -->
         <div class="tester-key-row">
           <label for="tester-api-key">API Key</label>
           <div class="tester-key-input-wrap">
@@ -668,7 +668,7 @@
         </div>
       </div>
 
-      <!-- â”€â”€ Documentation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+      <!-- ── Documentation ──────────────────────────────────────── -->
       <div class="api-card">
         <h2>API Reference</h2>
 
@@ -712,7 +712,7 @@
               <tr>
                 <td>minConviction</td>
                 <td>number</td>
-                <td>Filter by minimum conviction score (0â€“100)</td>
+                <td>Filter by minimum conviction score (0–100)</td>
               </tr>
               <tr>
                 <td>minMcap</td>
@@ -769,8 +769,8 @@
               <tr><td>401</td><td>Missing or invalid API key</td></tr>
               <tr><td>403</td><td>API key revoked or inactive</td></tr>
               <tr><td>404</td><td>Token not found</td></tr>
-              <tr><td>429</td><td>Rate limit exceeded â€” slow down requests</td></tr>
-              <tr><td>400</td><td>Bad request â€” check parameters</td></tr>
+              <tr><td>429</td><td>Rate limit exceeded — slow down requests</td></tr>
+              <tr><td>400</td><td>Bad request — check parameters</td></tr>
             </tbody>
           </table>
         </div>

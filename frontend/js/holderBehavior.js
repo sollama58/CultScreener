@@ -1,5 +1,5 @@
 ﻿// =============================================
-// HolDEX â€” Holder Behavior Analysis
+// HolDEX — Holder Behavior Analysis
 // Burn 10,000 ASDFASDFA â†’ analyze top 50 holders'
 // avg hold time across all tokens (last 250 swaps)
 // =============================================
@@ -12,7 +12,7 @@
   const BURN_DECIMALS = 6;
   const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
-  // â”€â”€ Persisted access tokens (per mint, survives navigation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Persisted access tokens (per mint, survives navigation) ──────────
   const STORAGE_KEY = 'hb_access';
   function loadTokens() {
     try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
@@ -33,7 +33,7 @@
     } catch {}
   }
 
-  // â”€â”€ Pending burn recovery (survives tab close for 10 min) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Pending burn recovery (survives tab close for 10 min) ────────────
   const PENDING_KEY = 'hb_pending_burn';
   function savePending(sig, mint, walletAddr) {
     try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ sig, mint, wallet: walletAddr, ts: Date.now() })); } catch {}
@@ -47,7 +47,7 @@
     } catch { return null; }
   }
 
-  // â”€â”€ Utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Utilities ─────────────────────────────────────────────────────────
   function escHtml(str) {
     return typeof utils !== 'undefined'
       ? utils.escapeHtml(str)
@@ -67,7 +67,7 @@
     return `${mins}m`;
   }
   function formatTs(ms) {
-    if (!ms) return 'â€”';
+    if (!ms) return '—';
     return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
@@ -87,10 +87,10 @@
 
   function buildShareText(tokenInfo, data) {
     const ticker  = tokenInfo.symbol ? `$${tokenInfo.symbol.toUpperCase()}` : (tokenInfo.name || 'Token');
-    const avgHold = data.overallAvgHoldTimeMs ? formatDuration(data.overallAvgHoldTimeMs) : 'â€”';
+    const avgHold = data.overallAvgHoldTimeMs ? formatDuration(data.overallAvgHoldTimeMs) : '—';
     return [
       `${ticker} Holder Behavior Analysis`,
-      `â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€`,
+      `────────────────────`,
       `Holders analyzed: ${data.analyzedCount}/${data.holderCount}`,
       `Swaps analyzed: ${(data.totalSwapsAnalyzed || 0).toLocaleString()}`,
       `Overall avg hold: ${avgHold}`,
@@ -100,19 +100,19 @@
   }
 
   async function handleShare(tokenInfo, data) {
-    // On the token detail page â€” delegate to tokenDetail for the combined screenshot
+    // On the token detail page — delegate to tokenDetail for the combined screenshot
     // (diamond hands + holder behavior in one image, matching the DH share button)
     if (typeof tokenDetail !== 'undefined' && typeof tokenDetail.shareWithHBData === 'function') {
       return tokenDetail.shareWithHBData(data);
     }
 
-    // Cultify page fallback â€” plain text share / clipboard copy
+    // Cultify page fallback — plain text share / clipboard copy
     const ticker = tokenInfo.symbol ? `$${tokenInfo.symbol.toUpperCase()}` : (tokenInfo.name || 'Token');
     const text   = buildShareText(tokenInfo, data);
 
     if (typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title: `${ticker} Holder Behavior â€” HolDEX`, text, url: 'https://holdex.live' });
+        await navigator.share({ title: `${ticker} Holder Behavior — HolDEX`, text, url: 'https://holdex.live' });
         return;
       } catch (e) {
         if (e.name === 'AbortError') return;
@@ -132,7 +132,7 @@
     } catch {}
   }
 
-  // â”€â”€ Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Modal ─────────────────────────────────────────────────────────────
   let pollTimer  = null;
   let pollStart  = null;
 
@@ -169,7 +169,7 @@
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   }
 
-  // Shared computing spinner â€” used in multiple places
+  // Shared computing spinner — used in multiple places
   function computingHtml(title, sub) {
     return `<div class="hb-computing">
       <div class="hb-computing-icon">
@@ -193,7 +193,7 @@
     document.getElementById('hb-err-close')?.addEventListener('click', closeModal);
   }
 
-  // â”€â”€ Burn gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Burn gate ─────────────────────────────────────────────────────────
   async function showBurnGate(mint) {
     const connected = typeof wallet !== 'undefined' && wallet.connected;
 
@@ -234,7 +234,7 @@
     // Fetch balance
     const balData = await fetchBalance();
 
-    // Re-grab elements â€” user may have closed modal while balance was loading
+    // Re-grab elements — user may have closed modal while balance was loading
     const balEl  = document.getElementById('hb-balance-line');
     const burnBtn = document.getElementById('hb-burn-btn');
     if (!balEl || !burnBtn) return;
@@ -270,9 +270,9 @@
     } catch { return { balance: 0, uiBalance: 0, tokenAccount: null }; }
   }
 
-  // â”€â”€ Burn transaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Burn transaction ──────────────────────────────────────────────────
   async function executeBurn(mint, tokenAccount) {
-    // Grab UI elements now â€” they'll be replaced by setBody() later
+    // Grab UI elements now — they'll be replaced by setBody() later
     const burnBtn = document.getElementById('hb-burn-btn');
     if (!burnBtn) return;
     burnBtn.disabled = true;
@@ -300,7 +300,7 @@
     try {
       const { PublicKey, Transaction, TransactionInstruction } = solanaWeb3;
 
-      // Pre-flight â€” verify backend reachable before touching the wallet
+      // Pre-flight — verify backend reachable before touching the wallet
       setStatus('Checking backend...');
       const preflight = await fetch(`${baseUrl()}/api/cultify/blockhash`).catch(() => null);
       if (!preflight || !preflight.ok) {
@@ -351,7 +351,7 @@
       }
       const { signature } = await sendResp.json();
 
-      // Save pending immediately â€” protects against tab-close / network failure
+      // Save pending immediately — protects against tab-close / network failure
       savePending(signature, mint, wallet.address);
 
       // Confirm
@@ -379,12 +379,12 @@
 
       // Verify
       const ok = await verifyBurnWithRetry(signature, mint, wallet.address);
-      if (!ok) throw new Error('Verification failed. Reload the page to retry â€” your burn is safe.');
+      if (!ok) throw new Error('Verification failed. Reload the page to retry — your burn is safe.');
 
       // Start analysis
       setBody(computingHtml(
         'Burn verified! Analysis started...',
-        'Analyzing 50 holders Ã— 250 swaps each. This takes ~30â€“60 seconds.'
+        'Analyzing 50 holders × 250 swaps each. This takes ~30–60 seconds.'
       ));
       pollStart = Date.now();
       startPolling(mint);
@@ -411,7 +411,7 @@
           return true;
         }
 
-        // 409 = already claimed â€” the burn is valid, just re-check access to get a token
+        // 409 = already claimed — the burn is valid, just re-check access to get a token
         if (resp.status === 409) {
           clearPending();
           const checkResp = await fetch(
@@ -426,16 +426,16 @@
           return false;
         }
 
-        // 400 = bad transaction â€” don't retry
+        // 400 = bad transaction — don't retry
         if (resp.status === 400) { clearPending(); return false; }
-        // 5xx / network â€” fall through to retry
+        // 5xx / network — fall through to retry
 
       } catch {}
     }
     return false;
   }
 
-  // â”€â”€ Polling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Polling ───────────────────────────────────────────────────────────
   function startPolling(mint) {
     pollStart = Date.now();
     stopPolling(); // cancel any existing poll
@@ -452,7 +452,7 @@
       return;
     }
 
-    // Build URL â€” prefer token, fall back to wallet (whitelisted users have no token)
+    // Build URL — prefer token, fall back to wallet (whitelisted users have no token)
     let url = `${baseUrl()}/api/cultify/holder-behavior/analyze/${encodeURIComponent(mint)}`;
     const params = new URLSearchParams();
     if (token) params.set('token', token);
@@ -467,7 +467,7 @@
       const data = await resp.json();
 
       if (!resp.ok) {
-        // Expired access token â€” clear it and offer to burn again
+        // Expired access token — clear it and offer to burn again
         if (resp.status === 403) {
           clearToken(mint);
           setBody(errorHtml('Access token expired. Please burn again.'));
@@ -502,24 +502,24 @@
         return;
       }
 
-      // Still computing â€” update elapsed time and check for overall timeout
+      // Still computing — update elapsed time and check for overall timeout
       const elapsed = Math.round((Date.now() - (pollStart || Date.now())) / 1000);
       const elapsedEl = document.getElementById('hb-elapsed');
       if (elapsedEl) elapsedEl.textContent = `${elapsed}s elapsed`;
 
-      // 5-minute hard timeout â€” prevents indefinite spinning if the backend job gets stuck
+      // 5-minute hard timeout — prevents indefinite spinning if the backend job gets stuck
       if (elapsed >= 300) {
-        setBody(errorHtml('Analysis is taking longer than expected. Your access is preserved â€” close this and try again later.'));
+        setBody(errorHtml('Analysis is taking longer than expected. Your access is preserved — close this and try again later.'));
         bindErrClose();
         return;
       }
 
       pollTimer = setTimeout(() => pollOnce(mint), 5000);
     } catch {
-      // Network error â€” keep polling (user may be on flaky connection)
+      // Network error — keep polling (user may be on flaky connection)
       const elapsed = Math.round((Date.now() - (pollStart || Date.now())) / 1000);
       if (elapsed >= 300) {
-        setBody(errorHtml('Analysis is taking longer than expected. Your access is preserved â€” close this and try again later.'));
+        setBody(errorHtml('Analysis is taking longer than expected. Your access is preserved — close this and try again later.'));
         bindErrClose();
         return;
       }
@@ -527,7 +527,7 @@
     }
   }
 
-  // â”€â”€ Results rendering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Results rendering ─────────────────────────────────────────────────
   function renderResults(data) {
     const { analyzedCount, holderCount, totalSwapsAnalyzed, overallAvgHoldTimeMs, holders = [], tokenStats = [] } = data;
     const tokenInfo = getTokenInfo();
@@ -549,7 +549,7 @@
           <span class="hb-results-stat-label">Swaps analyzed</span>
         </div>
         <div class="hb-results-stat">
-          <span class="hb-results-stat-value hb-avg-hold">${overallAvgHoldTimeMs ? formatDuration(overallAvgHoldTimeMs) : 'â€”'}</span>
+          <span class="hb-results-stat-value hb-avg-hold">${overallAvgHoldTimeMs ? formatDuration(overallAvgHoldTimeMs) : '—'}</span>
           <span class="hb-results-stat-label">Average Hold Time (all tokens)</span>
         </div>
       </div>`;
@@ -632,7 +632,7 @@
         <td>${h.rank}</td>
         <td class="hb-addr">${escHtml(shortAddr(h.address))}</td>
         <td class="text-right">${h.tokensTraded || 0}</td>
-        <td class="text-right hb-hold-val">${h.avgHoldTimeMs ? formatDuration(h.avgHoldTimeMs) : 'â€”'}</td>
+        <td class="text-right hb-hold-val">${h.avgHoldTimeMs ? formatDuration(h.avgHoldTimeMs) : '—'}</td>
         <td class="text-right hb-dim">${h.swapsAnalyzed || 0}</td>
         <td class="text-right">${hasPairs ? `<button class="hb-holder-toggle" data-rank="${h.rank}">â–¶</button>` : ''}</td>
       </tr>`;
@@ -651,8 +651,8 @@
                     <tr>
                       <td class="hb-addr hb-mono">${escHtml(shortAddr(p.mint))}</td>
                       <td><span class="hb-type-badge hb-type-${p.type === 'sold' ? 'sold' : 'holding'}">${p.type === 'sold' ? 'Sold' : 'Holding'}</span></td>
-                      <td class="hb-hold-val">${p.holdTime != null ? formatDuration(p.holdTime) : '<span class="hb-dim">â€”</span>'}</td>
-                      <td class="hb-dim">${p.buyTime ? formatTs(p.buyTime) : '<span class="hb-dim">â€”</span>'}</td>
+                      <td class="hb-hold-val">${p.holdTime != null ? formatDuration(p.holdTime) : '<span class="hb-dim">—</span>'}</td>
+                      <td class="hb-dim">${p.buyTime ? formatTs(p.buyTime) : '<span class="hb-dim">—</span>'}</td>
                       <td class="hb-dim">${p.sellTime ? formatTs(p.sellTime) : '<span class="hb-holding-now">still holding</span>'}</td>
                     </tr>`).join('')}
                 </tbody>
@@ -693,15 +693,15 @@
     return html;
   }
 
-  // â”€â”€ Card helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Card helpers ──────────────────────────────────────────────────────
   function showCachedNotice() {
     const notice = document.getElementById('hb-cached-notice');
     if (notice) notice.style.display = 'flex';
   }
 
-  // â”€â”€ Main entry points â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Main entry points ─────────────────────────────────────────────────
   async function handleAnalyzeClick(mint) {
-    // 1. Whitelisted wallet path â€” no token needed, just confirm and go
+    // 1. Whitelisted wallet path — no token needed, just confirm and go
     const wa = walletAddr();
     if (wa) {
       try {
@@ -724,7 +724,7 @@
       } catch {}
     }
 
-    // 2. Already have a valid access token â€” go straight to poll/results
+    // 2. Already have a valid access token — go straight to poll/results
     const token = getToken(mint);
     if (token) {
       try {
@@ -742,7 +742,7 @@
           }
         }
       } catch {}
-      // Token didn't work â€” fall through to burn gate (don't discard token yet,
+      // Token didn't work — fall through to burn gate (don't discard token yet,
       // the poll handler will clear it on 403)
     }
 
@@ -771,11 +771,11 @@
       return;
     }
 
-    // 4. No access â€” show burn gate
+    // 4. No access — show burn gate
     showBurnGate(mint);
   }
 
-  // â”€â”€ Initialization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Initialization ────────────────────────────────────────────────────
   function init() {
     const analyzeBtn = document.getElementById('hb-analyze-btn');
     if (!analyzeBtn) return; // Not on token page

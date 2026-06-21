@@ -1,5 +1,5 @@
 ﻿// =============================================
-// HolDEX â€” Cultify Page Controller
+// HolDEX — Cultify Page Controller
 // Analyze any token's holders via burn-gated access
 // =============================================
 
@@ -38,7 +38,7 @@
   let previewData = null;
   let previewAbort = null;
 
-  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Helpers ───────────────────────────────────────
 
   function showStatus(html) {
     statusEl.innerHTML = html;
@@ -63,7 +63,7 @@
       .replace(/"/g, '&quot;');
   }
 
-  // â”€â”€ Token preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Token preview ─────────────────────────────────
 
   function showPreview(html) {
     previewEl.innerHTML = html;
@@ -114,7 +114,7 @@
       </div>`);
     } catch (err) {
       if (err.name === 'AbortError') return;
-      // Couldn't load metadata â€” show minimal preview with just the address
+      // Couldn't load metadata — show minimal preview with just the address
       previewData = null;
       const short = mint.slice(0, 6) + '...' + mint.slice(-4);
       showPreview(`<div class="cultify-preview-card">
@@ -136,7 +136,7 @@
     }
   }
 
-  // â”€â”€ My analyzed tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── My analyzed tokens ─────────────────────────────
 
   const myTokensEl = document.getElementById('cultify-my-tokens');
 
@@ -216,7 +216,7 @@
     }
   }
 
-  // â”€â”€ Main flow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Main flow ─────────────────────────────────────
 
   async function handleCultify() {
     const mint = mintInput.value.trim();
@@ -248,7 +248,7 @@
         if (checkData.accessToken) currentAccessToken = checkData.accessToken;
         // Always persist to localStorage so page reloads within the 12h window don't lose access
         if (currentAccessToken) _saveAccessToken(mint, currentAccessToken);
-        // Free or already burned â€” go straight to analysis
+        // Free or already burned — go straight to analysis
         showStatus('<div class="cultify-gate"><p class="cultify-loading">Analyzing holders...</p></div>');
         await loadAnalysis(mint, checkData.reason === 'curated');
       } else {
@@ -262,7 +262,7 @@
     }
   }
 
-  // â”€â”€ Burn gate UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Burn gate UI ──────────────────────────────────
 
   // Fetch user's ASDFASDFA balance via backend (uses Helius RPC, keeps API key server-side)
   async function fetchBurnTokenBalance() {
@@ -335,7 +335,7 @@
     window.addEventListener('walletConnected', () => showBurnGate(mint), { once: true });
   }
 
-  // â”€â”€ Pending burn recovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Pending burn recovery ──────────────────────────
   // Saves burn signature to localStorage so if verification fails (backend down,
   // network error, tab closed), the user can recover without losing tokens.
 
@@ -416,7 +416,7 @@
           return true;
         }
 
-        // 409 = already claimed â€” that's fine, it means a previous attempt succeeded
+        // 409 = already claimed — that's fine, it means a previous attempt succeeded
         if (resp.status === 409) {
           clearPendingBurn();
           // Re-check access to get a fresh access token
@@ -425,21 +425,21 @@
           if (checkData.access) return true;
         }
 
-        // 400 = bad transaction (wrong mint, too old, etc.) â€” don't retry
+        // 400 = bad transaction (wrong mint, too old, etc.) — don't retry
         if (resp.status === 400) {
           clearPendingBurn();
           return false;
         }
 
-        // 502/500 = backend error â€” retry
+        // 502/500 = backend error — retry
       } catch {
-        // Network error â€” retry
+        // Network error — retry
       }
     }
     return false;
   }
 
-  // â”€â”€ Burn transaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Burn transaction ──────────────────────────────
 
   async function executeBurn(mint, tokenAccount) {
     const burnBtn = document.getElementById('cultify-burn-btn');
@@ -460,7 +460,7 @@
         throw new Error('No ASDFASDFA token account found. Buy some first.');
       }
 
-      // Step 1: Pre-flight check â€” make sure backend is reachable BEFORE burning tokens
+      // Step 1: Pre-flight check — make sure backend is reachable BEFORE burning tokens
       burnBtn.textContent = 'Checking backend...';
       const preflight = await fetch(`${baseUrl}/api/cultify/blockhash`).catch(() => null);
       if (!preflight || !preflight.ok) {
@@ -513,7 +513,7 @@
       }
       const { signature } = await sendResp.json();
 
-      // Step 5: Save pending burn IMMEDIATELY after send â€” if anything fails from
+      // Step 5: Save pending burn IMMEDIATELY after send — if anything fails from
       // here on, the user can recover by reloading the page
       savePendingBurn(signature, mint, wallet.address);
 
@@ -535,14 +535,14 @@
         } catch { /* retry */ }
       }
       if (!confirmed) {
-        throw new Error('Confirmation is taking longer than expected. Your burn is saved â€” reload the page to retry verification.');
+        throw new Error('Confirmation is taking longer than expected. Your burn is saved — reload the page to retry verification.');
       }
 
       // Step 7: Verify burn with retries
       burnBtn.textContent = 'Verifying...';
       const verified = await verifyBurnWithRetry(signature, mint, wallet.address);
       if (!verified) {
-        throw new Error('Burn verified on-chain but backend verification failed. Reload the page to retry â€” your burn is safe.');
+        throw new Error('Burn verified on-chain but backend verification failed. Reload the page to retry — your burn is safe.');
       }
 
       // Success
@@ -556,7 +556,7 @@
     }
   }
 
-  // â”€â”€ Load and render analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Load and render analysis ──────────────────────
 
   let analysisPollTimer = null;
 
@@ -601,7 +601,7 @@
               }
             }
           } catch (_) {}
-          // Not enriched yet â€” try again
+          // Not enriched yet — try again
           analysisPollTimer = setTimeout(pollEnriched, 5000);
         };
         analysisPollTimer = setTimeout(pollEnriched, 4000);
@@ -647,7 +647,7 @@
     const pairCreatedAt = previewData?.pairCreatedAt;
     const tokenAge = pairCreatedAt ? utils.formatAge(pairCreatedAt) : 'N/A';
 
-    // Holder count â€” prefer enriched data, fall back to "loading..."
+    // Holder count — prefer enriched data, fall back to "loading..."
     const holderCountStr = (metrics && metrics.holderCount && metrics.holderCount > 0)
       ? metrics.holderCount.toLocaleString()
       : null;
@@ -660,7 +660,7 @@
     if (isCurated) html += '<span class="cultify-free-badge">Curated - Free</span>';
     html += '</div>';
 
-    // Conviction metrics section â€” uses same classes as token page
+    // Conviction metrics section — uses same classes as token page
     html += '<section class="holders-section">';
     html += '<div class="holders-graphic" id="cultify-holders-graphic">';
 
@@ -675,7 +675,7 @@
       </button>
     </div>`;
 
-    // Metrics grid â€” same as token page
+    // Metrics grid — same as token page
     if (metrics) {
       html += '<div class="holders-metrics">';
       html += holderMetric('Total Holders', holderCountStr || '...', null, 'cultify-total-holders');
@@ -689,7 +689,7 @@
       html += '</div>';
     }
 
-    // Diamond Hands â€” uses same classes as token page
+    // Diamond Hands — uses same classes as token page
     html += '<div class="diamond-hands-section" id="diamond-hands-section">';
     html += '<div class="diamond-hands-header">';
     html += '<span class="diamond-hands-title">Diamond Hands</span>';
@@ -707,7 +707,7 @@
     });
     html += '</div>';
 
-    // Watermark â€” same as token page
+    // Watermark — same as token page
     html += `<div class="diamond-hands-footer">
       <span class="diamond-hands-watermark">
         <svg class="dh-watermark-flame" width="12" height="12" viewBox="0 0 24 24" fill="url(#dhFlameGradCultify)">
@@ -728,7 +728,7 @@
     html += '</div>';
     html += '</div></section>';
 
-    // Holders table â€” uses same classes as token page
+    // Holders table — uses same classes as token page
     if (holders && holders.length > 0) {
       html += '<section class="holders-section" style="margin-top:1rem;">';
       html += '<div class="holders-header"><h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Top Holders</h2></div>';
@@ -777,7 +777,7 @@
     </div>`;
   }
 
-  // â”€â”€ Share screenshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Share screenshot ───────────────────────────────
 
   async function shareCultifyAnalytics(mint) {
     const graphic = document.getElementById('cultify-holders-graphic');
@@ -942,8 +942,8 @@
   let diamondPollCount = 0;
   let diamondFreshRequested = false;
   let diamondCurrentMint = null; // for retry button
-  const MAX_DIAMOND_POLLS_ACTIVE = 60;  // ~3 min at 3s â€” actively computing
-  const MAX_DIAMOND_POLLS_QUEUED = 120; // ~10 min at 5s â€” waiting in queue
+  const MAX_DIAMOND_POLLS_ACTIVE = 60;  // ~3 min at 3s — actively computing
+  const MAX_DIAMOND_POLLS_QUEUED = 120; // ~10 min at 5s — waiting in queue
 
   async function pollDiamondHands(mint) {
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
@@ -991,7 +991,7 @@
         return;
       }
 
-      // â”€â”€ Not yet computed â€” determine status from queue + progress â”€â”€
+      // ── Not yet computed — determine status from queue + progress ──
       const queuePos = data.queue?.position || 0;
       const queueTotal = data.queue?.total || 0;
       const isQueued = queuePos > 1;
@@ -1018,12 +1018,12 @@
         }
       }
 
-      // Timeout check â€” use longer limit when queued
+      // Timeout check — use longer limit when queued
       const maxPolls = isQueued ? MAX_DIAMOND_POLLS_QUEUED : MAX_DIAMOND_POLLS_ACTIVE;
       if (diamondPollCount > maxPolls) {
         if (sampleEl) {
           sampleEl.innerHTML = data.distribution
-            ? 'Analysis timed out â€” showing partial results. <button class="dh-retry-btn" id="dh-retry-cultify">Retry</button>'
+            ? 'Analysis timed out — showing partial results. <button class="dh-retry-btn" id="dh-retry-cultify">Retry</button>'
             : 'Analysis timed out. <button class="dh-retry-btn" id="dh-retry-cultify">Retry</button>';
           document.getElementById('dh-retry-cultify')?.addEventListener('click', () => {
             diamondPollCount = 0;
@@ -1035,7 +1035,7 @@
         return;
       }
 
-      // Poll again â€” slower when queued
+      // Poll again — slower when queued
       const pollDelay = isQueued ? 5000 : 3000;
       diamondPollTimer = setTimeout(() => pollDiamondHands(mint), pollDelay);
     } catch {
@@ -1082,7 +1082,7 @@
   }
 
 
-  // â”€â”€ Event listeners â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Event listeners ───────────────────────────────
 
   goBtn.addEventListener('click', handleCultify);
   mintInput.addEventListener('keydown', (e) => {
@@ -1092,7 +1092,7 @@
   // Show token preview when a valid CA is pasted or typed
   mintInput.addEventListener('input', handleInputChange);
   mintInput.addEventListener('paste', () => {
-    // paste event fires before the value updates â€” defer to next tick
+    // paste event fires before the value updates — defer to next tick
     setTimeout(handleInputChange, 0);
   });
 
