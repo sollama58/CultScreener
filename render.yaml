@@ -1,4 +1,4 @@
-# Render Blueprint - CultScreener
+# Render Blueprint - HolDEX
 # Deploy with: render blueprint apply
 # Documentation: https://render.com/docs/blueprint-spec
 #
@@ -10,7 +10,7 @@ services:
   # Backend API Service
   # =====================================================
   - type: web
-    name: cultscreener-api
+    name: HolDEX-api
     runtime: node
     region: oregon
     plan: starter
@@ -22,14 +22,14 @@ services:
       # Database connection (auto-populated from Render PostgreSQL)
       - key: DATABASE_URL
         fromDatabase:
-          name: cultscreener-db
+          name: HolDEX-db
           property: connectionString
 
       # Redis connection (auto-populated from Render Redis)
       - key: REDIS_URL
         fromService:
           type: redis
-          name: cultscreener-redis
+          name: HolDEX-redis
           property: connectionString
 
       # API Keys (set these manually in Render dashboard)
@@ -55,7 +55,7 @@ services:
 
       # CORS - Update this to your actual frontend URL after creating the static site
       - key: CORS_ORIGIN
-        value: https://cultscreener-frontend.onrender.com,https://cultscreener.com,https://www.cultscreener.com
+        value: https://HolDEX-frontend.onrender.com,https://HolDEX.com,https://www.HolDEX.com
 
       # Rate limiting configuration
       - key: RATE_LIMIT_WINDOW_MS
@@ -73,7 +73,7 @@ services:
   # Background Worker (BullMQ job processor)
   # =====================================================
   - type: worker
-    name: cultscreener-worker
+    name: HolDEX-worker
     runtime: node
     region: oregon
     plan: starter
@@ -84,14 +84,14 @@ services:
       # Database connection (auto-populated from Render PostgreSQL)
       - key: DATABASE_URL
         fromDatabase:
-          name: cultscreener-db
+          name: HolDEX-db
           property: connectionString
 
       # Redis connection (auto-populated from Render Redis)
       - key: REDIS_URL
         fromService:
           type: redis
-          name: cultscreener-redis
+          name: HolDEX-redis
           property: connectionString
 
       # API Keys — worker needs these for background jobs
@@ -118,7 +118,7 @@ services:
   # Redis (BullMQ job queue)
   # =====================================================
   - type: redis
-    name: cultscreener-redis
+    name: HolDEX-redis
     region: oregon
     plan: free
     maxmemoryPolicy: allkeys-lru
@@ -128,11 +128,11 @@ services:
 # PostgreSQL Database
 # =====================================================
 databases:
-  - name: cultscreener-db
+  - name: HolDEX-db
     plan: basic-256mb
     region: oregon
-    databaseName: cultscreener
-    user: cultscreener_user
+    databaseName: HolDEX
+    user: HolDEX_user
 
 # =====================================================
 # MANUAL STEPS REQUIRED AFTER BLUEPRINT DEPLOYMENT:
@@ -147,7 +147,7 @@ databases:
 #    a. Go to Render Dashboard > New > Static Site
 #    b. Connect your GitHub repository
 #    c. Configure:
-#       - Name: cultscreener-frontend
+#       - Name: HolDEX-frontend
 #       - Root Directory: frontend
 #       - Build Command: (leave blank)
 #       - Publish Directory: .
@@ -156,9 +156,9 @@ databases:
 #       - Source: /community  -> Destination: /community.html (Rewrite)
 #       - Source: /about      -> Destination: /about.html (Rewrite)
 #
-# 3. Update CORS_ORIGIN on cultscreener-api:
+# 3. Update CORS_ORIGIN on HolDEX-api:
 #    After creating the static site, copy its URL and update
 #    the CORS_ORIGIN env var on the API service to match.
 #    If using a custom domain, add both:
-#      https://cultscreener-frontend.onrender.com,https://yourdomain.com
+#      https://HolDEX-frontend.onrender.com,https://yourdomain.com
 # =====================================================

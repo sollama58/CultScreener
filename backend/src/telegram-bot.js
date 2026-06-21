@@ -63,9 +63,9 @@ async function fetchTopConvictionTokens(limit = 10) {
 function buildStartMessage(firstName) {
   const name = firstName ? ` ${e(firstName)}` : '';
   return [
-    `👋 *Welcome${name} to CultScreener\\!*`,
+    `👋 *Welcome${name} to HolDEX\\!*`,
     '',
-    "CultScreener tracks *diamond hand conviction* on Solana — measuring what percentage of a token's holders have held for *1 month or longer*\\.",
+    "HolDEX tracks *diamond hand conviction* on Solana — measuring what percentage of a token's holders have held for *1 month or longer*\\.",
     '',
     '📊 *Conviction Tiers*',
     '💎 *Elite* — 75%\\+ of holders holding 1m\\+',
@@ -77,13 +77,13 @@ function buildStartMessage(firstName) {
     '/TryConviction — top 10 tokens by conviction',
     '/help — show this help again',
     '',
-    '🌐 Full terminal: [cultscreener\\.com](https://cultscreener.com)',
+    '🌐 Full terminal: [HolDEX\\.com](https://HolDEX.com)',
   ].join('\n');
 }
 
 function buildHelpMessage() {
   return [
-    '📖 *CultScreener Bot Help*',
+    '📖 *HolDEX Bot Help*',
     '',
     '*What is conviction?*',
     'The % of sampled holders who have held a token for *1 month or longer*\\. Higher conviction = stronger diamond hands\\.',
@@ -93,9 +93,9 @@ function buildHelpMessage() {
     '`/TryConviction` — top 10 tokens by conviction score',
     '`/help` — show this message',
     '',
-    '*On the leaderboard only curated tokens appear\\.* These are manually reviewed tokens added by the CultScreener team\\.',
+    '*On the leaderboard only curated tokens appear\\.* These are manually reviewed tokens added by the HolDEX team\\.',
     '',
-    '🌐 [cultscreener\\.com](https://cultscreener.com)',
+    '🌐 [HolDEX\\.com](https://HolDEX.com)',
   ].join('\n');
 }
 
@@ -130,7 +130,7 @@ function buildConvictionMessage(tokens) {
     );
   });
 
-  lines.push(`_Updated live • [cultscreener\\.com](https://cultscreener.com)_`);
+  lines.push(`_Updated live • [HolDEX\\.com](https://HolDEX.com)_`);
   return lines.join('\n');
 }
 
@@ -173,7 +173,7 @@ function startBot(token) {
         reply_markup: {
           inline_keyboard: [[
             { text: '📊 Top Conviction Tokens', callback_data: 'conviction' },
-            { text: '🌐 Open Website', url: 'https://cultscreener.com' },
+            { text: '🌐 Open Website', url: 'https://HolDEX.com' },
           ]],
         },
       });

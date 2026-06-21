@@ -82,7 +82,7 @@ const tokenDetail = {
     } catch (error) {
       console.error('Failed to initialize token page:', error.message);
       if (error.code === 'NOT_CURATED') {
-        this.showError('This token is not available on CultScreener. Only curated tokens listed on the leaderboard can be viewed.', 'Token Not Available');
+        this.showError('This token is not available on HolDEX. Only curated tokens listed on the leaderboard can be viewed.', 'Token Not Available');
       } else {
         this.showError('Failed to load token data. Please try again.');
       }
@@ -159,7 +159,7 @@ const tokenDetail = {
     // Share button — copies a share URL with rich social media previews
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      const shareUrl = `https://cultscreener.com/token.html?mint=${this.mint}`;
+      const shareUrl = `https://HolDEX.com/token.html?mint=${this.mint}`;
       const copied = await utils.copyToClipboard(shareUrl);
       if (copied) toast.success('Share link copied to clipboard');
     };
@@ -397,7 +397,7 @@ const tokenDetail = {
   _updateMetaTags(token) {
     const name = token.name || token.symbol || 'Token';
     const symbol = token.symbol || '';
-    const title = `${name}${symbol ? ` (${symbol})` : ''} - CultScreener`;
+    const title = `${name}${symbol ? ` (${symbol})` : ''} - HolDEX`;
 
     const parts = [];
     if (token.price) parts.push(utils.formatPrice(token.price));
@@ -405,8 +405,8 @@ const tokenDetail = {
     if (change != null) parts.push(`${change >= 0 ? '+' : ''}${change.toFixed(2)}% 24h`);
     if (token.marketCap) parts.push(`MCap ${utils.formatNumber(token.marketCap)}`);
     const desc = parts.length > 0
-      ? parts.join(' | ') + ' | CultScreener'
-      : 'View token details and diamond hands conviction data on CultScreener.';
+      ? parts.join(' | ') + ' | HolDEX'
+      : 'View token details and diamond hands conviction data on HolDEX.';
 
     const apiBase = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
     const ogImage = `${apiBase}/share/${encodeURIComponent(this.mint)}/og-image`;
@@ -476,7 +476,7 @@ const tokenDetail = {
     const token = this.token;
 
     // Update page title and social media meta tags
-    document.title = `${token.name} (${token.symbol}) - CultScreener`;
+    document.title = `${token.name} (${token.symbol}) - HolDEX`;
     this._updateMetaTags(token);
 
     // Header info - handle different property names from various API responses
@@ -835,8 +835,8 @@ const tokenDetail = {
       <svg class="ht-svg" width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" aria-hidden="true">
         <defs>
           <linearGradient id="ht-bar-grad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#ff9100" stop-opacity="0.95"/>
-            <stop offset="100%" stop-color="#ff4500" stop-opacity="0.75"/>
+            <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.95"/>
+            <stop offset="100%" stop-color="#0369a1" stop-opacity="0.75"/>
           </linearGradient>
         </defs>
         ${gridLines}
@@ -1637,7 +1637,7 @@ const tokenDetail = {
               <div style="${lblStyle}">Swaps analyzed</div>
             </div>
             <div style="${statStyle}">
-              <div style="${valStyle};color:#ff8c00;">${avgHold}</div>
+              <div style="${valStyle};color:#00c6ff;">${avgHold}</div>
               <div style="${lblStyle}">Average Hold Time (all tokens)</div>
             </div>
           </div>`;

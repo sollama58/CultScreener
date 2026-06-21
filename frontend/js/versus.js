@@ -416,12 +416,12 @@ const versusPage = {
         canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png');
       });
 
-      const filename = 'cultscreener-vs-sol-top3.png';
+      const filename = 'HolDEX-vs-sol-top3.png';
 
       if (navigator.share && navigator.canShare) {
         const file = new File([blob], filename, { type: 'image/png' });
         if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: 'CultScreener — Top 3 vs SOL' });
+          await navigator.share({ files: [file], title: 'HolDEX — Top 3 vs SOL' });
           return;
         }
       }
@@ -513,16 +513,16 @@ const versusPage = {
     graphic.innerHTML = `
       <div class="vsg-header">
         <div>
-          <div class="vsg-logo">Cult<span>Screener</span></div>
+          <div class="vsg-logo">Hol<span>DEX</span></div>
           <div class="vsg-subtitle">Top 3 Performers vs SOL</div>
-          <div class="vsg-powered-by">Powered by <strong>ASDFASDFA</strong></div>
+          <div class="vsg-powered-by">holdex.live</div>
         </div>
         <div class="vsg-date">${now}</div>
       </div>
       ${benchHtml}
       <div class="vsg-podium-area">${cardsHtml}</div>
       <div class="vsg-footer">
-        <span class="vsg-url" style="margin-left:auto;">cultscreener.com</span>
+        <span class="vsg-url" style="margin-left:auto;">holdex.live</span>
       </div>
     `;
 
@@ -585,7 +585,7 @@ const versusPage = {
     ctx.arc(18, 18, 18, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1c22';
     ctx.fill();
-    ctx.fillStyle = '#ff5722';
+    ctx.fillStyle = '#00c6ff';
     ctx.font = 'bold 16px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

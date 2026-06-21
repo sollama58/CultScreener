@@ -644,7 +644,7 @@ const api = {
 };
 
 // Toast notification system
-// Styles are now in config.js (cultscreener-shared-styles) to prevent duplication
+// Styles are now in config.js (holdex-shared-styles) to prevent duplication
 const toast = {
   container: null,
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * CultScreener Database Migration Script
+ * HolDEX Database Migration Script
  *
  * This script initializes or updates the database schema.
  * Run this after deploying to Render or when setting up locally.
@@ -194,7 +194,7 @@ async function seedTestData() {
 // Main function
 async function main() {
   log('\n========================================', 'blue');
-  log('  CultScreener Database Migration', 'blue');
+  log('  HolDEX Database Migration', 'blue');
   log('========================================\n', 'blue');
 
   if (!process.env.DATABASE_URL) {

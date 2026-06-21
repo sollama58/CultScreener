@@ -1024,7 +1024,7 @@ function createWorker(queueName, redisConfig) {
 async function start() {
   console.log(`
 ╔════════════════════════════════════════════╗
-║     CultScreener Background Worker         ║
+║     HolDEX Background Worker         ║
 ╠════════════════════════════════════════════╣
 ║  Starting worker process...                ║
 ╚════════════════════════════════════════════╝

@@ -1,4 +1,4 @@
-/* CultScreener Admin Panel */
+/* HolDEX Admin Panel */
 
 const admin = {
   token: null,

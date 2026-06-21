@@ -1,4 +1,4 @@
-// CultScreener Frontend Configuration
+// HolDEX Frontend Configuration
 // This file contains environment-specific settings and must be loaded BEFORE api.js
 
 const config = {
@@ -15,7 +15,7 @@ const config = {
 
       // Production API URL (Render deployment)
       // Used for all non-local environments (GitHub Pages, custom domains, etc.)
-      return 'https://cultscreener-api.onrender.com';
+      return 'https://holdex-api.onrender.com';
     })(),
 
     // Request timeout in milliseconds
@@ -28,7 +28,7 @@ const config = {
 
   // App settings
   app: {
-    name: 'CultScreener',
+    name: 'HolDEX',
     version: '1.0.0',
     debug: window.location.hostname === 'localhost'
   },
@@ -100,11 +100,11 @@ const config = {
 
   // Centralized localStorage keys (prevents typos and makes refactoring easier)
   storageKeys: {
-    walletConnection: 'cultscreener_wallet_connection', // JSON object with wallet, address, timestamp
-    walletConnected: 'cultscreener_wallet_connected',   // Legacy: boolean string
-    walletAddress: 'cultscreener_wallet_address',       // Legacy: address string
-    theme: 'cultscreener_theme',
-    lastFilter: 'cultscreener_last_filter'
+    walletConnection: 'holdex_wallet_connection', // JSON object with wallet, address, timestamp
+    walletConnected: 'holdex_wallet_connected',   // Legacy: boolean string
+    walletAddress: 'holdex_wallet_address',       // Legacy: address string
+    theme: 'holdex_theme',
+    lastFilter: 'holdex_last_filter'
   }
 };
 
@@ -122,10 +122,10 @@ Object.freeze(config.storageKeys);
 // Inject shared dynamic styles (toast, modals, wallet menu)
 // This prevents duplicate style injection across multiple JS files
 (function injectSharedStyles() {
-  if (document.getElementById('cultscreener-shared-styles')) return;
+  if (document.getElementById('holdex-shared-styles')) return;
 
   const style = document.createElement('style');
-  style.id = 'cultscreener-shared-styles';
+  style.id = 'holdex-shared-styles';
   style.textContent = `
     /* Toast Container */
     .toast-container {
@@ -268,5 +268,5 @@ Object.freeze(config.storageKeys);
 // Export for debugging (localhost only)
 if (config.app.debug) {
   // Intentionally behind debug flag — only logs on localhost
-  console.log('CultScreener Config:', config);
+  console.log('HolDEX Config:', config);
 }

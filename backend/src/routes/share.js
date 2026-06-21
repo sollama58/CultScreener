@@ -6,7 +6,7 @@ const { cache, TTL } = require('../services/cache');
 // Frontend URL for redirects
 const FRONTEND_URL = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',')[0].trim()
-  : 'https://cultscreener.com';
+  : 'https://holdex.live';
 
 // Solana address format
 const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -77,7 +77,7 @@ router.get('/:mint', async (req, res) => {
 
   // Build title
   let title = symbol ? `${name} (${symbol})` : name;
-  title += ' - CultScreener';
+  title += ' - HolDEX';
 
   // Build description
   const parts = [];
@@ -92,10 +92,10 @@ router.get('/:mint', async (req, res) => {
   let description = parts.length > 0
     ? parts.join(' | ')
     : 'View token details, price charts, holder analytics, and diamond hands conviction data.';
-  description += ' | CultScreener - Solana Diamond Hands Terminal';
+  description += ' | HolDEX - Solana Diamond Hands Terminal';
 
   const tokenPageUrl = `${FRONTEND_URL}/token.html?mint=${encodeURIComponent(mint)}`;
-  const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://api.cultscreener.com`;
+  const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://api.HolDEX.com`;
   const ogImageUrl = `${apiBaseUrl}/share/${encodeURIComponent(mint)}/og-image`;
   // Twitter doesn't support SVG — use the static banner JPG as fallback
   const twitterImageUrl = `${FRONTEND_URL}/CultScreenerBanner.jpg`;
@@ -112,7 +112,7 @@ router.get('/:mint', async (req, res) => {
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="CultScreener">
+<meta property="og:site_name" content="HolDEX">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:image" content="${esc(ogImageUrl)}">
@@ -180,7 +180,7 @@ router.get('/:mint/og-image', async (req, res) => {
 
   // Conviction bar width (clamped 0-100)
   const convBarWidth = conviction !== null ? Math.min(100, Math.max(0, Math.round(conviction))) : 0;
-  const convBarColor = convBarWidth >= 50 ? '#ff5722' : convBarWidth >= 20 ? '#ff9100' : '#3a3a42';
+  const convBarColor = convBarWidth >= 50 ? '#00c6ff' : convBarWidth >= 20 ? '#0ea5e9' : '#3a3a42';
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs>
@@ -188,13 +188,13 @@ router.get('/:mint/og-image', async (req, res) => {
       <stop offset="0%" stop-color="#09090b"/>
       <stop offset="100%" stop-color="#0f1012"/>
     </linearGradient>
-    <linearGradient id="fire" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0%" stop-color="#ff4500"/>
-      <stop offset="100%" stop-color="#ff8c00"/>
+    <linearGradient id="accent" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#0369a1"/>
+      <stop offset="100%" stop-color="#00c6ff"/>
     </linearGradient>
     <linearGradient id="convGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#d84315"/>
-      <stop offset="100%" stop-color="#ff5722"/>
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#00c6ff"/>
     </linearGradient>
   </defs>
 
@@ -202,22 +202,22 @@ router.get('/:mint/og-image', async (req, res) => {
   <rect width="1200" height="630" fill="url(#bg)"/>
 
   <!-- Subtle top glow -->
-  <ellipse cx="600" cy="0" rx="700" ry="250" fill="rgba(255,87,34,0.04)"/>
+  <ellipse cx="600" cy="0" rx="700" ry="250" fill="rgba(0,198,255,0.04)"/>
 
   <!-- Border -->
-  <rect x="1" y="1" width="1198" height="628" rx="16" ry="16" fill="none" stroke="rgba(255,87,34,0.12)" stroke-width="1"/>
+  <rect x="1" y="1" width="1198" height="628" rx="16" ry="16" fill="none" stroke="rgba(0,198,255,0.12)" stroke-width="1"/>
 
   <!-- Header bar -->
   <rect x="0" y="0" width="1200" height="80" rx="16" ry="16" fill="rgba(255,255,255,0.02)"/>
   <rect x="0" y="64" width="1200" height="16" fill="rgba(255,255,255,0.02)"/>
   <line x1="40" y1="80" x2="1160" y2="80" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
 
-  <!-- CultScreener branding -->
-  <text x="52" y="50" font-family="Inter,-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" font-weight="800" fill="#f0f0f2">Cult<tspan fill="url(#fire)">Screener</tspan></text>
+  <!-- HolDEX branding -->
+  <text x="52" y="50" font-family="Inter,-apple-system,BlinkMacSystemFont,sans-serif" font-size="22" font-weight="800" fill="#f0f0f2">Hol<tspan fill="url(#accent)">DEX</tspan></text>
 
-  <!-- Flame icon -->
-  <g transform="translate(230, 28) scale(0.85)">
-    <path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z" fill="url(#fire)"/>
+  <!-- Diamond icon -->
+  <g transform="translate(124, 38) scale(0.65)">
+    <polygon points="0,-18 16,0 0,18 -16,0" fill="url(#accent)" opacity="0.9"/>
   </g>
 
   <!-- "Diamond Hands Terminal" subtitle -->
@@ -244,8 +244,8 @@ router.get('/:mint/og-image', async (req, res) => {
   <text x="340" y="430" font-family="Inter,-apple-system,sans-serif" font-size="28" font-weight="700" fill="#a0a0a8">${esc(holdersStr)}</text>
 
   <!-- Diamond Hands conviction section -->
-  <text x="620" y="400" font-family="Inter,-apple-system,sans-serif" font-size="13" font-weight="600" fill="#ff5722" letter-spacing="1">DIAMOND HANDS (1M+)</text>
-  <text x="620" y="430" font-family="Inter,-apple-system,sans-serif" font-size="28" font-weight="800" fill="${conviction !== null && conviction >= 50 ? '#ff5722' : conviction !== null && conviction >= 20 ? '#ff9100' : '#a0a0a8'}">${esc(convictionStr)}</text>
+  <text x="620" y="400" font-family="Inter,-apple-system,sans-serif" font-size="13" font-weight="600" fill="#00c6ff" letter-spacing="1">DIAMOND HANDS (1M+)</text>
+  <text x="620" y="430" font-family="Inter,-apple-system,sans-serif" font-size="28" font-weight="800" fill="${conviction !== null && conviction >= 50 ? '#00c6ff' : conviction !== null && conviction >= 20 ? '#0ea5e9' : '#a0a0a8'}">${esc(convictionStr)}</text>
 
   <!-- Conviction bar -->
   <rect x="620" y="448" width="530" height="10" rx="5" fill="rgba(255,255,255,0.04)"/>
@@ -253,11 +253,11 @@ router.get('/:mint/og-image', async (req, res) => {
 
   <!-- Bottom branding -->
   <line x1="40" y1="545" x2="1160" y2="545" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
-  <text x="52" y="580" font-family="Inter,-apple-system,sans-serif" font-size="16" font-weight="600" fill="#45454d">cultscreener.com</text>
+  <text x="52" y="580" font-family="Inter,-apple-system,sans-serif" font-size="16" font-weight="600" fill="#45454d">holdex.live</text>
   <text x="1148" y="580" font-family="Inter,-apple-system,sans-serif" font-size="14" font-weight="500" fill="#45454d" text-anchor="end">Powered by ASDFASDFA</text>
 
   <!-- Accent line at bottom -->
-  <rect x="0" y="624" width="1200" height="6" fill="url(#fire)" opacity="0.5"/>
+  <rect x="0" y="624" width="1200" height="6" fill="url(#accent)" opacity="0.5"/>
 </svg>`;
 
   res.setHeader('Content-Type', 'image/svg+xml');

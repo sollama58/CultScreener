@@ -1,4 +1,4 @@
--- CultScreener Database Initialization Script
+-- HolDEX Database Initialization Script
 -- Run this script on a fresh PostgreSQL database
 
 -- Enable useful extensions

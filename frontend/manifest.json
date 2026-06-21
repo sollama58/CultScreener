@@ -1,7 +1,7 @@
 {
-  "name": "CultScreener - Diamond Hands Terminal",
-  "short_name": "CultScreener",
-  "description": "Solana token conviction analyzer. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.",
+  "name": "HolDEX - Diamond Hands Terminal",
+  "short_name": "HolDEX",
+  "description": "Solana holder analytics terminal. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#09090b",
@@ -53,7 +53,7 @@
       "sizes": "1200x630",
       "type": "image/jpeg",
       "form_factor": "wide",
-      "label": "CultScreener Diamond Hands Terminal"
+      "label": "HolDEX Diamond Hands Terminal"
     }
   ],
   "shortcuts": [

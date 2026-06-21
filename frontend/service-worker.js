@@ -1,7 +1,7 @@
-// CultScreener Service Worker
+// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'cultscreener-v40';
+const CACHE_VERSION = 'holdex-v40';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -76,7 +76,7 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then((keys) => Promise.all(
         keys
-          .filter((key) => key.startsWith('cultscreener-') && key !== STATIC_CACHE && key !== DYNAMIC_CACHE && key !== API_CACHE)
+          .filter((key) => key.startsWith('holdex-') && key !== STATIC_CACHE && key !== DYNAMIC_CACHE && key !== API_CACHE)
           .map((key) => caches.delete(key))
       ))
       .then(() => self.clients.claim())
@@ -199,7 +199,7 @@ function offlineFallback(request) {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Offline - CultScreener</title>
+        <title>Offline - HolDEX</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body {
@@ -227,7 +227,7 @@ function offlineFallback(request) {
             font-size: 1.5rem;
             font-weight: 700;
             margin-bottom: 0.75rem;
-            background: linear-gradient(135deg, #ff5722, #ff9100);
+            background: linear-gradient(135deg, #0369a1, #00c6ff);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
           }
@@ -237,7 +237,7 @@ function offlineFallback(request) {
             margin-bottom: 1.5rem;
           }
           button {
-            background: linear-gradient(135deg, #ff5722, #ff3d00);
+            background: linear-gradient(135deg, #0369a1, #00c6ff);
             color: white;
             border: none;
             padding: 12px 32px;
@@ -249,15 +249,15 @@ function offlineFallback(request) {
           }
           button:hover {
             transform: translateY(-1px);
-            box-shadow: 0 8px 24px rgba(255, 87, 34, 0.3);
+            box-shadow: 0 8px 24px rgba(0, 198, 255, 0.3);
           }
         </style>
       </head>
       <body>
         <div class="offline-container">
-          <div class="offline-icon">🔥</div>
+          <div class="offline-icon">💎</div>
           <h1>You're Offline</h1>
-          <p>CultScreener needs an internet connection to fetch live Solana data. Check your connection and try again.</p>
+          <p>HolDEX needs an internet connection to fetch live Solana data. Check your connection and try again.</p>
           <button onclick="window.location.reload()">Try Again</button>
         </div>
       </body>

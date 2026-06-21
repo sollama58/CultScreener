@@ -331,7 +331,7 @@ app.get('/api/image-proxy', async (req, res) => {
       responseType: 'arraybuffer',
       timeout: 8000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; CultScreener/1.0)',
+        'User-Agent': 'Mozilla/5.0 (compatible; HolDEX/1.0)',
         'Accept': 'image/webp,image/png,image/jpeg,image/*',
         'Referer': `https://${parsed.hostname}/`,
       },
@@ -364,7 +364,7 @@ app.use('/share', shareRoutes);
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    name: 'CultScreener API',
+    name: 'HolDEX API',
     version: '1.0.0',
     status: 'running',
     docs: '/health/detailed',
@@ -716,7 +716,7 @@ async function warmCuratedConviction() {
 httpServer = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════╗
-║        CultScreener API Server            ║
+║        HolDEX API Server            ║
 ╠════════════════════════════════════════════╣
 ║  Port: ${PORT.toString().padEnd(36)}║
 ║  Mode: ${(process.env.NODE_ENV || 'development').padEnd(36)}║

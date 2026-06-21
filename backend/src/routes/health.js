@@ -14,7 +14,7 @@ router.get('/', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    service: 'cultscreener-api'
+    service: 'HolDEX-api'
   });
 });
 
@@ -23,7 +23,7 @@ router.get('/detailed', require('../middleware/validation').validateAdminSession
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    service: 'cultscreener-api',
+    service: 'HolDEX-api',
     version: process.env.npm_package_version || '1.0.0',
     uptime: process.uptime(),
     checks: {}

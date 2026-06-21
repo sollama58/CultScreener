@@ -1,6 +1,6 @@
 /**
  * performance.js
- * CultScreener — Performance Leaderboard Page Module
+ * HolDEX — Performance Leaderboard Page Module
  *
  * Displays token performance since listing, sortable by ATH % or current %.
  * Provides a Canvas-based share card export.
@@ -217,13 +217,13 @@ const performancePage = {
       });
 
       const sortSlug = this.sortField === 'ath' ? 'ath' : 'current';
-      const filename = `cultscreener-performance-top10-${sortSlug}.png`;
+      const filename = `HolDEX-performance-top10-${sortSlug}.png`;
 
       // Try native share with file (mobile)
       if (navigator.share && navigator.canShare) {
         const file = new File([blob], filename, { type: 'image/png' });
         if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: 'CultScreener Performance Top 10' });
+          await navigator.share({ files: [file], title: 'HolDEX Performance Top 10' });
           return;
         }
       }
@@ -299,9 +299,9 @@ const performancePage = {
       <div class="psg-header">
         <div class="psg-brand">
           <div>
-            <div class="psg-logo">Cult<span>Screener</span></div>
+            <div class="psg-logo">Hol<span>DEX</span></div>
             <div class="psg-subtitle">Performance Leaderboard · Top 10</div>
-            <div class="psg-powered-by">Powered by <strong>ASDFASDFA</strong></div>
+            <div class="psg-powered-by">holdex.live</div>
           </div>
         </div>
         <div class="psg-sort-label">${sortLabel}</div>
@@ -318,7 +318,7 @@ const performancePage = {
         <tbody>${rows}</tbody>
       </table>
       <div class="psg-footer">
-        <span class="psg-url">cultscreener.com</span>
+        <span class="psg-url">holdex.live</span>
         <span class="psg-ts">${now}</span>
       </div>
     `;
@@ -483,7 +483,7 @@ const performancePage = {
 
     // Route through our own backend proxy so CORS is never an issue —
     // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
-    // Must use absolute URL: frontend (cultscreener.com) and API (cultscreener-api.onrender.com)
+    // Must use absolute URL: frontend (HolDEX.com) and API (HolDEX-api.onrender.com)
     // are separate Render services; a relative /api/* path hits the static file server (404).
     const apiBase = (typeof API_BASE_URL !== 'undefined') ? API_BASE_URL : '';
     const proxied = `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
@@ -529,7 +529,7 @@ const performancePage = {
     ctx.arc(15, 15, 15, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1c22';
     ctx.fill();
-    ctx.fillStyle = '#ff5722';
+    ctx.fillStyle = '#00c6ff';
     ctx.font = 'bold 14px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

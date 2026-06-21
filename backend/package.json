@@ -1,7 +1,7 @@
 {
-  "name": "cultscreener-backend",
+  "name": "holdex-backend",
   "version": "1.0.0",
-  "description": "Backend API for CultScreener - Solana Diamond Hands Terminal",
+  "description": "Backend API for HolDEX - Solana Diamond Hands Terminal",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",

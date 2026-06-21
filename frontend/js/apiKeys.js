@@ -1,4 +1,4 @@
-/* CultScreener API Keys Page */
+/* HolDEX API Keys Page */
 const apiKeysPage = {
   currentWallet: null,
   currentKey: null,   // Actual key — only kept in memory/sessionStorage within session
@@ -156,7 +156,7 @@ const apiKeysPage = {
 
   async signForApi() {
     const timestamp = Date.now();
-    const message = `CultScreener API Key: register for ${this.currentWallet} at ${timestamp}`;
+    const message = `HolDEX API Key: register for ${this.currentWallet} at ${timestamp}`;
     const sig = await wallet.signMessage(message);
     if (!sig || !sig.signature) throw new Error('Signature cancelled or failed');
     return { signature: sig.signature, signatureTimestamp: timestamp };

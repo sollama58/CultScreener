@@ -540,7 +540,7 @@ function verifyWalletSignature(message, signature, walletAddress) {
 
 /**
  * Create the message to be signed for a vote
- * Format: "CultScreener Vote: [voteType] on [submissionId] at [timestamp]"
+ * Format: "HolDEX Vote: [voteType] on [submissionId] at [timestamp]"
  *
  * @param {string} voteType - 'up' or 'down'
  * @param {number} submissionId - The submission ID
@@ -548,12 +548,12 @@ function verifyWalletSignature(message, signature, walletAddress) {
  * @returns {string} The message to sign
  */
 function createVoteSignatureMessage(voteType, submissionId, timestamp) {
-  return `CultScreener Vote: ${voteType} on submission #${submissionId} at ${timestamp}`;
+  return `HolDEX Vote: ${voteType} on submission #${submissionId} at ${timestamp}`;
 }
 
 /**
  * Create the message to be signed for a batch of votes
- * Format: "CultScreener Vote Batch: up:[ids];down:[ids] for wallet at [timestamp]"
+ * Format: "HolDEX Vote Batch: up:[ids];down:[ids] for wallet at [timestamp]"
  * Submission IDs are sorted numerically for consistent signature verification
  *
  * @param {Array<{submissionId: number, voteType: string}>} votes - Array of vote objects
@@ -570,12 +570,12 @@ function createBatchVoteSignatureMessage(votes, wallet, timestamp) {
   if (upVotes.length > 0) parts.push(`up:${upVotes.join(',')}`);
   if (downVotes.length > 0) parts.push(`down:${downVotes.join(',')}`);
 
-  return `CultScreener Vote Batch: ${parts.join(';')} for ${wallet} at ${timestamp}`;
+  return `HolDEX Vote Batch: ${parts.join(';')} for ${wallet} at ${timestamp}`;
 }
 
 /**
  * Create the message to be signed for a submission
- * Format: "CultScreener Submit: [type] for [tokenMint] at [timestamp]"
+ * Format: "HolDEX Submit: [type] for [tokenMint] at [timestamp]"
  *
  * @param {string} submissionType - The submission type
  * @param {string} tokenMint - The token mint address
@@ -583,12 +583,12 @@ function createBatchVoteSignatureMessage(votes, wallet, timestamp) {
  * @returns {string} The message to sign
  */
 function createSubmissionSignatureMessage(submissionType, tokenMint, timestamp) {
-  return `CultScreener Submit: ${submissionType} for ${tokenMint} at ${timestamp}`;
+  return `HolDEX Submit: ${submissionType} for ${tokenMint} at ${timestamp}`;
 }
 
 /**
  * Create the message to be signed for a batch submission
- * Format: "CultScreener Submit Batch: [types-comma-separated] for [tokenMint] at [timestamp]"
+ * Format: "HolDEX Submit Batch: [types-comma-separated] for [tokenMint] at [timestamp]"
  * Types are sorted alphabetically for consistent signature verification
  *
  * @param {string[]} submissionTypes - Array of submission types
@@ -599,7 +599,7 @@ function createSubmissionSignatureMessage(submissionType, tokenMint, timestamp) 
 function createBatchSubmissionSignatureMessage(submissionTypes, tokenMint, timestamp) {
   // Sort types alphabetically for consistent verification
   const sortedTypes = [...submissionTypes].sort().join(',');
-  return `CultScreener Submit Batch: ${sortedTypes} for ${tokenMint} at ${timestamp}`;
+  return `HolDEX Submit Batch: ${sortedTypes} for ${tokenMint} at ${timestamp}`;
 }
 
 /**
@@ -609,7 +609,7 @@ function createBatchSubmissionSignatureMessage(submissionTypes, tokenMint, times
  * @returns {string} The message to sign
  */
 function createDataDeletionSignatureMessage(wallet, timestamp) {
-  return `CultScreener Delete Data: ${wallet} at ${timestamp}`;
+  return `HolDEX Delete Data: ${wallet} at ${timestamp}`;
 }
 
 /**
@@ -1249,7 +1249,7 @@ async function validateBatchSubmissionSignature(req, res, next) {
  * @returns {string} The message to sign
  */
 function createWatchlistSignatureMessage(action, wallet, tokenMint, timestamp) {
-  return `CultScreener Watchlist: ${action} ${tokenMint} for ${wallet} at ${timestamp}`;
+  return `HolDEX Watchlist: ${action} ${tokenMint} for ${wallet} at ${timestamp}`;
 }
 
 /**
@@ -1261,7 +1261,7 @@ function createWatchlistSignatureMessage(action, wallet, tokenMint, timestamp) {
  * @returns {string} The message to sign
  */
 function createSentimentSignatureMessage(sentiment, mint, wallet, timestamp) {
-  return `CultScreener Sentiment: ${sentiment} on ${mint} for ${wallet} at ${timestamp}`;
+  return `HolDEX Sentiment: ${sentiment} on ${mint} for ${wallet} at ${timestamp}`;
 }
 
 /**
@@ -1272,7 +1272,7 @@ function createSentimentSignatureMessage(sentiment, mint, wallet, timestamp) {
  * @returns {string} The message to sign
  */
 function createCallSignatureMessage(mint, wallet, timestamp) {
-  return `CultScreener Call: ${mint} by ${wallet} at ${timestamp}`;
+  return `HolDEX Call: ${mint} by ${wallet} at ${timestamp}`;
 }
 
 /**
@@ -1282,7 +1282,7 @@ function createCallSignatureMessage(mint, wallet, timestamp) {
  * @returns {string} The message to sign
  */
 function createApiKeySignatureMessage(wallet, timestamp) {
-  return `CultScreener API Key: register for ${wallet} at ${timestamp}`;
+  return `HolDEX API Key: register for ${wallet} at ${timestamp}`;
 }
 
 /**

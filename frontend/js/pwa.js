@@ -1,5 +1,5 @@
 // =============================================
-// CultScreener PWA — Service Worker Registration & Install Prompt
+// HolDEX PWA — Service Worker Registration & Install Prompt
 // =============================================
 
 (function () {
@@ -129,7 +129,7 @@
     banner.setAttribute('role', 'alert');
     banner.innerHTML = `
       <div class="pwa-update-content">
-        <span>A new version of CultScreener is available.</span>
+        <span>A new version of HolDEX is available.</span>
         <button class="pwa-update-btn" id="pwa-update-accept">Update Now</button>
       </div>
     `;

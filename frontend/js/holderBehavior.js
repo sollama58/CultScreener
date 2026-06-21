@@ -1,5 +1,5 @@
 // =============================================
-// CultScreener — Holder Behavior Analysis
+// HolDEX — Holder Behavior Analysis
 // Burn 10,000 ASDFASDFA → analyze top 50 holders'
 // avg hold time across all tokens (last 250 swaps)
 // =============================================
@@ -95,7 +95,7 @@
       `Swaps analyzed: ${(data.totalSwapsAnalyzed || 0).toLocaleString()}`,
       `Overall avg hold: ${avgHold}`,
       ``,
-      `cultscreener.com`,
+      `HolDEX.com`,
     ].join('\n');
   }
 
@@ -112,7 +112,7 @@
 
     if (typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title: `${ticker} Holder Behavior — CultScreener`, text, url: 'https://cultscreener.com' });
+        await navigator.share({ title: `${ticker} Holder Behavior — HolDEX`, text, url: 'https://HolDEX.com' });
         return;
       } catch (e) {
         if (e.name === 'AbortError') return;
@@ -203,7 +203,7 @@
       <div class="hb-cost-row">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="url(#hbGateFlame)">
           <defs><linearGradient id="hbGateFlame" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stop-color="#ff4500"/><stop offset="100%" stop-color="#ff8c00"/>
+            <stop offset="0%" stop-color="#0369a1"/><stop offset="100%" stop-color="#00c6ff"/>
           </linearGradient></defs>
           <path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/>
         </svg>
@@ -584,7 +584,7 @@
       ${tabsHtml}
       <div class="hb-watermark">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.5"><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
-        cultscreener.com
+        HolDEX.com
       </div>
     `);
 

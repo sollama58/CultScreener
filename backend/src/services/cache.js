@@ -187,7 +187,7 @@ class RedisCache {
   constructor(redisUrl) {
     this.stats = { hits: 0, misses: 0, sets: 0 };
     this.isConnected = false;
-    this.keyPrefix = 'cultscreener:';
+    this.keyPrefix = 'HolDEX:';
     this._reconnectAttempts = 0;
     this._maxReconnectAttempts = 20;
 

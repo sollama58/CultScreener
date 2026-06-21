@@ -74,7 +74,7 @@ const wallet = {
   _getStorageKey(key) {
     return (typeof config !== 'undefined' && config.storageKeys?.[key])
       ? config.storageKeys[key]
-      : `cultscreener_${key}`;
+      : `HolDEX_${key}`;
   },
 
   // Get list of installed wallets
@@ -636,7 +636,7 @@ const wallet = {
       if (cultify.length === 0 && hb.length === 0) {
         body.innerHTML = `
           <p class="utilities-empty">No active utility access.</p>
-          <p class="utilities-empty-sub">Burn ASDFASDFA tokens on the <a href="cultify.html">Cultify</a> page or on a token's analysis page to gain access.</p>
+          <p class="utilities-empty-sub">Burn ASDFASDFA tokens on the <a href="cultify.html">Analyze</a> page or on a token's analysis page to gain access.</p>
         `;
         return;
       }
@@ -677,7 +677,7 @@ const wallet = {
       }
 
       body.innerHTML = [
-        buildSection('Cultify Analysis', '🔥', cultify, true),
+        buildSection('Analysis', '🔥', cultify, true),
         buildSection('Holder Behavior', '📊', hb, true)
       ].join('');
 
@@ -744,7 +744,7 @@ const wallet = {
     }
 
     try {
-      this.broadcastChannel = new BroadcastChannel('cultscreener_wallet_sync');
+      this.broadcastChannel = new BroadcastChannel('HolDEX_wallet_sync');
       this.broadcastChannel.onmessage = (event) => {
         this.handleBroadcastMessage(event.data);
       };
@@ -1016,10 +1016,10 @@ const wallet = {
 
   // Inject CSS for wallet selector
   injectStyles() {
-    if (document.getElementById('cultscreener-wallet-styles')) return;
+    if (document.getElementById('HolDEX-wallet-styles')) return;
 
     const style = document.createElement('style');
-    style.id = 'cultscreener-wallet-styles';
+    style.id = 'HolDEX-wallet-styles';
     style.textContent = `
       /* Wallet Button Icon */
       .wallet-btn-icon {

@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html>
-<head><title>Icon Generator - CultScreener</title></head>
+<head><title>Icon Generator - HolDEX</title></head>
 <body style="background:#111;color:#fff;font-family:sans-serif;padding:2rem">
-<h1>CultScreener PWA Icon Generator</h1>
+<h1>HolDEX PWA Icon Generator</h1>
 <p>Click "Generate" to create PNG icons from the SVG, then right-click each to save.</p>
-<button id="gen" style="padding:12px 24px;font-size:16px;cursor:pointer;background:#ff5722;color:#fff;border:none;border-radius:8px">Generate Icons</button>
+<button id="gen" style="padding:12px 24px;font-size:16px;cursor:pointer;background:#00c6ff;color:#fff;border:none;border-radius:8px">Generate Icons</button>
 <div id="output" style="display:flex;flex-wrap:wrap;gap:2rem;margin-top:2rem"></div>
 <script>
 document.getElementById('gen').onclick = async () => {
@@ -27,7 +27,7 @@ document.getElementById('gen').onclick = async () => {
     const url = canvas.toDataURL('image/png');
     const div = document.createElement('div');
     div.style.textAlign = 'center';
-    div.innerHTML = `<p>${name} (${size}x${size})</p><img src="${url}" width="${Math.min(size,256)}" style="border:1px solid #333;border-radius:12px"><br><a href="${url}" download="${name}" style="color:#ff5722">Download</a>`;
+    div.innerHTML = `<p>${name} (${size}x${size})</p><img src="${url}" width="${Math.min(size,256)}" style="border:1px solid #333;border-radius:12px"><br><a href="${url}" download="${name}" style="color:#00c6ff">Download</a>`;
     out.appendChild(div);
   }
 };
