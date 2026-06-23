@@ -15,7 +15,7 @@ const config = {
 
       // Production API URL (Render deployment)
       // Used for all non-local environments (GitHub Pages, custom domains, etc.)
-      return 'https://holdex-api.onrender.com';
+      return 'https://cultscreener-api.onrender.com';
     })(),
 
     // Request timeout in milliseconds

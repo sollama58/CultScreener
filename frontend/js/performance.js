@@ -483,7 +483,7 @@ const performancePage = {
 
     // Route through our own backend proxy so CORS is never an issue —
     // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
-    // Must use absolute URL: frontend (HolDEX.com) and API (HolDEX-api.onrender.com)
+    // Must use absolute URL: frontend (holdex.live) and API (cultscreener-api.onrender.com)
     // are separate Render services; a relative /api/* path hits the static file server (404).
     const apiBase = (typeof API_BASE_URL !== 'undefined') ? API_BASE_URL : '';
     const proxied = `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;

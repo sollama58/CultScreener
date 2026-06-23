@@ -77,7 +77,7 @@ function buildStartMessage(firstName) {
     '/TryConviction — top 10 tokens by conviction',
     '/help — show this help again',
     '',
-    '🌐 Full terminal: [HolDEX\\.com](https://HolDEX.com)',
+    '🌐 Full terminal: [holdex\\.live](https://holdex.live)',
   ].join('\n');
 }
 
@@ -95,7 +95,7 @@ function buildHelpMessage() {
     '',
     '*On the leaderboard only curated tokens appear\\.* These are manually reviewed tokens added by the HolDEX team\\.',
     '',
-    '🌐 [HolDEX\\.com](https://HolDEX.com)',
+    '🌐 [holdex\\.live](https://holdex.live)',
   ].join('\n');
 }
 
@@ -130,7 +130,7 @@ function buildConvictionMessage(tokens) {
     );
   });
 
-  lines.push(`_Updated live • [HolDEX\\.com](https://HolDEX.com)_`);
+  lines.push(`_Updated live • [holdex\\.live](https://holdex.live)_`);
   return lines.join('\n');
 }
 
@@ -173,7 +173,7 @@ function startBot(token) {
         reply_markup: {
           inline_keyboard: [[
             { text: '📊 Top Conviction Tokens', callback_data: 'conviction' },
-            { text: '🌐 Open Website', url: 'https://HolDEX.com' },
+            { text: '🌐 Open Website', url: 'https://holdex.live' },
           ]],
         },
       });

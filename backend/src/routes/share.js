@@ -95,7 +95,7 @@ router.get('/:mint', async (req, res) => {
   description += ' | HolDEX - Solana Diamond Hands Terminal';
 
   const tokenPageUrl = `${FRONTEND_URL}/token.html?mint=${encodeURIComponent(mint)}`;
-  const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://api.HolDEX.com`;
+  const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://cultscreener-api.onrender.com`;
   const ogImageUrl = `${apiBaseUrl}/share/${encodeURIComponent(mint)}/og-image`;
   // Twitter doesn't support SVG — use the static banner JPG as fallback
   const twitterImageUrl = `${FRONTEND_URL}/CultScreenerBanner.jpg`;
