@@ -400,7 +400,7 @@ const performancePage = {
    */
   _formatPct(pct) {
     const abs    = Math.abs(pct);
-    const sign   = pct >= 0 ? '+' : 'âˆ’';
+    const sign   = pct >= 0 ? ‘+’ : ‘-’;
     const numStr = abs.toLocaleString('en-US', { maximumFractionDigits: 0 });
     return `${sign}${numStr}%`;
   },

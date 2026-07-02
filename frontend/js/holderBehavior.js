@@ -610,7 +610,7 @@
         if (!detail) return;
         const open = detail.style.display !== 'none';
         detail.style.display = open ? 'none' : '';
-        btn.textContent = open ? 'â–¶' : 'â–¼';
+        btn.textContent = open ? '▶' : '▼';
       });
     });
   }
@@ -634,7 +634,7 @@
         <td class="text-right">${h.tokensTraded || 0}</td>
         <td class="text-right hb-hold-val">${h.avgHoldTimeMs ? formatDuration(h.avgHoldTimeMs) : '—'}</td>
         <td class="text-right hb-dim">${h.swapsAnalyzed || 0}</td>
-        <td class="text-right">${hasPairs ? `<button class="hb-holder-toggle" data-rank="${h.rank}">â–¶</button>` : ''}</td>
+        <td class="text-right">${hasPairs ? `<button class="hb-holder-toggle" data-rank="${h.rank}">▶</button>` : ''}</td>
       </tr>`;
 
       if (hasPairs) {
