@@ -178,7 +178,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
             price: local.price || 0,
             priceChange24h: local.price_change_24h != null ? parseFloat(local.price_change_24h) : null,
             volume24h: local.volume_24h || 0,
-            marketCap: local.market_cap || 0,
+            marketCap: parseFloat(local.market_cap) || null,
             logoUri: local.logo_uri || null,
             logoURI: local.logo_uri || null,
             views: viewCount
@@ -194,7 +194,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
             price: 0,
             priceChange24h: null,
             volume24h: 0,
-            marketCap: 0,
+            marketCap: null,
             logoUri: helius.logoUri || null,
             logoURI: helius.logoUri || null,
             views: viewCount
@@ -211,7 +211,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
             price: cached.price || 0,
             priceChange24h: cached.priceChange24h != null ? cached.priceChange24h : null,
             volume24h: cached.volume24h || 0,
-            marketCap: cached.marketCap || 0,
+            marketCap: cached.marketCap || null,
             logoUri: cached.logoUri || null,
             logoURI: cached.logoURI || null,
             views: viewCount
@@ -227,7 +227,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
           price: 0,
           priceChange24h: null,
           volume24h: 0,
-          marketCap: 0,
+          marketCap: null,
           logoUri: null,
           logoURI: null,
           views: viewCount
@@ -314,7 +314,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
             mintAddress: mint, address: mint,
             name: local.name, symbol: local.symbol || mint.slice(0, 5).toUpperCase(),
             price: local.price || 0, priceChange24h: local.price_change_24h != null ? parseFloat(local.price_change_24h) : null,
-            volume24h: local.volume_24h || 0, marketCap: local.market_cap || 0,
+            volume24h: local.volume_24h || 0, marketCap: parseFloat(local.market_cap) || null,
             logoUri: local.logo_uri || null, logoURI: local.logo_uri || null,
             views: 0
           };
@@ -323,7 +323,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
           return {
             mintAddress: mint, address: mint,
             name: helius.name, symbol: helius.symbol || mint.slice(0, 5).toUpperCase(),
-            price: 0, priceChange24h: null, volume24h: 0, marketCap: 0,
+            price: 0, priceChange24h: null, volume24h: 0, marketCap: null,
             logoUri: helius.logoUri || null, logoURI: helius.logoUri || null,
             views: 0
           };
@@ -333,7 +333,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
             mintAddress: mint, address: mint,
             name: cached.name, symbol: cached.symbol || mint.slice(0, 5).toUpperCase(),
             price: cached.price || 0, priceChange24h: cached.priceChange24h != null ? cached.priceChange24h : null,
-            volume24h: cached.volume24h || 0, marketCap: cached.marketCap || 0,
+            volume24h: cached.volume24h || 0, marketCap: cached.marketCap || null,
             logoUri: cached.logoUri || null, logoURI: cached.logoURI || null,
             views: 0
           };
@@ -341,7 +341,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
         return {
           mintAddress: mint, address: mint,
           name: `${mint.slice(0, 4)}...${mint.slice(-4)}`, symbol: mint.slice(0, 5).toUpperCase(),
-          price: 0, priceChange24h: null, volume24h: 0, marketCap: 0,
+          price: 0, priceChange24h: null, volume24h: 0, marketCap: null,
           logoUri: null, logoURI: null, views: 0
         };
       });
@@ -641,7 +641,7 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
             price: g.price || 0,
             priceChange24h: g.priceChange24h ?? null,
             volume24h: g.volume24h || 0,
-            marketCap: g.marketCap || 0
+            marketCap: g.marketCap || null
           };
         } else {
           // Fallback: minimal data with truncated mint as name
@@ -926,7 +926,7 @@ router.get('/leaderboard/watchlist', asyncHandler(async (req, res) => {
       price: parseFloat(r.price) || 0,
       priceChange24h: r.price_change_24h != null ? parseFloat(r.price_change_24h) : null,
       volume24h: parseFloat(r.volume_24h) || 0,
-      marketCap: parseFloat(r.market_cap) || 0,
+      marketCap: parseFloat(r.market_cap) || null,
       logoUri: r.logo_uri || helius?.logoUri || null,
       logoURI: r.logo_uri || helius?.logoUri || null,
       watchlistCount: watchCountMap[r.token_mint] || 0
@@ -987,7 +987,7 @@ router.get('/leaderboard/sentiment', asyncHandler(async (req, res) => {
       price: parseFloat(r.price) || 0,
       priceChange24h: r.price_change_24h != null ? parseFloat(r.price_change_24h) : null,
       volume24h: parseFloat(r.volume_24h) || 0,
-      marketCap: parseFloat(r.market_cap) || 0,
+      marketCap: parseFloat(r.market_cap) || null,
       logoUri: r.logo_uri || helius?.logoUri || null,
       logoURI: r.logo_uri || helius?.logoUri || null,
       sentimentScore: r.score || 0,
@@ -1036,7 +1036,7 @@ router.get('/leaderboard/calls', asyncHandler(async (req, res) => {
       price: parseFloat(r.price) || 0,
       priceChange24h: r.price_change_24h != null ? parseFloat(r.price_change_24h) : null,
       volume24h: parseFloat(r.volume_24h) || 0,
-      marketCap: parseFloat(r.market_cap) || 0,
+      marketCap: parseFloat(r.market_cap) || null,
       logoUri: r.logo_uri || helius?.logoUri || null,
       logoURI: r.logo_uri || helius?.logoUri || null,
       callCount: parseInt(r.call_count) || 0
@@ -1096,7 +1096,7 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       price: parseFloat(row.price) || 0,
       priceChange24h: row.price_change_24h != null ? parseFloat(row.price_change_24h) : null,
       volume24h: parseFloat(row.volume_24h) || 0,
-      marketCap: parseFloat(row.market_cap) || 0,
+      marketCap: parseFloat(row.market_cap) || null,
       logoUri: row.logo_uri || null,
       logoURI: row.logo_uri || null,
       conviction: distribution,
@@ -1513,7 +1513,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         priceChange24h: gecko.priceChange24h || jup.priceChange24h || 0,
         volume24h: gecko.volume24h || 0,
         liquidity: gecko.liquidity || 0,
-        marketCap: gecko.marketCap || gecko.fdv || 0,
+        marketCap: gecko.marketCap || gecko.fdv || null,
         fdv: gecko.fdv || 0,
         // Supply data - prefer Helius
         supply: supply,

@@ -205,13 +205,17 @@ const versusPage = {
     list.sort((a, b) => {
       let va, vb;
       switch (this._sortField) {
-        case 'vsSol':     va = a._vsSol ?? -Infinity;   vb = b._vsSol ?? -Infinity;   break;
-        case 'vsBtc':     va = a._vsBtc ?? -Infinity;   vb = b._vsBtc ?? -Infinity;   break;
-        case 'change24h': va = a.priceChange24h ?? -Infinity; vb = b.priceChange24h ?? -Infinity; break;
-        case 'mcap':      va = a.marketCap || 0;         vb = b.marketCap || 0;         break;
-        case 'holders':   va = a.holders || 0;           vb = b.holders || 0;           break;
+        case 'vsSol':     va = a._vsSol;         vb = b._vsSol;         break;
+        case 'vsBtc':     va = a._vsBtc;         vb = b._vsBtc;         break;
+        case 'change24h': va = a.priceChange24h; vb = b.priceChange24h; break;
+        case 'mcap':      va = a.marketCap ?? 0; vb = b.marketCap ?? 0; break;
+        case 'holders':   va = a.holders   ?? 0; vb = b.holders   ?? 0; break;
         default: return 0;
       }
+      // Null/missing values always sort last regardless of direction
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
       return (va - vb) * dir;
     });
 

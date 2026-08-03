@@ -430,13 +430,19 @@ router.post('/refresh-benchmarks', validateAdminSession, strictLimiter, asyncHan
   await cache.delete('benchmarks:sol-btc');
   // Fetch fresh data immediately so the caller gets the result right away
   const axios = require('axios');
+  const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || '';
+  const baseUrl = COINGECKO_API_KEY
+    ? 'https://pro-api.coingecko.com/api/v3'
+    : 'https://api.coingecko.com/api/v3';
+  const headers = { Accept: 'application/json' };
+  if (COINGECKO_API_KEY) headers['x-cg-pro-api-key'] = COINGECKO_API_KEY;
   try {
     const response = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price',
+      `${baseUrl}/simple/price`,
       {
         params: { ids: 'solana,bitcoin', vs_currencies: 'usd', include_24hr_change: true },
         timeout: 8000,
-        headers: { Accept: 'application/json' }
+        headers
       }
     );
     const data = response.data || {};
@@ -453,8 +459,86 @@ router.post('/refresh-benchmarks', validateAdminSession, strictLimiter, asyncHan
     res.json({ success: true, data: result });
   } catch (err) {
     console.error('[Admin] refresh-benchmarks CoinGecko error:', err.message);
+    // On rate-limit or transient failure, return last-good cached data rather than erroring
+    const lastGood = await cache.get('benchmarks:sol-btc:last-good');
+    if (lastGood) {
+      return res.json({ success: true, data: lastGood, stale: true });
+    }
     res.status(502).json({ error: `CoinGecko fetch failed: ${err.message}` });
   }
+}));
+
+// ==========================================
+// Force Refresh All Market Caps
+// ==========================================
+
+router.post('/refresh-market-caps', validateAdminSession, strictLimiter, asyncHandler(async (req, res) => {
+  const geckoService = require('../services/geckoTerminal');
+  const { sleep } = require('../services/rateLimiter');
+
+  const curatedTokens = await db.getCuratedTokens().catch(() => []);
+  if (!curatedTokens.length) {
+    return res.status(400).json({ error: 'No curated tokens found' });
+  }
+
+  const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
+  const CHUNK_SIZE = 5;
+  let updated = 0;
+  let athUpdated = 0;
+  const errors = [];
+
+  for (let i = 0; i < allMints.length; i += CHUNK_SIZE) {
+    const chunk = allMints.slice(i, i + CHUNK_SIZE);
+    let batchInfo = {};
+    try {
+      batchInfo = await geckoService.getMultiTokenInfo(chunk);
+    } catch (err) {
+      errors.push(`batch ${i}–${i + chunk.length - 1}: ${err.message}`);
+      continue;
+    }
+
+    for (const mint of chunk) {
+      const data = batchInfo[mint];
+      if (!data) continue;
+
+      const marketCap = data.marketCap || data.fdv;
+      if (!marketCap || marketCap <= 0) continue;
+
+      try {
+        await db.upsertToken({
+          mintAddress: mint,
+          name: data.name || 'unknown',
+          symbol: data.symbol || 'UNKNOWN',
+          price: data.price,
+          marketCap,
+          volume24h: data.volume24h,
+          priceChange24h: data.priceChange24h,
+          logoUri: data.logoUri,
+        });
+        updated++;
+      } catch (err) {
+        errors.push(`${mint.slice(0, 8)}: ${err.message}`);
+      }
+
+      const curatedToken = curatedTokens.find(t => (t.mintAddress || t.mint_address) === mint);
+      if (curatedToken?.mcapAtAdded == null) {
+        await db.updateCuratedTokenMcapAtAdded(mint, marketCap).catch(() => {});
+      }
+
+      const athResult = await db.updateCuratedTokenATH(mint, marketCap).catch(() => null);
+      if (athResult) athUpdated++;
+    }
+
+    if (i + CHUNK_SIZE < allMints.length) {
+      await sleep(5000);
+    }
+  }
+
+  // Bust leaderboard cache so fresh data is served immediately
+  await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
+
+  console.log(`[Admin] refresh-market-caps: updated ${updated} prices, ${athUpdated} ATH records`);
+  res.json({ success: true, updated, athUpdated, total: allMints.length, errors: errors.slice(0, 5) });
 }));
 
 // ==========================================

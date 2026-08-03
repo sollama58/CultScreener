@@ -775,7 +775,7 @@ const jobProcessors = {
     if (!curatedTokens || curatedTokens.length === 0) return { updated: 0, athUpdated: 0 };
 
     const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
-    const CHUNK_SIZE = 30;
+    const CHUNK_SIZE = 5;
     let updated = 0;
     let athUpdated = 0;
 
@@ -825,11 +825,14 @@ const jobProcessors = {
         if (athResult) athUpdated++;
       }
 
-      // Pause between chunks to respect GeckoTerminal's 30 req/min free-tier limit
+      // Pause between chunks to respect GeckoTerminal's rate limit
       if (i + CHUNK_SIZE < allMints.length) {
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 5000));
       }
     }
+
+    // Bust conviction leaderboard cache so fresh prices are served immediately
+    await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
 
     console.log(`[Worker] refresh-curated-prices: updated ${updated} prices, ${athUpdated} ATH records`);
     return { updated, athUpdated };

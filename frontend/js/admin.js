@@ -208,12 +208,14 @@ const admin = {
     const backfillBtn = document.getElementById('admin-backfill-holder-history');
     const geckoBackfillBtn = document.getElementById('admin-backfill-holder-gecko');
     const benchmarksBtn = document.getElementById('admin-refresh-benchmarks');
+    const marketCapsBtn = document.getElementById('admin-refresh-market-caps');
     const wipeBtn = document.getElementById('admin-wipe-token');
     if (flushBtn) flushBtn.addEventListener('click', () => this.flushFailedWallets());
     if (refreshBtn) refreshBtn.addEventListener('click', () => this.refreshHolderCounts());
     if (backfillBtn) backfillBtn.addEventListener('click', () => this.backfillHolderHistory());
     if (geckoBackfillBtn) geckoBackfillBtn.addEventListener('click', () => this.backfillHolderGecko());
     if (benchmarksBtn) benchmarksBtn.addEventListener('click', () => this.refreshBenchmarks());
+    if (marketCapsBtn) marketCapsBtn.addEventListener('click', () => this.refreshMarketCaps());
     const kotpSetBtn   = document.getElementById('admin-kotp-set');
     const kotpClearBtn = document.getElementById('admin-kotp-clear');
     if (kotpSetBtn)   kotpSetBtn.addEventListener('click', () => this.setKingOfPill());
@@ -412,6 +414,27 @@ const admin = {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Refresh SOL/BTC Prices';
+    }
+  },
+
+  async refreshMarketCaps() {
+    const btn = document.getElementById('admin-refresh-market-caps');
+    const status = document.getElementById('admin-flush-status');
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+    if (status) { status.textContent = 'Fetching market caps from GeckoTerminal...'; status.style.color = 'var(--text-muted)'; }
+
+    try {
+      const data = await this.request('/api/admin/refresh-market-caps', { method: 'POST' });
+      const msg = `Market caps refreshed — ${data.updated}/${data.total} updated, ${data.athUpdated} ATH records`;
+      if (status) { status.textContent = msg; status.style.color = 'var(--green)'; }
+      if (typeof toast !== 'undefined') toast.success(msg);
+    } catch (err) {
+      if (status) { status.textContent = `Error: ${err.message}`; status.style.color = 'var(--red)'; }
+      if (typeof toast !== 'undefined') toast.error(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Refresh All Market Caps';
     }
   },
 

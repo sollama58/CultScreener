@@ -179,7 +179,7 @@ const convictionPage = {
         let va, vb;
         switch (field) {
           case 'price': va = a.price || 0; vb = b.price || 0; break;
-          case 'mcap': va = a.marketCap || 0; vb = b.marketCap || 0; break;
+          case 'mcap': va = a.marketCap ?? 0; vb = b.marketCap ?? 0; break;
           case 'holders': va = a.holders || 0; vb = b.holders || 0; break;
           default: return 0;
         }
@@ -288,8 +288,8 @@ const convictionPage = {
           name: t.name || `${t.mint.slice(0, 4)}...${t.mint.slice(-4)}`,
           symbol: t.symbol || '',
           logoUri: t.logoUri || t.logo_uri || null,
-          price: 0,
-          marketCap: 0,
+          price: null,
+          marketCap: null,
           conviction1m: 0,
           conviction: {},
           sampleSize: 0,
@@ -320,8 +320,8 @@ const convictionPage = {
               this._allTokens.forEach(t => {
                 const d = dataMap[t.mintAddress];
                 if (d) {
-                  t.price = d.price || 0;
-                  t.marketCap = d.marketCap || 0;
+                  t.price = d.price || null;
+                  t.marketCap = d.marketCap || null;
                   t.conviction1m = d.conviction1m || 0;
                   t.conviction = d.conviction || {};
                   t.sampleSize = d.sampleSize || 0;
