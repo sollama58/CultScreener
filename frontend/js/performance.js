@@ -151,7 +151,7 @@ const performancePage = {
       `;
     }).join('');
 
-    // Row click â†’ token page
+    // Row click â†' token page
     tbody.querySelectorAll('.perf-row').forEach(row => {
       row.addEventListener('click', () => {
         const mint = row.dataset.mint;
@@ -400,7 +400,7 @@ const performancePage = {
    */
   _formatPct(pct) {
     const abs    = Math.abs(pct);
-    const sign   = pct >= 0 ? ‘+’ : ‘-’;
+    const sign   = pct >= 0 ? '+' : '-';
     const numStr = abs.toLocaleString('en-US', { maximumFractionDigits: 0 });
     return `${sign}${numStr}%`;
   },

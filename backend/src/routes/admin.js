@@ -501,32 +501,30 @@ router.post('/refresh-market-caps', validateAdminSession, strictLimiter, asyncHa
       const data = batchInfo[mint];
       if (!data) continue;
 
-      const marketCap = data.marketCap || data.fdv;
-      if (!marketCap || marketCap <= 0) continue;
+      const marketCap = data.marketCap || data.fdv || null;
 
       try {
-        await db.upsertToken({
+        await db.updateTokenMarketData({
           mintAddress: mint,
-          name: data.name || 'unknown',
-          symbol: data.symbol || 'UNKNOWN',
-          price: data.price,
+          price: data.price ?? null,
           marketCap,
-          volume24h: data.volume24h,
-          priceChange24h: data.priceChange24h,
-          logoUri: data.logoUri,
+          volume24h: data.volume24h ?? null,
+          priceChange24h: data.priceChange24h ?? null,
+          logoUri: data.logoUri ?? null,
         });
         updated++;
       } catch (err) {
         errors.push(`${mint.slice(0, 8)}: ${err.message}`);
       }
 
-      const curatedToken = curatedTokens.find(t => (t.mintAddress || t.mint_address) === mint);
-      if (curatedToken?.mcapAtAdded == null) {
-        await db.updateCuratedTokenMcapAtAdded(mint, marketCap).catch(() => {});
+      if (marketCap > 0) {
+        const curatedToken = curatedTokens.find(t => (t.mintAddress || t.mint_address) === mint);
+        if (curatedToken?.mcapAtAdded == null) {
+          await db.updateCuratedTokenMcapAtAdded(mint, marketCap).catch(() => {});
+        }
+        const athResult = await db.updateCuratedTokenATH(mint, marketCap).catch(() => null);
+        if (athResult) athUpdated++;
       }
-
-      const athResult = await db.updateCuratedTokenATH(mint, marketCap).catch(() => null);
-      if (athResult) athUpdated++;
     }
 
     if (i + CHUNK_SIZE < allMints.length) {
@@ -535,7 +533,11 @@ router.post('/refresh-market-caps', validateAdminSession, strictLimiter, asyncHa
   }
 
   // Bust leaderboard cache so fresh data is served immediately
-  await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
+  try {
+    await cache.clearPattern('leaderboard:conviction:*');
+  } catch (cacheErr) {
+    console.warn('[Admin] refresh-market-caps: failed to bust leaderboard cache:', cacheErr.message);
+  }
 
   console.log(`[Admin] refresh-market-caps: updated ${updated} prices, ${athUpdated} ATH records`);
   res.json({ success: true, updated, athUpdated, total: allMints.length, errors: errors.slice(0, 5) });

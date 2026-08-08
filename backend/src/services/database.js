@@ -555,6 +555,37 @@ async function upsertToken(token) {
   return result.rows[0];
 }
 
+/**
+ * Directly overwrite market-data fields (price, market_cap, volume_24h, price_change_24h)
+ * for an existing token row. Unlike upsertToken, this does NOT use COALESCE on these
+ * fields — it writes fresh values (including null) so stale data never lingers.
+ * Name/symbol/logo still use COALESCE so metadata is never clobbered.
+ * No-ops gracefully if the token row doesn't exist yet.
+ */
+async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h, priceChange24h, logoUri } = {}) {
+  if (!pool || !mintAddress) return null;
+  const result = await pool.query(
+    `UPDATE tokens SET
+       price            = $2,
+       market_cap       = $3,
+       volume_24h       = $4,
+       price_change_24h = $5,
+       logo_uri         = COALESCE($6, logo_uri),
+       updated_at       = NOW()
+     WHERE mint_address = $1
+     RETURNING mint_address`,
+    [
+      mintAddress,
+      price       != null ? price       : null,
+      marketCap   != null ? marketCap   : null,
+      volume24h   != null ? volume24h   : null,
+      priceChange24h != null ? priceChange24h : null,
+      logoUri     != null ? logoUri     : null,
+    ]
+  );
+  return result.rows[0] || null;
+}
+
 async function getToken(mintAddress) {
   if (!pool) return null;
   const result = await pool.query(
@@ -3447,6 +3478,7 @@ module.exports = {
   isReady,
   safeQuery,
   upsertToken,
+  updateTokenMarketData,
   getToken,
   getTokensBatch,
   searchTokens,

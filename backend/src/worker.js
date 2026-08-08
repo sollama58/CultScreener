@@ -792,37 +792,38 @@ const jobProcessors = {
 
       for (const mint of chunk) {
         const data = batchInfo[mint];
-        if (!data) continue;
+        if (!data) continue; // GeckoTerminal has no record of this token
 
-        const marketCap = data.marketCap || data.fdv;
-        if (!marketCap || marketCap <= 0) continue;
+        const marketCap = data.marketCap || data.fdv || null;
 
-        // Update tokens table with fresh market data
+        // Always write fresh market data — use updateTokenMarketData (not upsertToken)
+        // so price_change_24h is overwritten with the latest value rather than
+        // COALESCE-d, preventing stale 24h% from lingering indefinitely.
         try {
-          await db.upsertToken({
+          await db.updateTokenMarketData({
             mintAddress: mint,
-            name: data.name || 'unknown',
-            symbol: data.symbol || 'UNKNOWN',
-            price: data.price,
+            price: data.price ?? null,
             marketCap,
-            volume24h: data.volume24h,
-            priceChange24h: data.priceChange24h,
-            logoUri: data.logoUri,
+            volume24h: data.volume24h ?? null,
+            priceChange24h: data.priceChange24h ?? null,
+            logoUri: data.logoUri ?? null,
           });
           updated++;
         } catch (err) {
-          console.warn(`[Worker] refresh-curated-prices upsert failed for ${mint.slice(0, 8)}:`, err.message);
+          console.warn(`[Worker] refresh-curated-prices update failed for ${mint.slice(0, 8)}:`, err.message);
         }
 
-        // Backfill mcap_at_added for tokens listed before this feature shipped
-        const curatedToken = curatedTokens.find(t => (t.mintAddress || t.mint_address) === mint);
-        if (curatedToken?.mcapAtAdded == null) {
-          await db.updateCuratedTokenMcapAtAdded(mint, marketCap).catch(() => {});
-        }
+        if (marketCap > 0) {
+          // Backfill mcap_at_added for tokens listed before this feature shipped
+          const curatedToken = curatedTokens.find(t => (t.mintAddress || t.mint_address) === mint);
+          if (curatedToken?.mcapAtAdded == null) {
+            await db.updateCuratedTokenMcapAtAdded(mint, marketCap).catch(() => {});
+          }
 
-        // Update ATH (upward-only guard is inside updateCuratedTokenATH)
-        const athResult = await db.updateCuratedTokenATH(mint, marketCap).catch(() => null);
-        if (athResult) athUpdated++;
+          // Update ATH (upward-only guard is inside updateCuratedTokenATH)
+          const athResult = await db.updateCuratedTokenATH(mint, marketCap).catch(() => null);
+          if (athResult) athUpdated++;
+        }
       }
 
       // Pause between chunks to respect GeckoTerminal's rate limit
@@ -832,7 +833,11 @@ const jobProcessors = {
     }
 
     // Bust conviction leaderboard cache so fresh prices are served immediately
-    await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
+    try {
+      await cache.clearPattern('leaderboard:conviction:*');
+    } catch (cacheErr) {
+      console.warn('[Worker] refresh-curated-prices: failed to bust leaderboard cache:', cacheErr.message);
+    }
 
     console.log(`[Worker] refresh-curated-prices: updated ${updated} prices, ${athUpdated} ATH records`);
     return { updated, athUpdated };
