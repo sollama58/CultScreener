@@ -203,9 +203,12 @@ app.use(compression({
 
 // Request timeout middleware - prevent hung requests
 const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT_MS, 10) || 30000;
+// Long-running admin operations (market cap refresh, holder backfills, etc.) need more time
+const ADMIN_REQUEST_TIMEOUT = parseInt(process.env.ADMIN_REQUEST_TIMEOUT_MS, 10) || 120000;
 app.use((req, res, next) => {
-  req.setTimeout(REQUEST_TIMEOUT);
-  res.setTimeout(REQUEST_TIMEOUT, () => {
+  const timeout = req.path.startsWith('/api/admin/') ? ADMIN_REQUEST_TIMEOUT : REQUEST_TIMEOUT;
+  req.setTimeout(timeout);
+  res.setTimeout(timeout, () => {
     if (!res.headersSent) {
       res.status(503).json({ error: 'Request timeout' });
     }

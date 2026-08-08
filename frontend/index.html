@@ -1116,9 +1116,13 @@
             emergingLoaded = true;
             if (typeof emergingPage !== 'undefined') emergingPage.init();
           }
-          if (view === 'versus' && !versusLoaded) {
-            versusLoaded = true;
-            if (typeof versusPage !== 'undefined') versusPage.init();
+          if (view === 'versus') {
+            if (!versusLoaded) {
+              versusLoaded = true;
+              if (typeof versusPage !== 'undefined') versusPage.init();
+            } else if (typeof versusPage !== 'undefined' && !versusPage._loading && versusPage.tokens.length === 0) {
+              versusPage.loadData();
+            }
           }
         });
       });
