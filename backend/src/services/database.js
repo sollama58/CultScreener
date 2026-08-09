@@ -1178,6 +1178,9 @@ async function updateVoteTally(submissionId, marketCap = null) {
 // Includes minimum review period before auto-approval
 // First submission for a token uses shorter review period (5 min vs 1 hour)
 // Approval threshold varies by market cap tier
+// TODO: move this call inside the vote transaction for full atomicity — currently
+// called post-commit, so a failure here leaves the submission in pending despite
+// reaching the approval threshold until the next vote re-triggers it.
 async function checkAutoModeration(submissionId, weightedScore, marketCap = null) {
   // Get dynamic approval threshold based on market cap
   const approvalThreshold = getApprovalThreshold(marketCap);
@@ -1271,17 +1274,6 @@ async function getPendingSubmissions(limit = 50) {
 async function addToWatchlistAtomic(walletAddress, tokenMint, maxItems = 100) {
   if (!pool) return { limitReached: true };
 
-  // Ensure table exists (handles edge case where schema init hasn't completed)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS watchlist (
-      id SERIAL PRIMARY KEY,
-      wallet_address VARCHAR(44) NOT NULL,
-      token_mint VARCHAR(44) NOT NULL,
-      added_at TIMESTAMP DEFAULT NOW(),
-      UNIQUE(wallet_address, token_mint)
-    )
-  `).catch(() => {});
-
   const result = await pool.query(
     `INSERT INTO watchlist (wallet_address, token_mint)
      SELECT $1::text, $2::text
@@ -1327,7 +1319,7 @@ async function removeFromWatchlist(walletAddress, tokenMint) {
 async function getWatchlist(walletAddress) {
   if (!pool) return [];
   const result = await pool.query(
-    `SELECT w.token_mint, t.name, t.symbol, t.logo_uri
+    `SELECT w.token_mint, t.name, t.symbol, t.logo_uri, w.added_at
      FROM watchlist w
      LEFT JOIN tokens t ON w.token_mint = t.mint_address
      WHERE w.wallet_address = $1
@@ -1339,7 +1331,7 @@ async function getWatchlist(walletAddress) {
     name: row.name,
     symbol: row.symbol,
     logoUri: row.logo_uri,
-    addedAt: null
+    addedAt: row.added_at
   }));
 }
 

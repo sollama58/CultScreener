@@ -1510,7 +1510,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         // Price: prefer GeckoTerminal (more accurate), fallback to Helius
         price: gecko.price || helius.price || 0,
         // Market data: GeckoTerminal only (Helius doesn't provide these)
-        priceChange24h: gecko.priceChange24h || jup.priceChange24h || 0,
+        priceChange24h: gecko.priceChange24h ?? jup.priceChange24h ?? 0,
         volume24h: gecko.volume24h || 0,
         liquidity: gecko.liquidity || 0,
         marketCap: gecko.marketCap || gecko.fdv || null,
@@ -1596,7 +1596,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
 // GET /api/tokens/:mint/price - Get price data only
 // Uses 5-minute cache with 1-minute freshness for individual views
 // Optimized: Uses getOrSetWithFreshness for stampede prevention
-router.get('/:mint/price', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/price', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const cacheKey = keys.tokenPrice(mint);
 
@@ -1631,7 +1631,7 @@ router.get('/:mint/price', validateMint, asyncHandler(async (req, res) => {
 
 // GET /api/tokens/:mint/chart - Get price history for charts
 // Uses getOrSet for automatic caching with stampede prevention
-router.get('/:mint/chart', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/chart', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const { interval = '1h', limit = 100 } = req.query;
 
@@ -1646,7 +1646,8 @@ router.get('/:mint/chart', validateMint, asyncHandler(async (req, res) => {
     });
   }
 
-  const cacheKey = keys.tokenChart(mint, normalizedInterval);
+  const normalizedLimit = Math.min(Math.max(1, parseInt(limit) || 100), 500);
+  const cacheKey = keys.tokenChart(mint, normalizedInterval, normalizedLimit);
   // Use longer TTL for chart data - minute intervals cache 1min, others cache 2min
   const cacheTTL = normalizedInterval.includes('m') ? TTL.MEDIUM : TTL.OHLCV;
 
@@ -1668,7 +1669,7 @@ router.get('/:mint/chart', validateMint, asyncHandler(async (req, res) => {
       if (!data || !data.data || data.data.length === 0) {
         data = await jupiterService.getPriceHistory(mint, {
           interval: normalizedInterval,
-          limit: Math.min(Math.max(1, parseInt(limit) || 100), 500)
+          limit: normalizedLimit
         });
       }
 
@@ -1684,7 +1685,7 @@ router.get('/:mint/chart', validateMint, asyncHandler(async (req, res) => {
 
 // GET /api/tokens/:mint/ohlcv - Get OHLCV data for candlestick charts
 // Uses getOrSet for automatic caching with stampede prevention
-router.get('/:mint/ohlcv', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const { interval = '1h' } = req.query;
 
@@ -1735,7 +1736,7 @@ router.get('/:mint/pools', validateMint, requireAllowedToken, asyncHandler(async
 }));
 
 // GET /api/tokens/:mint/submissions - Get all submissions for a token
-router.get('/:mint/submissions', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/submissions', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const { type, status = 'all' } = req.query;
 
@@ -1785,14 +1786,14 @@ router.post('/:mint/view', strictLimiter, validateMint, asyncHandler(async (req,
       const viewCount = await db.incrementTokenViews(mint);
       res.json({ views: viewCount });
     } catch (fallbackError) {
-      // Privacy: Don't log error details - view tracking is non-critical
-      res.json({ views: 0 });
+      console.warn('[Views] All fallback paths failed for', mint);
+      res.status(500).json({ views: 0, error: 'view_record_failed' });
     }
   }
 }));
 
 // GET /api/tokens/:mint/views - Get view count for a token
-router.get('/:mint/views', validateMint, asyncHandler(async (req, res) => {
+router.get('/:mint/views', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   try {
@@ -1979,7 +1980,10 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
     }
 
     if (!largestAccounts || largestAccounts.length === 0) {
-      return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: !rpcAccounts ? 'rpc_unavailable' : null });
+      if (!rpcAccounts) {
+        return res.status(503).json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
+      }
+      return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: null });
     }
 
     const totalSupply = supplyResult?.value

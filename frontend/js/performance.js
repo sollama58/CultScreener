@@ -62,7 +62,7 @@ const performancePage = {
       const data = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
 
       // Accept either a plain array or an object with a tokens/data property
-      const raw = Array.isArray(data) ? data : (data.tokens || data.data || []);
+      const raw = Array.isArray(data) ? data : (data?.tokens || data?.data || []);
 
       // Keep only tokens that have a valid listing mcap
       this.tokens = raw.filter(

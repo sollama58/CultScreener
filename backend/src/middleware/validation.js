@@ -75,6 +75,9 @@ async function checkAndMarkSignature(signature, ttlMs) {
 async function markSignatureUsed(signature, ttlMs) {
   await checkAndMarkSignature(signature, ttlMs);
 }
+// SECURITY: Use checkAndMarkSignature for atomic check-and-mark to prevent TOCTOU races.
+// isSignatureUsed is read-only and must NOT be used alone for authorization decisions —
+// a separate mark step after a positive "not used" check creates a window for replay attacks.
 async function isSignatureUsed(signature) {
   // Check without marking — read-only check for backwards compat
   if (cache.getBackendType() === 'redis') {
@@ -1659,8 +1662,11 @@ async function validateDeviceSession(req, res, next) {
       req.deviceSession = session;
       req.deviceWallet = session.wallet_address;
     }
-  } catch (_) {
-    // Silent — device session is supplementary auth
+  } catch (err) {
+    // Silent — device session is supplementary auth, failure is non-fatal
+    if (process.env.DEBUG_DEVICE_SESSION) {
+      console.debug('[DeviceSession] Lookup failed:', err.message);
+    }
   }
 
   next();

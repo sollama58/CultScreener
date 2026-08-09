@@ -4,6 +4,28 @@ const helmet = require('helmet');
 const compression = require('compression');
 const crypto = require('crypto');
 
+// ── Startup validation ───────────────────────────────────────────────────────
+
+if (!process.env.ADMIN_PASSWORD) {
+  console.error('[Startup] ADMIN_PASSWORD is not set — admin login will always fail');
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('ADMIN_PASSWORD environment variable is required');
+  }
+}
+
+const COOKIE_SECRET = process.env.COOKIE_SECRET;
+if (!COOKIE_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('COOKIE_SECRET environment variable is required in production');
+  }
+  console.warn('[Security] COOKIE_SECRET not set — using ephemeral secret (sessions will not persist across restarts)');
+}
+const effectiveCookieSecret = COOKIE_SECRET || crypto.randomBytes(32).toString('hex');
+
+if (process.env.NODE_ENV !== 'production' && (process.env.DATABASE_URL || process.env.REDIS_URL)) {
+  console.warn('[Startup] WARNING: DATABASE_URL or REDIS_URL is set but NODE_ENV is not "production". Security controls (CORS, HSTS, cookies) are in development mode. Set NODE_ENV=production for production deployments.');
+}
+
 // Import routes
 const tokenRoutes = require('./routes/tokens');
 const watchlistRoutes = require('./routes/watchlist');
@@ -84,36 +106,51 @@ function startFallbackCleanup() {
   }, CLEANUP_INTERVAL_MS);
 }
 
+// Track fallback interval IDs so they can be cleared on graceful shutdown
+let _fallbackIntervalIds = [];
+
 // Fallback conviction warmers for when Redis/worker is not available
 function startFallbackConvictionWarmers() {
   // First run after 2 min, then every 10 min
   setTimeout(() => {
     warmConviction();
-    setInterval(warmConviction, 10 * 60 * 1000);
+    const id1 = setInterval(warmConviction, 10 * 60 * 1000);
+    _fallbackIntervalIds.push(id1);
   }, 2 * 60 * 1000);
 
   // First run after 30s, then every hour
   setTimeout(() => {
     warmCuratedConviction();
-    setInterval(warmCuratedConviction, 60 * 60 * 1000);
+    const id2 = setInterval(warmCuratedConviction, 60 * 60 * 1000);
+    _fallbackIntervalIds.push(id2);
   }, 30 * 1000);
 }
 
-// Initialize job queue after a short delay (allow DB/Redis to connect)
-setTimeout(() => initializeJobQueue().catch(err => console.error('[App] Job queue init failed:', err.message)), 5000);
+// Initialize job queue immediately (no artificial delay needed)
+initializeJobQueue().catch(err => {
+  console.error('[Startup] Job queue initialization failed:', err.message);
+});
 const PORT = process.env.PORT || 3000;
 
 // Trust proxy (for Render and other PaaS)
 app.set('trust proxy', 1);
 
+// ── Admin route prefix constant ──────────────────────────────────────────────
+const ADMIN_ROUTE_PREFIX = '/api/admin';
+
 // CORS configuration
 // SECURITY: Properly configure CORS to prevent credential leaks
-const corsOrigins = process.env.CORS_ORIGIN
+// In production, only explicitly listed origins are allowed.
+// In development/test, a safe localhost default is used.
+const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(o => o.trim().replace(/\/$/, '')).filter(Boolean)
-  : [];
+  : ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000'];
+
+// Alias for backwards-compat references in the block below
+const corsOrigins = allowedOrigins;
 
 // Log configured origins at startup so mismatches are visible in Render logs
-if (corsOrigins.length > 0) {
+if (process.env.CORS_ORIGIN) {
   console.log('[CORS] Allowed origins:', corsOrigins);
 } else if (process.env.NODE_ENV === 'production') {
   console.warn('[SECURITY WARNING] CORS_ORIGIN not configured in production. All cross-origin requests will be blocked.');
@@ -125,8 +162,7 @@ app.use((req, res, next) => {
   const normalizedOrigin = origin ? origin.replace(/\/$/, '') : null;
 
   const allowed = !normalizedOrigin                                  // non-browser / server-to-server
-    || process.env.NODE_ENV !== 'production'                         // development: allow all
-    || corsOrigins.includes(normalizedOrigin);                       // production: exact match
+    || corsOrigins.includes(normalizedOrigin);                       // exact match from allowedOrigins list
 
   if (allowed && normalizedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', normalizedOrigin);
@@ -192,13 +228,12 @@ app.use(helmet({
 }));
 
 // Response compression
+// Note: Do NOT trust client-supplied X-No-Compression headers — that allows
+// clients to force uncompressed responses and waste bandwidth.
 app.use(compression({
   level: 6,
   threshold: 1024,
-  filter: (req, res) => {
-    if (req.headers['x-no-compression']) return false;
-    return compression.filter(req, res);
-  }
+  filter: (req, res) => compression.filter(req, res)
 }));
 
 // Request timeout middleware - prevent hung requests
@@ -206,7 +241,7 @@ const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT_MS, 10) || 30000;
 // Long-running admin operations (market cap refresh, holder backfills, etc.) need more time
 const ADMIN_REQUEST_TIMEOUT = parseInt(process.env.ADMIN_REQUEST_TIMEOUT_MS, 10) || 120000;
 app.use((req, res, next) => {
-  const timeout = req.path.startsWith('/api/admin/') ? ADMIN_REQUEST_TIMEOUT : REQUEST_TIMEOUT;
+  const timeout = req.path.startsWith(ADMIN_ROUTE_PREFIX + '/') ? ADMIN_REQUEST_TIMEOUT : REQUEST_TIMEOUT;
   req.setTimeout(timeout);
   res.setTimeout(timeout, () => {
     if (!res.headersSent) {
@@ -229,10 +264,7 @@ app.use(express.json({ limit: '100kb' }));
 
 // Cookie parser for session management (signed cookies for tamper detection)
 const cookieParser = require('cookie-parser');
-if (!process.env.COOKIE_SECRET) {
-  console.warn('[SECURITY] COOKIE_SECRET is not set — sessions will not persist across restarts');
-}
-app.use(cookieParser(process.env.COOKIE_SECRET || crypto.randomBytes(32).toString('hex')));
+app.use(cookieParser(effectiveCookieSecret));
 
 // Request logging
 app.use((req, res, next) => {
@@ -289,7 +321,8 @@ app.get('/api/utilities/my-access', async (req, res) => {
       .map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' }));
 
     res.json({ cultify, holderBehavior });
-  } catch {
+  } catch (err) {
+    console.warn('[API] /api/utilities/my-access error:', err.message);
     res.json({ cultify: [], holderBehavior: [] });
   }
 });
@@ -299,7 +332,8 @@ app.get('/api/announcements', async (req, res) => {
   try {
     const announcements = await db.getActiveAnnouncements();
     res.json({ announcements });
-  } catch {
+  } catch (err) {
+    console.warn('[API] /api/announcements error:', err.message);
     res.json({ announcements: [] });
   }
 });
@@ -321,7 +355,15 @@ function isImageHostAllowed(hostname) {
   if (IMAGE_PROXY_EXACT_ALLOWED.has(hostname)) return true;
   return IMAGE_PROXY_SUFFIX_ALLOWED.some(s => hostname.endsWith(s));
 }
-app.get('/api/image-proxy', async (req, res) => {
+// Dedicated rate limiter for image proxy — 20 requests/min per IP
+const imageProxyLimiter = require('express-rate-limit')({
+  windowMs: 60000,
+  max: 20,
+  message: { error: 'Too many image proxy requests.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
   let parsed;
@@ -344,8 +386,9 @@ app.get('/api/image-proxy', async (req, res) => {
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(Buffer.from(response.data));
-  } catch {
-    res.status(502).json({ error: 'Failed to fetch image' });
+  } catch (err) {
+    console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
+    res.status(502).send('Bad Gateway');
   }
 });
 
@@ -353,7 +396,7 @@ app.get('/api/image-proxy', async (req, res) => {
 app.use('/api/tokens', tokenRoutes);
 app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/curated', curatedRoutes);
-app.use('/api/admin', adminRoutes);
+app.use(ADMIN_ROUTE_PREFIX, adminRoutes);
 app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/cultify', cultifyRoutes);
 app.use('/api/keys', apiKeyRoutes);
@@ -491,6 +534,10 @@ async function gracefulShutdown(signal) {
     clearInterval(cleanupIntervalId);
     cleanupIntervalId = null;
   }
+
+  // Clear fallback conviction warmer intervals (fallback mode)
+  _fallbackIntervalIds.forEach(id => clearInterval(id));
+  _fallbackIntervalIds = [];
 
   // Clear signature replay protection timer
   try {

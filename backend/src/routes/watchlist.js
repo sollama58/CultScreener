@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const { asyncHandler, requireDatabase, validateWalletSignature, validateWatchlistSignature, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
-const { walletLimiter, strictLimiter } = require('../middleware/rateLimit');
+const { walletLimiter, strictLimiter, defaultLimiter } = require('../middleware/rateLimit');
 
 // All routes in this file require database access
 router.use(requireDatabase);
@@ -16,8 +16,11 @@ const isValidMint = (mint) => {
 };
 
 // GET /api/watchlist/:wallet/count - Get watchlist count
-// NOTE: Must be registered BEFORE /:wallet to avoid being shadowed by the parametric route
-router.get('/:wallet/count', asyncHandler(async (req, res) => {
+// ORDERING: This route MUST be registered before /:wallet below. Express matches routes in
+// registration order, so if /:wallet were registered first it would shadow /count entirely.
+// Watchlist reads are intentionally public (wallet addresses are public on-chain).
+// Rate limiting protects against enumeration.
+router.get('/:wallet/count', defaultLimiter, asyncHandler(async (req, res) => {
   const { wallet } = req.params;
 
   if (!isValidWallet(wallet)) {
@@ -33,7 +36,9 @@ router.get('/:wallet/count', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/watchlist/:wallet - Get user's watchlist
-router.get('/:wallet', asyncHandler(async (req, res) => {
+// Watchlist reads are intentionally public (wallet addresses are public on-chain).
+// Rate limiting protects against enumeration.
+router.get('/:wallet', defaultLimiter, asyncHandler(async (req, res) => {
   const { wallet } = req.params;
 
   if (!isValidWallet(wallet)) {

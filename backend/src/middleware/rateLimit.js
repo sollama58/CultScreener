@@ -14,18 +14,18 @@ const defaultLimiter = rateLimit({
 
 // Strict limiter for write operations (submissions, votes)
 const strictLimiter = rateLimit({
-  windowMs: 60000, // 1 minute
-  max: 10,         // 10 requests per minute
+  windowMs: parseInt(process.env.STRICT_RATE_LIMIT_WINDOW_MS, 10) || 60000,
+  max: parseInt(process.env.STRICT_RATE_LIMIT_MAX, 10) || 10,
   message: { error: 'Too many submissions, please slow down.' },
   standardHeaders: true,
   legacyHeaders: false
 });
 
-// Very strict limiter for sensitive operations
+// Very strict limiter for sensitive operations (e.g. admin login)
 const veryStrictLimiter = rateLimit({
-  windowMs: 3600000, // 1 hour
-  max: 50,           // 50 per hour
-  message: { error: 'Rate limit exceeded. Please try again later.' },
+  windowMs: parseInt(process.env.VERY_STRICT_RATE_LIMIT_WINDOW_MS, 10) || 3600000,
+  max: parseInt(process.env.VERY_STRICT_RATE_LIMIT_MAX, 10) || 5,
+  message: { error: 'Too many login attempts. Please try again in 1 hour.' },
   standardHeaders: true,
   legacyHeaders: false
 });

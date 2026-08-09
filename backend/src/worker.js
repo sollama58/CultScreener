@@ -366,7 +366,10 @@ const jobProcessors = {
    */
   'compute-holder-analytics': async (job) => {
     const { mint, rawAccounts, totalSupply, usedDAS, supplyDecimals } = job.data;
-    if (!rawAccounts || rawAccounts.length === 0) return { status: 'empty' };
+    if (!rawAccounts || rawAccounts.length === 0) {
+      await cache.delete(`holder-classify-pending:${mint}`).catch(() => {});
+      return { status: 'empty' };
+    }
 
     console.log(`[Worker] Classifying ${rawAccounts.length} holder accounts for ${mint}`);
     // BURN_WALLETS and LP_PROGRAMS imported from ./constants at module level
@@ -1108,6 +1111,7 @@ process.on('uncaughtException', (err) => {
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Worker] Unhandled rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 // Start the worker

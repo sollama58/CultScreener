@@ -40,7 +40,10 @@ router.post('/login', veryStrictLimiter, asyncHandler(async (req, res) => {
     path: '/'
   });
 
-  res.json({ success: true, token, expiresAt: expiresAt.toISOString() });
+  // Send token in a response header so the frontend can store it in sessionStorage.
+  // It is NOT included in the JSON body to reduce accidental logging of session tokens.
+  res.setHeader('X-Admin-Token', token);
+  res.json({ success: true, expiresAt: expiresAt.toISOString() });
 }));
 
 // All routes below require valid admin session
@@ -84,28 +87,22 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
       const keys = await cache.scanKeys(pattern);
       scanned += keys.length;
 
-      for (const key of keys) {
-        const val = await cache.get(key);
-        if (val === -1 || val === null) {
-          await cache.delete(key);
-          flushed++;
-        }
-      }
+      // Batch GET + DELETE: only delete sentinel (-1 or null) values
+      const vals = await Promise.all(keys.map(k => cache.get(k).catch(() => null)));
+      const toDelete = keys.filter((_, i) => vals[i] === -1 || vals[i] === null);
+      await Promise.all(toDelete.map(k => cache.delete(k).catch(() => {})));
+      flushed += toDelete.length;
     }
 
     // Also clear diamond-hands distribution caches so they recompute
     const dhKeys = await cache.scanKeys('diamond-hands:*');
-    for (const key of dhKeys) {
-      await cache.delete(key);
-      flushed++;
-    }
+    await Promise.all(dhKeys.map(k => cache.delete(k).catch(() => {})));
+    flushed += dhKeys.length;
 
     // Clear holder-metrics-pending flags so recomputation isn't blocked
     const pendingKeys = await cache.scanKeys('holder-metrics-pending:*');
-    for (const key of pendingKeys) {
-      await cache.delete(key);
-      flushed++;
-    }
+    await Promise.all(pendingKeys.map(k => cache.delete(k).catch(() => {})));
+    flushed += pendingKeys.length;
 
     console.log(`[Admin] Flushed ${flushed} failed wallet caches (scanned ${scanned} keys)`);
     res.json({ success: true, flushed, scanned });
@@ -388,7 +385,7 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
 // King of the Pill
 // ==========================================
 
-router.get('/king-of-pill', validateAdminSession, asyncHandler(async (req, res) => {
+router.get('/king-of-pill', asyncHandler(async (req, res) => {
   const mint = await db.getSetting('king_of_pill_mint');
   if (!mint) return res.json({ mint: null, token: null });
   const row = await db.getToken(mint);
@@ -401,7 +398,7 @@ router.get('/king-of-pill', validateAdminSession, asyncHandler(async (req, res) 
   res.json({ mint, token });
 }));
 
-router.post('/king-of-pill', validateAdminSession, strictLimiter, asyncHandler(async (req, res) => {
+router.post('/king-of-pill', strictLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.body;
 
   if (mint && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint.trim())) {
@@ -425,7 +422,7 @@ router.post('/king-of-pill', validateAdminSession, strictLimiter, asyncHandler(a
 // Benchmark Price Refresh (SOL / BTC)
 // ==========================================
 
-router.post('/refresh-benchmarks', validateAdminSession, strictLimiter, asyncHandler(async (req, res) => {
+router.post('/refresh-benchmarks', strictLimiter, asyncHandler(async (req, res) => {
   // Bust the short-lived cache so the next call to /api/tokens/benchmarks re-fetches from CoinGecko
   await cache.delete('benchmarks:sol-btc');
   // Fetch fresh data immediately so the caller gets the result right away
@@ -472,7 +469,7 @@ router.post('/refresh-benchmarks', validateAdminSession, strictLimiter, asyncHan
 // Force Refresh All Market Caps
 // ==========================================
 
-router.post('/refresh-market-caps', validateAdminSession, strictLimiter, asyncHandler(async (req, res) => {
+router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res) => {
   const geckoService = require('../services/geckoTerminal');
   const { sleep } = require('../services/rateLimiter');
 
