@@ -10,6 +10,9 @@ const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 // Helius standard RPC requires the API key in the URL (not as a header).
 // The x-api-key header only works for Helius REST/DAS APIs, not for
 // JSON-RPC calls proxied to Solana validators.
+// Note: the api-key query param appears in error logs when the full RPC URL
+// is logged. Use log filtering or the Authorization header form if key
+// exposure in logs is a concern for your threat model.
 const RPC_ENDPOINTS = [
   // Primary: Helius with key in URL (if configured)
   HELIUS_API_KEY && `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,

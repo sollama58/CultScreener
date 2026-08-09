@@ -48,12 +48,23 @@ const admin = {
     btn.disabled = true;
     btn.textContent = 'Signing in...';
     try {
-      const data = await this.request('/api/admin/login', {
+      const url = config.api.baseUrl + '/api/admin/login';
+      const res = await fetch(url, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
-        noAuth: true
+        credentials: 'include',
+        cache: 'no-store'
       });
-      this.token = data.token;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.error || `HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      // Token is delivered via response header (not body) to prevent it appearing in logs
+      const token = res.headers.get('X-Admin-Token');
+      this.token = token || data.token || null;
       sessionStorage.setItem('admin_token', this.token);
       input.value = '';
       this.showPanel();
@@ -321,9 +332,10 @@ const admin = {
         el.textContent = 'No token set — widget is hidden.';
       } else {
         const t = data.token;
-        const name = t ? (t.name || t.symbol || data.mint) : data.mint;
-        const sym  = t?.symbol ? ` ($${t.symbol})` : '';
-        el.innerHTML = `Currently: <strong>${name}${sym}</strong> — <code style="font-size:0.75rem;color:var(--text-dim)">${data.mint}</code>`;
+        const name = this.esc(t ? (t.name || t.symbol || data.mint) : data.mint);
+        const sym  = t?.symbol ? ` ($${this.esc(t.symbol)})` : '';
+        const mint = this.esc(data.mint);
+        el.innerHTML = `Currently: <strong>${name}${sym}</strong> — <code style="font-size:0.75rem;color:var(--text-dim)">${mint}</code>`;
         const input = document.getElementById('kotp-mint-input');
         if (input && !input.value) input.value = data.mint;
       }
@@ -765,7 +777,7 @@ const admin = {
         const isActive = !!(a.is_active ?? a.isActive);
         return `<tr>
           <td>${this.esc(a.title)}</td>
-          <td><span class="badge ${typeBadge[a.type] || 'badge-blue'}">${a.type}</span></td>
+          <td><span class="badge ${typeBadge[a.type] || 'badge-blue'}">${this.esc(a.type)}</span></td>
           <td><span class="badge ${isActive ? 'badge-green' : 'badge-gray'}">${isActive ? 'Active' : 'Inactive'}</span></td>
           <td>${a.created_at ? new Date(a.created_at).toLocaleDateString() : '--'}</td>
           <td class="actions-cell">
@@ -855,7 +867,7 @@ const admin = {
         <td class="mono">${r.id}</td>
         <td>${this.esc(r.category)}</td>
         <td class="truncate" title="${this.esc(r.description)}">${this.esc((r.description || '').slice(0, 60))}</td>
-        <td><span class="badge ${statusBadge[r.status] || 'badge-gray'}">${r.status}</span></td>
+        <td><span class="badge ${statusBadge[r.status] || 'badge-gray'}">${this.esc(r.status)}</span></td>
         <td>${r.created_at ? new Date(r.created_at).toLocaleDateString() : '--'}</td>
         <td class="actions-cell">
           <select class="action-btn" data-bug-status="${r.id}" style="background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:var(--radius-xs);padding:0.2rem 0.4rem;font-size:0.72rem;">
@@ -922,7 +934,7 @@ const admin = {
           <td class="mono truncate" title="${this.esc(mint)}">${mint ? mint.slice(0, 6) + '...' + mint.slice(-4) : '--'}</td>
           <td>${this.esc(s.type || s.submission_type || '--')}</td>
           <td class="truncate" title="${this.esc(s.content || s.url || '')}">${this.esc((s.content || s.url || '').slice(0, 40))}</td>
-          <td><span class="badge ${statusBadge[s.status] || 'badge-gray'}">${s.status}</span></td>
+          <td><span class="badge ${statusBadge[s.status] || 'badge-gray'}">${this.esc(s.status)}</span></td>
           <td>${s.created_at ? new Date(s.created_at).toLocaleDateString() : '--'}</td>
           <td class="actions-cell">
             ${isPending ? `<button class="action-btn success" data-approve-sub="${s.id}">Approve</button>
