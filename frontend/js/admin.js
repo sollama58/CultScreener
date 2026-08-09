@@ -20,12 +20,11 @@ const admin = {
     // Restore token from sessionStorage (survives page refresh within the same tab)
     this.token = sessionStorage.getItem('admin_token') || null;
 
-    // If we have a token, verify it is still valid server-side; otherwise show login
-    if (this.token) {
-      this.verifySession();
-    } else {
-      this.showLogin();
-    }
+    // Always verify with the server — the httpOnly cookie may still be valid even
+    // if sessionStorage was cleared (e.g., the tab was closed and reopened).
+    // verifySession() calls /api/admin/stats with credentials:'include' so the cookie
+    // is sent automatically. On 401, request() calls showLogin() transparently.
+    this.verifySession();
   },
 
   // ── Auth ──────────────────────────────────────
