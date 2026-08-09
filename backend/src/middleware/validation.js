@@ -65,6 +65,17 @@ async function checkAndMarkSignature(signature, ttlMs) {
   }
   // In-memory fallback: synchronous check+set is atomic in single-threaded Node.js
   // between synchronous operations, but we must not yield between check and set.
+
+  // Size-based eviction: if the map is growing large (e.g., under a DoS flood),
+  // evict expired entries immediately rather than waiting for the periodic cleanup.
+  // This bounds worst-case heap usage to ~10,000 * ~100 bytes ≈ 1 MB.
+  if (usedSignatures.size > MAX_USED_SIGNATURES / 5) {
+    const now = Date.now();
+    for (const [sig, expiry] of usedSignatures) {
+      if (now > expiry) usedSignatures.delete(sig);
+    }
+  }
+
   const expiry = usedSignatures.get(signature);
   if (expiry && Date.now() <= expiry) return true; // Already used
   usedSignatures.set(signature, Date.now() + ttlMs);
@@ -75,16 +86,25 @@ async function checkAndMarkSignature(signature, ttlMs) {
 async function markSignatureUsed(signature, ttlMs) {
   await checkAndMarkSignature(signature, ttlMs);
 }
-// SECURITY: Use checkAndMarkSignature for atomic check-and-mark to prevent TOCTOU races.
-// isSignatureUsed is read-only and must NOT be used alone for authorization decisions —
-// a separate mark step after a positive "not used" check creates a window for replay attacks.
+
+/**
+ * @deprecated Use checkAndMarkSignature() for authorization decisions.
+ * This function is read-only and does NOT prevent replay attacks when used alone.
+ * A second concurrent request with the same signature can pass between this check
+ * and any subsequent mark operation (TOCTOU race condition).
+ *
+ * NOTE: When Redis is unavailable, this function falls back to the same in-memory
+ * `usedSignatures` Map used by checkAndMarkSignature, so both functions share the
+ * same fallback state and are consistent with each other.
+ */
 async function isSignatureUsed(signature) {
-  // Check without marking — read-only check for backwards compat
+  // Check without marking — read-only check for backwards compat.
+  // Falls back to in-memory Map (same store used by checkAndMarkSignature) on Redis failure.
   if (cache.getBackendType() === 'redis') {
     try {
       const val = await cache.get(`sig-replay:${signature}`);
       if (val != null) return true;
-    } catch { /* fall through to in-memory */ }
+    } catch { /* fall through to in-memory — consistent with checkAndMarkSignature fallback */ }
   }
   const expiry = usedSignatures.get(signature);
   if (!expiry) return false;
@@ -1743,7 +1763,7 @@ module.exports = {
   // Cleanup
   stopSignatureCleanup,
   // Signature replay helpers
-  isSignatureUsed,
+  isSignatureUsed,      // @deprecated — read-only, kept for backwards compat; use checkAndMarkSignature instead
   markSignatureUsed,
   checkAndMarkSignature,
   // Constants

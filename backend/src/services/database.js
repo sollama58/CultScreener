@@ -520,14 +520,14 @@ async function upsertToken(token) {
     if (price || marketCap || volume24h || priceChange24h != null) {
       const result = await pool.query(
         `UPDATE tokens SET
-           price = COALESCE($2, tokens.price),
-           market_cap = COALESCE($3, tokens.market_cap),
-           volume_24h = COALESCE($4, tokens.volume_24h),
-           price_change_24h = COALESCE($5, tokens.price_change_24h),
+           price = $2,
+           market_cap = $3,
+           volume_24h = $4,
+           price_change_24h = $5,
            updated_at = NOW()
          WHERE mint_address = $1
          RETURNING *`,
-        [mintAddress, price || null, marketCap || null, volume24h || null, priceChange24h != null ? priceChange24h : null]
+        [mintAddress, price != null ? price : null, marketCap != null ? marketCap : null, volume24h != null ? volume24h : null, priceChange24h != null ? priceChange24h : null]
       );
       return result.rows[0] || null;
     }
@@ -544,10 +544,10 @@ async function upsertToken(token) {
        decimals = EXCLUDED.decimals,
        logo_uri = COALESCE(EXCLUDED.logo_uri, tokens.logo_uri),
        pair_created_at = COALESCE(EXCLUDED.pair_created_at, tokens.pair_created_at),
-       price = COALESCE(EXCLUDED.price, tokens.price),
-       market_cap = COALESCE(EXCLUDED.market_cap, tokens.market_cap),
-       volume_24h = COALESCE(EXCLUDED.volume_24h, tokens.volume_24h),
-       price_change_24h = COALESCE(EXCLUDED.price_change_24h, tokens.price_change_24h),
+       price = EXCLUDED.price,
+       market_cap = EXCLUDED.market_cap,
+       volume_24h = EXCLUDED.volume_24h,
+       price_change_24h = EXCLUDED.price_change_24h,
        updated_at = NOW()
      RETURNING *`,
     [mintAddress, name, symbol, decimals, logoUri, pairCreatedAt || null, price || null, marketCap || null, volume24h || null, priceChange24h != null ? priceChange24h : null]
@@ -996,16 +996,16 @@ async function createVote({ submissionId, voterWallet, voteType, voterBalance = 
       [submissionId]
     );
 
-    await client.query('COMMIT');
+    // Run auto-moderation inside the transaction so that a failure rolls back the vote too.
+    // Read the tally we just wrote (using the same client so we see our own uncommitted write).
+    const tallyRow = await client.query(
+      `SELECT weighted_score FROM vote_tallies WHERE submission_id = $1`,
+      [submissionId]
+    );
+    const weightedScore = parseFloat(tallyRow.rows[0]?.weighted_score) || 0;
+    await checkAutoModeration(submissionId, weightedScore, marketCap, client);
 
-    // Post-commit: run auto-moderation check (non-critical -- don't fail the vote if this errors)
-    try {
-      const tally = await getVoteTally(submissionId);
-      const weightedScore = parseFloat(tally?.weighted_score) || 0;
-      await checkAutoModeration(submissionId, weightedScore, marketCap);
-    } catch (err) {
-      console.error(`[Votes] Post-commit auto-moderation failed for submission ${submissionId}:`, err.message);
-    }
+    await client.query('COMMIT');
 
     return result.rows[0];
   } catch (error) {
@@ -1076,19 +1076,19 @@ async function updateVote(submissionId, voterWallet, voteType, { marketCap = nul
        RETURNING score, weighted_score`,
       [submissionId]
     );
+    // Run auto-moderation inside the transaction so that a failure rolls back the vote too.
+    const tallyRow = await client.query(
+      `SELECT weighted_score FROM vote_tallies WHERE submission_id = $1`,
+      [submissionId]
+    );
+    const weightedScore = parseFloat(tallyRow.rows[0]?.weighted_score) || 0;
+    await checkAutoModeration(submissionId, weightedScore, marketCap, client);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
   } finally {
     client.release();
-  }
-  // Post-commit: run auto-moderation check (non-critical -- don't fail the vote if this errors)
-  try {
-    const weightedScore = (await getVoteTally(submissionId))?.weighted_score || 0;
-    await checkAutoModeration(submissionId, parseFloat(weightedScore), marketCap);
-  } catch (err) {
-    console.error(`[Votes] Post-commit auto-moderation failed for submission ${submissionId}:`, err.message);
   }
 }
 
@@ -1120,19 +1120,19 @@ async function deleteVote(submissionId, voterWallet, marketCap = null) {
        RETURNING score, weighted_score`,
       [submissionId]
     );
+    // Run auto-moderation inside the transaction so that a failure rolls back the vote too.
+    const tallyRow = await client.query(
+      `SELECT weighted_score FROM vote_tallies WHERE submission_id = $1`,
+      [submissionId]
+    );
+    const weightedScore = parseFloat(tallyRow.rows[0]?.weighted_score) || 0;
+    await checkAutoModeration(submissionId, weightedScore, marketCap, client);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
   } finally {
     client.release();
-  }
-  // Post-commit: run auto-moderation check (non-critical -- don't fail the vote if this errors)
-  try {
-    const weightedScore = (await getVoteTally(submissionId))?.weighted_score || 0;
-    await checkAutoModeration(submissionId, parseFloat(weightedScore), marketCap);
-  } catch (err) {
-    console.error(`[Votes] Post-commit auto-moderation failed for submission ${submissionId}:`, err.message);
   }
 }
 
@@ -1178,17 +1178,21 @@ async function updateVoteTally(submissionId, marketCap = null) {
 // Includes minimum review period before auto-approval
 // First submission for a token uses shorter review period (5 min vs 1 hour)
 // Approval threshold varies by market cap tier
-// TODO: move this call inside the vote transaction for full atomicity — currently
-// called post-commit, so a failure here leaves the submission in pending despite
-// reaching the approval threshold until the next vote re-triggers it.
-async function checkAutoModeration(submissionId, weightedScore, marketCap = null) {
+//
+// When called from inside a vote transaction, pass the transaction `client` so that
+// auto-moderation runs atomically with the vote write. If `client` is null, falls back
+// to the module-level pool (standalone / backfill calls).
+async function checkAutoModeration(submissionId, weightedScore, marketCap = null, client = null) {
+  // Use provided transaction client or fall back to pool for standalone calls
+  const db = client || pool;
+
   // Get dynamic approval threshold based on market cap
   const approvalThreshold = getApprovalThreshold(marketCap);
 
   // Check if submission meets the threshold for its market cap tier
   if (weightedScore >= approvalThreshold) {
     // Check if minimum review period has passed
-    const submission = await pool.query(
+    const submission = await db.query(
       `SELECT created_at, token_mint FROM submissions WHERE id = $1 AND status = 'pending'`,
       [submissionId]
     );
@@ -1199,7 +1203,7 @@ async function checkAutoModeration(submissionId, weightedScore, marketCap = null
       const minutesSinceCreation = (now - new Date(createdAt)) / (1000 * 60);
 
       // Check if this token has any approved submissions already
-      const existingApproved = await pool.query(
+      const existingApproved = await db.query(
         `SELECT 1 FROM submissions WHERE token_mint = $1 AND status = 'approved' LIMIT 1`,
         [tokenMint]
       );
@@ -1210,7 +1214,7 @@ async function checkAutoModeration(submissionId, weightedScore, marketCap = null
 
       // Only auto-approve if minimum review period has passed
       if (minutesSinceCreation >= requiredMinutes) {
-        await pool.query(
+        await db.query(
           `UPDATE submissions SET status = 'approved' WHERE id = $1 AND status = 'pending'`,
           [submissionId]
         );
@@ -1220,7 +1224,7 @@ async function checkAutoModeration(submissionId, weightedScore, marketCap = null
     }
   } else if (weightedScore <= AUTO_REJECT_THRESHOLD) {
     // Auto-rejection doesn't require review period (to quickly remove spam)
-    await pool.query(
+    await db.query(
       `UPDATE submissions SET status = 'rejected' WHERE id = $1 AND status = 'pending'`,
       [submissionId]
     );
