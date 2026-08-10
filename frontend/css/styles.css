@@ -5163,21 +5163,26 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Emerging Cult hammer emoji — table rows */
+/* Emoji badge next to token name in table rows */
 .cult-hammer {
   flex-shrink: 0;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   line-height: 1;
-  opacity: 0.9;
+  vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+  font-style: normal;
+  /* Force emoji/color presentation and prevent font substitution */
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
 }
 
-
-/* Name + hammer on the same flex row inside table token cells */
+/* Name + emoji badge on the same flex row inside table token cells */
 .table-name-line {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.25rem;
   min-width: 0;
+  overflow: hidden;
 }
 
 /* Table generic styles */

@@ -508,7 +508,7 @@ const tokenDetail = {
       if (token.emergingCult) {
         const badge = document.createElement('span');
         badge.className = 'emerging-cult-badge';
-        badge.textContent = '🛠️ Emerging Cult';
+        badge.textContent = '🔨 Emerging Cult';
         nameEl.insertAdjacentElement('afterend', badge);
       }
     }

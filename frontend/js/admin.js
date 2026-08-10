@@ -572,7 +572,7 @@ const admin = {
           </td>
           <td>
             <button class="action-btn ${isEmerging ? 'success' : ''}" data-toggle-emerging="${mint}" data-emerging="${isEmerging}" title="Toggle Emerging Cult label">
-              🛠️ ${isEmerging ? 'On' : 'Off'}
+              🔨 ${isEmerging ? 'On' : 'Off'}
             </button>
           </td>
           <td>
@@ -678,7 +678,7 @@ const admin = {
         body: JSON.stringify({ emergingCult: newValue })
       });
       btn.dataset.emerging = String(newValue);
-      btn.textContent = `🛠️ ${newValue ? 'On' : 'Off'}`;
+      btn.textContent = `🔨 ${newValue ? 'On' : 'Off'}`;
       btn.classList.toggle('success', newValue);
       if (typeof toast !== 'undefined') toast.success(`Emerging Cult label ${newValue ? 'enabled' : 'disabled'}`);
     } catch (err) {

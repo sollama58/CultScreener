@@ -118,7 +118,7 @@ const performancePage = {
       const symbol   = utils.escapeHtml(token.symbol || '');
       const mint     = utils.escapeHtml(token.mintAddress || token.address || '');
       const emergingBadge = token.emergingCult
-        ? '<span class="cult-hammer" title="Emerging Cult">🛠️</span>'
+        ? '<span class="cult-hammer" title="Emerging Cult">🔨</span>'
         : '';
       const techBadge = token.techCoin
         ? '<span class="cult-hammer" title="Tech Coin">🤖</span>'
@@ -270,7 +270,7 @@ const performancePage = {
         ? `<td class="psg-pct psg-na">—</td>`
         : `<td class="psg-pct ${pct >= 0 ? 'psg-positive' : 'psg-negative'} ${cls}">${this._formatPct(pct)}</td>`;
 
-      const hammer  = token.emergingCult ? '<span class="psg-hammer">🛠️</span>' : '';
+      const hammer  = token.emergingCult ? '<span class="psg-hammer">🔨</span>' : '';
       const techIcon = token.techCoin ? '<span class="psg-hammer">🤖</span>' : '';
       const name    = (token.name   || '').replace(/</g, '&lt;');
       const symbol  = (token.symbol || '').replace(/</g, '&lt;');

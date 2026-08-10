@@ -121,7 +121,7 @@ const emergingPage = {
       const safeName = utils.escapeHtml(token.name || `${address.slice(0, 4)}...${address.slice(-4)}`);
       const safeSymbol = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
 
-      const emergingBadge = '<span class="cult-hammer" title="Emerging Cult">🛠️</span>';
+      const emergingBadge = '<span class="cult-hammer" title="Emerging Cult">🔨</span>';
 
       const holdersHtml = token.holders
         ? `<span class="mono-num">${token.holders.toLocaleString()}</span>`

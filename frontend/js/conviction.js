@@ -455,7 +455,7 @@ const convictionPage = {
       const safeName = utils.escapeHtml(token.name || `${address.slice(0, 4)}...${address.slice(-4)}`);
       const safeSymbol = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
       const emergingBadge = token.emergingCult
-        ? '<span class="cult-hammer" title="Emerging Cult">🛠️</span>'
+        ? '<span class="cult-hammer" title="Emerging Cult">🔨</span>'
         : '';
       const techBadge = token.techCoin
         ? '<span class="cult-hammer" title="Tech Coin">🤖</span>'
