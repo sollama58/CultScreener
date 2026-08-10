@@ -167,6 +167,7 @@ app.use((req, res, next) => {
   if (allowed && normalizedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', normalizedOrigin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Admin-Token');
     res.setHeader('Vary', 'Origin');
   } else if (!allowed) {
     console.warn(`[CORS] Blocked origin: "${origin}" — not in allowed list: [${corsOrigins.join(', ')}]`);
