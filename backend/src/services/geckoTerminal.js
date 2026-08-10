@@ -284,6 +284,10 @@ async function getTokenInfo(mintAddress) {
  * Endpoint: /networks/{network}/tokens/multi/{addresses}
  * Max 30 addresses per request
  */
+// Session flag: set to false if the free API rejects include=top_pools, so we stop
+// doubling every request with a doomed first attempt.
+let _multiTokenIncludeSupported = true;
+
 async function getMultiTokenInfo(addresses) {
   if (!addresses || addresses.length === 0) {
     return {};
@@ -291,25 +295,17 @@ async function getMultiTokenInfo(addresses) {
 
   console.log(`[GeckoTerminal] getMultiTokenInfo: fetching ${addresses.length} tokens`);
 
-  try {
-    // GeckoTerminal accepts comma-separated addresses (max ~30 per request)
-    // include=top_pools adds pool records to the `included` array — pools have
-    // price_change_percentage.h24 which the token endpoint does not reliably expose.
-    const addressList = addresses.slice(0, 30).join(',');
+  // GeckoTerminal accepts comma-separated addresses (max ~30 per request)
+  const addressList = addresses.slice(0, 30).join(',');
+  const safeFloat = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
 
-    const response = await geckoRequest(() =>
-      geckoAxios.get(`/networks/${NETWORK}/tokens/multi/${addressList}`, {
-        params: { include: 'top_pools' }
-      }),
-      'getMultiTokenInfo'
-    );
+  const parseResponse = (responseData) => {
+    const tokens = responseData.data || [];
+    const included = responseData.included || [];
 
-    const tokens = response.data.data || [];
-    const included = response.data.included || [];
-    console.log(`[GeckoTerminal] multi token response: ${tokens.length} tokens, ${included.length} included pools`);
-
-    // Build a lookup: pool JSON:API id → price_change_percentage.h24
-    const safeFloat = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+    // Build a lookup: pool JSON:API id → price_change_percentage.h24.
+    // Pool records are returned via `include=top_pools`; pools reliably expose
+    // price_change_percentage while the token endpoint does not.
     const poolPriceChange = {};
     for (const item of included) {
       if (item.type === 'pool') {
@@ -324,7 +320,7 @@ async function getMultiTokenInfo(addresses) {
       const address = attrs.address;
       if (!address) continue;
 
-      // Prefer token-level change if present; fall back to top pool's change.
+      // Prefer token-level price change if present; fall back to top pool's value.
       let priceChange24h = attrs.price_change_percentage?.h24 != null
         ? safeFloat(attrs.price_change_percentage.h24)
         : null;
@@ -337,18 +333,52 @@ async function getMultiTokenInfo(addresses) {
       }
 
       result[address] = {
-        price: attrs.price_usd != null ? safeFloat(attrs.price_usd) : null,
-        volume24h: attrs.volume_usd?.h24 != null ? safeFloat(attrs.volume_usd.h24) : null,
+        price:        attrs.price_usd        != null ? safeFloat(attrs.price_usd)        : null,
+        volume24h:    attrs.volume_usd?.h24  != null ? safeFloat(attrs.volume_usd.h24)   : null,
         priceChange24h,
-        marketCap: attrs.market_cap_usd != null ? safeFloat(attrs.market_cap_usd) : null,
-        fdv: attrs.fdv_usd != null ? safeFloat(attrs.fdv_usd) : null,
-        name: attrs.name,
-        symbol: attrs.symbol,
-        decimals: attrs.decimals,
-        logoUri: attrs.image_url
+        marketCap:    attrs.market_cap_usd   != null ? safeFloat(attrs.market_cap_usd)   : null,
+        fdv:          attrs.fdv_usd          != null ? safeFloat(attrs.fdv_usd)          : null,
+        name:         attrs.name,
+        symbol:       attrs.symbol,
+        decimals:     attrs.decimals,
+        logoUri:      attrs.image_url
       };
     }
+    return result;
+  };
 
+  // Attempt with include=top_pools so pool records (which carry
+  // price_change_percentage.h24) are returned in the same response.
+  // If the free API doesn't support the parameter it returns a non-429 error;
+  // we then fall back to the plain token request and permanently skip the
+  // include attempt for the rest of this process lifetime to avoid double-calling.
+  if (_multiTokenIncludeSupported) {
+    try {
+      const response = await geckoRequest(() =>
+        geckoAxios.get(`/networks/${NETWORK}/tokens/multi/${addressList}`, {
+          params: { include: 'top_pools' }
+        }),
+        'getMultiTokenInfo'
+      );
+      const result = parseResponse(response.data);
+      const withChange = Object.values(result).filter(r => r.priceChange24h != null).length;
+      console.log(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens, ${withChange} with price change`);
+      return result;
+    } catch (includeErr) {
+      // Permanent fallback: stop using include=top_pools for this session
+      _multiTokenIncludeSupported = false;
+      console.warn('[GeckoTerminal] include=top_pools unsupported, disabling for this session:', includeErr.message);
+    }
+  }
+
+  // Plain token request (no include) — used when include=top_pools is not supported
+  try {
+    const response = await geckoRequest(() =>
+      geckoAxios.get(`/networks/${NETWORK}/tokens/multi/${addressList}`),
+      'getMultiTokenInfo'
+    );
+    const result = parseResponse(response.data);
+    console.log(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens`);
     return result;
   } catch (error) {
     console.error('[GeckoTerminal] getMultiTokenInfo error:', error.message);
@@ -520,7 +550,7 @@ async function getMarketData(mintAddress) {
   console.log(`[GeckoTerminal] getMarketData: ${mintAddress}`);
 
   try {
-    // Only fetch token info - pools data is included in price change from token endpoint
+    // Only fetch single-token info (price change comes from getTokenInfo's pool lookup)
     const tokenInfo = await getTokenInfo(mintAddress);
 
     if (!tokenInfo) {
