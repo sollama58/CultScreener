@@ -5166,14 +5166,12 @@ textarea {
 /* Emoji badge next to token name in table rows */
 .cult-hammer {
   flex-shrink: 0;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   line-height: 1;
-  vertical-align: middle;
-  display: inline-flex;
-  align-items: center;
-  font-style: normal;
-  /* Force emoji/color presentation and prevent font substitution */
-  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+  display: inline-block;
+  /* Force colored (emoji) presentation — overrides monospace text-mode rendering */
+  font-variant-emoji: emoji;
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", emoji, sans-serif;
 }
 
 /* Name + emoji badge on the same flex row inside table token cells */
