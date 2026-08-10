@@ -294,6 +294,16 @@ app.use('/api/', (req, res, next) => { res.setHeader('Cache-Control', 'no-store'
 // Health check routes (no rate limiting)
 app.use('/health', healthRoutes);
 
+// Dedicated rate limiter for lightweight public endpoints (announcements, my-access)
+// These hit DB/Redis on every call so deserve a tighter cap than the shared defaultLimiter.
+const publicEndpointLimiter = require('express-rate-limit')({
+  windowMs: 60000,
+  max: 30,
+  message: { error: 'Too many requests.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // Utility access summary for a wallet (Cultify + Holder Behavior)
 // Used by the "My Utilities" modal in the wallet dropdown
 app.get('/api/utilities/my-access', publicEndpointLimiter, async (req, res) => {
@@ -355,15 +365,6 @@ function isImageHostAllowed(hostname) {
   if (IMAGE_PROXY_EXACT_ALLOWED.has(hostname)) return true;
   return IMAGE_PROXY_SUFFIX_ALLOWED.some(s => hostname.endsWith(s));
 }
-// Dedicated rate limiter for lightweight public endpoints (announcements, my-access)
-// These hit DB/Redis on every call so deserve a tighter cap than the shared defaultLimiter.
-const publicEndpointLimiter = require('express-rate-limit')({
-  windowMs: 60000,
-  max: 30,
-  message: { error: 'Too many requests.' },
-  standardHeaders: true,
-  legacyHeaders: false
-});
 // Dedicated rate limiter for image proxy — 20 requests/min per IP
 const imageProxyLimiter = require('express-rate-limit')({
   windowMs: 60000,
