@@ -1561,6 +1561,9 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       const tokenName = helius.name || gecko.name;
       const tokenSymbol = helius.symbol || gecko.symbol;
       if (tokenName && tokenSymbol) {
+        // Only write metadata — market data (price, priceChange24h, etc.) must come from
+        // updateTokenMarketData (worker / admin refresh) to avoid single page-load nulls
+        // overwriting the worker's authoritative values.
         db.upsertToken({
           mintAddress: mint,
           name: tokenName,
@@ -1568,10 +1571,6 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
           decimals: helius.decimals || gecko.decimals || 9,
           logoUri: helius.logoUri || gecko.logoUri,
           pairCreatedAt: gecko.pairCreatedAt || null,
-          price: gecko.price || null,
-          marketCap: gecko.marketCap || gecko.fdv || null,
-          volume24h: gecko.volume24h || null,
-          priceChange24h: gecko.priceChange24h || null
         }).catch(() => { /* Privacy: Don't log error details */ });
       }
 

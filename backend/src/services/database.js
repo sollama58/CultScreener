@@ -544,10 +544,10 @@ async function upsertToken(token) {
        decimals = EXCLUDED.decimals,
        logo_uri = COALESCE(EXCLUDED.logo_uri, tokens.logo_uri),
        pair_created_at = COALESCE(EXCLUDED.pair_created_at, tokens.pair_created_at),
-       price = EXCLUDED.price,
-       market_cap = EXCLUDED.market_cap,
-       volume_24h = EXCLUDED.volume_24h,
-       price_change_24h = EXCLUDED.price_change_24h,
+       price = COALESCE(EXCLUDED.price, tokens.price),
+       market_cap = COALESCE(EXCLUDED.market_cap, tokens.market_cap),
+       volume_24h = COALESCE(EXCLUDED.volume_24h, tokens.volume_24h),
+       price_change_24h = COALESCE(EXCLUDED.price_change_24h, tokens.price_change_24h),
        updated_at = NOW()
      RETURNING *`,
     [mintAddress, name, symbol, decimals, logoUri, pairCreatedAt || null, price || null, marketCap || null, volume24h || null, priceChange24h != null ? priceChange24h : null]
