@@ -293,34 +293,60 @@ async function getMultiTokenInfo(addresses) {
 
   try {
     // GeckoTerminal accepts comma-separated addresses (max ~30 per request)
+    // include=top_pools adds pool records to the `included` array — pools have
+    // price_change_percentage.h24 which the token endpoint does not reliably expose.
     const addressList = addresses.slice(0, 30).join(',');
 
     const response = await geckoRequest(() =>
-      geckoAxios.get(`/networks/${NETWORK}/tokens/multi/${addressList}`),
+      geckoAxios.get(`/networks/${NETWORK}/tokens/multi/${addressList}`, {
+        params: { include: 'top_pools' }
+      }),
       'getMultiTokenInfo'
     );
 
     const tokens = response.data.data || [];
-    console.log(`[GeckoTerminal] multi token response: ${tokens.length} tokens`);
+    const included = response.data.included || [];
+    console.log(`[GeckoTerminal] multi token response: ${tokens.length} tokens, ${included.length} included pools`);
+
+    // Build a lookup: pool JSON:API id → price_change_percentage.h24
+    const safeFloat = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+    const poolPriceChange = {};
+    for (const item of included) {
+      if (item.type === 'pool') {
+        const pc = safeFloat(item.attributes?.price_change_percentage?.h24);
+        if (pc != null) poolPriceChange[item.id] = pc;
+      }
+    }
 
     const result = {};
     for (const token of tokens) {
       const attrs = token.attributes || {};
       const address = attrs.address;
-      if (address) {
-        const safeFloat = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
-        result[address] = {
-          price: attrs.price_usd != null ? safeFloat(attrs.price_usd) : null,
-          volume24h: attrs.volume_usd?.h24 != null ? safeFloat(attrs.volume_usd.h24) : null,
-          priceChange24h: attrs.price_change_percentage?.h24 != null ? safeFloat(attrs.price_change_percentage.h24) : null,
-          marketCap: attrs.market_cap_usd != null ? safeFloat(attrs.market_cap_usd) : null,
-          fdv: attrs.fdv_usd != null ? safeFloat(attrs.fdv_usd) : null,
-          name: attrs.name,
-          symbol: attrs.symbol,
-          decimals: attrs.decimals,
-          logoUri: attrs.image_url
-        };
+      if (!address) continue;
+
+      // Prefer token-level change if present; fall back to top pool's change.
+      let priceChange24h = attrs.price_change_percentage?.h24 != null
+        ? safeFloat(attrs.price_change_percentage.h24)
+        : null;
+
+      if (priceChange24h == null) {
+        const topPoolId = token.relationships?.top_pools?.data?.[0]?.id;
+        if (topPoolId && poolPriceChange[topPoolId] != null) {
+          priceChange24h = poolPriceChange[topPoolId];
+        }
       }
+
+      result[address] = {
+        price: attrs.price_usd != null ? safeFloat(attrs.price_usd) : null,
+        volume24h: attrs.volume_usd?.h24 != null ? safeFloat(attrs.volume_usd.h24) : null,
+        priceChange24h,
+        marketCap: attrs.market_cap_usd != null ? safeFloat(attrs.market_cap_usd) : null,
+        fdv: attrs.fdv_usd != null ? safeFloat(attrs.fdv_usd) : null,
+        name: attrs.name,
+        symbol: attrs.symbol,
+        decimals: attrs.decimals,
+        logoUri: attrs.image_url
+      };
     }
 
     return result;

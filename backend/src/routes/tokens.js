@@ -1187,14 +1187,18 @@ router.get('/benchmarks', asyncHandler(async (req, res) => {
       }
     );
     const data = response.data || {};
+
+    // Merge with last-good data so a partial response (price OK, change null) doesn't
+    // wipe a previously-known price_change_24h value out of the active cache.
+    const lastGood = await cache.get(lastGoodKey);
     const result = {
       sol: {
-        price: data.solana?.usd ?? null,
-        priceChange24h: data.solana?.usd_24h_change ?? null
+        price: data.solana?.usd ?? lastGood?.sol?.price ?? null,
+        priceChange24h: data.solana?.usd_24h_change ?? lastGood?.sol?.priceChange24h ?? null
       },
       btc: {
-        price: data.bitcoin?.usd ?? null,
-        priceChange24h: data.bitcoin?.usd_24h_change ?? null
+        price: data.bitcoin?.usd ?? lastGood?.btc?.price ?? null,
+        priceChange24h: data.bitcoin?.usd_24h_change ?? lastGood?.btc?.priceChange24h ?? null
       },
       updatedAt: Date.now(),
     };

@@ -557,9 +557,12 @@ async function upsertToken(token) {
 
 /**
  * Directly overwrite market-data fields (price, market_cap, volume_24h, price_change_24h)
- * for an existing token row. Unlike upsertToken, this does NOT use COALESCE on these
- * fields — it writes fresh values (including null) so stale data never lingers.
- * Name/symbol/logo still use COALESCE so metadata is never clobbered.
+ * for an existing token row. Unlike upsertToken, this does NOT use COALESCE on price/
+ * market_cap/volume_24h — it writes fresh values so stale data never lingers.
+ * price_change_24h uses COALESCE because the GeckoTerminal token endpoint does not
+ * reliably expose this field; pool-based fetching is required to populate it, and we
+ * never want a missing-field null to wipe a real 24h value that was stored previously.
+ * Name/symbol/logo also use COALESCE so metadata is never clobbered.
  * No-ops gracefully if the token row doesn't exist yet.
  */
 async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h, priceChange24h, logoUri } = {}) {
@@ -569,7 +572,7 @@ async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h,
        price            = $2,
        market_cap       = $3,
        volume_24h       = $4,
-       price_change_24h = $5,
+       price_change_24h = COALESCE($5, price_change_24h),
        logo_uri         = COALESCE($6, logo_uri),
        updated_at       = NOW()
      WHERE mint_address = $1

@@ -778,7 +778,8 @@ const jobProcessors = {
     if (!curatedTokens || curatedTokens.length === 0) return { updated: 0, athUpdated: 0 };
 
     const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
-    const CHUNK_SIZE = 5;
+    // GeckoTerminal multi-token endpoint supports up to 30 addresses per call.
+    const CHUNK_SIZE = 30;
     let updated = 0;
     let athUpdated = 0;
 
@@ -789,7 +790,7 @@ const jobProcessors = {
       try {
         batchInfo = await geckoService.getMultiTokenInfo(chunk);
       } catch (err) {
-        console.warn(`[Worker] refresh-curated-prices batch ${i}–${i + chunk.length - 1} failed:`, err.message);
+        console.warn(`[Worker] refresh-curated-prices batch ${Math.floor(i / CHUNK_SIZE) + 1} failed:`, err.message);
         continue;
       }
 
@@ -829,9 +830,9 @@ const jobProcessors = {
         }
       }
 
-      // Pause between chunks to respect GeckoTerminal's rate limit
+      // Pause between chunks to stay within GeckoTerminal free-tier rate limit (30 req/min)
       if (i + CHUNK_SIZE < allMints.length) {
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
 
