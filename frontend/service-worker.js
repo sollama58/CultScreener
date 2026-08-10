@@ -27,7 +27,7 @@ const APP_SHELL = [
   '/js/pwa.js?v=3',
   '/js/performance.js?v=17',
   '/js/cultify.js?v=11',
-  '/js/admin.js?v=14',
+  '/js/admin.js?v=15',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
   '/thisisfine8bit.jpg',

@@ -479,8 +479,11 @@ router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res)
   }
 
   const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
-  const CHUNK_SIZE = 5;
+  // GeckoTerminal multi-token endpoint supports up to 30 addresses per call.
+  // Batching at 30 reduces round-trips from N/5 to N/30.
+  const CHUNK_SIZE = 30;
   let updated = 0;
+  let skipped = 0; // not found on GeckoTerminal
   let athUpdated = 0;
   const errors = [];
 
@@ -490,13 +493,14 @@ router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res)
     try {
       batchInfo = await geckoService.getMultiTokenInfo(chunk);
     } catch (err) {
-      errors.push(`batch ${i}–${i + chunk.length - 1}: ${err.message}`);
+      errors.push(`batch ${Math.floor(i / CHUNK_SIZE) + 1}: ${err.message}`);
+      skipped += chunk.length;
       continue;
     }
 
     for (const mint of chunk) {
       const data = batchInfo[mint];
-      if (!data) continue;
+      if (!data) { skipped++; continue; }
 
       const marketCap = data.marketCap || data.fdv || null;
 
@@ -512,6 +516,7 @@ router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res)
         updated++;
       } catch (err) {
         errors.push(`${mint.slice(0, 8)}: ${err.message}`);
+        skipped++;
       }
 
       if (marketCap > 0) {
@@ -524,8 +529,9 @@ router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res)
       }
     }
 
+    // Brief pause between batches to stay within GeckoTerminal free-tier rate limit (30 req/min)
     if (i + CHUNK_SIZE < allMints.length) {
-      await sleep(5000);
+      await sleep(2000);
     }
   }
 
@@ -536,8 +542,8 @@ router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res)
     console.warn('[Admin] refresh-market-caps: failed to bust leaderboard cache:', cacheErr.message);
   }
 
-  console.log(`[Admin] refresh-market-caps: updated ${updated} prices, ${athUpdated} ATH records`);
-  res.json({ success: true, updated, athUpdated, total: allMints.length, errors: errors.slice(0, 5) });
+  console.log(`[Admin] refresh-market-caps: updated ${updated}, skipped ${skipped}, ${athUpdated} ATH records`);
+  res.json({ success: true, updated, skipped, athUpdated, total: allMints.length, errors: errors.slice(0, 5) });
 }));
 
 // ==========================================

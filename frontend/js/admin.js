@@ -430,18 +430,53 @@ const admin = {
 
   async refreshMarketCaps() {
     const btn = document.getElementById('admin-refresh-market-caps');
-    const status = document.getElementById('admin-flush-status');
+    const statusRow = document.getElementById('admin-market-caps-status-row');
+    const statusEl  = document.getElementById('admin-market-caps-status');
+
+    const setStatus = (html, color = 'var(--text-muted)') => {
+      if (!statusEl) return;
+      statusEl.innerHTML = html;
+      statusEl.style.color = color;
+      if (statusRow) statusRow.style.display = 'block';
+    };
+
     btn.disabled = true;
     btn.textContent = 'Refreshing...';
-    if (status) { status.textContent = 'Fetching market caps from GeckoTerminal...'; status.style.color = 'var(--text-muted)'; }
+
+    // Live elapsed-time counter
+    const startMs = Date.now();
+    setStatus('Fetching price data from GeckoTerminal...');
+    const timer = setInterval(() => {
+      const secs = Math.floor((Date.now() - startMs) / 1000);
+      setStatus(`Fetching price data from GeckoTerminal... <span style="opacity:0.55">(${secs}s)</span>`);
+    }, 1000);
 
     try {
       const data = await this.request('/api/admin/refresh-market-caps', { method: 'POST' });
-      const msg = `Market caps refreshed — ${data.updated}/${data.total} updated, ${data.athUpdated} ATH records`;
-      if (status) { status.textContent = msg; status.style.color = 'var(--green)'; }
-      if (typeof toast !== 'undefined') toast.success(msg);
+      clearInterval(timer);
+
+      const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+      const parts = [
+        `<span style="color:var(--green)">&#10003; ${data.updated} updated</span>`,
+        data.skipped  > 0 ? `<span style="color:var(--text-muted)">${data.skipped} not on GeckoTerminal</span>` : null,
+        data.athUpdated > 0 ? `<span style="color:var(--text-muted)">${data.athUpdated} ATH records</span>` : null,
+        data.errors?.length > 0 ? `<span style="color:var(--red)">${data.errors.length} error(s)</span>` : null,
+        `<span style="opacity:0.45">${elapsed}s</span>`,
+      ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+
+      setStatus(`${parts}`, 'inherit');
+
+      if (data.errors?.length) {
+        const errLines = data.errors.map(e => this.esc(e)).join('<br>');
+        setStatus(`${parts}<br><span style="color:var(--red);font-size:0.72rem">${errLines}</span>`, 'inherit');
+      }
+
+      const summary = `Market caps: ${data.updated}/${data.total} updated`;
+      if (typeof toast !== 'undefined') toast.success(summary);
     } catch (err) {
-      if (status) { status.textContent = `Error: ${err.message}`; status.style.color = 'var(--red)'; }
+      clearInterval(timer);
+      const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+      setStatus(`<span style="color:var(--red)">&#10007; ${this.esc(err.message)}</span> <span style="opacity:0.45">(${elapsed}s)</span>`, 'inherit');
       if (typeof toast !== 'undefined') toast.error(err.message);
     } finally {
       btn.disabled = false;
