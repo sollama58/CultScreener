@@ -10,7 +10,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=14',
+  '/css/styles.css?v=15',
   '/js/config.js?v=2',
   '/js/api.js?v=6',
   '/js/wallet.js?v=2',

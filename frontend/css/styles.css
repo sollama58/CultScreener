@@ -5125,6 +5125,17 @@ textarea {
   letter-spacing: 0.03em;
 }
 
+/* Force colored emoji presentation on all badge/icon elements that contain emoji.
+   Without this, monospace font inheritance causes browsers (especially Chrome/Windows)
+   to render emoji as monochrome text glyphs. */
+.cult-hammer,
+.psg-hammer,
+.emerging-cult-badge,
+.tech-coin-detail-badge {
+  font-variant-emoji: emoji;
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", emoji, sans-serif;
+}
+
 /* Emerging Cult label badge — token detail page */
 .emerging-cult-badge {
   display: inline-flex;
@@ -5163,15 +5174,18 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Emoji badge next to token name in table rows */
+/* Emoji-only icon next to token name in table rows */
 .cult-hammer {
   flex-shrink: 0;
   font-size: 0.85rem;
   line-height: 1;
   display: inline-block;
-  /* Force colored (emoji) presentation — overrides monospace text-mode rendering */
-  font-variant-emoji: emoji;
-  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", emoji, sans-serif;
+}
+
+/* Emoji icon in the performance share graphic */
+.psg-hammer {
+  font-size: 0.8rem;
+  line-height: 1;
 }
 
 /* Name + emoji badge on the same flex row inside table token cells */
