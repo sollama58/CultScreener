@@ -1,7 +1,7 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'holdex-v43';
+const CACHE_VERSION = 'holdex-v44';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -18,7 +18,7 @@ const APP_SHELL = [
   '/js/tech.js?v=4',
   '/js/emerging.js?v=4',
   '/js/versus.js?v=8',
-  '/js/tokenDetail.js?v=20',
+  '/js/tokenDetail.js?v=21',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=2',
   '/js/sentiment.js?v=2',
