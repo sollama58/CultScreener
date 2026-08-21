@@ -482,10 +482,11 @@ const tokenDetail = {
     // Header info - handle different property names from various API responses
     const logoEl = document.getElementById('token-logo');
     if (logoEl) {
-      logoEl.src = token.logoUri || token.logoURI || token.logo || utils.getDefaultLogo();
       logoEl.onerror = function() {
+        this.onerror = null;
         this.src = utils.getDefaultLogo();
       };
+      logoEl.src = token.logoUri || token.logoURI || token.logo || utils.getDefaultLogo();
     }
 
     // Update watchlist button
