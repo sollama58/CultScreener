@@ -98,7 +98,7 @@
       const pair = pairs[0];
       const name = pair.baseToken?.name || 'Unknown';
       const symbol = pair.baseToken?.symbol || '???';
-      const logo = pair.info?.imageUrl || defaultLogo;
+      const logo = (typeof utils !== 'undefined' ? utils.proxyImageUrl(pair.info?.imageUrl) : pair.info?.imageUrl) || defaultLogo;
 
       const pairCreatedAt = pair.pairCreatedAt || null;
       const price = pair.priceUsd ? parseFloat(pair.priceUsd) : null;
@@ -165,7 +165,7 @@
               metaMap[t.mint] = {
                 name: pairs[0].baseToken?.name || null,
                 symbol: pairs[0].baseToken?.symbol || null,
-                logo: pairs[0].info?.imageUrl || null,
+                logo: utils.proxyImageUrl(pairs[0].info?.imageUrl) || null,
               };
             }
           }
