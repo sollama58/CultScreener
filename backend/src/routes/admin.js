@@ -512,6 +512,9 @@ router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res)
           volume24h: data.volume24h ?? null,
           priceChange24h: data.priceChange24h ?? null,
           logoUri: data.logoUri ?? null,
+          name: data.name ?? null,
+          symbol: data.symbol ?? null,
+          decimals: data.decimals ?? null,
         });
         updated++;
       } catch (err) {
