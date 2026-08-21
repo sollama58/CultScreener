@@ -356,21 +356,24 @@ const IMAGE_PROXY_SUFFIX_ALLOWED = [
   '.dexscreener.com', '.coingecko.com', '.geckoterminal.com',
   '.githubusercontent.com', '.arweave.net', '.nftstorage.link',
   '.ipfs.io', '.cloudflare-ipfs.com', '.irys.xyz', '.pinata.cloud',
-  '.mypinata.cloud', '.w3s.link',
+  '.mypinata.cloud', '.w3s.link', '.dweb.link',
 ];
 const IMAGE_PROXY_EXACT_ALLOWED = new Set([
   'arweave.net', 'ipfs.io', 'cloudflare-ipfs.com', 'nftstorage.link',
   'pbs.twimg.com', 'i.imgur.com', 'storage.googleapis.com',
-  's2.coinmarketcap.com', 'metadata.jup.ag', 'irys.xyz', 'dweb.link',
+  's2.coinmarketcap.com', 'metadata.jup.ag', 'irys.xyz',
 ]);
 function isImageHostAllowed(hostname) {
   if (IMAGE_PROXY_EXACT_ALLOWED.has(hostname)) return true;
   return IMAGE_PROXY_SUFFIX_ALLOWED.some(s => hostname.endsWith(s));
 }
-// Dedicated rate limiter for image proxy — 20 requests/min per IP
+// Dedicated rate limiter for image proxy. Every table row's logo now routes through
+// this endpoint (not just the old canvas share-image feature), so a single page load
+// can legitimately request dozens of distinct images at once — 20/min was sized for
+// the old usage and was rejecting normal page loads with 429s.
 const imageProxyLimiter = require('express-rate-limit')({
   windowMs: 60000,
-  max: 20,
+  max: 150,
   message: { error: 'Too many image proxy requests.' },
   standardHeaders: true,
   legacyHeaders: false
@@ -383,6 +386,26 @@ const imageProxyLimiter = require('express-rate-limit')({
 const IMAGE_PROXY_TTL_MS = 24 * 60 * 60 * 1000;      // 24h — matches the Cache-Control max-age below
 const IMAGE_PROXY_FAIL_TTL_MS = 5 * 60 * 1000;       // 5m — retry a dead/blocked source periodically, not on every request
 const IMAGE_PROXY_MAX_BYTES = 3 * 1024 * 1024;       // 3MB — logos/banners only, reject anything larger
+const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — see withTimeout below
+
+// Races a promise against a timeout, resolving to `fallback` if the timeout wins.
+// Used so a slow/unresponsive Redis can never stall this route long enough to trip
+// the app's global request-timeout middleware (which would otherwise surface as a
+// 503 from OUR OWN server, not the upstream image host) — worst case we just treat
+// it as a cache miss and fetch live.
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+// In-flight de-dup: many table rows (or many concurrent visitors) can request the
+// same not-yet-cached image URL at once — e.g. right after a deploy when the cache is
+// cold. Without this, each one triggers its own axios fetch; with it, they all share
+// one upstream request instead of stampeding the origin (and each other, via Redis).
+const imageProxyInFlight = new Map();
+
 app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
@@ -394,7 +417,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const { cache } = require('./services/cache');
   const cacheKey = `image-proxy:${url}`;
 
-  const cached = await cache.get(cacheKey).catch(() => null);
+  const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
   if (cached) {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -403,24 +426,35 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     return res.send(Buffer.from(cached.data, 'base64'));
   }
 
-  try {
-    const axios = require('axios');
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 8000,
-      maxContentLength: IMAGE_PROXY_MAX_BYTES,
-      maxBodyLength: IMAGE_PROXY_MAX_BYTES,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; HolDEX/1.0)',
-        'Accept': 'image/webp,image/png,image/jpeg,image/*',
-        'Referer': `https://${parsed.hostname}/`,
-      },
-    });
-    const contentType = response.headers['content-type'] || 'image/png';
-    if (!contentType.startsWith('image/')) throw new Error(`Non-image response: ${contentType}`);
+  // Share one in-flight fetch across concurrent requests for the same URL
+  let fetchPromise = imageProxyInFlight.get(url);
+  if (!fetchPromise) {
+    fetchPromise = (async () => {
+      const axios = require('axios');
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 8000,
+        maxContentLength: IMAGE_PROXY_MAX_BYTES,
+        maxBodyLength: IMAGE_PROXY_MAX_BYTES,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; HolDEX/1.0)',
+          'Accept': 'image/webp,image/png,image/jpeg,image/*',
+          'Referer': `https://${parsed.hostname}/`,
+        },
+      });
+      const contentType = response.headers['content-type'] || 'image/png';
+      if (!contentType.startsWith('image/')) throw new Error(`Non-image response: ${contentType}`);
+      return { contentType, buffer: Buffer.from(response.data) };
+    })();
+    fetchPromise.finally(() => imageProxyInFlight.delete(url));
+    imageProxyInFlight.set(url, fetchPromise);
+  }
 
-    const buffer = Buffer.from(response.data);
-    await cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
+  try {
+    const { contentType, buffer } = await fetchPromise;
+    // Fire-and-forget — the response doesn't need to wait on the cache write, and a
+    // slow Redis write must never be able to stall (or fail) the response itself.
+    cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', contentType);
@@ -428,7 +462,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     res.send(buffer);
   } catch (err) {
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
-    await cache.set(cacheKey, { notFound: true }, IMAGE_PROXY_FAIL_TTL_MS).catch(() => {});
+    cache.set(cacheKey, { notFound: true }, IMAGE_PROXY_FAIL_TTL_MS).catch(() => {});
     res.status(502).send('Bad Gateway');
   }
 });
