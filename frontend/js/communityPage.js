@@ -56,7 +56,7 @@ const communityPage = {
         const d = enriched[mint] || {};
         const name = utils.escapeHtml(d.name || token.name || mint.slice(0, 8));
         const symbol = utils.escapeHtml(d.symbol || token.symbol || '');
-        const logo = utils.escapeHtml(d.logoUri || d.logoURI || token.logoUri || defaultLogo);
+        const logo = utils.escapeHtml(utils.proxyImageUrl(d.logoUri || d.logoURI || token.logoUri) || defaultLogo);
         const price = utils.formatPrice(d.price, 6);
         const mcap = utils.formatNumber(d.marketCap, '$');
 
@@ -116,7 +116,7 @@ const communityPage = {
       const defaultLogo = utils.getDefaultLogo();
       tbody.innerHTML = tokens.map((token, i) => {
         const address = token.mintAddress || token.address || token.mint_address || '';
-        const safeLogo = utils.escapeHtml(token.logoUri || token.logo_uri || defaultLogo);
+        const safeLogo = utils.escapeHtml(utils.proxyImageUrl(token.logoUri || token.logo_uri) || defaultLogo);
         const safeName = utils.escapeHtml(token.name || address.slice(0, 8));
         const safeSymbol = utils.escapeHtml(token.symbol || '');
         const price = utils.formatPrice(token.price, 6);

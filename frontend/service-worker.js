@@ -1,7 +1,7 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'holdex-v44';
+const CACHE_VERSION = 'holdex-v45';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -12,21 +12,21 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 const APP_SHELL = [
   '/css/styles.css?v=15',
   '/js/config.js?v=2',
-  '/js/api.js?v=6',
+  '/js/api.js?v=7',
   '/js/wallet.js?v=2',
-  '/js/conviction.js?v=13',
-  '/js/tech.js?v=4',
-  '/js/emerging.js?v=4',
-  '/js/versus.js?v=8',
+  '/js/conviction.js?v=14',
+  '/js/tech.js?v=5',
+  '/js/emerging.js?v=5',
+  '/js/versus.js?v=9',
   '/js/tokenDetail.js?v=21',
   '/js/watchlist.js?v=2',
-  '/js/communityPage.js?v=2',
+  '/js/communityPage.js?v=3',
   '/js/sentiment.js?v=2',
   '/js/holderBehavior.js?v=4',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=19',
-  '/js/cultify.js?v=11',
+  '/js/performance.js?v=20',
+  '/js/cultify.js?v=12',
   '/js/admin.js?v=15',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',

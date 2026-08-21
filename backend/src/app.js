@@ -355,12 +355,13 @@ app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
 const IMAGE_PROXY_SUFFIX_ALLOWED = [
   '.dexscreener.com', '.coingecko.com', '.geckoterminal.com',
   '.githubusercontent.com', '.arweave.net', '.nftstorage.link',
-  '.ipfs.io', '.cloudflare-ipfs.com',
+  '.ipfs.io', '.cloudflare-ipfs.com', '.irys.xyz', '.pinata.cloud',
+  '.mypinata.cloud', '.w3s.link',
 ];
 const IMAGE_PROXY_EXACT_ALLOWED = new Set([
   'arweave.net', 'ipfs.io', 'cloudflare-ipfs.com', 'nftstorage.link',
   'pbs.twimg.com', 'i.imgur.com', 'storage.googleapis.com',
-  's2.coinmarketcap.com', 'metadata.jup.ag',
+  's2.coinmarketcap.com', 'metadata.jup.ag', 'irys.xyz', 'dweb.link',
 ]);
 function isImageHostAllowed(hostname) {
   if (IMAGE_PROXY_EXACT_ALLOWED.has(hostname)) return true;
@@ -374,6 +375,14 @@ const imageProxyLimiter = require('express-rate-limit')({
   standardHeaders: true,
   legacyHeaders: false
 });
+// Server-side cache TTLs — separate from the browser's Cache-Control so repeated
+// requests *across all visitors* (not just one browser) reuse a single fetch. This is
+// what actually protects against flaky/rate-limited gateways (ipfs.io, Irys, ...): once
+// one request warms the cache, every other viewer's <img> is served from Redis instead
+// of hammering the origin again.
+const IMAGE_PROXY_TTL_MS = 24 * 60 * 60 * 1000;      // 24h — matches the Cache-Control max-age below
+const IMAGE_PROXY_FAIL_TTL_MS = 5 * 60 * 1000;       // 5m — retry a dead/blocked source periodically, not on every request
+const IMAGE_PROXY_MAX_BYTES = 3 * 1024 * 1024;       // 3MB — logos/banners only, reject anything larger
 app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
@@ -381,11 +390,26 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid url' }); }
   if (parsed.protocol !== 'https:') return res.status(400).json({ error: 'https only' });
   if (!isImageHostAllowed(parsed.hostname)) return res.status(403).json({ error: 'Host not allowed' });
+
+  const { cache } = require('./services/cache');
+  const cacheKey = `image-proxy:${url}`;
+
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached) {
+    if (cached.notFound) return res.status(502).send('Bad Gateway');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', cached.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(Buffer.from(cached.data, 'base64'));
+  }
+
   try {
     const axios = require('axios');
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 8000,
+      maxContentLength: IMAGE_PROXY_MAX_BYTES,
+      maxBodyLength: IMAGE_PROXY_MAX_BYTES,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; HolDEX/1.0)',
         'Accept': 'image/webp,image/png,image/jpeg,image/*',
@@ -393,12 +417,18 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
       },
     });
     const contentType = response.headers['content-type'] || 'image/png';
+    if (!contentType.startsWith('image/')) throw new Error(`Non-image response: ${contentType}`);
+
+    const buffer = Buffer.from(response.data);
+    await cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
+
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(Buffer.from(response.data));
+    res.send(buffer);
   } catch (err) {
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
+    await cache.set(cacheKey, { notFound: true }, IMAGE_PROXY_FAIL_TTL_MS).catch(() => {});
     res.status(502).send('Bad Gateway');
   }
 });

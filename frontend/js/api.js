@@ -908,6 +908,23 @@ const utils = {
     return 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2216%22%20fill%3D%22%231c1c21%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221%22%20text-anchor%3D%22middle%22%20fill%3D%22%236b6b73%22%20font-size%3D%2214%22%3E%3F%3C%2Ftext%3E%3C%2Fsvg%3E';
   },
 
+  // Route a token image (logo/banner) URL through our backend image proxy instead of
+  // hotlinking the third-party host directly. The server fetches + caches the bytes once
+  // and re-serves them from our own domain, so a rate-limited or hotlink-blocking gateway
+  // (ipfs.io, Irys, ...) doesn't leave the image blank for every visitor — only the first
+  // request after the cache expires ever touches the original host.
+  // Leaves data: URIs and already-proxied/non-https URLs untouched.
+  proxyImageUrl(url) {
+    if (!url) return url;
+    if (url.startsWith('data:') || url.includes('/api/image-proxy')) return url;
+    try {
+      if (new URL(url).protocol !== 'https:') return url; // proxy only handles https sources
+    } catch {
+      return url;
+    }
+    return `${API_BASE_URL}/api/image-proxy?url=${encodeURIComponent(url)}`;
+  },
+
   // Create element with attributes
   createElement(tag, attrs = {}, children = []) {
     const el = document.createElement(tag);

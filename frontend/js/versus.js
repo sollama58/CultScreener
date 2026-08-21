@@ -246,7 +246,7 @@ const versusPage = {
     podium.style.display = 'flex';
     podium.innerHTML = displayOrder.map((token, i) => {
       const sign = token._vsSol >= 0 ? '+' : '';
-      const logoSrc = utils.escapeHtml(token.logoUri || token.logoURI || defaultLogo);
+      const logoSrc = utils.escapeHtml(utils.proxyImageUrl(token.logoUri || token.logoURI) || defaultLogo);
       const safeName = utils.escapeHtml(token.name || token.symbol || '');
       const safeAddr = utils.escapeHtml(token.mintAddress || token.address || '');
       return `
@@ -297,7 +297,7 @@ const versusPage = {
       if (!address) return '';
 
       const safeAddress = utils.escapeHtml(address);
-      const safeLogo    = utils.escapeHtml(token.logoUri || token.logoURI || defaultLogo);
+      const safeLogo    = utils.escapeHtml(utils.proxyImageUrl(token.logoUri || token.logoURI) || defaultLogo);
       const safeName    = utils.escapeHtml(token.name || `${address.slice(0, 4)}...${address.slice(-4)}`);
       const safeSymbol  = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
 
@@ -547,8 +547,7 @@ const versusPage = {
     const avatar = this._letterAvatar(symbol);
     if (!url) return avatar;
 
-    const apiBase = (typeof API_BASE_URL !== 'undefined') ? API_BASE_URL : '';
-    const proxied = `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    const proxied = utils.proxyImageUrl(url);
 
     return new Promise((resolve) => {
       const img = new Image();

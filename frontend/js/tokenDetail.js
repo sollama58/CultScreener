@@ -486,7 +486,7 @@ const tokenDetail = {
         this.onerror = null;
         this.src = utils.getDefaultLogo();
       };
-      logoEl.src = token.logoUri || token.logoURI || token.logo || utils.getDefaultLogo();
+      logoEl.src = utils.proxyImageUrl(token.logoUri || token.logoURI || token.logo) || utils.getDefaultLogo();
     }
 
     // Update watchlist button
@@ -2014,13 +2014,14 @@ const tokenDetail = {
     if (!url) return;
     const container = document.getElementById('token-banner');
     if (!container) return;
+    const proxied = utils.proxyImageUrl(url);
     const img = new Image();
     img.onload = () => {
-      container.innerHTML = `<img src="${utils.escapeHtml(url)}" alt="Token banner" class="token-banner-img" loading="lazy">`;
+      container.innerHTML = `<img src="${utils.escapeHtml(proxied)}" alt="Token banner" class="token-banner-img" loading="lazy">`;
       container.style.display = '';
     };
     img.onerror = () => { container.style.display = 'none'; };
-    img.src = url;
+    img.src = proxied;
   },
 
   _renderSocials(socials) {

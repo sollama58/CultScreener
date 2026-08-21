@@ -112,7 +112,7 @@ const performancePage = {
       const currentPctHtml = this._pctHtml(currentPct, false);
 
       // Logo
-      const logo     = utils.escapeHtml(token.logoUri || '');
+      const logo     = utils.escapeHtml(utils.proxyImageUrl(token.logoUri) || '');
       const fallback = utils.escapeHtml(utils.getDefaultLogo ? utils.getDefaultLogo() : '');
       const name     = utils.escapeHtml(token.name   || '—');
       const symbol   = utils.escapeHtml(token.symbol || '');
@@ -483,10 +483,7 @@ const performancePage = {
 
     // Route through our own backend proxy so CORS is never an issue —
     // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
-    // Must use absolute URL: frontend (holdex.live) and API (cultscreener-api.onrender.com)
-    // are separate Render services; a relative /api/* path hits the static file server (404).
-    const apiBase = (typeof API_BASE_URL !== 'undefined') ? API_BASE_URL : '';
-    const proxied = `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    const proxied = utils.proxyImageUrl(url);
 
     return new Promise((resolve) => {
       const img = new Image();
