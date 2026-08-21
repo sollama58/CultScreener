@@ -124,8 +124,9 @@ router.post('/', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
 
   // Fetch market cap before adding so we can record it at time of listing
   let mcapAtAdded = null;
+  let marketData = null;
   try {
-    const marketData = await geckoService.getMarketData(mintAddress);
+    marketData = await geckoService.getMarketData(mintAddress);
     mcapAtAdded = marketData?.marketCap || null;
   } catch { /* non-critical — token can be added without mcap */ }
 
@@ -139,6 +140,22 @@ router.post('/', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
   const dexData = await fetchDexScreenerData(mintAddress);
   if (dexData) {
     await db.updateCuratedTokenDexScreener(mintAddress, dexData);
+  }
+
+  // Seed the tokens table immediately so the token has a real logo/price/market cap
+  // on the home page right away — otherwise it would sit blank until the
+  // refresh-curated-prices worker's next run (up to 10 minutes later).
+  if (marketData || dexData) {
+    await db.updateTokenMarketData({
+      mintAddress,
+      price: marketData?.price ?? null,
+      marketCap: marketData?.marketCap || marketData?.fdv || null,
+      volume24h: marketData?.volume24h ?? null,
+      priceChange24h: marketData?.priceChange24h ?? null,
+      logoUri: dexData?.logoUri ?? null,
+      name: dexData?.name ?? null,
+      symbol: dexData?.symbol ?? null,
+    }).catch(() => { /* non-critical — worker will backfill on next run */ });
   }
 
   // Return the enriched token

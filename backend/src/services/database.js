@@ -556,34 +556,48 @@ async function upsertToken(token) {
 }
 
 /**
- * Directly overwrite market-data fields (price, market_cap, volume_24h, price_change_24h)
- * for an existing token row. Unlike upsertToken, this does NOT use COALESCE on price/
- * market_cap/volume_24h — it writes fresh values so stale data never lingers.
+ * Write fresh market-data fields (price, market_cap, volume_24h, price_change_24h) for a
+ * token, creating the row if it doesn't exist yet. Unlike upsertToken, this does NOT use
+ * COALESCE on price/market_cap/volume_24h — it writes fresh values so stale data never
+ * lingers on an existing row.
  * price_change_24h uses COALESCE because the GeckoTerminal token endpoint does not
  * reliably expose this field; pool-based fetching is required to populate it, and we
  * never want a missing-field null to wipe a real 24h value that was stored previously.
- * Name/symbol/logo also use COALESCE so metadata is never clobbered.
- * No-ops gracefully if the token row doesn't exist yet.
+ * name/symbol/decimals/logo prefer the existing row's value and only fill in when it's
+ * missing, so metadata from a fuller source (Helius/token detail page) is never clobbered.
+ *
+ * Upserts (rather than UPDATE-only) because curated tokens are only inserted into `tokens`
+ * when their detail page is first viewed — a curated token added via the admin panel but
+ * never visited would otherwise never get a row, leaving price/market_cap/logo_uri NULL
+ * (rendering as blank/0 on the home page tables) forever, since this is the only place
+ * the periodic price-refresh worker writes market data.
  */
-async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h, priceChange24h, logoUri } = {}) {
+async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h, priceChange24h, logoUri, name, symbol, decimals } = {}) {
   if (!pool || !mintAddress) return null;
   const result = await pool.query(
-    `UPDATE tokens SET
-       price            = $2,
-       market_cap       = $3,
-       volume_24h       = $4,
-       price_change_24h = COALESCE($5, price_change_24h),
-       logo_uri         = COALESCE($6, logo_uri),
+    `INSERT INTO tokens (mint_address, name, symbol, decimals, logo_uri, price, market_cap, volume_24h, price_change_24h)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (mint_address) DO UPDATE SET
+       price            = EXCLUDED.price,
+       market_cap       = EXCLUDED.market_cap,
+       volume_24h       = EXCLUDED.volume_24h,
+       price_change_24h = COALESCE(EXCLUDED.price_change_24h, tokens.price_change_24h),
+       logo_uri         = COALESCE(tokens.logo_uri, EXCLUDED.logo_uri),
+       name             = COALESCE(tokens.name, EXCLUDED.name),
+       symbol           = COALESCE(tokens.symbol, EXCLUDED.symbol),
+       decimals         = COALESCE(tokens.decimals, EXCLUDED.decimals),
        updated_at       = NOW()
-     WHERE mint_address = $1
      RETURNING mint_address`,
     [
       mintAddress,
+      name        || null,
+      symbol      || null,
+      decimals    != null ? decimals    : null,
+      logoUri     != null ? logoUri     : null,
       price       != null ? price       : null,
       marketCap   != null ? marketCap   : null,
       volume24h   != null ? volume24h   : null,
       priceChange24h != null ? priceChange24h : null,
-      logoUri     != null ? logoUri     : null,
     ]
   );
   return result.rows[0] || null;
