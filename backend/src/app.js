@@ -350,7 +350,13 @@ app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
 });
 
 // Image proxy — fetches token logo images server-side and re-serves them with
-// Access-Control-Allow-Origin: * so the frontend can canvas-read cross-origin images.
+// Access-Control-Allow-Origin: * so the frontend can canvas-read cross-origin images, and
+// Cross-Origin-Resource-Policy: cross-origin so plain <img src> tags (a no-cors load,
+// governed by CORP rather than CORS) can embed it too. Without the latter, Helmet's
+// default `Cross-Origin-Resource-Policy: same-origin` on every response blocks the
+// frontend (a different origin) from loading it at all — surfacing in the browser as
+// net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin on literally every proxied image, regardless
+// of which third-party host it points at.
 // Suffix-based allowlist prevents open-proxy abuse while covering all known token CDNs.
 const IMAGE_PROXY_SUFFIX_ALLOWED = [
   '.dexscreener.com', '.coingecko.com', '.geckoterminal.com',
@@ -421,6 +427,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   if (cached) {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.send(Buffer.from(cached.data, 'base64'));
@@ -457,6 +464,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
 
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(buffer);
