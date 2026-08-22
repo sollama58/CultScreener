@@ -362,7 +362,7 @@ const IMAGE_PROXY_SUFFIX_ALLOWED = [
   '.dexscreener.com', '.coingecko.com', '.geckoterminal.com',
   '.githubusercontent.com', '.arweave.net', '.nftstorage.link',
   '.ipfs.io', '.cloudflare-ipfs.com', '.irys.xyz', '.pinata.cloud',
-  '.mypinata.cloud', '.w3s.link', '.dweb.link',
+  '.mypinata.cloud', '.w3s.link', '.dweb.link', '.rapidlaunch.io',
 ];
 const IMAGE_PROXY_EXACT_ALLOWED = new Set([
   'arweave.net', 'ipfs.io', 'cloudflare-ipfs.com', 'nftstorage.link',
@@ -413,6 +413,16 @@ function withTimeout(promise, ms, fallback) {
 const imageProxyInFlight = new Map();
 
 app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
+  // Set on every response from this route — including the validation/error paths below —
+  // not just the successful-image ones. Helmet's default Cross-Origin-Resource-Policy:
+  // same-origin otherwise applies to those too, and the browser reports a CORP block on an
+  // error JSON response identically to a CORP block on a real image: net::ERR_BLOCKED_BY_
+  // RESPONSE.NotSameOrigin either way. Without this, a host missing from the allowlist below
+  // (or any other validation failure) looks indistinguishable from the bug this route exists
+  // to prevent, instead of a plain, inspectable 403/400.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
   let parsed;
@@ -426,8 +436,6 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
   if (cached) {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.send(Buffer.from(cached.data, 'base64'));
@@ -463,8 +471,6 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     // slow Redis write must never be able to stall (or fail) the response itself.
     cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(buffer);
