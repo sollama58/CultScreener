@@ -1,7 +1,7 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'holdex-v45';
+const CACHE_VERSION = 'holdex-v46';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -37,6 +37,18 @@ const APP_SHELL = [
 // API patterns that should use network-first strategy
 const API_PATTERNS = [
   /\/api\//,
+];
+
+// Hosts whose responses must never be written to a cache.
+//
+// The Trenches app (/trenches/) talks to its own backend with cookie-authenticated,
+// per-user endpoints — /auth/me, /filters, /matches — none of which carry the /api/ prefix
+// API_PATTERNS matches on, and all of which are cross-origin. Without this they'd fall
+// through to the catch-all network-first branch at the bottom of the fetch handler and be
+// stored in DYNAMIC_CACHE: one user's filters and account details left on disk, still served
+// after sign-out whenever the network hiccups. Fetched pass-through instead, never stored.
+const NEVER_CACHE_HOSTS = [
+  'trenchscanner-api.onrender.com',
 ];
 
 // Font CDN patterns — cache long-term
@@ -100,6 +112,11 @@ self.addEventListener('fetch', (event) => {
 
   // Skip chrome-extension and other non-http(s) schemes
   if (!url.protocol.startsWith('http')) return;
+
+  // Per-user API responses — straight to the network, never stored. See NEVER_CACHE_HOSTS.
+  // Returning without calling respondWith() lets the browser handle the request normally,
+  // which also keeps the request's credentials/CORS behaviour exactly as the page intended.
+  if (NEVER_CACHE_HOSTS.includes(url.hostname)) return;
 
   // API requests â†’ Network First with cache fallback
   if (API_PATTERNS.some((p) => p.test(url.pathname))) {

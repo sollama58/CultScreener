@@ -148,13 +148,28 @@ databases:
 #    b. Connect your GitHub repository
 #    c. Configure:
 #       - Name: HolDEX-frontend
-#       - Root Directory: frontend
-#       - Build Command: (leave blank)
-#       - Publish Directory: .
+#       - Root Directory: (leave blank — the repo root)
+#       - Build Command: npm ci && npm run build
+#       - Publish Directory: frontend
 #    d. Add rewrite rules in Settings > Redirects/Rewrites:
 #       - Source: /token/*    -> Destination: /token.html (Rewrite)
 #       - Source: /community  -> Destination: /community.html (Rewrite)
 #       - Source: /about      -> Destination: /about.html (Rewrite)
+#       The /trenches/* SPA rewrite is version-controlled in frontend/_redirects instead.
+#       If this site serves rewrites from the Dashboard only, add it there to match:
+#       - Source: /trenches/* -> Destination: /trenches/index.html (Rewrite)
+#
+#    NOTE ON THE ROOT/BUILD CHANGE (was: Root Directory "frontend", no build command):
+#    The published tree is identical either way — Publish Directory "frontend" from the repo
+#    root resolves to the same files that Root Directory "frontend" + Publish "." did, so every
+#    existing page keeps its current URL. What changes:
+#      - The build step now runs on every deploy. It compiles trenches/ into frontend/trenches/
+#        (git-ignored, generated at deploy time). If that build fails, the WHOLE static site
+#        deploy fails, where previously there was no build to fail. Render keeps serving the
+#        last successful deploy, so a failure stalls updates rather than taking the site down.
+#      - Auto-deploy now triggers on any change in the repo, not just frontend/, because the
+#        service's root is the repo root.
+#      - Deploys are slower (npm ci for the SPA's dependencies).
 #
 # 3. Update CORS_ORIGIN on HolDEX-api:
 #    After creating the static site, copy its URL and update

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎯</text></svg>"
+    />
+    <title>Trenches - HolDEX</title>
+    <meta
+      name="description"
+      content="Scan the Solana memecoin trenches for tokens with breakout potential."
+    />
+
+    <!--
+      The main site's stylesheet, for the shared header below. This app's own CSS is scoped
+      under .trenches-app at build time (see vite.config.ts) so the two can't fight.
+      Absolute paths: this document is served from /trenches/, the site's assets are at the root.
+    -->
+    <link rel="stylesheet" href="/css/styles.css?v=15" />
+  </head>
+  <body>
+    <!--
+      Same header markup as the site's other pages, kept in sync by hand (as they already are
+      with each other). It is here so the Connect Wallet button on this page is *the* site
+      wallet button, driven by the same js/wallet.js - not a second, competing one. The app
+      picks the resulting connection up via src/bridge/holdexWallet.ts.
+    -->
+    <header class="header">
+      <div class="header-content">
+        <a href="/" class="logo">
+          <span class="logo-text">HolDEX</span>
+        </a>
+
+        <button
+          class="nav-hamburger"
+          id="nav-hamburger"
+          aria-label="Toggle navigation"
+          aria-expanded="false"
+        >
+          <svg
+            class="icon-hamburger"
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg
+            class="icon-close"
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+
+        <nav class="nav" id="main-nav">
+          <a href="/" class="nav-link">Diamond Hands</a>
+          <a href="/community.html" class="nav-link">Watchlist</a>
+          <a href="/api-keys.html" class="nav-link">API</a>
+          <a href="/about.html" class="nav-link">About</a>
+          <a href="/cultify.html" class="nav-link">Analyze</a>
+          <a href="/trenches/" class="nav-link active">Trenches</a>
+        </nav>
+
+        <div class="header-actions">
+          <button class="btn btn-wallet" id="connect-wallet">Connect Wallet</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- .trenches-app is the scope root every rule in this app's stylesheet hangs off. -->
+    <div id="root" class="trenches-app"></div>
+
+    <script src="/js/config.js?v=2"></script>
+    <script src="/js/api.js?v=7"></script>
+    <script src="/js/wallet.js?v=2"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

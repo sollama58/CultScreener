@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://cultscreener-api.onrender.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://cultscreener-api.onrender.com https://trenchscanner-api.onrender.com https://solana-rpc.publicnode.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
@@ -19,6 +19,17 @@
 
 /css/*
   Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+# Trenches SPA. Vite fingerprints every filename with a content hash, so these are immutable:
+# a rebuild that changes a file changes its URL. Safe to cache forever, unlike the hand-authored
+# /js and /css above which keep their filenames across deploys.
+/trenches/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The SPA's entry document is not fingerprinted and points at the current hashed assets, so it
+# must revalidate like the site's other HTML (which /*.html above doesn't match — no extension).
+/trenches/
+  Cache-Control: no-cache
 
 # Images and other static assets: 1-day cache
 /*.jpg

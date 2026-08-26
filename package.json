@@ -1,0 +1,14 @@
+{
+  "name": "cultscreener",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Root build orchestrator for the HolDEX static site. The site itself is hand-authored static files under frontend/; this exists so Render can build the Trenches SPA (trenches/) into frontend/trenches/ before publishing frontend/.",
+  "scripts": {
+    "build": "npm --prefix trenches ci && npm --prefix trenches run build",
+    "build:trenches": "npm --prefix trenches run build",
+    "dev:trenches": "npm --prefix trenches run dev"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
