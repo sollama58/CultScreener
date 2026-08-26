@@ -1,0 +1,982 @@
+/*
+ * This app's own palette, re-pointed at the main site's design tokens so Trenches reads as
+ * the same product as the rest of HolDEX rather than a bolted-on iframe-alike.
+ *
+ * The variable *names* below are this app's (used throughout the 900 lines that follow and by
+ * upstream); the *values* come from frontend/css/styles.css, which is loaded on this page for
+ * the shared header. Each falls back to the original standalone value, so the app still renders
+ * correctly if the site stylesheet ever fails to load or is served from a stale cache.
+ *
+ * Note the accent swap: upstream's green accent (#33d17a) doubled as both "brand" and
+ * "positive/up". The site already separates those — --accent-primary (fire orange) is the
+ * brand, --green is strictly gains — so --accent maps to the brand colour and the up/down
+ * semantics live in --pos/--neg below, matching the site's tables.
+ */
+:root {
+  --bg: var(--bg-primary, #0b0d10);
+  --surface: var(--bg-secondary, #14171c);
+  --surface-hover: var(--bg-hover, #1b1f26);
+  --border: var(--border-color, #262b33);
+  --text: var(--text-primary, #e7ebf0);
+  --text-muted: var(--text-secondary, #8b93a1);
+  --accent: var(--accent-primary, #33d17a);
+  --accent-dim: var(--accent-muted, #1f8a52);
+  --danger: var(--red, #e5534b);
+  --warn: var(--yellow, #d4a72c);
+  --radius: var(--radius-md, 10px);
+
+  /* Gain/loss, kept distinct from the brand accent — see note above. */
+  --pos: var(--green, #33d17a);
+  --neg: var(--red, #e5534b);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * Upstream ran as the whole document and chained height:100% from <html>. Here the app is one
+ * element inside the site's page, below the shared header, so it sizes itself instead — a
+ * height:100% chain would resolve against an auto-height <body> and collapse (visible as the
+ * login card and empty states no longer filling the screen). 70vh keeps short states looking
+ * deliberate without assuming an exact header height.
+ *
+ * Both selectors resolve to the app root once scoped; see vite.config.ts.
+ */
+html,
+body,
+#root {
+  min-height: 70vh;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────── */
+
+.app-loading {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.app-shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content {
+  flex: 1;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+
+/* ── Navbar ─────────────────────────────────────────────────────────── */
+
+/*
+ * Upstream stuck this to the top of the viewport. Inside HolDEX the site header already owns
+ * `position: sticky; top: 0` at z-index 1200, so a second sticky bar at top:0 just slides
+ * underneath it and disappears. This one scrolls normally; the site header remains the only
+ * pinned chrome.
+ */
+.navbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.navbar__brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navbar__tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.navbar__tab {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.navbar__tab:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.navbar__tab--active {
+  background: var(--surface-hover);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.navbar__account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.navbar__wallet {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-family: ui-monospace, monospace;
+}
+
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.health-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.health-badge[data-status="live"] .health-badge__dot {
+  background: var(--pos);
+  box-shadow: 0 0 6px var(--pos);
+}
+
+.health-badge[data-status="degraded"] .health-badge__dot {
+  background: var(--warn);
+  box-shadow: 0 0 6px var(--warn);
+}
+
+.health-badge[data-status="down"] .health-badge__dot {
+  background: var(--danger);
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+
+.btn {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: filter 0.15s ease;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btn:hover {
+  filter: brightness(1.15);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.btn--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btn--ghost {
+  background: none;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+/* ── Login ──────────────────────────────────────────────────────────── */
+
+.login {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login__card {
+  max-width: 420px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 32px;
+}
+
+.login__logo {
+  font-size: 2.5rem;
+  margin-bottom: 8px;
+}
+
+.login__card h1 {
+  margin: 0 0 12px;
+}
+
+.login__tagline {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.login__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  margin: 24px 0;
+}
+
+.login__note {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+/* Bridge status while adopting the wallet connected via the site header. */
+.login__status {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.login__status code {
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+}
+
+/* ── Dashboard / feed ───────────────────────────────────────────────── */
+
+.dashboard__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.dashboard__updated {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.empty-state {
+  color: var(--text-muted);
+  padding: 40px 0;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.welcome-card {
+  background: var(--surface);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+  max-width: 560px;
+  margin: 24px auto;
+  text-align: center;
+}
+
+.welcome-card h3 {
+  margin: 0 0 12px;
+  font-size: 1.3rem;
+}
+
+.welcome-card p {
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+
+.welcome-card .btn {
+  margin-top: 6px;
+}
+
+.token-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.pagination__label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.token-card {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-decoration: none;
+  color: var(--text);
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.token-card:hover {
+  border-color: var(--accent-dim);
+  transform: translateY(-1px);
+}
+
+.token-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.token-card__name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin-right: 6px;
+}
+
+.token-card__symbol {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.token-card__score {
+  font-weight: 800;
+  font-size: 1.1rem;
+  border-radius: 8px;
+  padding: 2px 10px;
+}
+
+.token-card__score[data-tier="high"] {
+  background: var(--green-light, rgba(51, 209, 122, 0.15));
+  color: var(--pos);
+}
+
+.token-card__score[data-tier="mid"] {
+  background: rgba(212, 167, 44, 0.15);
+  color: var(--warn);
+}
+
+.token-card__score[data-tier="low"] {
+  background: rgba(139, 147, 161, 0.15);
+  color: var(--text-muted);
+}
+
+.token-card__tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.tag {
+  background: var(--surface-hover);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.tag--muted {
+  opacity: 0.7;
+}
+
+.token-card__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0 0 10px;
+}
+
+.token-card__stats dt {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.token-card__stats dd {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.token-card__mint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.token-card__mint-text {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-card__copy {
+  flex-shrink: 0;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.token-card__copy:hover {
+  color: var(--text);
+  border-color: var(--accent-dim);
+}
+
+.token-card__change--up {
+  color: var(--pos);
+}
+
+.token-card__change--down {
+  color: var(--danger);
+}
+
+.token-card__change--flat {
+  color: var(--text-muted);
+}
+
+/* ── All-time high ──────────────────────────────────────────────────── */
+
+.token-card__ath {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 10px;
+}
+
+.token-card__ath-label {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
+}
+
+.token-card__ath-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.token-card__ath-pct {
+  color: var(--pos);
+  font-size: 0.85rem;
+}
+
+.token-card__ath-meta {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  margin-top: 2px;
+}
+
+/* ── Score breakdown ────────────────────────────────────────────────── */
+
+.token-card__breakdown {
+  display: flex;
+  gap: 10px;
+  margin: 2px 0 10px;
+}
+
+.breakdown-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.breakdown-bar__label {
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.breakdown-bar__track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+
+.breakdown-bar__fill {
+  display: block;
+  height: 100%;
+  background: var(--accent-dim);
+  border-radius: 2px;
+}
+
+/* ── Filters page ───────────────────────────────────────────────────── */
+
+.info-callout {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+
+.info-callout h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.info-callout ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.info-callout li + li {
+  margin-top: 8px;
+}
+
+.info-callout__note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filter-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.filter-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.filter-card__header h3 {
+  margin: 0;
+}
+
+.filter-card__summary {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 8px 0 12px;
+}
+
+.filter-card__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.badge--on {
+  background: var(--green-light, rgba(51, 209, 122, 0.15));
+  color: var(--pos);
+}
+
+.badge--off {
+  background: rgba(139, 147, 161, 0.15);
+  color: var(--text-muted);
+}
+
+/* ── Filter form ────────────────────────────────────────────────────── */
+
+.filter-card--editing {
+  border-color: var(--accent-dim);
+}
+
+.filter-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.filter-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.filter-form input,
+.filter-form select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.filter-form__row {
+  display: flex;
+  gap: 14px;
+}
+
+.filter-form__checkbox {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  justify-content: flex-end;
+}
+
+/* A label's text + its (i) hint icon need to sit inline together as a single flex item - a
+   column-direction .filter-form label would otherwise stack the icon on its own line between
+   the label text and the input. */
+.filter-form__label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-form__hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: help;
+  font-size: 0.85rem;
+}
+
+.filter-form__hint:hover {
+  color: var(--accent);
+}
+
+.filter-form__section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 -4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.filter-form__caption {
+  margin: -8px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.filter-form__actions {
+  display: flex;
+  gap: 10px;
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+/* ── Settings page ──────────────────────────────────────────────────── */
+
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-card h3 {
+  margin: 0;
+}
+
+.settings-card__status {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.settings-card__status--linked {
+  color: var(--pos);
+}
+
+.settings-card__select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.settings-card__pending {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.settings-card__pending code {
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+
+/* ── Admin panel ────────────────────────────────────────────────────── */
+
+.badge--warn {
+  background: rgba(212, 167, 44, 0.15);
+  color: var(--warn);
+}
+
+.admin-subtabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.admin-subtab {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.admin-subtab:hover {
+  color: var(--text);
+}
+
+.admin-subtab--active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.admin-section > .dashboard__header {
+  margin-bottom: 12px;
+}
+
+.admin-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.admin-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-stat-card__value {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.admin-stat-card__label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.admin-live-feed__note {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 10px 14px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-table th {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  background: var(--surface);
+}
+
+.admin-table tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-table tr:hover td {
+  background: var(--surface-hover);
+}
+
+.admin-table a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.admin-table a:hover {
+  color: var(--accent);
+}
+
+.admin-table__mono {
+  font-family: ui-monospace, monospace;
+}
+
+.admin-table__error {
+  color: var(--danger);
+  white-space: normal;
+  max-width: 320px;
+}
+
+.admin-table__reasons {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: help;
+}
+
+.admin-config {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 20px;
+  max-width: 480px;
+}
+
+.admin-config__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-config__row:last-child {
+  border-bottom: none;
+}
+
+.admin-config__row dt {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.admin-config__row dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* ── Leaderboard ────────────────────────────────────────────────────── */
+
+.leaderboard__note {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 0 0 20px;
+  max-width: 720px;
+}
+
+.leaderboard__return {
+  color: var(--pos);
+  font-weight: 700;
+}

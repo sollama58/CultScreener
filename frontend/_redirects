@@ -1,0 +1,8 @@
+# Render static-site rewrites. Files that actually exist are served before any rule here
+# applies, so /trenches/assets/* and the site's own pages are unaffected.
+
+# Trenches SPA: hand any /trenches/* URL back to the app's entry document so a refresh or a
+# pasted link lands in the app instead of a 404. Status 200 = rewrite (URL stays put), not a
+# redirect. The app keeps its tab state client-side rather than in the URL, so this is a
+# safety net rather than routing.
+/trenches/*  /trenches/index.html  200
