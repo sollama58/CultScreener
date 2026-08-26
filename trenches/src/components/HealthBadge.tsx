@@ -1,29 +1,64 @@
 import { useEffect, useState } from "react";
-import { getWorkerHealth } from "../api/client";
+import { getWorkerHealth, ApiError } from "../api/client";
 import type { WorkerHeartbeat } from "../api/types";
 
 const POLL_INTERVAL_MS = 60_000;
 
-type Status = "loading" | "live" | "degraded" | "down";
+/**
+ * After this many consecutive unreachable results we stop polling. A content blocker
+ * (uBlock, Brave Shields) or an offline device fails every attempt identically and forever,
+ * and each one logs its own net::ERR_* line in the console — retrying past this point buys
+ * nothing and just fills the console. A reload re-arms it.
+ */
+const MAX_UNREACHABLE_ATTEMPTS = 3;
+
+type Status = "loading" | "live" | "degraded" | "down" | "unknown";
 
 export function HealthBadge() {
   const [scanJob, setScanJob] = useState<WorkerHeartbeat | undefined>(undefined);
   const [status, setStatus] = useState<Status>("loading");
 
   useEffect(() => {
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | undefined;
+    let unreachableCount = 0;
+
     const poll = async () => {
       try {
         const health = await getWorkerHealth();
+        if (cancelled) return;
+        unreachableCount = 0;
         const scan = health.jobs.find((j) => j.job === "scan");
         setScanJob(scan);
         setStatus(computeStatus(scan));
-      } catch {
-        setStatus("down");
+      } catch (err) {
+        if (cancelled) return;
+        // An ApiError means the server answered and told us something is wrong — that is a
+        // real signal about the scanner. Anything else means the request never got there
+        // (blocked by an extension, offline, DNS), which says nothing about the scanner at
+        // all. Reporting that as "Not scanning" would be asserting something we can't know.
+        if (err instanceof ApiError) {
+          unreachableCount = 0;
+          setScanJob(undefined);
+          setStatus("down");
+          return;
+        }
+        unreachableCount += 1;
+        setScanJob(undefined);
+        setStatus("unknown");
+        if (unreachableCount >= MAX_UNREACHABLE_ATTEMPTS && interval !== undefined) {
+          clearInterval(interval);
+          interval = undefined;
+        }
       }
     };
+
     void poll();
-    const interval = setInterval(() => void poll(), POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    interval = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (interval !== undefined) clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -51,11 +86,16 @@ function labelFor(status: Status): string {
       return "Degraded";
     case "down":
       return "Not scanning";
+    case "unknown":
+      return "Status unavailable";
   }
 }
 
 function tooltipFor(status: Status, scan: WorkerHeartbeat | undefined): string {
   if (status === "loading") return "Checking scanner status…";
+  if (status === "unknown") {
+    return "Couldn't reach the scanner status endpoint — often a browser extension or ad blocker blocking the request. This doesn't affect the scanner itself.";
+  }
   if (!scan) return "The scanner hasn't reported in yet.";
   const lastRun = new Date(scan.lastRunAt).toLocaleTimeString();
   if (status === "down") return `Scanner hasn't run recently. Last seen ${lastRun}.`;
