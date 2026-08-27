@@ -8,6 +8,7 @@ import {
   verifySignMessage,
   verifyWalletSignIn,
   ApiError,
+  UNAUTHORIZED_EVENT,
 } from "../api/client";
 import type { User } from "../api/types";
 
@@ -34,6 +35,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(setUser)
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
+  }, []);
+
+  // Any 401 anywhere means the session is gone — drop straight back to the sign-in screen
+  // rather than leaving the user on a page that looks signed in but can no longer load
+  // anything. The bridge will re-adopt their wallet, so signing back in is one signature.
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
   const signIn = useCallback(async () => {

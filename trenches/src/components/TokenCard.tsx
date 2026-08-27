@@ -6,7 +6,16 @@ export function TokenCard({ match }: { match: Match }) {
   const { token, snapshot, latestSnapshot } = match;
   const name = token.name ?? token.symbol ?? token.mintAddress.slice(0, 8);
   const dexUrl = `https://dexscreener.com/solana/${token.pairAddress ?? token.mintAddress}`;
-  const change = pctChangeSinceAlert(snapshot.marketCapUsd, latestSnapshot?.marketCapUsd);
+  // The server already reconciled the live ping against the latest snapshot; re-deriving that
+  // here is wrong once a token drops out of the viewed set. Fall back to latestSnapshot only if
+  // the field is absent entirely (older API deploy) — a `null` from the server is authoritative
+  // and means "no figure", not "go look somewhere else".
+  const nowMcap =
+    match.currentMarketCapUsd !== undefined
+      ? match.currentMarketCapUsd
+      : (latestSnapshot?.marketCapUsd ?? null);
+  const nowMcapAt = match.currentMarketCapAt ?? latestSnapshot?.takenAt ?? null;
+  const change = pctChangeSinceAlert(snapshot.marketCapUsd, nowMcap);
 
   return (
     <a className="token-card" href={dexUrl} target="_blank" rel="noreferrer">
@@ -54,12 +63,12 @@ export function TokenCard({ match }: { match: Match }) {
           <dd
             className={change ? `token-card__change--${change.tone}` : undefined}
             title={
-              latestSnapshot
-                ? `As of the worker's most recent scan of this token: ${new Date(latestSnapshot.takenAt).toLocaleString()}`
-                : "No scan of this token since it matched yet"
+              nowMcapAt
+                ? `Freshest market cap the scanner has for this token: ${new Date(nowMcapAt).toLocaleString()}`
+                : "No fresher market cap than the alert-time one yet"
             }
           >
-            {latestSnapshot ? fmtUsd(latestSnapshot.marketCapUsd) : "—"}
+            {fmtUsd(nowMcap)}
             {change && ` (${change.text})`}
           </dd>
         </div>
@@ -98,16 +107,19 @@ export function TokenCard({ match }: { match: Match }) {
 }
 
 /**
- * `latestSnapshot` reflects however recently the worker last re-scanned this specific token
+ * Compares the frozen alert-time mcap against the freshest figure the server has (see nowMcap
+ * above). That figure reflects however recently the worker last re-scanned this specific token
  * (every ~7 minutes while it's still in the mcap band, per SCAN_INTERVAL_MINUTES - not at all
  * once it falls out of band) - so this is "as of the last data we actually have," not a live
  * price feed. Undefined/null when there's nothing newer than the alert-time snapshot to compare.
  */
 function pctChangeSinceAlert(
   alertMcap: number,
-  nowMcap: number | undefined,
+  nowMcap: number | null | undefined,
 ): { text: string; tone: "up" | "down" | "flat" } | null {
-  if (nowMcap === undefined || alertMcap <= 0) return null;
+  if (nowMcap === undefined || nowMcap === null || !Number.isFinite(nowMcap) || alertMcap <= 0) {
+    return null;
+  }
   const pct = Math.round(((nowMcap - alertMcap) / alertMcap) * 100);
   const tone = pct > 0 ? "up" : pct < 0 ? "down" : "flat";
   return { text: `${pct > 0 ? "+" : ""}${pct}%`, tone };
@@ -143,6 +155,44 @@ function AthSection({ match }: { match: Match }) {
   );
 }
 
+/**
+ * Copies text, falling back to a hidden textarea + execCommand where the async Clipboard API
+ * isn't there.
+ *
+ * `navigator.clipboard` is undefined outside a secure context and in a number of in-app
+ * webviews — Telegram's and X's among them, which is exactly where a memecoin CA gets opened.
+ * Reaching straight for `navigator.clipboard.writeText` throws a TypeError on the property
+ * access itself, *before* any promise exists, so a trailing `.catch()` never sees it: the click
+ * just dies with an uncaught error. Copying the CA was an explicit product requirement, so it
+ * gets a real fallback rather than silently doing nothing.
+ */
+async function copyText(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Denied or unavailable — fall through to the legacy path below.
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    // Keep it off-screen and non-focusable-looking so the page doesn't visibly jump.
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Copies the mint address to the clipboard - stops the click from also triggering the card's
  *  own link-out to DexScreener, since the whole card is one big <a>. */
 function CopyButton({ value }: { value: string }) {
@@ -151,16 +201,11 @@ function CopyButton({ value }: { value: string }) {
   const handleClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    navigator.clipboard
-      .writeText(value)
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => {
-        // Clipboard access can be denied (permissions, insecure context) - nothing to recover
-        // into here beyond just not showing the "Copied!" confirmation.
-      });
+    void copyText(value).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   };
 
   return (

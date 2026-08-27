@@ -51,6 +51,11 @@ export interface Token {
   hasTelegram: boolean;
   hasWebsite: boolean;
   narrativeTags: string[];
+  /** Latest cheap price/mcap ping for this token, independent of the full snapshot cycle.
+   *  Prefer Match.currentMarketCapUsd over reading these directly - see the note there. */
+  liveMarketCapUsd?: number | null;
+  livePriceUsd?: number | null;
+  liveDataAt?: string | null;
 }
 
 export interface TokenSnapshot {
@@ -117,6 +122,19 @@ export interface Match {
    * change alongside the frozen alert-time one - see apps/api/src/routes/matches.ts.
    */
   latestSnapshot: TokenSnapshot | null;
+  /**
+   * The freshest market cap the server actually has for this token: it reconciles the live ping
+   * against the latest snapshot and returns whichever is genuinely newer.
+   *
+   * Use this for "now" rather than deriving it from token.liveMarketCapUsd vs
+   * latestSnapshot.marketCapUsd — that derivation gets it wrong once a token drops out of the
+   * viewed set, which is exactly when the two sources disagree.
+   *
+   * Optional here only because this file is hand-written and can lag the API; treat `undefined`
+   * as "this deployment didn't send it" and `null` as "the server has no figure".
+   */
+  currentMarketCapUsd?: number | null;
+  currentMarketCapAt?: string | null;
   filter: { id: string; name: string };
 }
 

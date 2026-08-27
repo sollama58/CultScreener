@@ -19,6 +19,13 @@ import type {
 
 const BASE_URL = import.meta.env.VITE_API_URL;
 
+/**
+ * Fired on any 401 from this API. AuthContext listens and clears the user; nothing else should
+ * need to care. Deliberately a DOM event rather than a callback so client.ts stays free of
+ * imports from the React tree.
+ */
+export const UNAUTHORIZED_EVENT = "trenches:unauthorized";
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -40,6 +47,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
+    // The session is httpOnly and server-owned, so the only way this app learns it has expired
+    // (or was revoked, or the server restarted) is a 401 on some later call. Without this every
+    // caller just swallows the failure into its own catch: the feed silently stops updating and
+    // the user sits looking at a frozen page that still says they're signed in. Broadcasting it
+    // once here lets AuthContext drop back to the sign-in screen from anywhere.
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
     let message = `Request failed with status ${res.status}`;
     try {
       const body = await res.json();

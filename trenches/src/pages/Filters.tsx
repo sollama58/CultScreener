@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createFilter, deleteFilter, getConfig, listFilters, updateFilter } from "../api/client";
+import { ApiError, createFilter, deleteFilter, getConfig, listFilters, updateFilter } from "../api/client";
 import type { FilterInput, PublicConfig, UserFilter } from "../api/types";
 import { FilterForm } from "../components/FilterForm";
 
@@ -17,8 +17,37 @@ export function Filters() {
   const [config, setConfig] = useState<PublicConfig>(FALLBACK_CONFIG);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
+  // Distinct from the form's own error: this covers list/delete/pause failures, which otherwise
+  // failed completely silently - the row just didn't change and nothing said why.
+  const [listError, setListError] = useState<string | null>(null);
+  // null until the first load settles, so an empty list caused by a *failed* fetch can't be
+  // rendered as the "No filters yet" empty state - which would tell a user with filters that
+  // they have none.
+  const [loaded, setLoaded] = useState(false);
 
-  const refresh = () => listFilters().then(setFilters);
+  const refresh = () =>
+    listFilters()
+      .then((f) => {
+        setFilters(f);
+        setLoaded(true);
+        setListError(null);
+      })
+      .catch((err: unknown) => {
+        setListError(
+          err instanceof ApiError ? err.message : "Couldn't load your filters. Check your connection.",
+        );
+      });
+
+  /** Shared by delete/pause/resume: report what the API said instead of failing silently. */
+  const runAction = async (action: () => Promise<unknown>) => {
+    setListError(null);
+    try {
+      await action();
+      await refresh();
+    } catch (err) {
+      setListError(err instanceof ApiError ? err.message : "That didn't work. Please try again.");
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -29,6 +58,9 @@ export function Filters() {
     ]).finally(() => setLoading(false));
   }, []);
 
+  // create/update deliberately let the error propagate: FilterForm catches it and renders the
+  // API's message next to the fields being edited, which is where it belongs. Closing the form
+  // first would throw that message away along with the user's input.
   const handleCreate = async (input: Partial<FilterInput>) => {
     await createFilter(input);
     setEditingId(null);
@@ -41,15 +73,13 @@ export function Filters() {
     await refresh();
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     if (!confirm("Delete this filter? You'll stop getting matches for it.")) return;
-    await deleteFilter(id);
-    await refresh();
+    void runAction(() => deleteFilter(id));
   };
 
-  const handleToggleActive = async (filter: UserFilter) => {
-    await updateFilter(filter.id, { isActive: !filter.isActive });
-    await refresh();
+  const handleToggleActive = (filter: UserFilter) => {
+    void runAction(() => updateFilter(filter.id, { isActive: !filter.isActive }));
   };
 
   if (loading) return <p className="empty-state">Loading filters…</p>;
@@ -100,7 +130,9 @@ export function Filters() {
         </div>
       )}
 
-      {filters.length === 0 && editingId === null && (
+      {listError && <p className="form-error">{listError}</p>}
+
+      {loaded && filters.length === 0 && editingId === null && (
         <p className="empty-state">No filters yet - create one above to start matching tokens.</p>
       )}
 
@@ -132,10 +164,10 @@ export function Filters() {
                 <button className="btn" onClick={() => setEditingId(filter.id)}>
                   Edit
                 </button>
-                <button className="btn" onClick={() => void handleToggleActive(filter)}>
+                <button className="btn" onClick={() => handleToggleActive(filter)}>
                   {filter.isActive ? "Pause" : "Resume"}
                 </button>
-                <button className="btn btn--danger" onClick={() => void handleDelete(filter.id)}>
+                <button className="btn btn--danger" onClick={() => handleDelete(filter.id)}>
                   Delete
                 </button>
               </div>
