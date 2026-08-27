@@ -8,6 +8,7 @@ import {
   verifySignMessage,
   verifyWalletSignIn,
   ApiError,
+  UNAUTHORIZED_EVENT,
 } from "../api/client";
 import type { User } from "../api/types";
 
@@ -34,6 +35,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(setUser)
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
+  }, []);
+
+  // Any 401 anywhere means the session is gone — drop straight back to the sign-in screen
+  // rather than leaving the user on a page that looks signed in but can no longer load
+  // anything. The bridge will re-adopt their wallet, so signing back in is one signature.
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
   const signIn = useCallback(async () => {
@@ -76,6 +86,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setError(err.message);
       } else if (err instanceof Error && err.message.toLowerCase().includes("reject")) {
         setError("Signature request was rejected.");
+      } else if (err instanceof TypeError) {
+        // fetch() rejects with a TypeError only when the request never reached the server:
+        // blocked by a browser extension, offline, or DNS/TLS failure. Worth naming, because
+        // content blockers do block this API's domain and the generic "try again" below sends
+        // the user round the same loop forever with no idea what to change.
+        setError(
+          "Couldn't reach the Trenches server. If you use an ad blocker or privacy extension, " +
+            "allow trenchscanner-api.onrender.com and try again.",
+        );
       } else {
         setError("Sign-in failed. Please try again.");
       }

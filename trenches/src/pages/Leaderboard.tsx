@@ -48,9 +48,11 @@ export function Leaderboard() {
       </div>
 
       <p className="leaderboard__note">
-        The best calls TrenchScanner has ever surfaced - every alert that went on to at least double (+100%)
-        from its market cap at alert time, ranked by how far it ran. One entry per token, and it only shows up
-        here once it's actually crossed that bar - most alerts never will, and that's expected.
+        <strong>These are platform-wide, not your alerts.</strong> Everyone is alerted from the same
+        discovery pipeline, so this is the best calls TrenchScanner has ever surfaced for anyone - every alert
+        that went on to at least double (+100%) from its market cap at alert time, ranked by how far it ran.
+        One entry per token, and it only shows up here once it's actually crossed that bar - most alerts never
+        will, and that's expected.
       </p>
 
       {loading && <p className="empty-state">Loading leaderboard…</p>}

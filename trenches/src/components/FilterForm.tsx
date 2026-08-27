@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { ApiError } from "../api/client";
 import type { FilterInput, PublicConfig, UserFilter } from "../api/types";
 
 interface FilterFormProps {
@@ -118,8 +119,16 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
         maxFreshTop10WalletPct: toNumberOrNull(form.maxFreshTop10WalletPct),
         isActive: form.isActive,
       });
-    } catch {
-      setError("Couldn't save this filter. Please try again.");
+    } catch (err) {
+      // The API writes its 4xx messages to be shown to users verbatim ("Market cap must be
+      // between $5,000 and $1,500,000", a name that's too long, and so on). Replacing that with
+      // a generic retry prompt hides the one thing the user needs in order to fix the filter,
+      // so they retry the identical input and fail identically.
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't save this filter - check your connection and try again.",
+      );
     } finally {
       setSaving(false);
     }

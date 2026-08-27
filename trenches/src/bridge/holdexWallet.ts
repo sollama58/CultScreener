@@ -110,3 +110,23 @@ export function resolveWalletName(hint: string | null, available: readonly strin
     ) ?? null
   );
 }
+
+/**
+ * Opens the main site's wallet picker by clicking its real header button.
+ *
+ * Deliberately a delegation rather than a reimplementation: wallet.js owns provider
+ * detection, the selection modal, persistence and the connect/disconnect events. Calling its
+ * button keeps exactly one connect implementation on the page, so the Trenches login screen
+ * can offer a retry without becoming a second, competing wallet flow.
+ *
+ * Returns false if the header button isn't on the page (it always is here, but this file has
+ * no way to guarantee that), letting the caller fall back to instructing the user.
+ */
+export function requestSiteWalletConnect(): boolean {
+  const btn = document.getElementById("connect-wallet");
+  if (btn instanceof HTMLElement) {
+    btn.click();
+    return true;
+  }
+  return false;
+}

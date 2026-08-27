@@ -980,3 +980,211 @@ select {
   color: var(--pos);
   font-weight: 700;
 }
+
+/* ── Responsive ─────────────────────────────────────────────────────────
+ *
+ * This app shipped desktop-only — the 900 lines above contain no media queries at all — so
+ * everything here is additive. It sits at the end of the file deliberately: these rules must
+ * win over the base ones without needing !important or raised specificity.
+ *
+ * The shared site header above the app is not touched by any of this; it brings its own
+ * responsive rules and hamburger menu from frontend/css/styles.css.
+ */
+
+/* Tablets and phones */
+@media (max-width: 768px) {
+  .app-content {
+    padding: 16px 14px 48px;
+  }
+
+  /* Brand | tabs | account no longer fit on one row, so stack them. */
+  .navbar {
+    gap: 12px;
+    padding: 12px 14px;
+    align-items: stretch;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* The shell is itself a flex column; it needs the same treatment or it re-expands to fit
+     the widest descendant regardless of what the navbar does. */
+  .app-shell,
+  .app-content {
+    min-width: 0;
+  }
+
+  /* Wrap onto a second row rather than scrolling sideways. A scrolling strip fits in one
+     line, but it puts Settings (and Admin, for admins) off-screen with no affordance that
+     they exist — on a 320px screen only the first two-and-a-bit tabs are visible. Wrapping
+     keeps every tab reachable, which matters more here than saving one row of height.
+     max-width also stops a stretched flex item resolving to its max-content width (measured:
+     345px inside a 320px navbar), which made the *page* scroll sideways. */
+  .navbar__tabs {
+    flex: none;
+    flex-wrap: wrap;
+    max-width: 100%;
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .navbar__tab {
+    white-space: nowrap;
+    /* ~44px tall: the minimum comfortable touch target. */
+    padding: 11px 14px;
+  }
+
+  /* Every direct child needs min-width:0. Left at the default `auto`, each one refuses to go
+     below its own min-content width; the account row (health badge + wallet + Sign out)
+     demands ~345px, which inflates the navbar's content box and drags the other two children
+     out to match, pushing the page sideways. Measured at 320px before this: children 345px
+     wide inside a 320px navbar. */
+  .navbar__brand,
+  .navbar__tabs,
+  .navbar__account {
+    min-width: 0;
+  }
+
+  .navbar__account {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Wallet address is a single unbreakable monospace token — clip it rather than let it set
+     the row's minimum width. */
+  .navbar__wallet {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* Heading + action button: let the button drop to its own line instead of being squeezed. */
+  .dashboard__header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .dashboard__header h2 {
+    margin: 0;
+  }
+
+  /* Side-by-side form fields are unusable at this width. */
+  .filter-form__row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* Inputs below 16px make iOS Safari zoom the whole page on focus, and it never zooms back
+     out — the single most common "the form is broken on my phone" bug. */
+  .filter-form input,
+  .filter-form select,
+  .settings-card__select {
+    font-size: 16px;
+    padding: 11px 12px;
+  }
+
+  /* Button rows: wrap, and give each a real touch target. */
+  .filter-form__actions,
+  .filter-card__actions,
+  .login__actions {
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    padding: 11px 16px;
+    min-height: 44px;
+  }
+
+  .filter-card__actions .btn,
+  .filter-form__actions .btn {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  .login__card {
+    padding: 28px 20px;
+  }
+
+  .login__actions .btn {
+    width: 100%;
+  }
+
+  .welcome-card {
+    padding: 22px 18px;
+  }
+
+  .info-callout {
+    padding: 16px 14px;
+  }
+
+  /* Wide admin tables already scroll inside .admin-table-wrap; make that gesture smooth and
+     make sure the wrapper itself can shrink inside a grid/flex parent (min-width:auto is the
+     default that causes the *page* to scroll sideways instead of the table). */
+  .admin-table-wrap {
+    -webkit-overflow-scrolling: touch;
+    min-width: 0;
+  }
+
+  .pagination {
+    gap: 10px;
+  }
+}
+
+/* Small phones */
+@media (max-width: 480px) {
+  /* One card per row: below this the two-column auto-fill leaves cards too narrow to read. */
+  .token-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-stat-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-stat-card__value {
+    font-size: 1.35rem;
+  }
+
+  .login__card {
+    padding: 24px 16px;
+  }
+
+  .login__card h1 {
+    font-size: 1.5rem;
+  }
+
+  .filter-card__actions .btn {
+    /* Three actions (Edit / Pause / Delete) fit two-up rather than three cramped columns. */
+    flex: 1 1 calc(50% - 5px);
+  }
+}
+
+/* Long unbroken strings — mint addresses, wallet addresses, keyword lists — are the usual
+   cause of a page that scrolls sideways on a phone. Applies at every width; it only has an
+   effect when a word genuinely can't fit. */
+.filter-card__summary,
+.settings-card__pending code,
+.token-card__name {
+  overflow-wrap: anywhere;
+}
+
+/* Live-push indicator in the feed header. Present only while the SSE stream is connected, so
+   its absence is the tell that the feed has quietly fallen back to polling. */
+.dashboard__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 10px;
+  color: var(--pos);
+  font-weight: 600;
+}
+
+.dashboard__live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pos);
+  box-shadow: 0 0 6px var(--pos);
+}

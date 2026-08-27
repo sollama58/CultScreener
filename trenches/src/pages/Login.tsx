@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useHoldexWalletBridge } from "../bridge/useHoldexWalletBridge";
+import { requestSiteWalletConnect } from "../bridge/holdexWallet";
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
@@ -8,8 +9,9 @@ function shortAddress(address: string): string {
 
 export function Login() {
   const { signIn, signingIn, error } = useAuth();
-  const { state, siteAddress } = useHoldexWalletBridge();
+  const { state, siteAddress, refresh } = useHoldexWalletBridge();
   const autoTriggered = useRef(false);
+  const [noHeaderButton, setNoHeaderButton] = useState(false);
 
   // Once the bridge has adopted the site's wallet, go straight to the signature step rather
   // than making the user press another button to get there. Guarded by a ref so a re-render
@@ -20,6 +22,14 @@ export function Login() {
     autoTriggered.current = true;
     void signIn();
   }, [state, signingIn, error, signIn]);
+
+  // Delegates to the site header's own button (see requestSiteWalletConnect) and re-reads, so
+  // the screen recovers even if wallet.js's events were missed entirely.
+  const connectAndRetry = useCallback(() => {
+    const opened = requestSiteWalletConnect();
+    setNoHeaderButton(!opened);
+    refresh();
+  }, [refresh]);
 
   return (
     <div className="login">
@@ -35,17 +45,31 @@ export function Login() {
           {state === "checking" && <p className="login__status">Checking your wallet…</p>}
 
           {state === "no-site-wallet" && (
-            <p className="login__status">
-              Use the <strong>Connect Wallet</strong> button in the header above to get started.
-            </p>
+            <>
+              <p className="login__status">
+                Connect your wallet to get started — use the <strong>Connect Wallet</strong> button in
+                the header above, or:
+              </p>
+              <button className="btn btn--primary" onClick={connectAndRetry}>
+                Connect Wallet
+              </button>
+              <button className="btn" onClick={refresh}>
+                Try again
+              </button>
+            </>
           )}
 
           {state === "unavailable" && (
-            <p className="form-error">
-              {siteAddress ? `${shortAddress(siteAddress)} is connected` : "A wallet is connected"} on
-              HolDEX, but that wallet extension isn&apos;t available in this browser. Reconnect from the
-              header above.
-            </p>
+            <>
+              <p className="form-error">
+                {siteAddress ? `${shortAddress(siteAddress)} is connected` : "A wallet is connected"} on
+                HolDEX, but we couldn&apos;t reach that wallet in this browser. Make sure the extension
+                is unlocked, then try again.
+              </p>
+              <button className="btn btn--primary" onClick={connectAndRetry}>
+                Try again
+              </button>
+            </>
           )}
 
           {state === "ready" && (
@@ -59,6 +83,12 @@ export function Login() {
                 {signingIn ? "Waiting for signature…" : error ? "Try again" : "Sign in"}
               </button>
             </>
+          )}
+
+          {noHeaderButton && (
+            <p className="form-error">
+              Couldn&apos;t open the wallet picker. Please reload the page and try again.
+            </p>
           )}
         </div>
 
