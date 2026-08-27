@@ -1169,3 +1169,22 @@ select {
 .token-card__name {
   overflow-wrap: anywhere;
 }
+
+/* Live-push indicator in the feed header. Present only while the SSE stream is connected, so
+   its absence is the tell that the feed has quietly fallen back to polling. */
+.dashboard__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 10px;
+  color: var(--pos);
+  font-weight: 600;
+}
+
+.dashboard__live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pos);
+  box-shadow: 0 0 6px var(--pos);
+}

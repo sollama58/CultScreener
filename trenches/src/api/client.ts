@@ -173,3 +173,29 @@ export function unlinkUserTelegram(userId: string) {
 export function getAdminConfig() {
   return request<AdminConfig>("/admin/config");
 }
+
+// ── Live match stream ────────────────────────────────────────────────────
+/**
+ * Opens the server-sent events stream that fires the moment a match is created for the
+ * signed-in user.
+ *
+ * The worker scans once a minute, so without this the feed's latency is however long the
+ * fallback poll happens to be. With it, an alert lands as soon as the server has it.
+ *
+ * Two things the caller must respect:
+ *  - Events carry only `{ matchId }`. They are a nudge, not the record — refetch /matches to
+ *    render. Nothing here should try to build a match out of the event payload.
+ *  - This is NOT reliable delivery. The underlying Postgres NOTIFY isn't durable, so a client
+ *    that happens to be disconnected at the instant of publication misses that event outright,
+ *    and some proxies kill long-lived responses. A fallback poll is required, not optional.
+ *
+ * EventSource reconnects by itself (the server sends `retry: 5000`), so callers must not layer
+ * their own reconnect loop on top. A non-200 — notably the 503 the server returns when it is at
+ * stream capacity — closes it permanently instead, which is the signal to rely on polling.
+ *
+ * withCredentials is what carries the session cookie; without it the stream just 401s.
+ */
+export function openMatchesStream(): EventSource | null {
+  if (typeof EventSource === "undefined") return null;
+  return new EventSource(`${BASE_URL}/matches/stream`, { withCredentials: true });
+}
