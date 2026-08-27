@@ -23,6 +23,12 @@ export function AdminConfig() {
         ${config.mcapFilterMin.toLocaleString()} – ${config.mcapFilterMax.toLocaleString()}
       </Row>
       <Row label="Scan interval">every {config.scanIntervalMinutes} min</Row>
+      <Row label="RugCheck cache">{config.rugCheckCacheTtlMinutes} min TTL</Row>
+      <Row label="Holder growth window">{config.holderGrowthWindowMinutes} min</Row>
+      <Row label="Live price refresh">
+        every {config.livePriceIntervalMinutes} min, up to {config.livePriceMaxTracked.toLocaleString()} tokens
+      </Row>
+      <Row label="Active view window">{config.activeViewWindowMinutes} min</Row>
       <Row label="Daily digest">{config.digestHourUtc}:00 UTC</Row>
       <Row label="Watchlist TTL">{config.watchlistTtlHours}h</Row>
       <Row label="Watchlist cap">{config.watchlistMaxTracked.toLocaleString()} tokens</Row>
@@ -30,6 +36,7 @@ export function AdminConfig() {
       <Row label="Snapshot retention">{config.snapshotRetentionDays}d</Row>
       <Row label="Stale token retention">{config.staleTokenRetentionDays}d</Row>
       <Row label="Outcome tracking">{config.outcomeTrackingHourUtc}:00 UTC</Row>
+      <Row label="App domain">{config.publicAppDomain}</Row>
       <Row label="Telegram">
         <span className={`badge ${config.telegramConfigured ? "badge--on" : "badge--off"}`}>
           {config.telegramConfigured ? "Configured" : "Not configured"}

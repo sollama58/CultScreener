@@ -79,6 +79,11 @@ export interface TokenSnapshot {
   riskFlags: string[];
   /** % of the top-10 holders whose wallet was funded <24h ago. Null if there was no holder list to check. */
   freshTop10WalletPct: number | null;
+  /** Was the mint launched in Pump.fun's Mayhem Mode? An automatic, non-optional rejection: their
+   *  own AI agents mint an extra 1B supply and trade it for the token's first 24h, which
+   *  manufactures the volume and holder growth this app scores on. Null means the check never ran
+   *  or failed, which the screen also rejects - so `!== false` is what "excluded" means here. */
+  isMayhemMode: boolean | null;
   /** Has the mint graduated off a Pump.fun bonding curve to a real AMM? Null if unknown (no DexScreener pair). */
   graduated: boolean | null;
   mintAuthorityActive: boolean | null;
@@ -111,6 +116,10 @@ export interface Match {
   peakMcapAt: string | null;
   /** (peakMcapUsd - snapshot.marketCapUsd) / snapshot.marketCapUsd * 100 - null on the same terms as peakMcapUsd. */
   peakReturnPct: number | null;
+  /** When the recorded peak first reached +100% over the alert mcap - set once and never moved,
+   *  and dated to when that peak was actually seen rather than to the run that noticed. Non-null
+   *  is exactly what makes this match eligible for the Leaderboard. */
+  hitHundredPctAt: string | null;
   token: Token;
   /** The frozen snapshot from when this match was created - "alerted at," never updated. */
   snapshot: TokenSnapshot;
@@ -191,6 +200,18 @@ export interface WorkerHealth {
   jobs: WorkerHeartbeat[];
 }
 
+/**
+ * State of the API instance's push channel (GET /health/stream).
+ *
+ * Worth surfacing because a broken listener is completely silent from the outside: no request
+ * fails, clients just quietly stop receiving live alerts and fall back to their poll. Counts are
+ * per-instance, so behind several API instances this reports whichever one answered.
+ */
+export interface StreamHealth {
+  connected: boolean;
+  subscribers: number;
+}
+
 // ── Admin ────────────────────────────────────────────────────────────────
 export interface AdminStats {
   totalUsers: number;
@@ -225,6 +246,22 @@ export interface AdminLiveFeed {
 
 export interface AdminConfig {
   scanIntervalMinutes: number;
+  /** How often the market cap is refreshed for tokens someone currently has open, and the cap on
+   *  how many one pass will touch. Far faster than the scan cycle because it is market data only. */
+  livePriceIntervalMinutes: number;
+  livePriceMaxTracked: number;
+  /** How long after last being viewed a token keeps getting tracked, even out of the mcap band. */
+  activeViewWindowMinutes: number;
+  /** How long a RugCheck report is reused. This is what lets the scan run every minute without
+   *  multiplying RugCheck traffic one-for-one - the two are only sound in combination. */
+  rugCheckCacheTtlMinutes: number;
+  /** The wall-clock span holderGrowthPct is measured over. Worth reading before setting a
+   *  minHolderGrowthPct threshold: "+5%" means nothing without knowing over how long. */
+  holderGrowthWindowMinutes: number;
+  /** The dashboard's own domain as the API has it. Decides both the Sign-In With Solana domain
+   *  binding and the session cookie's SameSite, so it is the first thing to check when sign-in
+   *  works in one browser and not another. */
+  publicAppDomain: string;
   digestHourUtc: number;
   mcapFilterMin: number;
   mcapFilterMax: number;
