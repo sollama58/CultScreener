@@ -3,6 +3,8 @@ import { listFilters, listMatches, openMatchesStream } from "../api/client";
 import { HealthBadge } from "../components/HealthBadge";
 import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
+import { usePreferences } from "../context/PreferencesContext";
+import { playAlertSound } from "../utils/alertSound";
 
 /**
  * Alerts do NOT wait for this. New matches arrive over the SSE stream the instant the server
@@ -22,12 +24,22 @@ import { TokenCard } from "../components/TokenCard";
  */
 const POLL_INTERVAL_MS = 45_000;
 
+/**
+ * The shortest gap between two alert chimes.
+ *
+ * The scanner creates matches in batches, so five tokens can qualify in the same cycle - and both
+ * paths below (the stream nudge and the poll's own detection) can notice the same batch. One
+ * sound per burst is the useful signal; five overlapping chimes is just noise.
+ */
+const SOUND_COOLDOWN_MS = 2_000;
+
 interface DashboardProps {
   /** Jumps to the Filters tab - wired to the same tab state the Navbar uses (see App.tsx). */
   onGoToFilters: () => void;
 }
 
 export function Dashboard({ onGoToFilters }: DashboardProps) {
+  const { prefs } = usePreferences();
   const [page, setPage] = useState(1);
   const [matches, setMatches] = useState<Match[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -58,6 +70,37 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   pageRef.current = page;
   const requestIdRef = useRef(0);
 
+  // Preferences are read through a ref rather than closed over, so `refetch` and
+  // `announceNewAlert` stay referentially stable. Both are dependencies of the stream effect
+  // below; rebuilding them every time the volume slider moves would tear down and reopen the SSE
+  // connection mid-drag.
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+
+  // The newest matchedAt this tab has seen, in epoch ms. Null until the first response lands.
+  const newestSeenRef = useRef<number | null>(null);
+  const lastSoundAtRef = useRef(0);
+  // Ids already chimed for, so the two detection paths can't both announce the same match.
+  const announcedIdsRef = useRef(new Set<string>());
+
+  const announceNewAlert = useCallback(() => {
+    const { alertSoundEnabled, alertSound, alertVolume } = prefsRef.current;
+    if (!alertSoundEnabled) return;
+    const now = Date.now();
+    // A burst of matches from one scan cycle is one event worth hearing, not five.
+    if (now - lastSoundAtRef.current < SOUND_COOLDOWN_MS) return;
+    lastSoundAtRef.current = now;
+    void playAlertSound(alertSound, alertVolume);
+  }, []);
+
+  const rememberAnnounced = useCallback((matchId: string) => {
+    const seen = announcedIdsRef.current;
+    // Bounded: a tab left open for a week would otherwise accumulate every id it ever saw. Losing
+    // the oldest entries is harmless - they are long past the high-water mark that gates them.
+    if (seen.size > 500) seen.clear();
+    seen.add(matchId);
+  }, []);
+
   const refetch = useCallback(async () => {
     const id = ++requestIdRef.current;
     try {
@@ -67,12 +110,34 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
       setTotalCount(result.totalCount);
       setPageSize(result.pageSize);
       setLastUpdated(new Date());
+
+      // Which of these count as *new* is tracked as a high-water mark on matchedAt, not as a set
+      // of ids already seen. Paging backwards hands us twelve matches this tab has never seen and
+      // not one of them is a new alert; comparing timestamps gets that right for free, and also
+      // means a refetch that returns the same page unchanged stays silent.
+      const previous = newestSeenRef.current;
+      const arrived = result.matches.filter((m) => {
+        const at = new Date(m.matchedAt).getTime();
+        return Number.isFinite(at) && previous !== null && at > previous;
+      });
+      const newest = result.matches.reduce((max, m) => Math.max(max, new Date(m.matchedAt).getTime() || 0), 0);
+      if (newest > 0) newestSeenRef.current = previous === null ? newest : Math.max(previous, newest);
+
+      // A null previous is the first load of this tab: everything on screen is new to us, but
+      // none of it just happened, so it must not chime. Beyond that, anything the stream already
+      // chimed for is skipped - otherwise someone reading page 3 when an alert lands hears it
+      // once from the stream and again the moment they navigate back to page 1, where the
+      // high-water mark finally sees it.
+      if (arrived.length > 0 && arrived.some((m) => !announcedIdsRef.current.has(m.id))) {
+        for (const m of arrived) rememberAnnounced(m.id);
+        announceNewAlert();
+      }
     } catch {
       // A single failed fetch isn't worth surfacing - the next tick or nudge will retry.
     } finally {
       if (id === requestIdRef.current) setLoading(false);
     }
-  }, []);
+  }, [announceNewAlert, rememberAnnounced]);
 
   // Each fetch only ever asks for the 12 matches on the current page, and the API only stamps
   // those 12 tokens' lastViewedAt - nothing off-page gets refreshed just because it's still
@@ -91,7 +156,24 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     if (!es) return;
 
     const handleOpen = () => setStreamLive(true);
-    const handleMatch = () => void refetch();
+    const handleMatch = (event: Event) => {
+      // The event itself is the new-alert signal, and unlike the refetch below it is not scoped
+      // to a page - so the chime still fires for someone reading page 3, where the refetched
+      // matches will contain nothing newer than before.
+      //
+      // The id is recorded, not used to render: the payload is a nudge, and the card still comes
+      // from the refetch. Recording it is what stops the refetch path chiming for it a second
+      // time. A payload that doesn't parse costs only that de-duplication, so it still chimes.
+      try {
+        const data: unknown = JSON.parse((event as MessageEvent<string>).data);
+        const matchId = (data as { matchId?: unknown })?.matchId;
+        if (typeof matchId === "string") rememberAnnounced(matchId);
+      } catch {
+        // Malformed or absent payload - announce anyway, that part doesn't depend on the id.
+      }
+      announceNewAlert();
+      void refetch();
+    };
     const handleError = () => {
       setStreamLive(false);
       // Deliberately no reconnect here. EventSource retries transient drops by itself (the
@@ -112,7 +194,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
       es.removeEventListener("error", handleError);
       es.close();
     };
-  }, [refetch]);
+  }, [refetch, announceNewAlert, rememberAnnounced]);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 

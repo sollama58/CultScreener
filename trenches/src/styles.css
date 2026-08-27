@@ -1815,3 +1815,105 @@ select {
   flex: 1;
   min-width: 0;
 }
+
+/* ══ Settings: device preferences ═══════════════════════════════════════
+ *
+ * The toggles and sound picker for the display and alert-sound cards. Everything here is stored
+ * per-device in localStorage rather than on the account - see context/PreferencesContext.tsx.
+ */
+
+.settings-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+/* Big enough to hit on a phone, and pulled onto the first line of the label beside it. */
+.settings-toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-toggle__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-toggle__title {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.settings-toggle__hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.settings-sounds {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-sound {
+  flex: 1 1 auto;
+  min-width: 84px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.settings-sound:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.settings-sound--active {
+  background: var(--grad-brand);
+  border-color: transparent;
+  color: #fff;
+}
+
+.settings-volume__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-volume__value {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A range input is one of the few controls whose default styling is legible in a dark theme, so
+   this only sets the parts that aren't: the track colour and a real touch height. */
+.settings-volume input[type="range"] {
+  width: 100%;
+  height: 22px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Sized to its label rather than stretched across the card: it's a try-it control, not the
+   card's primary action. */
+.settings-card__preview {
+  align-self: flex-start;
+}

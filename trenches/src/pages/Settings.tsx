@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { getTelegramStatus, linkTelegram, setAlertMode, unlinkTelegram } from "../api/client";
 import type { AlertMode, TelegramStatus } from "../api/types";
+import { usePreferences, type AlertSoundName } from "../context/PreferencesContext";
+import { playAlertSound, unlockAudio } from "../utils/alertSound";
 
 const ALERT_MODE_LABELS: Record<AlertMode, string> = {
   REALTIME: "Real-time only",
@@ -10,6 +12,23 @@ const ALERT_MODE_LABELS: Record<AlertMode, string> = {
 };
 
 export function Settings() {
+  return (
+    <div className="settings-page">
+      <h2>Settings</h2>
+      <TelegramCard />
+      <DisplayCard />
+      <SoundCard />
+    </div>
+  );
+}
+
+/**
+ * Telegram linking and alert mode - account settings, stored server-side.
+ *
+ * Its own component so that its loading state is its own: the device preferences below are read
+ * from localStorage and have no reason to wait on, or disappear with, a failed /telegram call.
+ */
+function TelegramCard() {
   const [status, setStatus] = useState<TelegramStatus | null>(null);
   const [linkInfo, setLinkInfo] = useState<{ linkCode: string; deepLink: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -53,7 +72,7 @@ export function Settings() {
     }
   };
 
-  if (!status) return <p className="empty-state">Loading settings…</p>;
+  if (!status) return <p className="empty-state">Loading Telegram settings…</p>;
 
   // linkInfo only exists right after clicking "Link Telegram" this session; status.pendingLinkCode
   // survives a reload. Reconstruct the same deep link from status when linkInfo is gone so the
@@ -64,63 +83,177 @@ export function Settings() {
     (status.botUsername && pendingCode ? `https://t.me/${status.botUsername}?start=${pendingCode}` : null);
 
   return (
-    <div className="settings-page">
-      <h2>Settings</h2>
+    <div className="settings-card">
+      <h3>Telegram alerts</h3>
 
-      <div className="settings-card">
-        <h3>Telegram alerts</h3>
-
-        {!status.enabled ? (
-          <p className="settings-card__status">
-            Telegram alerts aren't set up on this deployment yet - check back later. The dashboard will keep
-            showing your matches here in the meantime.
-          </p>
-        ) : status.linked ? (
-          <>
-            <p className="settings-card__status settings-card__status--linked">✅ Telegram linked</p>
-            <label className="settings-card__select">
-              Alert mode
-              <select
-                value={status.alertMode}
-                onChange={(e) => void handleAlertModeChange(e.target.value as AlertMode)}
-                disabled={busy}
-              >
-                {(Object.keys(ALERT_MODE_LABELS) as AlertMode[]).map((mode) => (
-                  <option key={mode} value={mode}>
-                    {ALERT_MODE_LABELS[mode]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="btn btn--danger" onClick={() => void handleUnlink()} disabled={busy}>
-              Unlink Telegram
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="settings-card__status">Not linked yet.</p>
-            {pendingCode ? (
-              <div className="settings-card__pending">
-                <p>
-                  Send <code>/start {pendingCode}</code> to the bot on Telegram to finish linking.
-                </p>
-                {deepLink && (
-                  <a className="btn btn--primary" href={deepLink} target="_blank" rel="noreferrer">
-                    Open Telegram
-                  </a>
-                )}
-                <button className="btn" onClick={() => void handleLink()} disabled={busy}>
-                  Generate new code
-                </button>
-              </div>
-            ) : (
-              <button className="btn btn--primary" onClick={() => void handleLink()} disabled={busy}>
-                Link Telegram
+      {!status.enabled ? (
+        <p className="settings-card__status">
+          Telegram alerts aren't set up on this deployment yet - check back later. The dashboard will keep
+          showing your matches here in the meantime.
+        </p>
+      ) : status.linked ? (
+        <>
+          <p className="settings-card__status settings-card__status--linked">✅ Telegram linked</p>
+          <label className="settings-card__select">
+            Alert mode
+            <select
+              value={status.alertMode}
+              onChange={(e) => void handleAlertModeChange(e.target.value as AlertMode)}
+              disabled={busy}
+            >
+              {(Object.keys(ALERT_MODE_LABELS) as AlertMode[]).map((mode) => (
+                <option key={mode} value={mode}>
+                  {ALERT_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="btn btn--danger" onClick={() => void handleUnlink()} disabled={busy}>
+            Unlink Telegram
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="settings-card__status">Not linked yet.</p>
+          {pendingCode ? (
+            <div className="settings-card__pending">
+              <p>
+                Send <code>/start {pendingCode}</code> to the bot on Telegram to finish linking.
+              </p>
+              {deepLink && (
+                <a className="btn btn--primary" href={deepLink} target="_blank" rel="noreferrer">
+                  Open Telegram
+                </a>
+              )}
+              <button className="btn" onClick={() => void handleLink()} disabled={busy}>
+                Generate new code
               </button>
-            )}
-          </>
-        )}
-      </div>
+            </div>
+          ) : (
+            <button className="btn btn--primary" onClick={() => void handleLink()} disabled={busy}>
+              Link Telegram
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Card-appearance preferences. Device-local - see PreferencesContext. */
+function DisplayCard() {
+  const { prefs, update } = usePreferences();
+
+  return (
+    <div className="settings-card">
+      <h3>Display</h3>
+
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={prefs.showThemeLabels}
+          onChange={(e) => update({ showThemeLabels: e.target.checked })}
+        />
+        <span className="settings-toggle__text">
+          <span className="settings-toggle__title">Show theme labels</span>
+          <span className="settings-toggle__hint">
+            The theme chips on each card (AI, MEME, DOG...). They're inferred from the token's name and
+            description, so they're a decent hint and not a fact - off by default.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+const SOUND_LABELS: Record<AlertSoundName, string> = {
+  cork: "Cork",
+  ring: "Ring",
+  bell: "Bell",
+};
+
+/** Audio alerting for the live feed. Device-local - see PreferencesContext. */
+function SoundCard() {
+  const { prefs, update } = usePreferences();
+
+  /**
+   * Every control here previews the sound it just changed, which is the only way to set a volume
+   * without guessing. It also does the job the browser's autoplay policy requires: these clicks
+   * are real user gestures, so the audio context comes out of `suspended` here rather than
+   * silently swallowing the first real alert.
+   */
+  const preview = (patch: Partial<typeof prefs> = {}) => {
+    const next = { ...prefs, ...patch };
+    void unlockAudio().then(() => playAlertSound(next.alertSound, next.alertVolume));
+  };
+
+  const handleEnabledChange = (enabled: boolean) => {
+    update({ alertSoundEnabled: enabled });
+    if (enabled) preview({ alertSoundEnabled: true });
+  };
+
+  return (
+    <div className="settings-card">
+      <h3>Alert sound</h3>
+
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={prefs.alertSoundEnabled}
+          onChange={(e) => handleEnabledChange(e.target.checked)}
+        />
+        <span className="settings-toggle__text">
+          <span className="settings-toggle__title">Play a sound on new alerts</span>
+          <span className="settings-toggle__hint">
+            Sounds once when a new token lands on the Live Feed, including while the tab is in the
+            background. A burst of alerts at once gets one sound, not one each.
+          </span>
+        </span>
+      </label>
+
+      {prefs.alertSoundEnabled && (
+        <>
+          <div className="settings-sounds">
+            {(Object.keys(SOUND_LABELS) as AlertSoundName[]).map((name) => (
+              <button
+                key={name}
+                type="button"
+                className={`settings-sound${prefs.alertSound === name ? " settings-sound--active" : ""}`}
+                aria-pressed={prefs.alertSound === name}
+                onClick={() => {
+                  update({ alertSound: name });
+                  preview({ alertSound: name });
+                }}
+              >
+                {SOUND_LABELS[name]}
+              </button>
+            ))}
+          </div>
+
+          <label className="settings-card__select settings-volume">
+            <span className="settings-volume__label">
+              Volume
+              <span className="settings-volume__value">{Math.round(prefs.alertVolume * 100)}%</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round(prefs.alertVolume * 100)}
+              onChange={(e) => update({ alertVolume: Number(e.target.value) / 100 })}
+              /* Previewed on release, not on every step - dragging the slider would otherwise
+                 fire twenty overlapping chimes. */
+              onPointerUp={() => preview()}
+              onKeyUp={() => preview()}
+            />
+          </label>
+
+          <button className="btn settings-card__preview" type="button" onClick={() => preview()}>
+            Test sound
+          </button>
+        </>
+      )}
     </div>
   );
 }
