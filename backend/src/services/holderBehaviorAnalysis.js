@@ -9,6 +9,7 @@
 const solanaService = require('./solana');
 const { cache, TTL } = require('./cache');
 const { DIAMOND_HANDS_BUCKETS } = require('../constants');
+const { MINTS } = require('@asdf-forge/constants');
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -27,13 +28,13 @@ const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analys
 // dropped. A pure USDC→SOL swap generates no hold pairs at all.
 const HB_EXCLUDED_MINTS = new Set([
   // Wrapped / native SOL
-  'So11111111111111111111111111111111111111112',    // Wrapped SOL (wSOL)
+  MINTS.WSOL,    // Wrapped SOL (wSOL)
 
   // Stablecoins
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',  // USDC
-  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',  // USDT
+  MINTS.USDC,  // USDC
+  MINTS.USDT,  // USDT
   'USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA',   // USDS
-  '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',  // PYUSD
+  MINTS.PYUSD,  // PYUSD
   'USDH1SM45983WjjMKkut3vDfb4CpBqBtvNMkZGGAJJq',   // USDH (Hubble)
   '7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT',  // UXD
   'EjmyN6qEC1Tf1JxiG1ae7UTJhUxSwk1TCWNWqxWV4J6o',  // DAI (Wormhole)
