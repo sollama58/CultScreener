@@ -22,6 +22,8 @@ import type {
   AdminSubscriber,
   AdminBurn,
   WhitelistEntry,
+  CuratedPage,
+  CuratedStats,
 } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_URL;
@@ -235,6 +237,22 @@ export function getAdminConfig() {
 export function openMatchesStream(): EventSource | null {
   if (typeof EventSource === "undefined") return null;
   return new EventSource(`${BASE_URL}/matches/stream`, { withCredentials: true });
+}
+
+// ── Curated Alerts ───────────────────────────────────────────────────────
+
+export function listCurated(page = 1) {
+  return request<CuratedPage>(`/curated?page=${page}`);
+}
+
+export function getCuratedStats() {
+  return request<CuratedStats>("/curated/stats");
+}
+
+/** Same contract and caveats as openMatchesStream - a nudge channel, never the only path. */
+export function openCuratedStream(): EventSource | null {
+  if (typeof EventSource === "undefined") return null;
+  return new EventSource(`${BASE_URL}/curated/stream`, { withCredentials: true });
 }
 
 // ── Subscription ─────────────────────────────────────────────────────────

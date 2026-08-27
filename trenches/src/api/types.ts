@@ -351,3 +351,67 @@ export interface WhitelistEntry {
   addedBy: string;
   createdAt: string;
 }
+
+// ── Curated Alerts ───────────────────────────────────────────────────────
+
+/** How one curated call is going / went - see resolveOutcome in apps/api/src/routes/curated.ts. */
+export interface CuratedOutcome {
+  status: "watching" | "won" | "missed" | "disqualified" | "unknown";
+  hit2x: boolean;
+  peak1hReturnPct: number | null;
+  maxDrawdown1hPct: number | null;
+  peak24hReturnPct: number | null;
+  finalized: boolean;
+}
+
+export interface CuratedAlert {
+  id: string;
+  createdAt: string;
+  /** "heuristic-v1", or the id of the trained model that emitted it. */
+  source: string;
+  confidence: number;
+  reasons: string[];
+  anchorPriceUsd: number;
+  anchorMcapUsd: number;
+  token: Pick<Token, "id" | "mintAddress" | "symbol" | "name" | "imageUrl" | "pairAddress">;
+  outcome: CuratedOutcome;
+}
+
+export interface CuratedPage {
+  alerts: CuratedAlert[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}
+
+export interface CuratedStats {
+  curator: {
+    active: string;
+    phase: "collecting-training-data" | "model-live";
+    modelTrainedAt: string | null;
+    latestEvaluation: {
+      at: string;
+      trainingRows: number;
+      status: string;
+      verdict: { promote: boolean; reason: string } | null;
+    } | null;
+  };
+  training: {
+    totalSamples: number;
+    finalizedSamples: number;
+    samples7d: number;
+    winners: number;
+    baseWinRatePct: number | null;
+    disqualified: number;
+    avgWinnerPeak1hReturnPct: number | null;
+  };
+  feed: {
+    alertsTotal: number;
+    alerts7d: number;
+    graded: number;
+    wins: number;
+    hitRatePct: number | null;
+    avgPeak1hReturnPct: number | null;
+    bestPeak24hReturnPct: number | null;
+  };
+}
