@@ -32,8 +32,20 @@ export function Paywall() {
   const { state: bridgeState, refresh: refreshBridge } = useWalletBridge();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // Survives re-renders so a claim loop started before a refresh doesn't get orphaned.
+  //
+  // Reset on mount, not only set on unmount: refs persist across StrictMode's deliberate
+  // mount -> cleanup -> mount cycle in development, so a cleanup-only version left the flag
+  // permanently true after the simulated remount - and every claim loop then bailed on its first
+  // iteration, silently, in dev only. Production never double-invokes, which is exactly why this
+  // survived unnoticed: the one environment where anyone debugs was the one environment where the
+  // claim loop was dead.
   const cancelled = useRef(false);
-  useEffect(() => () => { cancelled.current = true; }, []);
+  useEffect(() => {
+    cancelled.current = false;
+    return () => {
+      cancelled.current = true;
+    };
+  }, []);
 
   /**
    * Ask the API to credit a burn, retrying while it reports the transaction hasn't finalised.
