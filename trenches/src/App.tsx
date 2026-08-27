@@ -8,6 +8,7 @@ import { Paywall } from "./pages/Paywall";
 import { Navbar, type Tab } from "./components/Navbar";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
+import { Curated } from "./pages/Curated";
 import { Filters } from "./pages/Filters";
 import { Leaderboard } from "./pages/Leaderboard";
 import { Settings } from "./pages/Settings";
@@ -37,7 +38,7 @@ function AppShell() {
   //
   // Nothing here is a security boundary: every gated route checks access itself. This only decides
   // whether someone sees a paywall or a wall of failed requests.
-  const gated = tab === "dashboard" || tab === "filters" || tab === "leaderboard";
+  const gated = tab === "dashboard" || tab === "curated" || tab === "filters" || tab === "leaderboard";
   // Deliberately three states, not two. Mounting a gated tab before the answer is known meant the
   // feed fired /matches, /filters and the SSE stream on first paint, collected a 402 on each, and
   // only then got replaced by the paywall - so someone who simply hasn't subscribed opened their
@@ -56,6 +57,7 @@ function AppShell() {
         {gated && accessKnown && status.hasAccess && (
           <>
             {tab === "dashboard" && <Dashboard onGoToFilters={() => setTab("filters")} />}
+            {tab === "curated" && <Curated />}
             {tab === "filters" && <Filters />}
             {tab === "leaderboard" && <Leaderboard />}
           </>
