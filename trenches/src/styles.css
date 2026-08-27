@@ -1520,3 +1520,95 @@ select {
 .admin-table tbody tr:hover {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
+
+
+/* ══ Card: image, quick links ═══════════════════════════════════════════ */
+
+/* The card is an <article> now, so the pointer cue belongs on the things that are actually
+   clickable rather than on the whole surface. */
+.token-card {
+  cursor: default;
+}
+
+.token-card__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+
+.token-card__title:hover .token-card__name {
+  color: var(--accent);
+}
+
+.token-card__image {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  flex: none;
+  object-fit: cover;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+}
+
+/* Shown when the mint has no artwork, and as the resting state behind one that fails to load.
+   Initials rather than a generic placeholder icon, so cards stay distinguishable either way. */
+.token-card__image--empty {
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+}
+
+.token-card__links {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+}
+
+.token-card__links-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.token-card__links-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.token-card__link {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.token-card__link:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* With one bar left there is room for a real label, so it no longer needs to be squeezed. */
+.token-card__breakdown {
+  grid-template-columns: 1fr;
+}

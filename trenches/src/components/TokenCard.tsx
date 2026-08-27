@@ -5,6 +5,10 @@ import { fmtUsd, fmtPct, fmtAge } from "../utils/format";
 export function TokenCard({ match }: { match: Match }) {
   const { token, snapshot, latestSnapshot } = match;
   const name = token.name ?? token.symbol ?? token.mintAddress.slice(0, 8);
+  // Some DexScreener symbols already carry a leading "$" ("$WIF", "$michi"), and the card adds
+  // its own - which rendered as "$$WIF". Strip it once here so both the label and the fallback
+  // tile's initials work from the bare ticker.
+  const ticker = token.symbol?.replace(/^\$+/, "") || null;
   const dexUrl = `https://dexscreener.com/solana/${token.pairAddress ?? token.mintAddress}`;
   // The server already reconciled the live ping against the latest snapshot; re-deriving that
   // here is wrong once a token drops out of the viewed set. Fall back to latestSnapshot only if
@@ -18,12 +22,21 @@ export function TokenCard({ match }: { match: Match }) {
   const change = pctChangeSinceAlert(snapshot.marketCapUsd, nowMcap);
 
   return (
-    <a className="token-card" href={dexUrl} target="_blank" rel="noreferrer">
+    /*
+     * An <article>, not an <a>. The whole card used to be one link to DexScreener, which made
+     * the copy button illegal HTML (interactive content cannot nest inside an anchor) and made
+     * the quick links below impossible - nested anchors are not allowed and browsers unnest them.
+     * The link moved onto the title instead, which is also the thing you would expect to click.
+     */
+    <article className="token-card">
       <div className="token-card__header">
-        <div>
-          <span className="token-card__name">{name}</span>
-          {token.symbol && <span className="token-card__symbol">${token.symbol}</span>}
-        </div>
+        <a className="token-card__title" href={dexUrl} target="_blank" rel="noreferrer">
+          <TokenImage src={token.imageUrl} label={ticker ?? name} />
+          <span>
+            <span className="token-card__name">{name}</span>
+            {ticker && <span className="token-card__symbol">${ticker}</span>}
+          </span>
+        </a>
         <span className="token-card__score" data-tier={scoreTier(match.score)}>
           {match.score.toFixed(0)}
         </span>
@@ -98,11 +111,74 @@ export function TokenCard({ match }: { match: Match }) {
 
       <ScoreBreakdown snapshot={snapshot} />
 
+      <QuickLinks mint={token.mintAddress} />
+
       <div className="token-card__mint">
         <span className="token-card__mint-text">{token.mintAddress}</span>
         <CopyButton value={token.mintAddress} />
       </div>
-    </a>
+    </article>
+  );
+}
+
+/**
+ * The token's logo, falling back to its initials.
+ *
+ * The fallback covers two different situations that look the same on screen and must not be
+ * distinguished: DexScreener has no artwork for the mint (common for brand-new tokens), and it has
+ * a URL that fails to load. An earlier version only handled the first, and hid the image on error
+ * - which left a hole in the header exactly where the tile should be, and only in the case where
+ * something had already gone wrong.
+ */
+function TokenImage({ src, label }: { src?: string | null; label: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    return (
+      <span className="token-card__image token-card__image--empty" aria-hidden="true">
+        {label.slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      className="token-card__image"
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+/** Where to go to actually trade the thing, since every one of these takes the raw mint address. */
+const TRADING_PLATFORMS: { label: string; href: (mint: string) => string }[] = [
+  { label: "PumpFun", href: (m) => `https://pump.fun/coin/${m}` },
+  { label: "Terminal", href: (m) => `https://trade.padre.gg/trade/solana/${m}` },
+  { label: "FOMO", href: (m) => `https://fomo.family/tokens/solana/${m}` },
+  { label: "Axiom", href: (m) => `https://axiom.trade/t/${m}` },
+];
+
+function QuickLinks({ mint }: { mint: string }) {
+  return (
+    <div className="token-card__links">
+      <span className="token-card__links-label">Quick links</span>
+      <span className="token-card__links-row">
+        {TRADING_PLATFORMS.map((p) => (
+          <a
+            key={p.label}
+            className="token-card__link"
+            href={p.href(mint)}
+            target="_blank"
+            /* noreferrer as well as noopener: these are third-party trading sites, and there is no
+               reason to hand them the referring URL. */
+            rel="noreferrer"
+          >
+            {p.label}
+          </a>
+        ))}
+      </span>
+    </div>
   );
 }
 
@@ -241,15 +317,15 @@ function ScoreBreakdown({
     scoreNarrative: number | null;
   };
 }) {
+  // Momentum only. Holder health, age and narrative all still feed the composite score shown in
+  // the header - they are just no longer broken out here, where four abbreviated bars cost more
+  // attention than they returned. One bar has room for its real name.
   const bars: { label: string; title: string; value: number | null }[] = [
-    { label: "Mom", title: "Momentum (volume/mcap ratio, buy pressure)", value: snapshot.scoreMomentum },
-    { label: "Hold", title: "Holder health (growth, concentration)", value: snapshot.scoreHolderHealth },
-    { label: "Age", title: "Age (sweet spot vs. too new/too mature)", value: snapshot.scoreAge },
-    { label: "Narr", title: "Narrative (theme + social presence)", value: snapshot.scoreNarrative },
+    { label: "Momentum", title: "Momentum (volume/mcap ratio, buy pressure)", value: snapshot.scoreMomentum },
   ];
 
-  // Older snapshots (pre-breakdown-tracking) won't have these - skip the row entirely rather
-  // than show four empty bars.
+  // Older snapshots (pre-breakdown-tracking) won't have this - skip the row entirely rather
+  // than show an empty bar.
   if (bars.every((b) => b.value === null)) return null;
 
   return (
