@@ -2091,3 +2091,152 @@ select {
 .admin-table a:hover {
   text-decoration: underline;
 }
+
+/* ══ Filter templates ═══════════════════════════════════════════════════ */
+
+/* Under a "minutes" input showing what a fractional value means in seconds - 0.25 reads as a
+   typo until something confirms it isn't. */
+.filter-form__unit-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Confirms a template took. Several of the fields it sets go *blank*, which on its own looks
+   indistinguishable from nothing having happened. */
+.filter-form__applied {
+  margin: 0 0 4px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+}
+
+.modal {
+  width: 100%;
+  max-width: 480px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.7);
+  position: relative;
+}
+
+.modal::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--grad-brand);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal__head h3 {
+  margin: 0;
+}
+
+.modal__close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.modal__close:hover {
+  color: var(--text);
+}
+
+.modal__lede {
+  margin: 8px 0 16px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.modal__foot {
+  margin: 14px 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.template-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* A button, not a div: picking a template is an action, and this way it is reachable and
+   activatable from the keyboard without reimplementing any of that. */
+.template-card {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.template-card:hover,
+.template-card:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: var(--surface-hover);
+}
+
+.template-card__name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.template-card__description {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.template-card__summary {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
