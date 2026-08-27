@@ -126,11 +126,20 @@ function pctChangeSinceAlert(
 }
 
 /**
- * The highest market cap this token has reached since the match, tracked daily by
- * apps/worker/src/jobs/outcomeTrackingJob.ts. Null (and this section hidden entirely) until that
- * job's first run after the match - "no ATH recorded yet" is not the same as "never went up."
- * peakMcapUsd only ever moves up from snapshot.marketCapUsd, so the % here is always a gain -
- * this is a record of the best it's done, not a live price, and can lag up to a day behind.
+ * The highest market cap this token has reached since the match.
+ *
+ * Recorded every scan cycle - about once a minute - from the snapshot and live-ping history the
+ * backend already holds (apps/worker/src/jobs/matchPeaks.ts); a nightly job covers the long tail
+ * of tokens that have dropped out of the scanned band. It used to be daily, and this comment used
+ * to say so: worth correcting rather than deleting, because "can lag up to a day behind" is
+ * exactly the sort of note that makes a genuinely stale number look expected. It was - the
+ * percentage was frozen at its first value while the dollar figure kept climbing.
+ *
+ * Null (and this section hidden entirely) until the token has traded above its alert market cap
+ * at all - "no ATH recorded yet" is not the same as "never went up", and neither is "+0%".
+ *
+ * peakMcapUsd only ever moves up from snapshot.marketCapUsd, so the % here is always a gain. This
+ * is a record of the best it has done, not a live price.
  */
 function AthSection({ match }: { match: Match }) {
   const { snapshot } = match;
