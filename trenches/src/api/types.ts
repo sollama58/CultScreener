@@ -46,6 +46,9 @@ export interface Token {
   symbol: string | null;
   name: string | null;
   pairAddress: string | null;
+  /** DexScreener's hosted logo for this mint. Null means DexScreener has no artwork for it -
+   *  common for very new tokens - not that the lookup failed. */
+  imageUrl?: string | null;
   firstSeenAt: string;
   hasTwitter: boolean;
   hasTelegram: boolean;
