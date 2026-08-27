@@ -18,8 +18,69 @@ const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
 const BURN_AMOUNT = 5_000;
 const BURN_DECIMALS = 6; // pump.fun tokens use 6 decimals
 const BURN_RAW_AMOUNT = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
-const MAX_TX_AGE_SECONDS = 600; // 10 minutes
 const ACCESS_TOKEN_TTL = 43200 * 1000; // 12 hours in milliseconds (cache.set takes ms)
+
+/**
+ * On-chain verification shared by both burn-gated features (Cultify at 5k, Holder Behavior at
+ * 10k). One implementation on purpose: the two routes previously duplicated this logic, and the
+ * copies had already started to drift.
+ *
+ * Returns { ok: true, rawAmount: bigint } or { ok: false, status, error }.
+ *
+ * Three deliberate properties:
+ *  - No recency window. Replay is impossible regardless of age - the signature-used check plus
+ *    the UNIQUE constraint on burn_signature mean each burn credits exactly once - so an age gate
+ *    only ever produced "burned, verified late, tokens gone, access refused forever". An old
+ *    unclaimed burn being claimable by the wallet that made it is recovery, not a vulnerability.
+ *  - The burn's AUTHORITY must be the requesting wallet. The old check accepted any signer on
+ *    the transaction, and a transaction can carry several signers (the fee payer need not own
+ *    the tokens) - so a co-signer could claim access bought with another wallet's burn.
+ *  - Burns of our mint are filtered and summed per wallet (not find-first): a transaction that
+ *    also burns some other token can't shadow the real burn, and a balance split across two
+ *    token accounts still qualifies in one transaction. Amounts stay BigInt - they're u64s.
+ */
+function verifyBurnTransaction(tx, walletAddress, requiredRaw, requiredLabel) {
+  if (tx.meta && tx.meta.err) {
+    return { ok: false, status: 400, error: 'Transaction failed on-chain' };
+  }
+
+  const allInstructions = [
+    ...(tx.transaction?.message?.instructions || []),
+    ...(tx.meta?.innerInstructions?.flatMap(ii => ii.instructions) || [])
+  ];
+  const burnIxs = allInstructions.filter(ix => {
+    const t = ix.parsed?.type;
+    return t === 'burn' || t === 'burnChecked';
+  });
+  if (burnIxs.length === 0) {
+    return { ok: false, status: 400, error: 'No burn instruction found in this transaction' };
+  }
+
+  const ourBurns = burnIxs.filter(ix => ix.parsed?.info?.mint === BURN_MINT);
+  if (ourBurns.length === 0) {
+    return { ok: false, status: 400, error: 'Wrong token burned. Must burn $ASDFASDFA.' };
+  }
+
+  let burnedByWallet = 0n;
+  for (const ix of ourBurns) {
+    const info = ix.parsed?.info || {};
+    const authority = info.authority || info.multisigAuthority;
+    if (authority !== walletAddress) continue;
+    const raw = info.amount || info.tokenAmount?.amount;
+    if (typeof raw === 'string' && /^\d+$/.test(raw)) burnedByWallet += BigInt(raw);
+  }
+  if (burnedByWallet === 0n) {
+    return { ok: false, status: 400, error: 'That burn was made by a different wallet.' };
+  }
+  if (burnedByWallet < requiredRaw) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Insufficient burn amount. Required: ${requiredLabel} ASDFASDFA.`
+    };
+  }
+  return { ok: true, rawAmount: burnedByWallet };
+}
 
 // Generate a short-lived access token for a wallet+mint pair
 function generateAccessToken(walletAddress, mint) {
@@ -61,58 +122,13 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'Transaction not found. It may still be confirming — wait a few seconds and retry.' });
   }
 
-  // 1. Transaction must have succeeded
-  if (tx.meta && tx.meta.err) {
-    return res.status(400).json({ error: 'Transaction failed on-chain' });
+  // On-chain verification - see verifyBurnTransaction for what it enforces (authority match,
+  // burns filtered+summed, no age gate) and why.
+  const verdict = verifyBurnTransaction(tx, walletAddress, BURN_RAW_AMOUNT, BURN_AMOUNT.toLocaleString());
+  if (!verdict.ok) {
+    return res.status(verdict.status).json({ error: verdict.error });
   }
-
-  // 2. Check recency
-  if (tx.blockTime) {
-    const ageSec = Math.floor(Date.now() / 1000) - tx.blockTime;
-    if (ageSec > MAX_TX_AGE_SECONDS) {
-      return res.status(400).json({ error: 'Transaction is too old. Please submit a new burn.' });
-    }
-  }
-
-  // 3. Find burn instruction (check both outer and inner instructions)
-  const allInstructions = [
-    ...(tx.transaction?.message?.instructions || []),
-    ...(tx.meta?.innerInstructions?.flatMap(ii => ii.instructions) || [])
-  ];
-
-  const burnIx = allInstructions.find(ix => {
-    const t = ix.parsed?.type;
-    return t === 'burn' || t === 'burnChecked';
-  });
-
-  if (!burnIx) {
-    return res.status(400).json({ error: 'No burn instruction found in this transaction' });
-  }
-
-  // 4. Verify correct token was burned
-  const burnedMint = burnIx.parsed?.info?.mint;
-  if (burnedMint !== BURN_MINT) {
-    return res.status(400).json({ error: 'Wrong token burned. Must burn $ASDFASDFA.' });
-  }
-
-  // 5. Verify burn amount
-  const rawAmount = burnIx.parsed?.info?.amount
-    || burnIx.parsed?.info?.tokenAmount?.amount
-    || '0';
-  if (BigInt(rawAmount) < BURN_RAW_AMOUNT) {
-    return res.status(400).json({
-      error: `Insufficient burn amount. Required: ${BURN_AMOUNT.toLocaleString()} ASDFASDFA.`
-    });
-  }
-
-  // 6. Verify signer matches provided wallet
-  const accountKeys = tx.transaction?.message?.accountKeys || [];
-  const signerMatch = accountKeys.some(k =>
-    (k.pubkey === walletAddress || k.pubkey?.toString() === walletAddress) && k.signer
-  );
-  if (!signerMatch) {
-    return res.status(400).json({ error: 'Transaction signer does not match your wallet' });
-  }
+  const rawAmount = verdict.rawAmount;
 
   // 7. Record the burn (UNIQUE constraint on burn_signature prevents replay)
   try {
@@ -665,47 +681,13 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
   if (!tx) {
     return res.status(404).json({ error: 'Transaction not found. It may still be confirming.' });
   }
-  if (tx.meta && tx.meta.err) {
-    return res.status(400).json({ error: 'Transaction failed on-chain' });
+  // Same shared verification as the Cultify burn above - authority match, burns
+  // filtered+summed, no age gate. See verifyBurnTransaction.
+  const verdict = verifyBurnTransaction(tx, walletAddress, HB_BURN_RAW_AMOUNT, HB_BURN_AMOUNT.toLocaleString());
+  if (!verdict.ok) {
+    return res.status(verdict.status).json({ error: verdict.error });
   }
-  if (tx.blockTime) {
-    const ageSec = Math.floor(Date.now() / 1000) - tx.blockTime;
-    if (ageSec > MAX_TX_AGE_SECONDS) {
-      return res.status(400).json({ error: 'Transaction is too old. Please submit a new burn.' });
-    }
-  }
-
-  const allInstructions = [
-    ...(tx.transaction?.message?.instructions || []),
-    ...(tx.meta?.innerInstructions?.flatMap(ii => ii.instructions) || [])
-  ];
-  const burnIx = allInstructions.find(ix => {
-    const t = ix.parsed?.type;
-    return t === 'burn' || t === 'burnChecked';
-  });
-  if (!burnIx) {
-    return res.status(400).json({ error: 'No burn instruction found in this transaction' });
-  }
-
-  const burnedMint = burnIx.parsed?.info?.mint;
-  if (burnedMint !== BURN_MINT) {
-    return res.status(400).json({ error: 'Wrong token burned. Must burn $ASDFASDFA.' });
-  }
-
-  const rawAmount = burnIx.parsed?.info?.amount
-    || burnIx.parsed?.info?.tokenAmount?.amount
-    || '0';
-  if (BigInt(rawAmount) < HB_BURN_RAW_AMOUNT) {
-    return res.status(400).json({ error: `Insufficient burn amount. Required: ${HB_BURN_AMOUNT.toLocaleString()} ASDFASDFA.` });
-  }
-
-  const accountKeys = tx.transaction?.message?.accountKeys || [];
-  const signerMatch = accountKeys.some(k =>
-    (k.pubkey === walletAddress || k.pubkey?.toString() === walletAddress) && k.signer
-  );
-  if (!signerMatch) {
-    return res.status(400).json({ error: 'Transaction signer does not match your wallet' });
-  }
+  const rawAmount = verdict.rawAmount;
 
   try {
     await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString(), 'holder_behavior');
@@ -832,3 +814,6 @@ router.get('/holder-behavior/my-access', walletLimiter, asyncHandler(async (req,
 }));
 
 module.exports = router;
+// Exposed for tests only - lets the burn verification be exercised against captured transaction
+// fixtures without standing up the whole route (and its DB/cache/RPC dependencies).
+module.exports._verifyBurnTransaction = verifyBurnTransaction;
