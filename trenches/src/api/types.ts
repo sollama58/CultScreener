@@ -276,3 +276,78 @@ export interface AdminConfig {
   outcomeTrackingHourUtc: number;
   telegramConfigured: boolean;
 }
+
+// ── Subscription ─────────────────────────────────────────────────────────
+/** Why a wallet has (or hasn't) access to the dashboard. */
+export type AccessReason = "admin" | "whitelist" | "subscription" | "none";
+
+export interface SubscriptionStatus {
+  hasAccess: boolean;
+  reason: AccessReason;
+  /** Null for admins and indefinite whitelist entries. May be in the past, which is how the
+   *  paywall can say "expired three days ago" rather than "you have no access". */
+  expiresAt: string | null;
+  price: {
+    mint: string;
+    decimals: number;
+    tokensPerMonth: number;
+    daysPerMonth: number;
+  };
+  burnCount: number;
+  lastBurn: {
+    signature: string;
+    createdAt: string;
+    monthsCredited: number;
+    creditedAt: string | null;
+  } | null;
+}
+
+/** Outcome of POST /subscription/claim. `pending` and `held` both come back as 202. */
+export interface ClaimResult {
+  status: "credited" | "already_credited" | "pending" | "held" | "rejected";
+  hasAccess?: boolean;
+  expiresAt?: string | null;
+  message?: string;
+  error?: string;
+}
+
+export interface AdminSubscriptionStats {
+  activeSubscriptions: number;
+  expiredSubscriptions: number;
+  whitelisted: number;
+  totalBurns: number;
+  unattributedBurns: number;
+  totalMonthsCredited: number;
+  /** Base units, as a decimal string - too large for a JS number once the ledger grows. */
+  totalRawBurned: string;
+  scanCursor: string | null;
+  scanCursorUpdatedAt: string | null;
+}
+
+export interface AdminSubscriber {
+  walletAddress: string;
+  expiresAt: string;
+  source: "BURN" | "ADMIN_GRANT";
+  burnCount: number;
+  updatedAt: string;
+}
+
+export interface AdminBurn {
+  signature: string;
+  burnerWallet: string;
+  rawAmount: string;
+  monthsCredited: number;
+  blockTime: string | null;
+  creditedAt: string | null;
+  discoveredBy: string;
+  linkedWallet: string | null;
+  slot: string;
+}
+
+export interface WhitelistEntry {
+  walletAddress: string;
+  expiresAt: string | null;
+  note: string | null;
+  addedBy: string;
+  createdAt: string;
+}
