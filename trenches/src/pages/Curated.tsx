@@ -212,8 +212,14 @@ function CuratorScoreboard({ stats }: { stats: CuratedStats }) {
  * a small and volatile market, and its backtest numbers describe the past, not a promise.
  */
 function TrainingExplainer({ stats }: { stats: CuratedStats }) {
-  const { curator, training } = stats;
+  const { curator, training, comparison30d } = stats;
   const modelLive = curator.phase === "model-live";
+  const recordLine = (record: { graded: number; hitRatePct: number | null }) =>
+    record.graded > 0 && record.hitRatePct !== null
+      ? `${record.hitRatePct.toFixed(0)}% of ${record.graded.toLocaleString()} graded picks`
+      : "no graded picks yet";
+  const showComparison =
+    comparison30d && (comparison30d.heuristic.graded > 0 || comparison30d.model.graded > 0);
   return (
     <details className="training-explainer">
       <summary className="training-explainer__summary">How does the model training work?</summary>
@@ -229,7 +235,9 @@ function TrainingExplainer({ stats }: { stats: CuratedStats }) {
           The model only takes the job when it clearly beats the gate, including on the most recent slice of
           history - a model that used to win but has since stopped can&apos;t coast in on an old record. The
           same check runs again at every retrain, so the job can also hand back to the gate if the model
-          stops winning.{" "}
+          stops winning. And whichever curator is <em>not</em> picking still runs silently on the same
+          candidates, its would-be picks graded by the same bar - so both sides carry a live record, not
+          just backtest numbers.{" "}
           {training.finalizedSamples > 0 && (
             <>
               {training.finalizedSamples.toLocaleString()} outcomes graded so far (+
@@ -238,6 +246,13 @@ function TrainingExplainer({ stats }: { stats: CuratedStats }) {
           )}
           {curator.latestEvaluation?.verdict && ` Latest check: ${curator.latestEvaluation.verdict.reason}.`}
         </p>
+        {showComparison && (
+          <p className="training-explainer__comparison">
+            Last 30 days, graded in production - live picks and shadow picks together:{" "}
+            <strong>hand-tuned gate</strong> {recordLine(comparison30d.heuristic)} ·{" "}
+            <strong>model</strong> {recordLine(comparison30d.model)}.
+          </p>
+        )}
         <p className="training-explainer__warning">
           <strong>Experimental:</strong> this self-learning system is new and trained on a small, fast-moving
           market - {modelLive ? "the live model's" : "any future model's"} backtest numbers describe what

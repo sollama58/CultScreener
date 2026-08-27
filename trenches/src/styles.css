@@ -2360,6 +2360,19 @@ select {
 .training-explainer__body p:last-child {
   margin-bottom: 0;
 }
+/* The two curators' live-fire 30-day record - one quiet accent-tinted line, deliberately less
+   loud than the warning below it: a comparison to glance at, not a claim to shout. */
+.training-explainer__body .training-explainer__comparison {
+  color: var(--text);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  padding: 0.55rem 0.75rem;
+}
+.training-explainer__comparison strong {
+  color: var(--text);
+}
+
 .training-explainer__body .training-explainer__warning {
   color: var(--warn);
   border-radius: 8px;
