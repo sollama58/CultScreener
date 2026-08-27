@@ -27,6 +27,12 @@ export function Curated() {
   // Sequenced by request id so a stale page's response can't land after a newer one - the same
   // discipline the Live Feed uses, for the same reason.
   const requestSeq = useRef(0);
+  // The stream effect must not depend on `page` (that would tear down and reopen the SSE
+  // connection on every page turn), so it reads the current page through this ref instead.
+  const pageRef = useRef(page);
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
   const load = useCallback(async (targetPage: number) => {
     const seq = ++requestSeq.current;
@@ -67,9 +73,11 @@ export function Curated() {
     const source = openCuratedStream();
     if (!source) return;
     source.addEventListener("ready", () => setStreamLive(true));
-    // Nudge-only contract: refetch page 1 rather than trusting a payload - one definition of an
-    // alert (the list route), not two that could drift.
-    source.addEventListener("curated", () => void load(1));
+    // Nudge-only contract: refetch rather than trusting a payload - one definition of an alert
+    // (the list route), not two that could drift. Refetches the page actually being read: a
+    // reader parked on page 2 gets their view refreshed in place, not yanked to page 1's
+    // content while the pagination still says otherwise.
+    source.addEventListener("curated", () => void load(pageRef.current));
     source.onerror = () => setStreamLive(false);
     return () => source.close();
   }, [load]);
