@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { acquireImageSlot } from "../utils/imageQueue";
+import { useNow } from "../utils/useNow";
 import type { Match } from "../api/types";
 import { fmtUsd, fmtPct, fmtAge } from "../utils/format";
 
@@ -102,9 +103,12 @@ export function TokenCard({ match }: { match: Match }) {
           <dt>Age</dt>
           <dd>{fmtAge(snapshot.ageMinutes)}</dd>
         </div>
-        <div>
-          <dt>Matched</dt>
-          <dd>{new Date(match.matchedAt).toLocaleTimeString()}</dd>
+        <div className="token-card__stat--wide">
+          <dt>Alerted</dt>
+          <dd className="token-card__alerted">
+            <span>{new Date(match.matchedAt).toLocaleTimeString()}</span>
+            <AlertAge matchedAt={match.matchedAt} />
+          </dd>
         </div>
       </dl>
 
@@ -195,6 +199,51 @@ function TokenImage({ src, label }: { src?: string | null; label: string }) {
       )}
     </span>
   );
+}
+
+/** How old an alert may get before its age changes colour. */
+const ALERT_AGE_FRESH_MS = 60_000;
+const ALERT_AGE_RECENT_MS = 5 * 60_000;
+
+/**
+ * Time since the alert fired, ticking once a second.
+ *
+ * Counts from match.matchedAt, which is set server-side and never moves, so this measures how
+ * long ago the token actually qualified rather than how long this tab has been open - a card
+ * loaded from page 3 half an hour later still reads correctly.
+ *
+ * The clock is shared across every card (see useNow) so they tick together rather than drifting
+ * a fraction of a second apart from each other.
+ */
+function AlertAge({ matchedAt }: { matchedAt: string }) {
+  const now = useNow();
+  const elapsedMs = now - new Date(matchedAt).getTime();
+
+  // A clock skew between server and browser can put an alert marginally in the future; showing a
+  // negative duration would look broken, so it floors at zero and reads as brand new.
+  const safeMs = Math.max(0, elapsedMs);
+  const tone = safeMs < ALERT_AGE_FRESH_MS ? "fresh" : safeMs < ALERT_AGE_RECENT_MS ? "recent" : "stale";
+
+  return (
+    <span
+      className="token-card__age"
+      data-tone={tone}
+      title={`Alerted ${new Date(matchedAt).toLocaleString()}`}
+    >
+      {formatElapsed(safeMs)}
+    </span>
+  );
+}
+
+/** HH:MM:SS. Hours are not capped at 24 - an alert from yesterday should read 27:12:04, not
+ *  03:12:04, which would be indistinguishable from one three hours old. */
+export function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 }
 
 /** Where to go to actually trade the thing, since every one of these takes the raw mint address. */

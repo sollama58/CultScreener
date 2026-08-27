@@ -1667,3 +1667,49 @@ select {
     pointer-events: none;
   }
 }
+
+
+/* ══ Alert age ══════════════════════════════════════════════════════════ */
+
+/* The stats grid is two columns; this cell takes the whole row so the clock sits beside the
+   timestamp rather than wrapping under it. */
+.token-card__stat--wide {
+  grid-column: 1 / -1;
+}
+
+.token-card__alerted {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.token-card__age {
+  font-family: ui-monospace, monospace;
+  /* Tabular figures so the digits don't shuffle sideways as the seconds tick over. */
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.token-card__age[data-tone="fresh"] {
+  color: #6ee7a8;
+  background: color-mix(in srgb, #6ee7a8 14%, transparent);
+  border-color: color-mix(in srgb, #6ee7a8 34%, transparent);
+}
+
+.token-card__age[data-tone="recent"] {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 34%, transparent);
+}
+
+.token-card__age[data-tone="stale"] {
+  color: var(--neg);
+  background: color-mix(in srgb, var(--neg) 14%, transparent);
+  border-color: color-mix(in srgb, var(--neg) 34%, transparent);
+}
