@@ -1,5 +1,4 @@
 import { useAuth } from "../context/AuthContext";
-import { HealthBadge } from "./HealthBadge";
 
 export type Tab = "dashboard" | "filters" | "leaderboard" | "settings" | "admin";
 
@@ -35,11 +34,24 @@ export function Navbar({ tab, onTabChange }: { tab: Tab; onTabChange: (tab: Tab)
           </button>
         ))}
       </nav>
+      {/* Scanner status deliberately does NOT live here. It used to sit beside the wallet while
+          the Live Feed header showed its own "Live" pill for the push connection - two different
+          facts wearing the same word, a few hundred pixels apart. There is now one status
+          element, in the Live Feed header, and it carries both. */}
       <div className="navbar__account">
-        <HealthBadge />
-        <span className="navbar__wallet">{user ? shortWallet(user.walletAddress) : ""}</span>
-        <button className="btn btn--ghost" onClick={() => void signOut()}>
-          Sign out
+        {user && (
+          <span className="wallet-chip" title={user.walletAddress}>
+            {/* Colour derived from the address, so a wallet is recognisable at a glance and two
+                accounts are visibly different without showing the full key. */}
+            <span className="wallet-chip__avatar" style={avatarStyle(user.walletAddress)} aria-hidden="true" />
+            <span className="wallet-chip__address">{shortWallet(user.walletAddress)}</span>
+          </span>
+        )}
+        <button className="btn btn--signout" onClick={() => void signOut()} title="Sign out">
+          <span className="btn__icon" aria-hidden="true">
+            ⏻
+          </span>
+          <span className="btn__label">Sign out</span>
         </button>
       </div>
     </header>
@@ -48,4 +60,16 @@ export function Navbar({ tab, onTabChange }: { tab: Tab; onTabChange: (tab: Tab)
 
 function shortWallet(address: string): string {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
+/**
+ * A stable two-tone gradient per wallet. Purely decorative - a cheap way to make an account
+ * recognisable without rendering the full key, and to make "am I signed in as the right wallet?"
+ * answerable at a glance. Not a hash anyone should rely on: it only needs to be stable and
+ * well-spread, not collision-free.
+ */
+function avatarStyle(address: string): { background: string } {
+  let hash = 0;
+  for (let i = 0; i < address.length; i += 1) hash = (hash * 31 + address.charCodeAt(i)) % 360;
+  return { background: `linear-gradient(135deg, hsl(${hash} 70% 55%), hsl(${(hash + 60) % 360} 70% 45%))` };
 }

@@ -28,6 +28,45 @@
   /* Gain/loss, kept distinct from the brand accent — see note above. */
   --pos: var(--green, #33d17a);
   --neg: var(--red, #e5534b);
+
+  /*
+   * A second hue, used only as the far end of a gradient. Gradients need two stops, and running
+   * them from the brand colour to a tint of itself reads as a smudge rather than as depth. This
+   * is deliberately NOT introduced as a general-purpose colour: nothing is ever painted flat in
+   * --accent-2, so it can't drift into competing with the brand accent.
+   */
+  --accent-2: #7c5cff;
+
+  --grad-brand: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --grad-pos: linear-gradient(135deg, var(--pos), #26c6a2);
+  --grad-neg: linear-gradient(135deg, var(--neg), #b5407a);
+  --grad-gold: linear-gradient(135deg, #ffd76e, #e0a13a);
+  --grad-silver: linear-gradient(135deg, #dfe6ef, #9aa6b6);
+  --grad-bronze: linear-gradient(135deg, #e0a06a, #a86a3c);
+
+  /*
+   * Surfaces get a barely-there vertical lift rather than a flat fill, so a card reads as raised
+   * against the page without needing a heavier border.
+   */
+  --surface-raised: linear-gradient(180deg, var(--surface-hover), var(--surface));
+
+  --glow-brand: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 8px 28px -12px color-mix(in srgb, var(--accent) 55%, transparent);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 28px -18px rgb(0 0 0 / 0.9);
+}
+
+/*
+ * Every animation here is decoration - a pulsing dot, a card lifting on hover. None of it carries
+ * information that isn't also in text, so honouring the OS setting costs nothing.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 * {
@@ -106,16 +145,29 @@ select {
   gap: 24px;
   padding: 14px 24px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  /* A hairline of brand colour along the bottom edge, so the app's own bar is distinguishable
+     from the site header stacked directly above it without adding a second heavy border. */
+  border-image: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent) 1;
+  border-image-slice: 0 0 1 0;
+  background:
+    radial-gradient(120% 180% at 0% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%),
+    var(--surface-raised);
   flex-wrap: wrap;
 }
 
 .navbar__brand {
-  font-weight: 700;
-  font-size: 1.1rem;
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
   display: flex;
   align-items: center;
   gap: 8px;
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  /* The emoji is a child of a background-clipped element, which would clip it to transparent
+     too - it gets its colour back below. */
 }
 
 .navbar__tabs {
@@ -126,12 +178,17 @@ select {
 
 .navbar__tab {
   background: none;
-  border: none;
+  border: 0;
   color: var(--text-muted);
   padding: 8px 14px;
-  border-radius: var(--radius);
+  border-radius: 999px;
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  position: relative;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .navbar__tab:hover {
@@ -140,15 +197,14 @@ select {
 }
 
 .navbar__tab--active {
-  background: var(--surface-hover);
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .navbar__account {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .navbar__wallet {
@@ -190,17 +246,23 @@ select {
 /* ── Buttons ────────────────────────────────────────────────────────── */
 
 .btn {
-  background: var(--surface-hover);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   color: var(--text);
   padding: 8px 16px;
-  border-radius: var(--radius);
+  border-radius: 999px;
   cursor: pointer;
   font-size: 0.9rem;
-  font-weight: 500;
-  transition: filter 0.15s ease;
+  font-weight: 600;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
   text-decoration: none;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 
 .btn:hover {
@@ -213,10 +275,11 @@ select {
 }
 
 .btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--grad-brand);
+  border-color: transparent;
   color: #fff;
   font-weight: 700;
+  box-shadow: 0 6px 20px -10px color-mix(in srgb, var(--accent) 90%, transparent);
 }
 
 .btn--danger {
@@ -357,20 +420,28 @@ select {
 
 .token-card {
   display: block;
-  background: var(--surface);
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
   text-decoration: none;
   color: var(--text);
+  box-shadow: var(--shadow-card);
   transition:
-    border-color 0.15s ease,
-    transform 0.15s ease;
+    border-color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .token-card:hover {
-  border-color: var(--accent-dim);
-  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  transform: translateY(-3px);
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 18px 40px -24px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .token-card__header {
@@ -393,24 +464,26 @@ select {
 
 .token-card__score {
   font-weight: 800;
-  font-size: 1.1rem;
-  border-radius: 8px;
-  padding: 2px 10px;
+  font-size: 1.05rem;
+  border-radius: 999px;
+  padding: 3px 12px;
+  color: #fff;
+  letter-spacing: -0.01em;
 }
 
 .token-card__score[data-tier="high"] {
-  background: var(--green-light, rgba(51, 209, 122, 0.15));
-  color: var(--pos);
+  background: var(--grad-pos);
+  color: #04140d;
 }
 
 .token-card__score[data-tier="mid"] {
-  background: rgba(212, 167, 44, 0.15);
-  color: var(--warn);
+  background: linear-gradient(135deg, #f0c14b, #d4872c);
+  color: #1b1204;
 }
 
 .token-card__score[data-tier="low"] {
-  background: rgba(139, 147, 161, 0.15);
-  color: var(--text-muted);
+  background: linear-gradient(135deg, #6b7482, #49505b);
+  color: #e7ebf0;
 }
 
 .token-card__tags {
@@ -421,13 +494,15 @@ select {
 }
 
 .tag {
-  background: var(--surface-hover);
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 0.72rem;
-  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-hover));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent) 65%, var(--text));
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
 }
 
 .tag--muted {
@@ -472,15 +547,19 @@ select {
 
 .token-card__copy {
   flex-shrink: 0;
-  background: var(--surface-hover);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 999px;
   color: var(--text-muted);
-  font-size: 0.65rem;
-  font-weight: 600;
-  padding: 3px 8px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 4px 11px;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .token-card__copy:hover {
@@ -503,10 +582,12 @@ select {
 /* ── All-time high ──────────────────────────────────────────────────── */
 
 .token-card__ath {
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--pos) 12%, transparent), transparent 65%),
+    var(--surface);
+  border: 1px solid color-mix(in srgb, var(--pos) 28%, var(--border));
+  border-radius: 10px;
+  padding: 9px 12px;
   margin: 0 0 10px;
 }
 
@@ -561,16 +642,16 @@ select {
 
 .breakdown-bar__track {
   display: block;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface-hover);
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
   overflow: hidden;
 }
 
 .breakdown-bar__fill {
   display: block;
   height: 100%;
-  background: var(--accent-dim);
+  background: var(--grad-brand);
   border-radius: 2px;
 }
 
@@ -1172,19 +1253,270 @@ select {
 
 /* Live-push indicator in the feed header. Present only while the SSE stream is connected, so
    its absence is the tell that the feed has quietly fallen back to polling. */
-.dashboard__live {
+
+
+/* ══ Visual layer ═══════════════════════════════════════════════════════
+ *
+ * Everything below is presentation only - no new markup depends on it beyond the classes named
+ * here, and removing the whole block leaves a plainer but fully working app.
+ */
+
+/* The brand text is background-clipped, which would clip its emoji child to transparent too. */
+.navbar__logo {
+  -webkit-text-fill-color: initial;
+  color: initial;
+  filter: drop-shadow(0 2px 6px color-mix(in srgb, var(--accent) 60%, transparent));
+}
+
+/* A soft brand wash behind the whole app. Fixed attachment so it stays put while the feed
+   scrolls, which keeps it reading as lighting rather than as content. */
+.app-shell {
+  background:
+    radial-gradient(60% 45% at 12% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    radial-gradient(50% 40% at 92% 4%, color-mix(in srgb, var(--accent-2) 8%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* ── Wallet chip + sign out ─────────────────────────────────────────── */
+
+.wallet-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin-right: 10px;
-  color: var(--pos);
+  gap: 8px;
+  padding: 5px 12px 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  cursor: default;
+}
+
+.wallet-chip__avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex: none;
+  /* Inner ring so the generated colour never sits directly against the chip's own border. */
+  box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.18);
+}
+
+.wallet-chip__address {
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.btn--signout {
+  padding: 7px 14px;
+  color: var(--text-muted);
+  background: none;
+}
+
+.btn--signout:hover {
+  color: var(--neg);
+  border-color: color-mix(in srgb, var(--neg) 50%, var(--border));
+  background: color-mix(in srgb, var(--neg) 10%, transparent);
+}
+
+.btn__icon {
+  font-size: 0.95em;
+  line-height: 1;
+}
+
+/* Below the navbar's own wrap point the label is the first thing worth losing - the icon and the
+   tooltip still say what the button does. */
+@media (max-width: 560px) {
+  .btn--signout .btn__label {
+    display: none;
+  }
+  .btn--signout {
+    padding: 7px 11px;
+  }
+}
+
+/* ── Status indicator ───────────────────────────────────────────────── */
+
+.health-badge {
+  padding: 4px 11px 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
   font-weight: 600;
 }
 
-.dashboard__live-dot {
-  width: 6px;
-  height: 6px;
+.health-badge[data-status="live"] {
+  color: var(--pos);
+  border-color: color-mix(in srgb, var(--pos) 40%, transparent);
+  background: color-mix(in srgb, var(--pos) 10%, transparent);
+}
+
+.health-badge[data-status="degraded"] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.health-badge[data-status="down"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* The dot pulses only while alerts are genuinely being pushed. Scanner healthy but stream down is
+   a real, different state - a steady dot - and animating both would erase the distinction the
+   merge of these two indicators was meant to preserve. */
+.health-badge[data-status="live"][data-stream="on"] .health-badge__dot {
+  animation: health-pulse 2s ease-in-out infinite;
+}
+
+@keyframes health-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--pos) 70%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--pos) 0%, transparent);
+  }
+}
+
+/* ── All-time high ──────────────────────────────────────────────────── */
+
+.token-card__ath-pct {
+  background: var(--grad-pos);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 800;
+}
+
+/* ── Leaderboard ────────────────────────────────────────────────────── */
+
+.leaderboard__rank {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Top three get a medal; everything else stays a plain number, so the podium reads instantly. */
+.leaderboard__rank[data-rank="1"],
+.leaderboard__rank[data-rank="2"],
+.leaderboard__rank[data-rank="3"] {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  background: var(--pos);
-  box-shadow: 0 0 6px var(--pos);
+  color: #1a1206;
+  font-size: 0.82rem;
+}
+
+.leaderboard__rank[data-rank="1"] {
+  background: var(--grad-gold);
+}
+
+.leaderboard__rank[data-rank="2"] {
+  background: var(--grad-silver);
+}
+
+.leaderboard__rank[data-rank="3"] {
+  background: var(--grad-bronze);
+}
+
+.leaderboard__return {
+  background: var(--grad-pos);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Surfaces ───────────────────────────────────────────────────────── */
+
+.welcome-card,
+.login__card,
+.info-callout {
+  position: relative;
+  overflow: hidden;
+}
+
+/* One brand-gradient edge, rather than tinting the whole panel - it marks the block as
+   introductory without lowering the contrast of the text inside it. */
+.welcome-card::before,
+.login__card::before,
+.info-callout::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--grad-brand);
+}
+
+.login__card {
+  box-shadow: var(--glow-brand), var(--shadow-card);
+}
+
+.login__logo {
+  filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--accent) 55%, transparent));
+}
+
+.admin-stat-card__value {
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.admin-table th {
+  background: var(--surface-raised);
+}
+
+
+/* A score-tinted edge along the top of each card, so the grid can be read at a glance without
+   hunting for the number in every header. Same three tiers the score badge uses. */
+.token-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, #6b7482, #49505b);
+}
+
+.token-card:has(.token-card__score[data-tier="high"])::before {
+  background: var(--grad-pos);
+}
+
+.token-card:has(.token-card__score[data-tier="mid"])::before {
+  background: linear-gradient(90deg, #f0c14b, #d4872c);
+}
+
+.token-card__copy:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
+/* Muted tags (bonding status, socials) stay grey - only narrative tags carry the accent, so the
+   colour means "this is what the token is about" rather than just "this is a tag". */
+.tag--muted {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+/* Page titles pick up the brand gradient. Scoped to the app's own headings so it can't reach the
+   site's shared header above. */
+.dashboard__header h2,
+.dashboard__header h3 {
+  background: linear-gradient(135deg, var(--text), color-mix(in srgb, var(--accent) 55%, var(--text)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: -0.02em;
+}
+
+.admin-table tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+.admin-table tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
