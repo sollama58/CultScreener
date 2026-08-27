@@ -2318,6 +2318,59 @@ select {
   border-color: color-mix(in srgb, var(--accent-2) 50%, transparent);
 }
 
+/* Closed-by-default writeup behind the phase badge's tooltip - a <details> disclosure rather
+   than another hover target, so it's actually reachable on mobile and worth a real read once. */
+.training-explainer {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 0.7rem 1.1rem;
+  margin: 0 0 1.25rem;
+}
+.training-explainer__summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  list-style: none;
+}
+.training-explainer__summary::-webkit-details-marker {
+  display: none;
+}
+.training-explainer__summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.5rem;
+  transition: transform 0.15s ease;
+}
+.training-explainer[open] .training-explainer__summary::before {
+  transform: rotate(90deg);
+}
+.training-explainer__body {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.training-explainer__body p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 0 0 0.7rem;
+}
+.training-explainer__body p:last-child {
+  margin-bottom: 0;
+}
+.training-explainer__body .training-explainer__warning {
+  color: var(--warn);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  padding: 0.55rem 0.75rem;
+}
+.training-explainer__warning strong {
+  color: var(--warn);
+}
+
 /* A curated card in either feed. The tint is what makes it stand out among ordinary matches in
    the Live Feed; it is deliberately a wash over the existing card rather than a different card,
    so the statistics stay in exactly the places people already read them. */

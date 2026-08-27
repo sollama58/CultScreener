@@ -107,6 +107,7 @@ export function Curated() {
       </p>
 
       {stats && <CuratorScoreboard stats={stats} />}
+      {stats && <TrainingExplainer stats={stats} />}
 
       {loading && alerts.length === 0 && <p className="empty-state">Loading curated alerts…</p>}
       {error && <p className="empty-state">{error}</p>}
@@ -201,6 +202,50 @@ function CuratorScoreboard({ stats }: { stats: CuratedStats }) {
         {modelLive ? "Model picking" : "Learning"}
       </span>
     </section>
+  );
+}
+
+/**
+ * The fuller writeup behind the phase badge's tooltip - closed by default (a `<details>`, not a
+ * hover), since a tooltip is easy to miss on mobile and this is worth reading once. Ends with an
+ * explicit experimental warning: this whole self-learning half of the pipeline is new, trained on
+ * a small and volatile market, and its backtest numbers describe the past, not a promise.
+ */
+function TrainingExplainer({ stats }: { stats: CuratedStats }) {
+  const { curator, training } = stats;
+  const modelLive = curator.phase === "model-live";
+  return (
+    <details className="training-explainer">
+      <summary className="training-explainer__summary">How does the model training work?</summary>
+      <div className="training-explainer__body">
+        <p>
+          Every candidate that clears the rug screen - not just the ones that get curated - has its outcome
+          quietly tracked: did it 2x within an hour without first dropping 50%. That record is the training
+          set. Every 4 hours, a model retrains on it and is walk-forward tested against the hand-tuned gate
+          currently picking - trained on the past, graded on a slice of history it never saw, the way a real
+          deployment would be judged.
+        </p>
+        <p>
+          The model only takes the job when it clearly beats the gate, including on the most recent slice of
+          history - a model that used to win but has since stopped can&apos;t coast in on an old record. The
+          same check runs again at every retrain, so the job can also hand back to the gate if the model
+          stops winning.{" "}
+          {training.finalizedSamples > 0 && (
+            <>
+              {training.finalizedSamples.toLocaleString()} outcomes graded so far (+
+              {training.samples7d.toLocaleString()} this week).
+            </>
+          )}
+          {curator.latestEvaluation?.verdict && ` Latest check: ${curator.latestEvaluation.verdict.reason}.`}
+        </p>
+        <p className="training-explainer__warning">
+          <strong>Experimental:</strong> this self-learning system is new and trained on a small, fast-moving
+          market - {modelLive ? "the live model's" : "any future model's"} backtest numbers describe what
+          already happened, not a guarantee of what happens next. Treat every curated alert, from either
+          curator, as one input - not financial advice.
+        </p>
+      </div>
+    </details>
   );
 }
 
