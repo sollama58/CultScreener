@@ -1,21 +1,30 @@
 import { useEffect, useState } from "react";
-import { getWorkerHealth } from "../../api/client";
-import type { WorkerHeartbeat } from "../../api/types";
+import { getStreamHealth, getWorkerHealth } from "../../api/client";
+import type { StreamHealth, WorkerHeartbeat } from "../../api/types";
 
 const POLL_INTERVAL_MS = 30_000;
 
 /** Every job's full heartbeat, not just "scan" - the navbar's HealthBadge only surfaces that one. */
 export function AdminMonitoring() {
   const [jobs, setJobs] = useState<WorkerHeartbeat[]>([]);
+  const [stream, setStream] = useState<StreamHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
 
   useEffect(() => {
     const poll = async () => {
       try {
-        const health = await getWorkerHealth();
-        setJobs(health.jobs);
-        setError(null);
+        // Fetched together but reported separately: a dead push channel and a dead worker are
+        // different problems with different fixes, and the stream failing must not blank out the
+        // job table that would tell you the worker is fine.
+        const [health, streamHealth] = await Promise.allSettled([getWorkerHealth(), getStreamHealth()]);
+        if (health.status === "fulfilled") {
+          setJobs(health.value.jobs);
+          setError(null);
+        } else {
+          setError("Failed to reach the API's /health/worker endpoint.");
+        }
+        setStream(streamHealth.status === "fulfilled" ? streamHealth.value : null);
         setLastPolled(new Date());
       } catch {
         setError("Failed to reach the API's /health/worker endpoint.");
@@ -35,6 +44,23 @@ export function AdminMonitoring() {
 
       {error && <p className="empty-state">{error}</p>}
       {!error && jobs.length === 0 && <p className="empty-state">No jobs have reported in yet.</p>}
+
+      {stream && (
+        // dt/dd have to live inside a dl to be valid markup - and this reuses the Config tab's
+        // own row styling rather than inventing a second look for one line.
+        <dl className="admin-config">
+          <div className="admin-config__row">
+            <dt>Live alert push</dt>
+            <dd>
+              <span className={`badge ${stream.connected ? "badge--on" : "badge--off"}`}>
+                {stream.connected ? "Connected" : "Down"}
+              </span>{" "}
+              {stream.subscribers} {stream.subscribers === 1 ? "dashboard" : "dashboards"} listening
+              {!stream.connected && " - alerts are falling back to polling"}
+            </dd>
+          </div>
+        </dl>
+      )}
 
       {jobs.length > 0 && (
         <div className="admin-table-wrap">

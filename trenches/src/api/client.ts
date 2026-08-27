@@ -9,6 +9,7 @@ import type {
   LeaderboardResponse,
   MatchesPage,
   PublicConfig,
+  StreamHealth,
   TelegramLinkResponse,
   TelegramStatus,
   Token,
@@ -144,6 +145,11 @@ export function getLeaderboard() {
 // ── Health ───────────────────────────────────────────────────────────────
 export function getWorkerHealth() {
   return request<WorkerHealth>("/health/worker");
+}
+
+/** Whether this API instance's live-match push channel is actually up - see StreamHealth. */
+export function getStreamHealth() {
+  return request<StreamHealth>("/health/stream");
 }
 
 // ── Telegram ─────────────────────────────────────────────────────────────
