@@ -1,7 +1,10 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'holdex-v47';
+// v48: the fetch handler no longer takes over cross-origin requests, so any third-party
+// responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
+// below deletes every holdex-* cache that isn't the current version.
+const CACHE_VERSION = 'holdex-v48';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -146,8 +149,24 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Everything else â†’ Network First
-  event.respondWith(networkFirstWithCache(request, DYNAMIC_CACHE));
+  // Anything else cross-origin → leave it entirely alone.
+  //
+  // Not an optimisation; taking these over actively breaks them. A page's CSP checks a
+  // subresource against the directive for its *type* - img-src for an image, script-src for a
+  // script - but a fetch() issued from this worker is a connection, checked against connect-src
+  // instead. Any host allowed to serve images or scripts but absent from connect-src therefore
+  // loads fine normally and fails the moment this worker intercepts it.
+  //
+  // Both were happening: token logos on cdn.dexscreener.com (img-src allows it, connect-src does
+  // not) and @solana/web3.js on unpkg.com (script-src allows it, connect-src does not). Neither
+  // reports as a page CSP violation, because the refusal happens in this worker's context - the
+  // only trace is a "Refused to connect" line attributed to this file.
+  //
+  // Everything cross-origin worth caching is already routed above (fonts, APIs), and per-user
+  // API responses are passed through by NEVER_CACHE_HOSTS. What reached this point was
+  // third-party assets that gained nothing from DYNAMIC_CACHE and lost correctness by being here.
+  // Returning without respondWith() hands the request back to the browser, which loads it under
+  // the directive the page actually intended.
 });
 
 // ─── Caching Strategies ──────────────────────────────────
