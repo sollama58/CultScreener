@@ -424,4 +424,21 @@ export interface CuratedStats {
     hitRatePct: number | null;
     bestPeak24hReturnPct: number | null;
   };
+  /**
+   * Each curator's last-30-days production record across both ledgers: its real curated alerts
+   * from any time it held the job, plus its shadow picks from the bench (whichever curator
+   * isn't picking runs silently on the same scan moments, graded by the same bar). Optional so
+   * the tab keeps rendering against an API that predates it.
+   */
+  comparison30d?: {
+    heuristic: CuratorRecord30d;
+    model: CuratorRecord30d;
+  };
+}
+
+export interface CuratorRecord30d {
+  emitted: number;
+  graded: number;
+  wins: number;
+  hitRatePct: number | null;
 }
