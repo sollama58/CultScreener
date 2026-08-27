@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { acquireImageSlot } from "../utils/imageQueue";
 import { useNow } from "../utils/useNow";
 import type { Match } from "../api/types";
-import { fmtUsd, fmtPct, fmtAge } from "../utils/format";
+import { fmtUsd, fmtAge } from "../utils/format";
 
 export function TokenCard({ match }: { match: Match }) {
   const { token, snapshot, latestSnapshot } = match;
@@ -34,8 +34,10 @@ export function TokenCard({ match }: { match: Match }) {
       <div className="token-card__header">
         <a className="token-card__title" href={dexUrl} target="_blank" rel="noreferrer">
           <TokenImage src={token.imageUrl} label={ticker ?? name} />
-          <span>
-            <span className="token-card__name">{name}</span>
+          <span className="token-card__title-text">
+            <span className="token-card__name" title={name}>
+              {name}
+            </span>
             {ticker && <span className="token-card__symbol">${ticker}</span>}
           </span>
         </a>
@@ -67,13 +69,13 @@ export function TokenCard({ match }: { match: Match }) {
       </div>
 
       <dl className="token-card__stats">
-        <div>
+        <div className="token-card__stat--hero">
           <dt>Alerted at</dt>
           <dd title={`Market cap when this match was found: ${new Date(match.matchedAt).toLocaleString()}`}>
             {fmtUsd(snapshot.marketCapUsd)}
           </dd>
         </div>
-        <div>
+        <div className="token-card__stat--hero">
           <dt>Now</dt>
           <dd
             className={change ? `token-card__change--${change.tone}` : undefined}
@@ -90,14 +92,6 @@ export function TokenCard({ match }: { match: Match }) {
         <div>
           <dt>24h volume</dt>
           <dd>{fmtUsd(snapshot.volume24hUsd)}</dd>
-        </div>
-        <div>
-          <dt>Holders</dt>
-          <dd>{snapshot.holderCount ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Top 10</dt>
-          <dd>{fmtPct(snapshot.top10HolderPct)}</dd>
         </div>
         <div>
           <dt>Age</dt>
