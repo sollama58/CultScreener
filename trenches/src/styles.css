@@ -421,7 +421,6 @@ select {
 .token-card {
   display: block;
   position: relative;
-  overflow: hidden;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1478,6 +1477,8 @@ select {
   position: absolute;
   inset: 0 0 auto 0;
   height: 3px;
+  /* The card used to clip this; it no longer does, so the bar rounds its own top corners. */
+  border-radius: var(--radius) var(--radius) 0 0;
   background: linear-gradient(90deg, #6b7482, #49505b);
 }
 
@@ -1611,4 +1612,58 @@ select {
 /* With one bar left there is room for a real label, so it no longer needs to be squeezed. */
 .token-card__breakdown {
   grid-template-columns: 1fr;
+}
+
+
+/* ══ Token image hover preview ══════════════════════════════════════════
+ *
+ * Desktop only, and gated on what the pointer can actually do rather than on viewport width:
+ * a hover preview on a touch screen either never fires or, worse, sticks after a tap and needs a
+ * second tap elsewhere to clear. `hover: hover` and `pointer: fine` together mean a real mouse -
+ * phones and tablets report `hover: none` / `pointer: coarse` and get the plain image, which a
+ * width breakpoint would have got wrong in both directions (a narrow desktop window, a large
+ * tablet).
+ */
+
+.token-card__image-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .token-card__image {
+    transition:
+      transform 180ms cubic-bezier(0.2, 0.7, 0.3, 1),
+      box-shadow 180ms ease,
+      border-color 180ms ease;
+    transform-origin: top left;
+    will-change: transform;
+  }
+
+  /* Scoped to the img: blowing up two letters of fallback text 2.5x shows nothing you couldn't
+     already read. */
+  .token-card__image-wrap:hover img.token-card__image {
+    transform: scale(2.5);
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+      0 18px 40px -12px rgb(0 0 0 / 0.75);
+    /* Grows on a short delay so sweeping the cursor across the grid doesn't set off a run of
+       previews, but shrinks immediately - waiting to leave always feels like lag. */
+    transition-delay: 110ms;
+    z-index: 3;
+  }
+
+  /* Grid items paint in DOM order, so without this a preview on one card would be painted over
+     by the next card along. */
+  .token-card:has(.token-card__image-wrap:hover) {
+    z-index: 3;
+  }
+
+  /* The scaled image is the whole point of the hover, so it must not swallow its own pointer
+     events at the edges and flicker between hovered and not. */
+  .token-card__image-wrap:hover img.token-card__image {
+    pointer-events: none;
+  }
 }

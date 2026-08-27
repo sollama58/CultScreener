@@ -133,21 +133,24 @@ export function TokenCard({ match }: { match: Match }) {
 function TokenImage({ src, label }: { src?: string | null; label: string }) {
   const [failed, setFailed] = useState(false);
 
-  if (!src || failed) {
-    return (
-      <span className="token-card__image token-card__image--empty" aria-hidden="true">
-        {label.slice(0, 2).toUpperCase()}
-      </span>
-    );
-  }
+  // Both branches sit in the same wrapper so the header's layout doesn't shift depending on
+  // whether a logo exists, and so the hover preview has one positioning context to anchor to.
   return (
-    <img
-      className="token-card__image"
-      src={src}
-      alt=""
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
+    <span className="token-card__image-wrap">
+      {!src || failed ? (
+        <span className="token-card__image token-card__image--empty" aria-hidden="true">
+          {label.slice(0, 2).toUpperCase()}
+        </span>
+      ) : (
+        <img
+          className="token-card__image"
+          src={src}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </span>
   );
 }
 
