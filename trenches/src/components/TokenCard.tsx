@@ -109,9 +109,9 @@ export function TokenCard({ match }: { match: Match }) {
 /**
  * Compares the frozen alert-time mcap against the freshest figure the server has (see nowMcap
  * above). That figure reflects however recently the worker last re-scanned this specific token
- * (every ~7 minutes while it's still in the mcap band, per SCAN_INTERVAL_MINUTES - not at all
- * once it falls out of band) - so this is "as of the last data we actually have," not a live
- * price feed. Undefined/null when there's nothing newer than the alert-time snapshot to compare.
+ * (SCAN_INTERVAL_MINUTES, now every minute) and, for tokens someone is actively viewing, the
+ * separate once-a-minute live-price ping - so this is "as of the last data we actually have,"
+ * not a continuous feed. Null when there's nothing newer than the alert-time snapshot.
  */
 function pctChangeSinceAlert(
   alertMcap: number,
@@ -126,11 +126,11 @@ function pctChangeSinceAlert(
 }
 
 /**
- * The highest market cap this token has reached since the match, tracked daily by
- * apps/worker/src/jobs/outcomeTrackingJob.ts. Null (and this section hidden entirely) until that
- * job's first run after the match - "no ATH recorded yet" is not the same as "never went up."
- * peakMcapUsd only ever moves up from snapshot.marketCapUsd, so the % here is always a gain -
- * this is a record of the best it's done, not a live price, and can lag up to a day behind.
+ * The highest market cap this token has reached since the match. Rolled forward every scan cycle
+ * (recordMatchPeaks, called from the worker's scanJob) rather than by a daily job, so it now
+ * tracks within about a minute. Null - and this section hidden entirely - until the first cycle
+ * after the match: "no ATH recorded yet" is not the same as "never went up." peakMcapUsd only
+ * ever moves up from snapshot.marketCapUsd, so the % here is always a gain.
  */
 function AthSection({ match }: { match: Match }) {
   const { snapshot } = match;

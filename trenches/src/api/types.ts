@@ -105,8 +105,9 @@ export interface Match {
   deliveredDashboard: boolean;
   deliveredTelegram: boolean;
   digestSentAt: string | null;
-  /** Backtesting data: highest mcap seen since this match, updated daily. Both null until the
-   *  outcome-tracking job's first run after the match - see apps/worker/src/jobs/outcomeTrackingJob.ts. */
+  /** Backtesting data: highest mcap seen since this match, rolled forward every scan cycle
+   *  (recordMatchPeaks in the worker's scanJob), so within about a minute. Both null until the
+   *  first cycle after the match. */
   peakMcapUsd: number | null;
   peakMcapAt: string | null;
   /** (peakMcapUsd - snapshot.marketCapUsd) / snapshot.marketCapUsd * 100 - null on the same terms as peakMcapUsd. */

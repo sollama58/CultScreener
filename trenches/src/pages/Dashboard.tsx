@@ -153,7 +153,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
           {!loading && matches.length === 0 && (
             <p className="empty-state">
               No matches yet. Once a token in the trenches passes the screen and matches one of your filters,
-              it'll show up here within a few minutes.
+              it'll show up here within seconds.
             </p>
           )}
         </>

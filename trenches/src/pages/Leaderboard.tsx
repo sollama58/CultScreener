@@ -9,8 +9,9 @@ const POLL_INTERVAL_MS = 60_000;
  * The best-performing alerts this platform has ever surfaced, globally across every user - see
  * apps/api/src/routes/leaderboard.ts for exactly what qualifies (reached at least +100%/2x above
  * its alert-time market cap; one entry per token, its single best-returning alert). The
- * underlying figures only change once a day (apps/worker/src/jobs/outcomeTrackingJob.ts), so
- * polling here is just to catch that daily update, not a live feed.
+ * underlying peaks are rolled forward every scan cycle (recordMatchPeaks in the worker's
+ * scanJob), so a minute's polling here is about right - entries can appear or move at that pace
+ * rather than once a day.
  */
 export function Leaderboard() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
@@ -59,8 +60,8 @@ export function Leaderboard() {
       {error && <p className="empty-state">{error}</p>}
       {!loading && !error && entries.length === 0 && (
         <p className="empty-state">
-          No alerts have hit +100% yet. Check back later - the outcome-tracking job rechecks recent alerts
-          daily, and it takes real time for a token to run.
+          No alerts have hit +100% yet. Check back later - peaks are rechecked every scan cycle, but it
+          takes real time for a token to actually run.
         </p>
       )}
 
