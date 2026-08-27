@@ -148,6 +148,19 @@ export interface Match {
   currentMarketCapUsd?: number | null;
   currentMarketCapAt?: string | null;
   filter: { id: string; name: string };
+  /**
+   * Which feed this card came from. The Live Feed interleaves curated alerts with the user's own
+   * matches (see apps/api/src/routes/matches.ts), and a curated entry is deliberately serialized
+   * into this same Match shape - so `kind` is how a card knows which it is. Optional because an
+   * API deployed before that change sends neither field.
+   */
+  kind?: "match" | "curated";
+  /**
+   * Present when the curator picked this token: on a "curated" card always, and on a "match"
+   * card when the user's own filter caught the same token around the same time (one card, both
+   * facts). Null on an ordinary match.
+   */
+  curated?: CuratedMeta | null;
 }
 
 export interface MatchesPage {
@@ -354,7 +367,7 @@ export interface WhitelistEntry {
 
 // ── Curated Alerts ───────────────────────────────────────────────────────
 
-/** How one curated call is going / went - see resolveOutcome in apps/api/src/routes/curated.ts. */
+/** How one curated call is going / went - see resolveOutcome in apps/api/src/curatedFeed.ts. */
 export interface CuratedOutcome {
   status: "watching" | "won" | "missed" | "disqualified" | "unknown";
   hit2x: boolean;
@@ -362,23 +375,24 @@ export interface CuratedOutcome {
   maxDrawdown1hPct: number | null;
   peak24hReturnPct: number | null;
   finalized: boolean;
+  /** Minutes left in the 1h window while watching; null once the verdict has landed. */
+  minutesLeft: number | null;
 }
 
-export interface CuratedAlert {
-  id: string;
-  createdAt: string;
+/** Who picked this token, why, and how the call is going. Attached to a feed card. */
+export interface CuratedMeta {
+  alertId: string;
   /** "heuristic-v1", or the id of the trained model that emitted it. */
   source: string;
   confidence: number;
   reasons: string[];
-  anchorPriceUsd: number;
-  anchorMcapUsd: number;
-  token: Pick<Token, "id" | "mintAddress" | "symbol" | "name" | "imageUrl" | "pairAddress">;
+  alertedAt: string;
   outcome: CuratedOutcome;
 }
 
+/** The Curated tab's page - the same card shape the Live Feed renders. */
 export interface CuratedPage {
-  alerts: CuratedAlert[];
+  alerts: Match[];
   page: number;
   pageSize: number;
   totalCount: number;
@@ -397,13 +411,10 @@ export interface CuratedStats {
     } | null;
   };
   training: {
-    totalSamples: number;
     finalizedSamples: number;
     samples7d: number;
     winners: number;
     baseWinRatePct: number | null;
-    disqualified: number;
-    avgWinnerPeak1hReturnPct: number | null;
   };
   feed: {
     alertsTotal: number;
@@ -411,7 +422,6 @@ export interface CuratedStats {
     graded: number;
     wins: number;
     hitRatePct: number | null;
-    avgPeak1hReturnPct: number | null;
     bestPeak24hReturnPct: number | null;
   };
 }

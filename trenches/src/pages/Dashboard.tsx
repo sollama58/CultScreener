@@ -249,7 +249,8 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
           <h3>Welcome to TrenchScanner 👋</h3>
           <p>
             This feed shows tokens matched to <strong>your own filters</strong> - and you don't have any set
-            up yet, so there's nothing here for now.
+            up yet. Until you do, it shows the ★ Curated picks: the pipeline's own highest-conviction calls,
+            the same for everyone.
           </p>
           <p>
             Every token is already screened for basic safety before it ever reaches you (see the Filters page
@@ -266,8 +267,8 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
 
           {!loading && matches.length === 0 && (
             <p className="empty-state">
-              No matches yet. Once a token in the trenches passes the screen and matches one of your filters,
-              it'll show up here within a few minutes.
+              Nothing here yet. Once a token in the trenches passes the screen and matches one of your
+              filters - or the curator picks one - it'll show up within a few minutes.
             </p>
           )}
         </>

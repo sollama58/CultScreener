@@ -2241,7 +2241,7 @@ select {
   line-height: 1.6;
 }
 
-/* ── Curated Alerts tab ─────────────────────────────────────────────── */
+/* ── Curated Alerts ─────────────────────────────────────────────────── */
 
 /* Minimal live/polling indicator for the curated stream - unlike the Live Feed's HealthBadge it
    carries no scanner status, because this tab's freshness story is just "is the push channel up". */
@@ -2258,151 +2258,107 @@ select {
   border-color: color-mix(in srgb, var(--green, var(--accent)) 45%, transparent);
 }
 
-.learning-panel {
+.curated-intro {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  margin: 0 0 0.9rem;
+}
+.curated-intro strong {
+  color: var(--text);
+}
+
+/* The curator's record: numbers on one row, no prose. */
+.scoreboard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.75rem;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
-  padding: 1rem 1.25rem;
+  padding: 0.85rem 1.25rem;
   margin: 0 0 1.25rem;
 }
-.learning-panel__header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-.learning-panel__header h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-.learning-panel__phase {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-}
-.learning-panel__phase--live {
-  color: var(--accent-2);
-  border-color: color-mix(in srgb, var(--accent-2) 50%, transparent);
-}
-.learning-panel__explain {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  margin: 0.5rem 0 0.9rem;
-  line-height: 1.5;
-}
-.learning-panel__verdict {
-  display: block;
-  margin-top: 0.35rem;
-}
-.learning-panel__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-}
-.learning-panel__stat {
+.scoreboard__stat {
   display: flex;
   flex-direction: column;
-  min-width: 7rem;
+  cursor: help;
 }
-.learning-panel__stat-value {
-  font-size: 1.15rem;
+.scoreboard__value {
+  font-size: 1.2rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.learning-panel__stat-label {
-  font-size: 0.72rem;
+.scoreboard__value[data-tone="good"] {
+  color: var(--green, var(--accent));
+}
+.scoreboard__value[data-tone="bad"] {
+  color: var(--red, #e05563);
+}
+.scoreboard__label {
+  font-size: 0.7rem;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-
-.curated-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.curated-card {
+.scoreboard__phase {
+  margin-left: auto;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 0.85rem 1rem;
+  color: var(--text-muted);
+  cursor: help;
 }
-/* The card's left edge carries the verdict at a glance, before anyone reads a number. */
-.curated-card--won {
-  border-left-color: var(--green, var(--accent));
-}
-.curated-card--missed,
-.curated-card--disqualified {
-  border-left-color: var(--red, #e05563);
-}
-.curated-card--watching {
-  border-left-color: var(--accent-2);
+.scoreboard__phase--live {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 50%, transparent);
 }
 
-.curated-card__head {
+/* A curated card in either feed. The tint is what makes it stand out among ordinary matches in
+   the Live Feed; it is deliberately a wash over the existing card rather than a different card,
+   so the statistics stay in exactly the places people already read them. */
+.token-card--curated {
+  border-color: color-mix(in srgb, var(--accent-2) 45%, var(--border));
+  background:
+    linear-gradient(color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 220px),
+    var(--surface);
+}
+
+.token-card__curated-strip {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: -0.15rem 0 0.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-2) 25%, transparent);
 }
-.curated-card__logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-.curated-card__logo--placeholder {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface-hover);
-  color: var(--text-muted);
-}
-.curated-card__title {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-.curated-card__title a {
-  color: var(--text);
-  font-weight: 600;
-  text-decoration: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.curated-card__title a:hover {
-  color: var(--accent);
-}
-.curated-card__symbol {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-.curated-card__meta {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+.token-card__curated-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-2);
+  cursor: help;
 }
 
 .outcome-badge {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  padding: 0.25rem 0.65rem;
+  padding: 0.15rem 0.55rem;
   border-radius: 999px;
   border: 1px solid var(--border);
   color: var(--text-muted);
   white-space: nowrap;
-  flex-shrink: 0;
 }
 .outcome-badge--won {
   color: var(--green, var(--accent));
   border-color: color-mix(in srgb, var(--green, var(--accent)) 50%, transparent);
-  background: color-mix(in srgb, var(--green, var(--accent)) 10%, transparent);
+  background: color-mix(in srgb, var(--green, var(--accent)) 12%, transparent);
 }
 .outcome-badge--missed {
   color: var(--red, #e05563);
@@ -2413,58 +2369,31 @@ select {
   border-color: color-mix(in srgb, var(--accent-2) 45%, transparent);
 }
 
-.curated-card__reasons {
+/* The alert's own scorecard, sitting with the other after-the-alert numbers. */
+.token-card__curated-outcome {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  list-style: none;
-  padding: 0;
-  margin: 0.6rem 0 0;
-}
-.curated-card__reasons li {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.15rem 0.6rem;
-}
-
-.curated-card__outcomes {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
   gap: 1.25rem;
-  margin-top: 0.7rem;
+  margin: 0.55rem 0 0.15rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.curated-card__stat {
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-.curated-card__stat-label {
-  font-size: 0.72rem;
+.token-card__curated-outcome-label {
+  font-size: 0.7rem;
   font-weight: 400;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-right: 0.3rem;
 }
-.curated-card__source {
-  margin-left: auto;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
 
 @media (max-width: 640px) {
-  .learning-panel__stats {
+  .scoreboard {
     gap: 1rem;
   }
-  .curated-card__outcomes {
-    gap: 0.75rem;
-  }
-  .curated-card__source {
+  .scoreboard__phase {
     margin-left: 0;
   }
 }
