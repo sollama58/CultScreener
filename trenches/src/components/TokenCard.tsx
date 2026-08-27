@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { acquireImageSlot } from "../utils/imageQueue";
 import { useNow } from "../utils/useNow";
 import { usePreferences } from "../context/PreferencesContext";
-import type { Match } from "../api/types";
+import type { CuratedMeta, Match } from "../api/types";
 import { fmtUsd, fmtAge } from "../utils/format";
 
 export function TokenCard({ match }: { match: Match }) {
@@ -32,7 +32,8 @@ export function TokenCard({ match }: { match: Match }) {
      * the quick links below impossible - nested anchors are not allowed and browsers unnest them.
      * The link moved onto the title instead, which is also the thing you would expect to click.
      */
-    <article className="token-card">
+    <article className={`token-card${match.curated ? " token-card--curated" : ""}`}>
+      {match.curated && <CuratedStrip curated={match.curated} standalone={match.kind === "curated"} />}
       <div className="token-card__header">
         <a className="token-card__title" href={dexUrl} target="_blank" rel="noreferrer">
           <TokenImage src={token.imageUrl} label={ticker ?? name} />
@@ -113,6 +114,8 @@ export function TokenCard({ match }: { match: Match }) {
 
       <AthSection match={match} />
 
+      {match.curated && <CuratedOutcomeRow outcome={match.curated.outcome} />}
+
       <QuickLinks mint={token.mintAddress} />
 
       <div className="token-card__mint">
@@ -121,6 +124,101 @@ export function TokenCard({ match }: { match: Match }) {
       </div>
     </article>
   );
+}
+
+/**
+ * The banner that marks a card the curator picked, and how that call is going.
+ *
+ * `standalone` distinguishes the two ways a curated card reaches the Live Feed: on its own (the
+ * curator picked a token none of this user's filters caught) or folded into one of their own
+ * matches. Both wear the same tint - what matters is "the curator vouched for this" - but the
+ * wording is honest about which happened.
+ */
+function CuratedStrip({ curated, standalone }: { curated: CuratedMeta; standalone: boolean }) {
+  return (
+    <div className="token-card__curated-strip">
+      <span
+        className="token-card__curated-label"
+        title={
+          curated.reasons.length > 0
+            ? `Why: ${curated.reasons.join(" · ")}`
+            : "Picked by the curator for the Curated Alerts feed"
+        }
+      >
+        ★ Curated{standalone ? "" : " + your filter"}
+      </span>
+      <OutcomeBadge curated={curated} />
+    </div>
+  );
+}
+
+/**
+ * The verdict, or the countdown to it.
+ *
+ * The 2x flips the badge the moment it is observed rather than when the hour formally closes -
+ * waiting would mean showing "watching" to someone whose alert has already doubled. The
+ * countdown ticks locally off the alert time (see useNow) instead of trusting a number computed
+ * when the response was built, which would freeze between polls.
+ */
+function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
+  const now = useNow();
+  const { outcome } = curated;
+
+  if (outcome.hit2x) return <span className="outcome-badge outcome-badge--won">2x ✓</span>;
+
+  if (outcome.status === "watching") {
+    const minutesLeft = Math.max(
+      0,
+      Math.ceil(60 - (now - new Date(curated.alertedAt).getTime()) / 60_000),
+    );
+    return (
+      <span
+        className="outcome-badge outcome-badge--watching"
+        title="A win means doubling within an hour of the alert, without first dropping 50%."
+      >
+        watching · {minutesLeft}m
+      </span>
+    );
+  }
+  if (outcome.status === "missed") {
+    return (
+      <span className="outcome-badge outcome-badge--missed" title="Did not double within the hour.">
+        missed
+      </span>
+    );
+  }
+  if (outcome.status === "disqualified") {
+    return (
+      <span
+        className="outcome-badge outcome-badge--missed"
+        title="It did double - but only after first dropping 50%+, which would have stopped out anyone who bought the alert. Counted as a loss on purpose."
+      >
+        stopped out
+      </span>
+    );
+  }
+  return null;
+}
+
+/** The alert's own scorecard: how far it ran in its first hour, and the worst it got. */
+function CuratedOutcomeRow({ outcome }: { outcome: CuratedMeta["outcome"] }) {
+  if (outcome.peak1hReturnPct === null && outcome.maxDrawdown1hPct === null) return null;
+  return (
+    <div className="token-card__curated-outcome">
+      <span>
+        <span className="token-card__curated-outcome-label">1h peak</span> {fmtSignedPct(outcome.peak1hReturnPct)}
+      </span>
+      <span>
+        <span className="token-card__curated-outcome-label">worst</span> {fmtSignedPct(outcome.maxDrawdown1hPct)}
+      </span>
+    </div>
+  );
+}
+
+function fmtSignedPct(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return "—";
+  const rounded = Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 10) / 10;
+  return `${rounded > 0 ? "+" : ""}${rounded}%`;
 }
 
 /**
