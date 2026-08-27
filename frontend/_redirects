@@ -1,3 +1,12 @@
+# ⚠️  RENDER DOES NOT READ THIS FILE.
+#
+# `_redirects` is a Netlify / Cloudflare Pages convention. Render takes rewrite config from
+# render.yaml (the HolDEX-frontend service's `routes:` block) or the Dashboard. Verified in
+# production: /trenches/deep-link returned 404 rather than the SPA, so this rule was inert.
+# /trenches/ itself only worked because a directory path serves index.html by default.
+#
+# EDITING THIS FILE ALONE CHANGES NOTHING - make the same edit in render.yaml.
+
 # Render static-site rewrites. Files that actually exist are served before any rule here
 # applies, so /trenches/assets/* and the site's own pages are unaffected.
 
