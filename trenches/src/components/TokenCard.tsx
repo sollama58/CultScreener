@@ -4,6 +4,7 @@ import { useNow } from "../utils/useNow";
 import { usePreferences } from "../context/PreferencesContext";
 import type { CuratedMeta, Match } from "../api/types";
 import { fmtUsd, fmtAge } from "../utils/format";
+import { changeSinceAlertPct } from "../utils/feedFilter";
 
 export function TokenCard({ match }: { match: Match }) {
   const { prefs } = usePreferences();
@@ -23,7 +24,7 @@ export function TokenCard({ match }: { match: Match }) {
       ? match.currentMarketCapUsd
       : (latestSnapshot?.marketCapUsd ?? null);
   const nowMcapAt = match.currentMarketCapAt ?? latestSnapshot?.takenAt ?? null;
-  const change = pctChangeSinceAlert(snapshot.marketCapUsd, nowMcap);
+  const change = toChangeLabel(changeSinceAlertPct(match));
 
   return (
     /*
@@ -400,22 +401,18 @@ function QuickLinks({ mint }: { mint: string }) {
 }
 
 /**
- * Compares the frozen alert-time mcap against the freshest figure the server has (see nowMcap
- * above). That figure reflects however recently the worker last re-scanned this specific token
- * (every ~7 minutes while it's still in the mcap band, per SCAN_INTERVAL_MINUTES - not at all
- * once it falls out of band) - so this is "as of the last data we actually have," not a live
- * price feed. Undefined/null when there's nothing newer than the alert-time snapshot to compare.
+ * Renders the % change the feed filter computes (see changeSinceAlertPct, which is shared so a
+ * card and the filter can never disagree about the same number).
+ *
+ * That figure reflects however recently the worker last re-scanned this specific token - so it is
+ * "as of the last data we actually have", not a live price feed. Null when there is nothing
+ * newer than the alert-time snapshot to compare.
  */
-function pctChangeSinceAlert(
-  alertMcap: number,
-  nowMcap: number | null | undefined,
-): { text: string; tone: "up" | "down" | "flat" } | null {
-  if (nowMcap === undefined || nowMcap === null || !Number.isFinite(nowMcap) || alertMcap <= 0) {
-    return null;
-  }
-  const pct = Math.round(((nowMcap - alertMcap) / alertMcap) * 100);
-  const tone = pct > 0 ? "up" : pct < 0 ? "down" : "flat";
-  return { text: `${pct > 0 ? "+" : ""}${pct}%`, tone };
+function toChangeLabel(pct: number | null): { text: string; tone: "up" | "down" | "flat" } | null {
+  if (pct === null) return null;
+  const rounded = Math.round(pct);
+  const tone = rounded > 0 ? "up" : rounded < 0 ? "down" : "flat";
+  return { text: `${rounded > 0 ? "+" : ""}${rounded}%`, tone };
 }
 
 /**

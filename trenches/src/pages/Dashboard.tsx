@@ -3,6 +3,8 @@ import { listFilters, listMatches, openMatchesStream } from "../api/client";
 import { HealthBadge } from "../components/HealthBadge";
 import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
+import { FeedFilterBar } from "../components/FeedFilterBar";
+import { DEFAULT_FEED_FILTER, passesFeedFilter, type FeedFilter } from "../utils/feedFilter";
 import { usePreferences } from "../context/PreferencesContext";
 import { playAlertSound } from "../utils/alertSound";
 import { useNow } from "../utils/useNow";
@@ -53,6 +55,10 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   // Whether live push is currently connected - shown in the header so it's visible when the
   // feed has silently fallen back to polling.
   const [streamLive, setStreamLive] = useState(false);
+  // Display-only: narrows what's on screen, never what's fetched or alerted. Component state
+  // rather than saved preferences, so it can't outlive the session and leave someone staring at
+  // a feed they filtered empty yesterday.
+  const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FEED_FILTER);
 
   // Checked once on mount, not on every poll tick - a brand new user creating their first filter
   // just needs the welcome message to go away next time they load the page, not live mid-session.
@@ -230,6 +236,10 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   }, [refetch, announceNewAlert, rememberAnnounced]);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  // Ticks with the shared clock (the same one the cards' own timers use), so a card ages out of
+  // a "last 5 minutes" filter on its own rather than at the next poll.
+  const now = useNow();
+  const visibleMatches = matches.filter((m) => passesFeedFilter(m, filter, now));
 
   return (
     <div className="dashboard">
@@ -274,8 +284,24 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         </>
       )}
 
+      {matches.length > 0 && (
+        <FeedFilterBar
+          filter={filter}
+          onChange={setFilter}
+          shown={visibleMatches.length}
+          total={matches.length}
+        />
+      )}
+
+      {matches.length > 0 && visibleMatches.length === 0 && (
+        <p className="empty-state">
+          All {matches.length} alerts on this page are outside the filter above - widen it or reset to see
+          them again.
+        </p>
+      )}
+
       <div className="token-grid">
-        {matches.map((match) => (
+        {visibleMatches.map((match) => (
           <TokenCard key={match.id} match={match} />
         ))}
       </div>

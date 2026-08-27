@@ -2397,3 +2397,99 @@ select {
     margin-left: 0;
   }
 }
+
+/* ── Live Feed display filter ───────────────────────────────────────── */
+
+/* Sits directly above the grid it filters, one row high. Deliberately quiet until it is doing
+   something - an always-loud control above a feed people watch all day is noise. */
+.feed-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 0.7rem 1rem;
+  margin: 0 0 1rem;
+}
+.feed-filter--active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.feed-filter__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 15rem;
+  flex: 1 1 15rem;
+}
+.feed-filter__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.feed-filter__value {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The two handles of one range, stacked tight so they read as a single control. */
+.feed-filter__sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.feed-filter__sliders input[type="range"] {
+  width: 100%;
+  height: 1.1rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  background: transparent;
+}
+
+.feed-filter__status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+.feed-filter__count {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+  white-space: nowrap;
+}
+.feed-filter__hidden {
+  color: var(--accent);
+}
+.feed-filter__reset {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.75rem;
+}
+.feed-filter__reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (max-width: 640px) {
+  .feed-filter {
+    gap: 0.9rem;
+  }
+  .feed-filter__status {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+}
