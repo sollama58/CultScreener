@@ -2400,27 +2400,68 @@ select {
 
 /* ── Live Feed display filter ───────────────────────────────────────── */
 
-/* Sits directly above the grid it filters, one row high. Deliberately quiet until it is doing
-   something - an always-loud control above a feed people watch all day is noise. */
+/* Sits directly above the grid it filters. Closed by default - it stays out of the way of a feed
+   people watch all day until asked for; the toggle row itself never disappears, so a collapsed
+   panel never hides the fact that it's quietly narrowing the feed. */
 .feed-filter {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 1.5rem;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
-  padding: 0.7rem 1rem;
   margin: 0 0 1rem;
+  overflow: hidden;
 }
 .feed-filter--active {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
+.feed-filter__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: transparent;
+  border: none;
+  padding: 0.65rem 1rem;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+.feed-filter__toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.feed-filter__chevron {
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.feed-filter__chevron--open {
+  transform: rotate(90deg);
+}
+.feed-filter__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.feed-filter__panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1.5rem;
+  padding: 0.85rem 1rem 1rem;
+  border-top: 1px solid var(--border);
+}
+
 .feed-filter__group {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.6rem;
   min-width: 15rem;
   flex: 1 1 15rem;
 }
@@ -2443,53 +2484,78 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-/* The two handles of one range, stacked tight so they read as a single control. */
-.feed-filter__sliders {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+/* One track, two independently-draggable handles - see DualRangeSlider.tsx for why this is a
+   from-scratch control rather than two overlaid native <input type="range"> elements. */
+.dual-range {
+  position: relative;
+  height: 28px;
+  touch-action: none;
 }
-.feed-filter__sliders input[type="range"] {
-  width: 100%;
-  height: 1.1rem;
-  margin: 0;
-  accent-color: var(--accent);
+.dual-range__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: var(--border);
+}
+.dual-range__fill {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: var(--accent);
+}
+.dual-range__handle {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   cursor: pointer;
-  background: transparent;
+  touch-action: none;
+}
+.dual-range__handle:focus-visible {
+  outline: none;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.4),
+    0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-.feed-filter__status {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-left: auto;
-}
-.feed-filter__count {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  cursor: help;
-  white-space: nowrap;
-}
-.feed-filter__hidden {
-  color: var(--accent);
-}
 .feed-filter__reset {
   padding: 0.3rem 0.7rem;
   font-size: 0.75rem;
+  margin-left: auto;
 }
 .feed-filter__reset:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
+.feed-filter__count {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.feed-filter__hidden {
+  color: var(--accent);
+}
+
 @media (max-width: 640px) {
-  .feed-filter {
-    gap: 0.9rem;
+  .feed-filter__panel {
+    gap: 1.1rem;
   }
-  .feed-filter__status {
+  .feed-filter__reset {
     margin-left: 0;
     width: 100%;
-    justify-content: space-between;
   }
 }
