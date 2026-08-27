@@ -453,7 +453,6 @@ select {
 .token-card__name {
   font-weight: 700;
   font-size: 1.05rem;
-  margin-right: 6px;
 }
 
 .token-card__symbol {
@@ -463,11 +462,13 @@ select {
 
 .token-card__score {
   font-weight: 800;
-  font-size: 1.05rem;
+  font-size: 0.85rem;
   border-radius: 999px;
-  padding: 3px 12px;
+  padding: 2px 9px;
   color: #fff;
   letter-spacing: -0.01em;
+  flex: none;
+  align-self: center;
 }
 
 .token-card__score[data-tier="high"] {
@@ -511,21 +512,24 @@ select {
 .token-card__stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px 12px;
-  margin: 0 0 10px;
+  gap: 10px 12px;
+  margin: 0 0 12px;
 }
 
 .token-card__stats dt {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: 0.66rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
+  margin-bottom: 1px;
 }
 
 .token-card__stats dd {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.86rem;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .token-card__mint {
@@ -1245,8 +1249,7 @@ select {
    cause of a page that scrolls sideways on a phone. Applies at every width; it only has an
    effect when a word genuinely can't fit. */
 .filter-card__summary,
-.settings-card__pending code,
-.token-card__name {
+.settings-card__pending code {
   overflow-wrap: anywhere;
 }
 
@@ -1712,4 +1715,103 @@ select {
   color: var(--neg);
   background: color-mix(in srgb, var(--neg) 14%, transparent);
   border-color: color-mix(in srgb, var(--neg) 34%, transparent);
+}
+
+/* ══ Card cell polish ═══════════════════════════════════════════════════
+ *
+ * With holders and top-10 gone, the two market caps are the only figures most people read on a
+ * card. They get the weight; volume and age become supporting detail rather than four equal
+ * numbers competing for the same attention.
+ */
+
+.token-card__stat--hero dd {
+  font-size: 1.08rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* A hairline under the headline pair, so the eye has somewhere to stop rather than reading four
+   stat blocks as one undifferentiated list. */
+.token-card__stat--hero {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+/* Supporting figures sit quieter than the pair above them. */
+.token-card__stats > div:not(.token-card__stat--hero) dd {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text) 82%, var(--text-muted));
+}
+
+/* The timestamp is reference detail; the live counter beside it is the part worth reading, so it
+   does not need to compete. */
+.token-card__alerted > span:first-child {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-card__header {
+  gap: 10px;
+}
+
+/* One consistent rhythm down the card rather than each block choosing its own margin. */
+.token-card__tags {
+  margin-bottom: 12px;
+}
+
+.token-card__breakdown {
+  margin-bottom: 12px;
+}
+
+.token-card__mint {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* The name is clamped to one line so every card in a row starts its figures at the same height -
+   a two-word name and a four-word one used to push the whole stack down by a line each time. The
+   full name stays reachable as a tooltip. */
+.token-card__title-text {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The name is the part that gives, not the ticker: "Degen Season For... $DEGEN" is still
+   identifiable, "Degen Season Forever $..." is not. */
+.token-card__name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.token-card__symbol {
+  flex: none;
+}
+
+/* The alert row spans both columns, so without this the clock sat mid-card with an empty half
+   beside it. Pushed to the far edge it reads as a deliberate pairing instead. */
+.token-card__alerted {
+  justify-content: space-between;
+}
+
+/* One bar does not need a line of its own for a one-word label. */
+.breakdown-bar {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.breakdown-bar__label {
+  flex: none;
+}
+
+.breakdown-bar__track {
+  flex: 1;
+  min-width: 0;
 }
