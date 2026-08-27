@@ -3,6 +3,7 @@ import { getTelegramStatus, linkTelegram, setAlertMode, unlinkTelegram } from ".
 import type { AlertMode, TelegramStatus } from "../api/types";
 import { usePreferences, type AlertSoundName } from "../context/PreferencesContext";
 import { playAlertSound, unlockAudio } from "../utils/alertSound";
+import { useSubscription } from "../context/SubscriptionContext";
 
 const ALERT_MODE_LABELS: Record<AlertMode, string> = {
   REALTIME: "Real-time only",
@@ -15,9 +16,61 @@ export function Settings() {
   return (
     <div className="settings-page">
       <h2>Settings</h2>
+      <AccessCard />
       <TelegramCard />
       <DisplayCard />
       <SoundCard />
+    </div>
+  );
+}
+
+/** How long this wallet's access runs, and where it came from. */
+function AccessCard() {
+  const { status, loading } = useSubscription();
+
+  if (loading) return <p className="empty-state">Loading access…</p>;
+  if (!status) return null;
+
+  const expiresAt = status.expiresAt ? new Date(status.expiresAt) : null;
+  const daysLeft =
+    expiresAt !== null ? Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 86_400_000)) : null;
+
+  const describe = () => {
+    switch (status.reason) {
+      case "admin":
+        return "You're an admin - access doesn't expire.";
+      case "whitelist":
+        return expiresAt
+          ? `Free access, until ${expiresAt.toLocaleDateString()}.`
+          : "Free access, with no expiry.";
+      case "subscription":
+        return `Paid access${expiresAt ? `, ${daysLeft} day${daysLeft === 1 ? "" : "s"} left` : ""}.`;
+      default:
+        return expiresAt
+          ? `Expired on ${expiresAt.toLocaleDateString()}.`
+          : "No access yet - burn to unlock the feed.";
+    }
+  };
+
+  return (
+    <div className="settings-card">
+      <h3>Access</h3>
+      <p className={`settings-card__status${status.hasAccess ? " settings-card__status--linked" : ""}`}>
+        {status.hasAccess ? "✅ " : ""}
+        {describe()}
+      </p>
+      {expiresAt && status.reason === "subscription" && (
+        <p className="settings-toggle__hint">
+          Renews for {status.price.tokensPerMonth.toLocaleString()} $ASDFASDFA per{" "}
+          {status.price.daysPerMonth} days. Burning before this runs out adds to the time you have left
+          rather than replacing it.
+        </p>
+      )}
+      {status.burnCount > 0 && (
+        <p className="settings-toggle__hint">
+          {status.burnCount} burn{status.burnCount === 1 ? "" : "s"} on record for this wallet.
+        </p>
+      )}
     </div>
   );
 }

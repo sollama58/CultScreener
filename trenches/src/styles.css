@@ -1905,3 +1905,189 @@ select {
 .token-card__mint {
   margin-top: auto;
 }
+
+/* ══ Paywall ════════════════════════════════════════════════════════════
+ *
+ * Shown in place of the feed when a wallet has no live subscription. The API enforces this
+ * independently on every gated route - this screen exists so the answer is "here's how to get in"
+ * rather than a page of failed requests.
+ */
+
+.paywall {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 48px;
+}
+
+.paywall__card {
+  width: 100%;
+  max-width: 520px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  box-shadow: var(--shadow-card);
+  position: relative;
+  overflow: hidden;
+}
+
+/* The same brand gradient the cards use for their top edge, so the paywall reads as part of the
+   product rather than as an error page. */
+.paywall__card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--grad-brand);
+}
+
+.paywall__title {
+  margin: 0 0 4px;
+  font-size: 1.4rem;
+}
+
+.paywall__lapsed {
+  margin: 0 0 12px;
+  color: var(--warn);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.paywall__lede {
+  margin: 0 0 16px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.paywall__points {
+  margin: 0 0 20px;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+
+.paywall__cta {
+  width: 100%;
+  padding: 13px;
+  font-size: 0.95rem;
+}
+
+.paywall__status {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.paywall__ok {
+  margin: 0 0 12px;
+  color: var(--pos);
+  font-weight: 600;
+}
+
+.paywall__error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--neg);
+  background: color-mix(in srgb, var(--neg) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--neg) 30%, transparent);
+}
+
+/* A failure AFTER the tokens were spent is a different thing from one before, and must not look
+   the same: this one is amber and reassuring, because the burn is safe and only the confirmation
+   is slow. */
+.paywall__error--burned {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.paywall__footnote {
+  margin: 14px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ══ Admin: subscriptions ═══════════════════════════════════════════════ */
+
+/* Burns with no account behind them are money that arrived from someone who hasn't signed in -
+   the one figure on this page that may need a human to do something. */
+.admin-stat-card--warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+}
+
+.admin-subheading {
+  margin: 28px 0 10px;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0 4px;
+}
+
+.admin-scan-cursor {
+  margin: 12px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.admin-live {
+  color: var(--pos);
+  font-weight: 600;
+}
+
+.admin-lapsed {
+  color: var(--text-muted);
+}
+
+.btn--small {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+}
+
+/* The "connect your wallet first" hint under a disabled burn button. */
+.paywall__status--center {
+  text-align: center;
+  margin-top: 10px;
+}
+
+/* Links inside the app, styled explicitly.
+ *
+ * In production this page also loads the main site's stylesheet, which happens to style anchors -
+ * but "happens to" is not a contract, and in isolation (dev, or if the site's CSS is ever scoped)
+ * these render as default browser blue on a dark background. Cheap to state outright. */
+.paywall__footnote a,
+.admin-scan-cursor a,
+.admin-table a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.paywall__footnote a:hover,
+.admin-scan-cursor a:hover,
+.admin-table a:hover {
+  text-decoration: underline;
+}

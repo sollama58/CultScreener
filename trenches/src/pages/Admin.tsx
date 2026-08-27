@@ -4,14 +4,16 @@ import { AdminMonitoring } from "../components/admin/AdminMonitoring";
 import { AdminLiveFeed } from "../components/admin/AdminLiveFeed";
 import { AdminUsers } from "../components/admin/AdminUsers";
 import { AdminConfig } from "../components/admin/AdminConfig";
+import { AdminSubscriptions } from "../components/admin/AdminSubscriptions";
 
-type AdminSection = "overview" | "monitoring" | "live-feed" | "users" | "config";
+type AdminSection = "overview" | "monitoring" | "live-feed" | "users" | "subscriptions" | "config";
 
 const SECTIONS: { id: AdminSection; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "monitoring", label: "Monitoring" },
   { id: "live-feed", label: "Live Feed" },
   { id: "users", label: "Users" },
+  { id: "subscriptions", label: "Subscriptions" },
   { id: "config", label: "Config" },
 ];
 
@@ -47,6 +49,7 @@ export function Admin() {
         {section === "monitoring" && <AdminMonitoring />}
         {section === "live-feed" && <AdminLiveFeed />}
         {section === "users" && <AdminUsers />}
+        {section === "subscriptions" && <AdminSubscriptions />}
         {section === "config" && <AdminConfig />}
       </div>
     </div>

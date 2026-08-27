@@ -16,6 +16,12 @@ import type {
   User,
   UserFilter,
   WorkerHealth,
+  SubscriptionStatus,
+  ClaimResult,
+  AdminSubscriptionStats,
+  AdminSubscriber,
+  AdminBurn,
+  WhitelistEntry,
 } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_URL;
@@ -26,6 +32,9 @@ const BASE_URL = import.meta.env.VITE_API_URL;
  * imports from the React tree.
  */
 export const UNAUTHORIZED_EVENT = "trenches:unauthorized";
+
+/** Fired on any 402 - the subscription lapsed or was never there. SubscriptionContext listens. */
+export const PAYMENT_REQUIRED_EVENT = "trenches:payment-required";
 
 export class ApiError extends Error {
   constructor(
@@ -55,6 +64,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // once here lets AuthContext drop back to the sign-in screen from anywhere.
     if (res.status === 401) {
       window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
+    // Same reasoning as the 401 above, one step along: the subscription can lapse mid-session, or
+    // be revoked, and the only way this app finds out is a 402 on some later call. Broadcasting it
+    // once here means the feed drops to the paywall from wherever it happened, rather than each
+    // caller swallowing it and leaving a page that quietly stops updating.
+    if (res.status === 402) {
+      window.dispatchEvent(new CustomEvent(PAYMENT_REQUIRED_EVENT));
     }
     let message = `Request failed with status ${res.status}`;
     try {
@@ -219,4 +235,89 @@ export function getAdminConfig() {
 export function openMatchesStream(): EventSource | null {
   if (typeof EventSource === "undefined") return null;
   return new EventSource(`${BASE_URL}/matches/stream`, { withCredentials: true });
+}
+
+// ── Subscription ─────────────────────────────────────────────────────────
+export function getSubscription() {
+  return request<SubscriptionStatus>("/subscription");
+}
+
+/**
+ * A recent blockhash - and, by succeeding at all, proof the API is reachable.
+ *
+ * Called immediately before asking the wallet to sign. That ordering is the point: a burn cannot
+ * be undone, so finding out the backend is unreachable AFTER the tokens are gone is the one
+ * outcome worth going out of the way to avoid.
+ */
+export function getBlockhash() {
+  return request<{ blockhash: string; lastValidBlockHeight: number }>("/subscription/blockhash");
+}
+
+/**
+ * Hand a signed burn to the API to broadcast.
+ *
+ * Sent through the server rather than straight to an RPC so the signature is recorded server-side
+ * the instant it exists. If this tab dies immediately afterwards, the burn is still credited -
+ * either by the claim below when the user returns, or by the reconciler without them doing
+ * anything at all.
+ */
+export function sendBurnTransaction(base64Transaction: string) {
+  return request<{ signature: string }>("/subscription/send", {
+    method: "POST",
+    body: JSON.stringify({ transaction: base64Transaction }),
+  });
+}
+
+/** Ask the API to verify a burn and grant the months it bought. Safe to call repeatedly. */
+export function claimBurn(signature: string) {
+  return request<ClaimResult>("/subscription/claim", {
+    method: "POST",
+    body: JSON.stringify({ signature }),
+  });
+}
+
+// ── Admin: subscriptions ─────────────────────────────────────────────────
+export function getAdminSubscriptionStats() {
+  return request<AdminSubscriptionStats>("/admin/subscriptions/stats");
+}
+
+export function getAdminSubscribers(limit = 50) {
+  return request<AdminSubscriber[]>(`/admin/subscriptions?limit=${limit}`);
+}
+
+export function getAdminBurns(limit = 50, unattributedOnly = false) {
+  return request<AdminBurn[]>(
+    `/admin/subscriptions/burns?limit=${limit}${unattributedOnly ? "&unattributed=true" : ""}`,
+  );
+}
+
+export function getWhitelist() {
+  return request<WhitelistEntry[]>("/admin/whitelist");
+}
+
+export function addToWhitelist(walletAddress: string, note?: string, expiresAt?: string) {
+  return request<WhitelistEntry>("/admin/whitelist", {
+    method: "POST",
+    body: JSON.stringify({ walletAddress, note: note || undefined, expiresAt: expiresAt || undefined }),
+  });
+}
+
+export function removeFromWhitelist(walletAddress: string) {
+  return request<{ ok: boolean; removed: boolean }>(`/admin/whitelist/${encodeURIComponent(walletAddress)}`, {
+    method: "DELETE",
+  });
+}
+
+export function grantSubscription(walletAddress: string, days: number) {
+  return request<{ walletAddress: string; expiresAt: string }>("/admin/subscriptions/grant", {
+    method: "POST",
+    body: JSON.stringify({ walletAddress, days }),
+  });
+}
+
+export function revokeSubscription(walletAddress: string) {
+  return request<{ ok: boolean; revoked: boolean }>(
+    `/admin/subscriptions/${encodeURIComponent(walletAddress)}`,
+    { method: "DELETE" },
+  );
 }
