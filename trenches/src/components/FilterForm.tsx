@@ -1,4 +1,9 @@
 import { useState, type FormEvent } from "react";
+import {
+  FilterTemplates,
+  templateSettings,
+  type FilterTemplate,
+} from "./FilterTemplates";
 import { ApiError } from "../api/client";
 import type { FilterInput, PublicConfig, UserFilter } from "../api/types";
 
@@ -52,6 +57,19 @@ function toFormState(config: PublicConfig, filter?: UserFilter): FormState {
   };
 }
 
+/**
+ * Spells out a sub-minute value in seconds, under the input that produced it.
+ *
+ * The field is labelled "minutes", so 0.25 reads as a typo until something confirms it isn't.
+ * Only shown below a minute: at 30 minutes nobody needs to be told that's 1800 seconds.
+ */
+function SecondsHint({ minutes }: { minutes: string }) {
+  const value = toNumberOrNull(minutes);
+  if (value === null || value <= 0 || value >= 1) return null;
+  const seconds = Math.round(value * 60);
+  return <span className="filter-form__unit-hint">= {seconds} second{seconds === 1 ? "" : "s"}</span>;
+}
+
 function toNumberOrNull(value: string): number | null {
   const trimmed = value.trim();
   if (trimmed === "") return null;
@@ -74,10 +92,50 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
   const [form, setForm] = useState<FormState>(() => toFormState(config, initial));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
+  // Which template was last applied, so the form can confirm it took - the fields it changes are
+  // scattered down a long form and several of them go *blank*, which on its own looks like
+  // nothing happened.
+  const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null);
   const { scanBandMin, scanBandMax } = config;
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  /**
+   * Fill the form from a template.
+   *
+   * Numbers go back to strings because that is what the inputs hold - the form keeps everything
+   * as text so a half-typed value isn't destroyed by a parse on every keystroke. A null in the
+   * template means "leave this criterion open", which is the empty string here.
+   */
+  const applyTemplate = (template: FilterTemplate) => {
+    const settings = templateSettings(template, config);
+    const text = (value: number | null | undefined) =>
+      value === null || value === undefined ? "" : String(value);
+
+    setForm((current) => ({
+      ...current,
+      // Name is left alone deliberately: it's the user's label for this filter, not part of the
+      // configuration, and overwriting one they already typed would be rude.
+      mcapMin: String(settings.mcapMin ?? current.mcapMin),
+      mcapMax: String(settings.mcapMax ?? current.mcapMax),
+      minVolumeMcapRatio: text(settings.minVolumeMcapRatio),
+      minHolderGrowthPct: text(settings.minHolderGrowthPct),
+      maxTop10HolderPct: text(settings.maxTop10HolderPct),
+      maxDevWalletPct: text(settings.maxDevWalletPct),
+      maxRiskScore: text(settings.maxRiskScore),
+      excludeCriticalRiskFlags: settings.excludeCriticalRiskFlags ?? false,
+      minTokenAgeMinutes: text(settings.minTokenAgeMinutes),
+      maxTokenAgeMinutes: text(settings.maxTokenAgeMinutes),
+      minScore: text(settings.minScore),
+      maxFreshTop10WalletPct: text(settings.maxFreshTop10WalletPct),
+      narrativeKeywords: settings.narrativeKeywords ?? "",
+    }));
+    setAppliedTemplate(template.name);
+    setShowTemplates(false);
+    setError(null);
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -136,6 +194,12 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
 
   return (
     <form className="filter-form" onSubmit={handleSubmit}>
+      {appliedTemplate && (
+        <p className="filter-form__applied" role="status">
+          Filled from <strong>{appliedTemplate}</strong>. Adjust anything you like, then save.
+        </p>
+      )}
+
       <div className="filter-form__row">
         <label>
           Filter name
@@ -224,7 +288,7 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
             type="number"
             min={0}
             max={100}
-            placeholder="e.g. 60"
+            placeholder="e.g. 30"
             value={form.minScore}
             onChange={(e) => update("minScore", e.target.value)}
           />
@@ -311,28 +375,34 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
         <label>
           <span className="filter-form__label-row">
             Min age (minutes)
-            <Hint text="How long ago the token launched, at minimum. Set this to skip brand-new tokens and only see ones that have had a little time to prove themselves. Leave blank to see tokens of any age." />
+            <Hint text="How long ago the token launched, at minimum. Set this to skip brand-new tokens and only see ones that have had a little time to prove themselves. For seconds, use a fraction of a minute - 0.25 is 15 seconds. Leave blank to see tokens of any age." />
           </span>
           <input
             type="number"
             min={0}
+            /* Any decimal, not whole minutes: a fraction is how you ask for seconds here. The
+               API and the stored age both carry sub-minute precision to match. */
+            step="any"
             placeholder="e.g. 30"
             value={form.minTokenAgeMinutes}
             onChange={(e) => update("minTokenAgeMinutes", e.target.value)}
           />
+          <SecondsHint minutes={form.minTokenAgeMinutes} />
         </label>
         <label>
           <span className="filter-form__label-row">
             Max age (minutes)
-            <Hint text="How long ago the token launched, at most. Set this if you only want fresh opportunities and don't care about tokens that have been around for a while. Leave blank to see tokens of any age." />
+            <Hint text="How long ago the token launched, at most. Set this if you only want fresh opportunities and don't care about tokens that have been around for a while. For seconds, use a fraction of a minute - 0.5 is 30 seconds. Leave blank to see tokens of any age." />
           </span>
           <input
             type="number"
             min={0}
+            step="any"
             placeholder="e.g. 2880"
             value={form.maxTokenAgeMinutes}
             onChange={(e) => update("maxTokenAgeMinutes", e.target.value)}
           />
+          <SecondsHint minutes={form.maxTokenAgeMinutes} />
         </label>
       </div>
 
@@ -351,6 +421,9 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
       {error && <p className="form-error">{error}</p>}
 
       <div className="filter-form__actions">
+        <button type="button" className="btn" onClick={() => setShowTemplates(true)} disabled={saving}>
+          Use a template…
+        </button>
         <button type="submit" className="btn btn--primary" disabled={saving}>
           {saving ? "Saving…" : "Save filter"}
         </button>
@@ -360,6 +433,13 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
           </button>
         )}
       </div>
+      {showTemplates && (
+        <FilterTemplates
+          config={config}
+          onApply={applyTemplate}
+          onClose={() => setShowTemplates(false)}
+        />
+      )}
     </form>
   );
 }
