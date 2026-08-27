@@ -1,10 +1,14 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
+// v49: two inline <script> blocks in index.html (the main-view tab switcher and the King of
+// the Pill widget) never ran under this site's CSP - script-src has no 'unsafe-inline', so the
+// browser silently drops inline scripts with no console error a user would notice. Moved to
+// js/mainViewTabs.js and js/kotp.js, which script-src 'self' actually allows to execute.
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v48';
+const CACHE_VERSION = 'holdex-v49';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -21,6 +25,8 @@ const APP_SHELL = [
   '/js/tech.js?v=5',
   '/js/emerging.js?v=5',
   '/js/versus.js?v=9',
+  '/js/mainViewTabs.js?v=1',
+  '/js/kotp.js?v=1',
   '/js/tokenDetail.js?v=21',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=3',
