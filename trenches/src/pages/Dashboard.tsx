@@ -4,7 +4,7 @@ import { HealthBadge } from "../components/HealthBadge";
 import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
 import { FeedFilterBar } from "../components/FeedFilterBar";
-import { DEFAULT_FEED_FILTER, passesFeedFilter, type FeedFilter } from "../utils/feedFilter";
+import { DEFAULT_FEED_FILTER, isDefaultFilter, passesFeedFilter, type FeedFilter } from "../utils/feedFilter";
 import { usePreferences } from "../context/PreferencesContext";
 import { playAlertSound } from "../utils/alertSound";
 import { useNow } from "../utils/useNow";
@@ -36,6 +36,22 @@ const POLL_INTERVAL_MS = 45_000;
  */
 const SOUND_COOLDOWN_MS = 2_000;
 
+/**
+ * How many alerts one page shows - the server's own fixed page size (see MatchesPage.pageSize).
+ * Filtered browsing paginates over this many PASSING alerts, not raw ones - see the backfill
+ * logic below.
+ */
+const DISPLAY_PAGE_SIZE = 12;
+
+/**
+ * Backfill cap for a filtered view: how many raw server pages one "ensure enough for page N"
+ * pass will pull before giving up, even if the filter is narrow enough to never fill a page. A
+ * generous, bounded backstop (~300 raw alerts) rather than "keep going forever" - a filter that
+ * genuinely matches almost nothing should end in "that's everything," not an unbounded fetch
+ * loop the moment someone pages deep enough.
+ */
+const MAX_FILTER_LOOKAHEAD_PAGES = 25;
+
 interface DashboardProps {
   /** Jumps to the Filters tab - wired to the same tab state the Navbar uses (see App.tsx). */
   onGoToFilters: () => void;
@@ -59,6 +75,33 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   // rather than saved preferences, so it can't outlive the session and leave someone staring at
   // a feed they filtered empty yesterday.
   const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FEED_FILTER);
+  const filterActive = !isDefaultFilter(filter);
+
+  // ── Filtered-view pagination ────────────────────────────────────────
+  // Raw "page N" from the server rarely lines up with "page N" of what a tight filter actually
+  // lets through - a narrow filter can leave a raw page nearly empty, which reads as a broken
+  // filter (a couple of cards, then Next/Next/Next through mostly-blank pages to see more).
+  // Filtered browsing keeps its own page counter over the PASSING alerts instead, and backfills
+  // by pulling more raw pages from the server until it has enough to fill the requested page (or
+  // has genuinely run out) - see ensureFilteredPage. Untouched by any of this when the filter is
+  // at its default (isDefaultFilter), which is the common case and keeps the plain single-page
+  // fetch below exactly as it was.
+  const [filteredPage, setFilteredPage] = useState(1);
+  const [filteredRaw, setFilteredRaw] = useState<Match[]>([]);
+  const [filteredServerTotal, setFilteredServerTotal] = useState(0);
+  const [filteredLoading, setFilteredLoading] = useState(false);
+  const filteredRequestIdRef = useRef(0);
+
+  // A different range means a different "page 1" - the previously accumulated buffer may not
+  // have enough (or the right) alerts for it. Adjusted directly during render (a recognized React
+  // pattern for "derive state from a changed prop/value") rather than in an effect, so it's
+  // already correct by the time the fetch effect below reads `filteredPage` in the same commit -
+  // an effect-based reset here would let one stale fetch slip through first.
+  const lastFilterRef = useRef(filter);
+  if (lastFilterRef.current !== filter) {
+    lastFilterRef.current = filter;
+    if (filteredPage !== 1) setFilteredPage(1);
+  }
 
   // Checked once on mount, not on every poll tick - a brand new user creating their first filter
   // just needs the welcome message to go away next time they load the page, not live mid-session.
@@ -235,11 +278,103 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     };
   }, [refetch, announceNewAlert, rememberAnnounced]);
 
+  /**
+   * Ensures the filtered buffer has enough PASSING alerts to fill `targetPage`, pulling
+   * additional raw server pages (starting fresh from page 1 each time) until it does, or until
+   * it has genuinely run out.
+   *
+   * Restarts from page 1 rather than appending onto whatever was already buffered: a live update
+   * can insert a brand new alert ahead of everything else, which would otherwise shift every
+   * later alert's page by one and risk showing a duplicate or dropping one at a page boundary.
+   * Raw pages are cheap (12 rows of JSON), so redoing the walk from the top on every call trades
+   * a handful of small requests for a model with no bookkeeping to get subtly wrong.
+   */
+  const ensureFilteredPage = useCallback(async (targetPage: number, activeFilter: FeedFilter) => {
+    const id = ++filteredRequestIdRef.current;
+    setFilteredLoading(true);
+    const nowMs = Date.now();
+    let raw: Match[] = [];
+    let serverTotal = 0;
+    let rawPage = 1;
+    try {
+      for (;;) {
+        const result = await listMatches(rawPage);
+        if (id !== filteredRequestIdRef.current) return; // superseded by a newer request
+        serverTotal = result.totalCount;
+        raw = raw.concat(result.matches);
+        const passingCount = raw.filter((m) => passesFeedFilter(m, activeFilter, nowMs)).length;
+        const haveEnough = passingCount >= targetPage * DISPLAY_PAGE_SIZE;
+        const exhausted = result.matches.length === 0 || raw.length >= serverTotal;
+        if (haveEnough || exhausted || rawPage >= MAX_FILTER_LOOKAHEAD_PAGES) break;
+        rawPage += 1;
+      }
+    } catch {
+      // A failed page mid-backfill keeps whatever was already fetched successfully - a partial,
+      // honestly-labelled result beats discarding it all and showing nothing.
+    } finally {
+      if (id === filteredRequestIdRef.current) {
+        setFilteredRaw(raw);
+        setFilteredServerTotal(serverTotal);
+        setFilteredLoading(false);
+      }
+    }
+  }, []);
+
+  // Debounced trigger for the filtered backfill: dragging a slider fires many rapid filter
+  // updates, and only the value it settles on is worth a round trip. A page-navigation click
+  // doesn't touch `filter` at all, so it falls through with no artificial delay.
+  const prevFilterForFetchRef = useRef(filter);
+  useEffect(() => {
+    if (!filterActive) return;
+    const filterJustChanged = prevFilterForFetchRef.current !== filter;
+    prevFilterForFetchRef.current = filter;
+    const delay = filterJustChanged ? 300 : 0;
+    const t = setTimeout(() => void ensureFilteredPage(filteredPage, filter), delay);
+    return () => clearTimeout(t);
+  }, [filterActive, filter, filteredPage, ensureFilteredPage]);
+
+  // Keeps the filtered view "live" the same way the unfiltered one is: a fresh alert or a stale
+  // market cap shouldn't sit unnoticed just because a filter happens to be on.
+  useEffect(() => {
+    if (!filterActive) return;
+    const interval = setInterval(() => void ensureFilteredPage(filteredPage, filter), POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [filterActive, filteredPage, filter, ensureFilteredPage]);
+
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   // Ticks with the shared clock (the same one the cards' own timers use), so a card ages out of
   // a "last 5 minutes" filter on its own rather than at the next poll.
   const now = useNow();
   const visibleMatches = matches.filter((m) => passesFeedFilter(m, filter, now));
+
+  const filteredMatches = filteredRaw.filter((m) => passesFeedFilter(m, filter, now));
+  // Known-exhausted only once the buffer has genuinely caught up to the server's own count - a
+  // buffer that's merely paused mid-backfill (haveEnough tripped first) must not read as "that's
+  // everything," or Next would wrongly disable itself one page early.
+  const filteredExhausted = filteredRaw.length > 0 && filteredRaw.length >= filteredServerTotal;
+  const filteredSlice = filteredMatches.slice(
+    (filteredPage - 1) * DISPLAY_PAGE_SIZE,
+    filteredPage * DISPLAY_PAGE_SIZE,
+  );
+  // Optimistic when not yet confirmed exhausted: ensureFilteredPage stops the instant it has
+  // enough for the CURRENT page, so it may not yet know whether a full next page exists. Clicking
+  // Next either reveals one or (once that resolves) confirms there isn't - either way this alone
+  // never has to guess wrong for longer than one backfill.
+  const filteredHasNext = filteredExhausted
+    ? filteredMatches.length > filteredPage * DISPLAY_PAGE_SIZE
+    : true;
+
+  // A live update can shrink the passing set out from under a page the user was already on
+  // (a token's price moved back inside a filter's exclusion range, say) - once the buffer is
+  // confirmed exhausted, land back on the last page that actually has something rather than
+  // stranding them on a blank one.
+  useEffect(() => {
+    if (!filterActive || filteredLoading || !filteredExhausted) return;
+    const lastValidPage = Math.max(1, Math.ceil(filteredMatches.length / DISPLAY_PAGE_SIZE));
+    if (filteredPage > lastValidPage) setFilteredPage(lastValidPage);
+  }, [filterActive, filteredLoading, filteredExhausted, filteredMatches.length, filteredPage]);
+
+  const displayedMatches = filterActive ? filteredSlice : visibleMatches;
 
   return (
     <div className="dashboard">
@@ -288,40 +423,74 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         <FeedFilterBar
           filter={filter}
           onChange={setFilter}
-          shown={visibleMatches.length}
-          total={matches.length}
+          shown={filterActive ? filteredMatches.length : visibleMatches.length}
+          total={filterActive ? filteredRaw.length : matches.length}
         />
       )}
 
-      {matches.length > 0 && visibleMatches.length === 0 && (
+      {!filterActive && matches.length > 0 && visibleMatches.length === 0 && (
         <p className="empty-state">
           All {matches.length} alerts on this page are outside the filter above - widen it or reset to see
           them again.
         </p>
       )}
 
+      {filterActive && !filteredLoading && filteredExhausted && filteredMatches.length === 0 && (
+        <p className="empty-state">
+          Nothing matches this filter yet - widen it or reset to see alerts again.
+        </p>
+      )}
+
       <div className="token-grid">
-        {visibleMatches.map((match) => (
+        {displayedMatches.map((match) => (
           <TokenCard key={match.id} match={match} />
         ))}
       </div>
 
-      {totalCount > pageSize && (
-        <div className="pagination">
-          <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
-            ← Prev
-          </button>
-          <span className="pagination__label">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            className="btn"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          >
-            Next →
-          </button>
-        </div>
+      {filterActive && filteredLoading && displayedMatches.length === 0 && (
+        <p className="empty-state">Loading matches…</p>
+      )}
+
+      {filterActive ? (
+        (filteredPage > 1 || filteredHasNext) && (
+          <div className="pagination">
+            <button
+              className="btn"
+              disabled={filteredPage <= 1}
+              onClick={() => setFilteredPage((p) => Math.max(1, p - 1))}
+            >
+              ← Prev
+            </button>
+            <span className="pagination__label">
+              {filteredLoading ? "Loading more…" : `Page ${filteredPage}`}
+            </span>
+            <button
+              className="btn"
+              disabled={!filteredHasNext || filteredLoading}
+              onClick={() => setFilteredPage((p) => p + 1)}
+            >
+              Next →
+            </button>
+          </div>
+        )
+      ) : (
+        totalCount > pageSize && (
+          <div className="pagination">
+            <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+              ← Prev
+            </button>
+            <span className="pagination__label">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              className="btn"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next →
+            </button>
+          </div>
+        )
       )}
     </div>
   );
