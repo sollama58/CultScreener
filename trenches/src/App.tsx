@@ -3,6 +3,7 @@ import { SolanaWalletProvider } from "./wallet/SolanaWalletProvider";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { PreferencesProvider } from "./context/PreferencesContext";
 import { SubscriptionProvider, useSubscription } from "./context/SubscriptionContext";
+import { WalletBridgeProvider } from "./bridge/WalletBridgeContext";
 import { Paywall } from "./pages/Paywall";
 import { Navbar, type Tab } from "./components/Navbar";
 import { Login } from "./pages/Login";
@@ -37,15 +38,22 @@ function AppShell() {
   // Nothing here is a security boundary: every gated route checks access itself. This only decides
   // whether someone sees a paywall or a wall of failed requests.
   const gated = tab === "dashboard" || tab === "filters" || tab === "leaderboard";
-  const blocked = gated && !accessLoading && status !== null && !status.hasAccess;
+  // Deliberately three states, not two. Mounting a gated tab before the answer is known meant the
+  // feed fired /matches, /filters and the SSE stream on first paint, collected a 402 on each, and
+  // only then got replaced by the paywall - so someone who simply hasn't subscribed opened their
+  // console to a wall of red and reasonably concluded the page was broken. Waiting costs one
+  // request's worth of latency and makes the normal unsubscribed path silent.
+  const accessKnown = !accessLoading && status !== null;
+  const blocked = gated && accessKnown && !status.hasAccess;
+  const waiting = gated && !accessKnown;
 
   return (
     <div className="app-shell">
       <Navbar tab={tab} onTabChange={setTab} />
       <main className="app-content">
-        {blocked ? (
-          <Paywall />
-        ) : (
+        {waiting && <p className="empty-state">Checking your access…</p>}
+        {blocked && <Paywall />}
+        {gated && accessKnown && status.hasAccess && (
           <>
             {tab === "dashboard" && <Dashboard onGoToFilters={() => setTab("filters")} />}
             {tab === "filters" && <Filters />}
@@ -62,13 +70,17 @@ function AppShell() {
 export function App() {
   return (
     <SolanaWalletProvider>
-      <AuthProvider>
-        <PreferencesProvider>
-          <SubscriptionProvider>
-            <AppShell />
-          </SubscriptionProvider>
-        </PreferencesProvider>
-      </AuthProvider>
+      {/* Outside AuthProvider: the bridge has to keep running whether or not there's a session,
+          because a signed-in user with a disconnected wallet still needs it to sign a burn. */}
+      <WalletBridgeProvider>
+        <AuthProvider>
+          <PreferencesProvider>
+            <SubscriptionProvider>
+              <AppShell />
+            </SubscriptionProvider>
+          </PreferencesProvider>
+        </AuthProvider>
+      </WalletBridgeProvider>
     </SolanaWalletProvider>
   );
 }

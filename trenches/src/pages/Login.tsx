@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useHoldexWalletBridge } from "../bridge/useHoldexWalletBridge";
+import { useWalletBridge } from "../bridge/WalletBridgeContext";
 import { requestSiteWalletConnect } from "../bridge/holdexWallet";
 
 function shortAddress(address: string): string {
@@ -9,7 +9,7 @@ function shortAddress(address: string): string {
 
 export function Login() {
   const { signIn, signingIn, error } = useAuth();
-  const { state, siteAddress, refresh } = useHoldexWalletBridge();
+  const { state, siteAddress, refresh } = useWalletBridge();
   const autoTriggered = useRef(false);
   const [noHeaderButton, setNoHeaderButton] = useState(false);
 
