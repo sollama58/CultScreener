@@ -5,6 +5,7 @@ import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
 import { usePreferences } from "../context/PreferencesContext";
 import { playAlertSound } from "../utils/alertSound";
+import { useNow } from "../utils/useNow";
 
 /**
  * Alerts do NOT wait for this. New matches arrive over the SSE stream the instant the server
@@ -69,6 +70,28 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   const pageRef = useRef(page);
   pageRef.current = page;
   const requestIdRef = useRef(0);
+
+  // When the next refresh is actually due, in epoch ms - what the countdown in the header reads
+  // from. Null until the first fetch has landed and set a real deadline.
+  const [nextRefreshAt, setNextRefreshAt] = useState<number | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Lets the timer below call the current refetch without either one having to be declared first.
+  const refetchRef = useRef<(() => Promise<void>) | undefined>(undefined);
+
+  /**
+   * Arm the next refresh, `POLL_INTERVAL_MS` from now.
+   *
+   * A rescheduling timeout rather than a fixed interval, because a live push also refetches: with
+   * an interval anchored at mount, a stream nudge at second 10 would still leave a poll firing at
+   * second 45, and the countdown on screen would be describing a schedule the feed wasn't
+   * actually keeping. Re-arming from the fetch that just landed makes the number honest, and
+   * saves the redundant request into the bargain.
+   */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current !== undefined) clearTimeout(refreshTimerRef.current);
+    setNextRefreshAt(Date.now() + POLL_INTERVAL_MS);
+    refreshTimerRef.current = setTimeout(() => void refetchRef.current?.(), POLL_INTERVAL_MS);
+  }, []);
 
   // Preferences are read through a ref rather than closed over, so `refetch` and
   // `announceNewAlert` stay referentially stable. Both are dependencies of the stream effect
@@ -135,17 +158,27 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     } catch {
       // A single failed fetch isn't worth surfacing - the next tick or nudge will retry.
     } finally {
-      if (id === requestIdRef.current) setLoading(false);
+      // Only the winning request re-arms the timer. A superseded one landing late would otherwise
+      // push the deadline out and make the countdown jump backwards.
+      if (id === requestIdRef.current) {
+        setLoading(false);
+        scheduleRefresh();
+      }
     }
-  }, [announceNewAlert, rememberAnnounced]);
+  }, [announceNewAlert, rememberAnnounced, scheduleRefresh]);
+
+  refetchRef.current = refetch;
 
   // Each fetch only ever asks for the 12 matches on the current page, and the API only stamps
   // those 12 tokens' lastViewedAt - nothing off-page gets refreshed just because it's still
   // technically in the feed.
   useEffect(() => {
+    // No interval here: each fetch arms the next one itself (see scheduleRefresh).
     void refetch();
-    const interval = setInterval(() => void refetch(), POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    return () => {
+      if (refreshTimerRef.current !== undefined) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = undefined;
+    };
   }, [page, refetch]);
 
   // Live alerts. A 'match' event means the server just created a match for this user; it
@@ -202,10 +235,13 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     <div className="dashboard">
       <div className="dashboard__header">
         <h2>Live Feed</h2>
-        <span className="dashboard__updated">
+        <div className="dashboard__status">
           <HealthBadge streamConnected={streamLive} />
-          {lastUpdated && <>Updated {lastUpdated.toLocaleTimeString()}</>}
-        </span>
+          <span className="dashboard__updated">
+            {lastUpdated && <span>Updated {lastUpdated.toLocaleTimeString()}</span>}
+            <RefreshCountdown at={nextRefreshAt} />
+          </span>
+        </div>
       </div>
 
       {hasFilters === false ? (
@@ -261,5 +297,31 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * How long until the feed next refreshes its figures.
+ *
+ * Worth showing because "Live" answers a different question than people read into it: the badge
+ * is about the scanner still running, while the market caps on the cards move on this timer.
+ * Without it a number that hasn't changed for half a minute is ambiguous between "nothing
+ * happened" and "nothing has been fetched".
+ *
+ * Alerts are not on this clock - they arrive over the push stream the moment they exist, which is
+ * what the badge's pulsing dot indicates. This is only about the periodic refresh of the figures.
+ */
+function RefreshCountdown({ at }: { at: number | null }) {
+  const now = useNow();
+  if (at === null) return null;
+
+  const secondsLeft = Math.max(0, Math.ceil((at - now) / 1000));
+  return (
+    <span
+      className="dashboard__countdown"
+      title="Market caps and other figures refresh on this timer. New alerts don't wait for it - they're pushed as soon as they happen."
+    >
+      {secondsLeft === 0 ? "refreshing…" : `next in ${secondsLeft}s`}
+    </span>
   );
 }

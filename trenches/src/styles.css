@@ -362,9 +362,45 @@ select {
   margin-bottom: 16px;
 }
 
+/* The status pill and the timestamp beside it were both inline with nothing between them, so
+   they rendered as one run-on string - "LiveUpdated 5:34:08 AM". A flex row with a real gap, and
+   allowed to wrap rather than crush the heading on a narrow screen. */
+.dashboard__status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
 .dashboard__updated {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   color: var(--text-muted);
   font-size: 0.8rem;
+}
+
+/* Separated from the timestamp by a dot rather than more whitespace - they're two facts about
+   the same thing (when the figures last moved, when they move next), not two unrelated items. */
+.dashboard__countdown::before {
+  content: "·";
+  margin-right: 8px;
+  opacity: 0.6;
+}
+
+/* The seconds tick down every second; tabular figures stop the text shuffling sideways as the
+   digit widths change. */
+.dashboard__countdown {
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+/* With nothing before it, the leading dot would just be a stray mark. */
+.dashboard__updated > .dashboard__countdown:first-child::before {
+  content: none;
 }
 
 .empty-state {
@@ -619,43 +655,6 @@ select {
   color: var(--text-muted);
   font-size: 0.68rem;
   margin-top: 2px;
-}
-
-/* ── Score breakdown ────────────────────────────────────────────────── */
-
-.token-card__breakdown {
-  display: flex;
-  gap: 10px;
-  margin: 2px 0 10px;
-}
-
-.breakdown-bar {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.breakdown-bar__label {
-  font-size: 0.62rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.breakdown-bar__track {
-  display: block;
-  height: 5px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
-  overflow: hidden;
-}
-
-.breakdown-bar__fill {
-  display: block;
-  height: 100%;
-  background: var(--grad-brand);
-  border-radius: 2px;
 }
 
 /* ── Filters page ───────────────────────────────────────────────────── */
@@ -1612,11 +1611,6 @@ select {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-/* With one bar left there is room for a real label, so it no longer needs to be squeezed. */
-.token-card__breakdown {
-  grid-template-columns: 1fr;
-}
-
 
 /* ══ Token image hover preview ══════════════════════════════════════════
  *
@@ -1762,10 +1756,6 @@ select {
   margin-bottom: 12px;
 }
 
-.token-card__breakdown {
-  margin-bottom: 12px;
-}
-
 .token-card__mint {
   padding-top: 10px;
   border-top: 1px solid var(--border);
@@ -1800,21 +1790,6 @@ select {
   justify-content: space-between;
 }
 
-/* One bar does not need a line of its own for a one-word label. */
-.breakdown-bar {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-}
-
-.breakdown-bar__label {
-  flex: none;
-}
-
-.breakdown-bar__track {
-  flex: 1;
-  min-width: 0;
-}
 
 /* ══ Settings: device preferences ═══════════════════════════════════════
  *
@@ -1916,4 +1891,17 @@ select {
    card's primary action. */
 .settings-card__preview {
   align-self: flex-start;
+}
+
+/* Cards in a row stretch to the tallest one, and not every card has an all-time-high block to
+   fill that height - so a card without one used to end early and leave dead space below its
+   footer. Pinning the mint row to the bottom puts the slack above it instead, where it reads as
+   breathing room rather than as the card having stopped short. */
+.token-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.token-card__mint {
+  margin-top: auto;
 }

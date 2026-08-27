@@ -113,8 +113,6 @@ export function TokenCard({ match }: { match: Match }) {
 
       <AthSection match={match} />
 
-      <ScoreBreakdown snapshot={snapshot} />
-
       <QuickLinks mint={token.mintAddress} />
 
       <div className="token-card__mint">
@@ -424,49 +422,6 @@ function CopyButton({ value }: { value: string }) {
     >
       {copied ? "Copied!" : "Copy CA"}
     </button>
-  );
-}
-
-/** Why the token scored the way it did - the 4 components behind the single number in the header. */
-function ScoreBreakdown({
-  snapshot,
-}: {
-  snapshot: {
-    scoreMomentum: number | null;
-    scoreHolderHealth: number | null;
-    scoreAge: number | null;
-    scoreNarrative: number | null;
-  };
-}) {
-  // Momentum only. Holder health, age and narrative all still feed the composite score shown in
-  // the header - they are just no longer broken out here, where four abbreviated bars cost more
-  // attention than they returned. One bar has room for its real name.
-  const bars: { label: string; title: string; value: number | null }[] = [
-    { label: "Momentum", title: "Momentum (volume/mcap ratio, buy pressure)", value: snapshot.scoreMomentum },
-  ];
-
-  // Older snapshots (pre-breakdown-tracking) won't have this - skip the row entirely rather
-  // than show an empty bar.
-  if (bars.every((b) => b.value === null)) return null;
-
-  return (
-    <div className="token-card__breakdown">
-      {bars.map((bar) => (
-        <div
-          key={bar.label}
-          className="breakdown-bar"
-          title={`${bar.title}: ${bar.value?.toFixed(0) ?? "—"}`}
-        >
-          <span className="breakdown-bar__label">{bar.label}</span>
-          <span className="breakdown-bar__track">
-            <span
-              className="breakdown-bar__fill"
-              style={{ width: `${Math.max(0, Math.min(100, bar.value ?? 0))}%` }}
-            />
-          </span>
-        </div>
-      ))}
-    </div>
   );
 }
 
