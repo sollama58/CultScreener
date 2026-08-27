@@ -3,6 +3,8 @@ import { PublicKey, Transaction } from "@solana/web3.js";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { claimBurn, getBlockhash, sendBurnTransaction, ApiError } from "../api/client";
 import { useSubscription } from "../context/SubscriptionContext";
+import { useWalletBridge } from "../bridge/WalletBridgeContext";
+import { requestSiteWalletConnect } from "../bridge/holdexWallet";
 import {
   associatedTokenAddress,
   clearPendingBurn,
@@ -27,6 +29,7 @@ const CLAIM_DELAY_MS = 3_000;
 export function Paywall() {
   const { status, refresh } = useSubscription();
   const { publicKey, signTransaction } = useWallet();
+  const { state: bridgeState, refresh: refreshBridge } = useWalletBridge();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // Survives re-renders so a claim loop started before a refresh doesn't get orphaned.
   const cancelled = useRef(false);
@@ -146,6 +149,28 @@ export function Paywall() {
   // Both are needed to build and sign: a wallet can be connected but not expose signTransaction.
   const walletReady = publicKey !== null && typeof signTransaction === "function";
 
+  /**
+   * Connect from here rather than sending people to hunt for the header button.
+   *
+   * requestSiteWalletConnect() clicks the site's own button, so there is still exactly one
+   * component owning the connection - this just saves the user a scroll and a guess. The bridge
+   * then adopts the result automatically, so no second approval is needed.
+   */
+  const connectHere = () => {
+    requestSiteWalletConnect();
+    refreshBridge();
+  };
+
+  // What the wallet step should say, given where the bridge has got to. "Disabled with no
+  // explanation" is never one of the options.
+  const walletHint = (() => {
+    if (walletReady) return null;
+    if (bridgeState === "checking") return "Connecting your wallet…";
+    if (bridgeState === "unavailable")
+      return "Your wallet is connected on HolDEX but we couldn't reach it here. Unlock the extension, then retry.";
+    return null;
+  })();
+
   return (
     <div className="paywall">
       <div className="paywall__card">
@@ -191,23 +216,27 @@ export function Paywall() {
           wallet attached to this tab, and the button has to say why it can't do anything rather
           than sit there greyed out looking broken.
         */}
-        <button
-          className="btn btn--primary paywall__cta"
-          onClick={() => void burn()}
-          disabled={busy || !walletReady}
-        >
-          {busy
-            ? "Working…"
-            : walletReady
-              ? `Burn ${status.price.tokensPerMonth.toLocaleString()} $ASDFASDFA`
-              : "Connect your wallet to burn"}
-        </button>
-
-        {!walletReady && !busy && (
-          <p className="paywall__status paywall__status--center">
-            Use the <strong>Connect Wallet</strong> button in the header, then come back here.
-          </p>
+        {walletReady || busy ? (
+          <button className="btn btn--primary paywall__cta" onClick={() => void burn()} disabled={busy}>
+            {busy ? "Working…" : `Burn ${status.price.tokensPerMonth.toLocaleString()} $ASDFASDFA`}
+          </button>
+        ) : (
+          // A separate button, not a disabled burn button: the action available right now is
+          // "connect", and offering it here means nobody has to go and find the header.
+          <button
+            className="btn btn--primary paywall__cta"
+            onClick={bridgeState === "unavailable" ? refreshBridge : connectHere}
+            disabled={bridgeState === "checking"}
+          >
+            {bridgeState === "checking"
+              ? "Connecting…"
+              : bridgeState === "unavailable"
+                ? "Retry wallet connection"
+                : "Connect wallet"}
+          </button>
         )}
+
+        {walletHint && !busy && <p className="paywall__status paywall__status--center">{walletHint}</p>}
 
         <p className="paywall__footnote">
           Don't have any?{" "}
