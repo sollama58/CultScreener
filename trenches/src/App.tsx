@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SolanaWalletProvider } from "./wallet/SolanaWalletProvider";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { PreferencesProvider } from "./context/PreferencesContext";
 import { Navbar, type Tab } from "./components/Navbar";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
@@ -43,7 +44,9 @@ export function App() {
   return (
     <SolanaWalletProvider>
       <AuthProvider>
-        <AppShell />
+        <PreferencesProvider>
+          <AppShell />
+        </PreferencesProvider>
       </AuthProvider>
     </SolanaWalletProvider>
   );

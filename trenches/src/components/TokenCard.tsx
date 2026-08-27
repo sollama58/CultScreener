@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { acquireImageSlot } from "../utils/imageQueue";
 import { useNow } from "../utils/useNow";
+import { usePreferences } from "../context/PreferencesContext";
 import type { Match } from "../api/types";
 import { fmtUsd, fmtAge } from "../utils/format";
 
 export function TokenCard({ match }: { match: Match }) {
+  const { prefs } = usePreferences();
   const { token, snapshot, latestSnapshot } = match;
   const name = token.name ?? token.symbol ?? token.mintAddress.slice(0, 8);
   // Some DexScreener symbols already carry a leading "$" ("$WIF", "$michi"), and the card adds
@@ -59,11 +61,12 @@ export function TokenCard({ match }: { match: Match }) {
             {snapshot.graduated ? "Graduated" : "Bonding"}
           </span>
         )}
-        {token.narrativeTags.map((tag) => (
-          <span key={tag} className="tag">
-            {tag}
-          </span>
-        ))}
+        {prefs.showThemeLabels &&
+          token.narrativeTags.map((tag) => (
+            <span key={tag} className="tag">
+              {tag}
+            </span>
+          ))}
         {token.hasTwitter && <span className="tag tag--muted">𝕏</span>}
         {token.hasTelegram && <span className="tag tag--muted">TG</span>}
       </div>
@@ -95,7 +98,9 @@ export function TokenCard({ match }: { match: Match }) {
         </div>
         <div>
           <dt>Age</dt>
-          <dd>{fmtAge(snapshot.ageMinutes)}</dd>
+          <dd>
+            <TokenAge ageMinutes={snapshot.ageMinutes} takenAt={snapshot.takenAt} />
+          </dd>
         </div>
         <div className="token-card__stat--wide">
           <dt>Alerted</dt>
@@ -193,6 +198,33 @@ function TokenImage({ src, label }: { src?: string | null; label: string }) {
       )}
     </span>
   );
+}
+
+/**
+ * How old the *token* is, right now.
+ *
+ * The snapshot stores `ageMinutes` as it stood the moment that snapshot was taken, which for the
+ * alert-time snapshot means age-at-alert. Rendering that directly - which this card used to do -
+ * froze the number: a token alerted at 40 minutes old still read "40m" hours later, and two
+ * tokens alerted a day apart could show the same age while being wildly different things.
+ *
+ * Adding the time elapsed since the snapshot recovers the real figure exactly, because
+ * `takenAt - ageMinutes` is the token's creation time: the worker derives `ageMinutes` as
+ * `now - createdAt` in the same scan cycle that writes `takenAt`. So this is the true age, not
+ * an estimate of it, and it stays true without the server having to re-send anything.
+ */
+function TokenAge({ ageMinutes, takenAt }: { ageMinutes: number | null; takenAt: string }) {
+  const now = useNow();
+
+  if (ageMinutes === null || !Number.isFinite(ageMinutes)) return <>—</>;
+
+  const takenAtMs = new Date(takenAt).getTime();
+  // An unparseable timestamp shouldn't turn a real age into a dash - fall back to the stored
+  // figure, which is at worst stale rather than wrong.
+  if (!Number.isFinite(takenAtMs)) return <>{fmtAge(ageMinutes)}</>;
+
+  const sinceSnapshotMinutes = Math.max(0, (now - takenAtMs) / 60_000);
+  return <>{fmtAge(Math.round(ageMinutes + sinceSnapshotMinutes))}</>;
 }
 
 /** How old an alert may get before its age changes colour. */
