@@ -1644,11 +1644,11 @@ select {
   /* Scoped to the img: blowing up two letters of fallback text 2.5x shows nothing you couldn't
      already read. */
   .token-card__image-wrap:hover img.token-card__image {
-    transform: scale(2.5);
+    transform: scale(5);
     border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
     box-shadow:
       0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
-      0 18px 40px -12px rgb(0 0 0 / 0.75);
+      0 24px 60px -12px rgb(0 0 0 / 0.85);
     /* Grows on a short delay so sweeping the cursor across the grid doesn't set off a run of
        previews, but shrinks immediately - waiting to leave always feels like lag. */
     transition-delay: 110ms;
@@ -1658,7 +1658,7 @@ select {
   /* Grid items paint in DOM order, so without this a preview on one card would be painted over
      by the next card along. */
   .token-card:has(.token-card__image-wrap:hover) {
-    z-index: 3;
+    z-index: 20;
   }
 
   /* The scaled image is the whole point of the hover, so it must not swallow its own pointer

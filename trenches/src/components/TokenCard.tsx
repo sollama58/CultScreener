@@ -1,4 +1,5 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { acquireImageSlot } from "../utils/imageQueue";
 import type { Match } from "../api/types";
 import { fmtUsd, fmtPct, fmtAge } from "../utils/format";
 
@@ -132,6 +133,42 @@ export function TokenCard({ match }: { match: Match }) {
  */
 function TokenImage({ src, label }: { src?: string | null; label: string }) {
   const [failed, setFailed] = useState(false);
+  // Held back until the queue says go, so a page of twelve cards doesn't hit a public IPFS
+  // gateway with twelve simultaneous requests - see imageQueue.ts.
+  const [started, setStarted] = useState(false);
+  // The slot has to be released the moment the image settles, not when the card unmounts: a
+  // loaded image that keeps its slot would mean only MAX_CONCURRENT images ever appear and the
+  // rest sit queued until their timeout. The ref is what lets onLoad/onError reach it.
+  const releaseRef = useRef<(() => void) | undefined>(undefined);
+
+  useEffect(() => {
+    if (!src) return;
+    setStarted(false);
+    setFailed(false);
+    let cancelled = false;
+
+    void acquireImageSlot().then((release) => {
+      // Unmounted, or re-rendered onto a different token, while queued: give the slot straight
+      // back rather than letting a load nobody is waiting for hold it.
+      if (cancelled) {
+        release();
+        return;
+      }
+      releaseRef.current = release;
+      setStarted(true);
+    });
+
+    return () => {
+      cancelled = true;
+      releaseRef.current?.();
+      releaseRef.current = undefined;
+    };
+  }, [src]);
+
+  const settle = () => {
+    releaseRef.current?.();
+    releaseRef.current = undefined;
+  };
 
   // Both branches sit in the same wrapper so the header's layout doesn't shift depending on
   // whether a logo exists, and so the hover preview has one positioning context to anchor to.
@@ -144,10 +181,16 @@ function TokenImage({ src, label }: { src?: string | null; label: string }) {
       ) : (
         <img
           className="token-card__image"
-          src={src}
+          // Rendered from the start so the box reserves its space, but with no src until the
+          // queue releases it - an <img> with no src requests nothing.
+          src={started ? src : undefined}
           alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
+          decoding="async"
+          onLoad={settle}
+          onError={() => {
+            settle();
+            setFailed(true);
+          }}
         />
       )}
     </span>
