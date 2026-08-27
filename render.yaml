@@ -2,8 +2,12 @@
 # Deploy with: render blueprint apply
 # Documentation: https://render.com/docs/blueprint-spec
 #
-# NOTE: Static sites cannot be created via blueprint.
-# After deploying this blueprint, manually create the frontend static site.
+# The frontend static site IS defined here (see HolDEX-frontend below). An older revision of
+# this file said static sites couldn't be blueprint-managed; that hasn't been true for a while.
+# It matters: frontend/_headers and frontend/_redirects are Netlify/Cloudflare Pages conventions
+# that Render does not read - verified in production, where the site was serving no CSP, no
+# X-Frame-Options and no Referrer-Policy at all, and where /trenches/deep-link 404'd. Header and
+# rewrite config for a Render static site lives in this file (or the Dashboard), nowhere else.
 
 services:
   # =====================================================
@@ -68,6 +72,74 @@ services:
         value: "300"
       - key: CACHE_PRICE_TTL
         value: "60"
+
+
+  # =====================================================
+  # Frontend Static Site
+  # =====================================================
+  # Publishes frontend/ from the repo root. The build step compiles the Trenches SPA
+  # (trenches/) into frontend/trenches/, which is git-ignored and generated at deploy time.
+  - type: web
+    name: HolDEX-frontend
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./frontend
+
+    # Render checks for a real file before applying any rule here ("Render does not apply
+    # redirect or rewrite rules to a path if a resource exists at that path"), so the
+    # /trenches/* rule cannot swallow the SPA's own hashed assets.
+    routes:
+      # Trenches SPA: hand any unmatched /trenches/* path to the app's entry document, so a
+      # refresh or a pasted link lands in the app instead of a 404.
+      - type: rewrite
+        source: /trenches/*
+        destination: /trenches/index.html
+      # Extensionless URLs for the hand-authored pages.
+      - type: rewrite
+        source: /token/*
+        destination: /token.html
+      - type: rewrite
+        source: /community
+        destination: /community.html
+      - type: rewrite
+        source: /about
+        destination: /about.html
+
+    headers:
+      # Security headers. These sat in frontend/_headers, which Render ignores, so production
+      # served none of them - a wallet-connected site with no CSP and no clickjacking defence.
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://cultscreener-api.onrender.com https://api.holdex.live https://solana-rpc.publicnode.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'"
+      - path: /*
+        name: X-Content-Type-Options
+        value: "nosniff"
+      - path: /*
+        name: X-Frame-Options
+        value: "DENY"
+      - path: /*
+        name: Referrer-Policy
+        value: "strict-origin-when-cross-origin"
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000; includeSubDomains"
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=(), payment=()"
+
+      # Caching. HTML keeps Render's default (max-age=0), which already revalidates on every
+      # load - what the no-cache rules in _headers were after. The hand-authored JS/CSS keep
+      # their filenames across deploys and are busted with ?v=N, so a short cache is safe.
+      - path: /js/*
+        name: Cache-Control
+        value: "public, max-age=3600, stale-while-revalidate=86400"
+      - path: /css/*
+        name: Cache-Control
+        value: "public, max-age=3600, stale-while-revalidate=86400"
+      # The SPA's bundle is content-hashed: a changed file always has a new URL, so immutable.
+      - path: /trenches/assets/*
+        name: Cache-Control
+        value: "public, max-age=31536000, immutable"
 
   # =====================================================
   # Background Worker (BullMQ job processor)
@@ -143,21 +215,28 @@ databases:
 #    - COOKIE_SECRET (required for session persistence)
 #    - COINGECKO_API_KEY (optional — higher rate limits)
 #
-# 2. Create the frontend Static Site manually:
-#    a. Go to Render Dashboard > New > Static Site
-#    b. Connect your GitHub repository
-#    c. Configure:
-#       - Name: HolDEX-frontend
-#       - Root Directory: (leave blank — the repo root)
-#       - Build Command: npm ci && npm run build
-#       - Publish Directory: frontend
-#    d. Add rewrite rules in Settings > Redirects/Rewrites:
-#       - Source: /token/*    -> Destination: /token.html (Rewrite)
-#       - Source: /community  -> Destination: /community.html (Rewrite)
-#       - Source: /about      -> Destination: /about.html (Rewrite)
-#       The /trenches/* SPA rewrite is version-controlled in frontend/_redirects instead.
-#       If this site serves rewrites from the Dashboard only, add it there to match:
-#       - Source: /trenches/* -> Destination: /trenches/index.html (Rewrite)
+# 2. The frontend Static Site (HolDEX-frontend) is now defined in this file, including its
+#    headers and rewrites. HOWEVER: the live site was created by hand in the Dashboard and is
+#    not yet linked to this Blueprint, so nothing above applies to it until one of these
+#    happens. Pick one:
+#
+#    EITHER adopt the Blueprint (headers/rewrites become version-controlled from then on):
+#      Dashboard > the static site > Settings > link it to this Blueprint, then re-deploy.
+#      Check first that applying the Blueprint UPDATES the existing service rather than
+#      creating a second one - a new service means a new URL and the api.holdex.live custom
+#      domain would have to be moved.
+#
+#    OR set the same values by hand, which changes nothing about how the site is managed:
+#      Settings > Redirects/Rewrites - add all four, Rewrite (not Redirect):
+#        /trenches/*  ->  /trenches/index.html
+#        /token/*     ->  /token.html
+#        /community   ->  /community.html
+#        /about       ->  /about.html
+#      Settings > Headers - path /* for each, copying the values from the `headers:` block
+#      above (Content-Security-Policy, X-Content-Type-Options, X-Frame-Options,
+#      Referrer-Policy, Strict-Transport-Security, Permissions-Policy).
+#
+#    Until then the site serves NO security headers at all - confirmed in production.
 #
 #    NOTE ON THE ROOT/BUILD CHANGE (was: Root Directory "frontend", no build command):
 #    The published tree is identical either way — Publish Directory "frontend" from the repo

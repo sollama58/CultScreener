@@ -1,3 +1,13 @@
+# ⚠️  RENDER DOES NOT READ THIS FILE.
+#
+# `_headers` is a Netlify / Cloudflare Pages convention. This site is hosted on Render, which
+# takes header config from render.yaml (the HolDEX-frontend service's `headers:` block) or the
+# Dashboard instead. Verified in production: none of the headers below were being served.
+#
+# It is kept only so the config survives a move to a host that does read it, and so the CSP has
+# one readable home. EDITING THIS FILE ALONE CHANGES NOTHING - make the same edit in
+# render.yaml, which is what actually ships.
+
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://cultscreener-api.onrender.com https://api.holdex.live https://solana-rpc.publicnode.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'
   X-Content-Type-Options: nosniff
