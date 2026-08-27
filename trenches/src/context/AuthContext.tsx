@@ -91,9 +91,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // blocked by a browser extension, offline, or DNS/TLS failure. Worth naming, because
         // content blockers do block this API's domain and the generic "try again" below sends
         // the user round the same loop forever with no idea what to change.
+        // Host is named so the user knows what to allowlist; keep it in step with
+        // VITE_API_URL in trenches/.env.production.
         setError(
           "Couldn't reach the Trenches server. If you use an ad blocker or privacy extension, " +
-            "allow trenchscanner-api.onrender.com and try again.",
+            "allow api.holdex.live and try again.",
         );
       } else {
         setError("Sign-in failed. Please try again.");

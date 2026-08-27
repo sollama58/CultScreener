@@ -1,7 +1,7 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
-const CACHE_VERSION = 'holdex-v46';
+const CACHE_VERSION = 'holdex-v47';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -48,7 +48,7 @@ const API_PATTERNS = [
 // stored in DYNAMIC_CACHE: one user's filters and account details left on disk, still served
 // after sign-out whenever the network hiccups. Fetched pass-through instead, never stored.
 const NEVER_CACHE_HOSTS = [
-  'trenchscanner-api.onrender.com',
+  'api.holdex.live',
 ];
 
 // Font CDN patterns — cache long-term
