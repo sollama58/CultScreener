@@ -14,7 +14,14 @@ const MAX_UNREACHABLE_ATTEMPTS = 3;
 
 type Status = "loading" | "live" | "degraded" | "down" | "unknown";
 
-export function HealthBadge() {
+/**
+ * `streamConnected` folds the live-alert push connection into this one indicator. It used to be a
+ * separate "Live" pill in the Live Feed header while this badge sat beside the wallet - two
+ * different facts (is the scanner running / is my socket open) sharing one word on the same
+ * screen. They are reported together now: the label is the scanner's state, and the dot pulses
+ * only while alerts are actually being pushed rather than polled for.
+ */
+export function HealthBadge({ streamConnected = false }: { streamConnected?: boolean }) {
   const [scanJob, setScanJob] = useState<WorkerHeartbeat | undefined>(undefined);
   const [status, setStatus] = useState<Status>("loading");
 
@@ -62,7 +69,12 @@ export function HealthBadge() {
   }, []);
 
   return (
-    <span className="health-badge" data-status={status} title={tooltipFor(status, scanJob)}>
+    <span
+      className="health-badge"
+      data-status={status}
+      data-stream={streamConnected ? "on" : "off"}
+      title={tooltipFor(status, scanJob, streamConnected)}
+    >
       <span className="health-badge__dot" />
       {labelFor(status)}
     </span>
@@ -91,7 +103,14 @@ function labelFor(status: Status): string {
   }
 }
 
-function tooltipFor(status: Status, scan: WorkerHeartbeat | undefined): string {
+function tooltipFor(status: Status, scan: WorkerHeartbeat | undefined, streamConnected: boolean): string {
+  const push = streamConnected
+    ? " New alerts are pushed the moment they happen."
+    : " New alerts will arrive on the next refresh rather than instantly.";
+  return baseTooltip(status, scan) + (status === "live" ? push : "");
+}
+
+function baseTooltip(status: Status, scan: WorkerHeartbeat | undefined): string {
   if (status === "loading") return "Checking scanner status…";
   if (status === "unknown") {
     return "Couldn't reach the scanner status endpoint — often a browser extension or ad blocker blocking the request. This doesn't affect the scanner itself.";

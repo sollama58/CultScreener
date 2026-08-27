@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listFilters, listMatches, openMatchesStream } from "../api/client";
+import { HealthBadge } from "../components/HealthBadge";
 import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
 
@@ -120,12 +121,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
       <div className="dashboard__header">
         <h2>Live Feed</h2>
         <span className="dashboard__updated">
-          {streamLive && (
-            <span className="dashboard__live" title="Connected - new alerts appear the moment they happen.">
-              <span className="dashboard__live-dot" />
-              Live
-            </span>
-          )}
+          <HealthBadge streamConnected={streamLive} />
           {lastUpdated && <>Updated {lastUpdated.toLocaleTimeString()}</>}
         </span>
       </div>

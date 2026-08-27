@@ -80,7 +80,12 @@ export function Leaderboard() {
             <tbody>
               {entries.map((entry, i) => (
                 <tr key={entry.matchId}>
-                  <td>{i + 1}</td>
+                  <td>
+                    {/* data-rank only for the podium; past third there is nothing to distinguish. */}
+                    <span className="leaderboard__rank" data-rank={i < 3 ? String(i + 1) : undefined}>
+                      {i + 1}
+                    </span>
+                  </td>
                   <td>
                     <a
                       href={`https://dexscreener.com/solana/${entry.token.pairAddress ?? entry.token.mintAddress}`}
