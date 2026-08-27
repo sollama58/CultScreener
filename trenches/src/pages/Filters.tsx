@@ -66,12 +66,17 @@ export function Filters() {
       </div>
 
       <div className="info-callout">
-        <h3>Two checks run automatically, before your filters below ever come into play</h3>
+        <h3>Three checks run automatically, before your filters below ever come into play</h3>
         <ul>
           <li>
             <strong>Safety screen (always on - you can't turn this off):</strong> a token is rejected outright
             if its creator can still mint new supply or freeze holders' wallets, or if its liquidity hasn't
             been locked or burned. This applies to every token, for every user, no exceptions.
+          </li>
+          <li>
+            <strong>Mayhem Mode tokens are blocked:</strong> any token launched in Mayhem Mode is excluded
+            outright and never surfaces here, for every user, no exceptions - no filter below can opt back
+            into them.
           </li>
           <li>
             <strong>Market cap range:</strong> TrenchScanner only ever tracks tokens roughly between{" "}
