@@ -103,7 +103,8 @@ export function Curated() {
           the badge on it means. Everything else lives in tooltips on the numbers themselves. */}
       <p className="curated-intro">
         The pipeline&apos;s highest-conviction calls, the same for everyone - each one graded in public
-        against the same bar: <strong>2x within an hour, without first dropping 50%</strong>.
+        against the same bar: <strong>2x within 15 minutes, without first dropping 50%</strong> - and then
+        tracked for the hour to see if it reaches <strong>4x</strong>.
       </p>
 
       {stats && <CuratorScoreboard stats={stats} />}
@@ -165,8 +166,8 @@ function CuratorScoreboard({ stats }: { stats: CuratedStats }) {
         }
         hint={
           feed.graded >= MIN_GRADED_FOR_HIT_RATE
-            ? `Of ${feed.graded} curated alerts whose hour has closed.`
-            : `Too few graded alerts to quote a rate yet - ${feed.graded} of ${MIN_GRADED_FOR_HIT_RATE} so far. Each one settles an hour after it fires.`
+            ? `Of ${feed.graded} curated alerts that have been graded: doubled within 15 minutes, without first dropping 50%.`
+            : `Too few graded alerts to quote a rate yet - ${feed.graded} of ${MIN_GRADED_FOR_HIT_RATE} so far. Each one settles 15 minutes after it fires.`
         }
         tone={
           feed.hitRatePct !== null && training.baseWinRatePct !== null && feed.graded >= MIN_GRADED_FOR_HIT_RATE
@@ -181,6 +182,17 @@ function CuratorScoreboard({ stats }: { stats: CuratedStats }) {
         value={training.baseWinRatePct !== null ? `${training.baseWinRatePct.toFixed(1)}%` : "—"}
         hint="How often any scanned token clears the same bar - the number the curator has to beat."
       />
+      {feed.goalRatePct !== undefined && (
+        <Stat
+          label="Reached 4x"
+          value={
+            feed.goalRatePct !== null && feed.graded >= MIN_GRADED_FOR_HIT_RATE
+              ? `${feed.goalRatePct.toFixed(0)}%`
+              : "—"
+          }
+          hint="How often a curated alert went on to 4x within the hour - the goal behind the 15-minute bar."
+        />
+      )}
       <Stat
         label="Best call"
         value={feed.bestPeak24hReturnPct !== null ? `+${feed.bestPeak24hReturnPct.toFixed(0)}%` : "—"}
@@ -195,7 +207,7 @@ function CuratorScoreboard({ stats }: { stats: CuratedStats }) {
         className={`scoreboard__phase ${modelLive ? "scoreboard__phase--live" : ""}`}
         title={
           modelLive
-            ? "A model trained on this pipeline's own recorded outcomes is picking - it earned the job by beating the hand-tuned gate on held-out history, and retrains nightly."
+            ? "A model trained on this pipeline's own recorded outcomes is picking - it earned the job by beating the hand-tuned gate on held-out history, and retrains every 4 hours."
             : `A hand-tuned quality gate is picking while the model learns. ${training.finalizedSamples.toLocaleString()} outcomes graded so far (+${training.samples7d.toLocaleString()} this week); it takes over automatically once it beats the gate on held-out history.${curator.latestEvaluation?.verdict ? ` Latest check: ${curator.latestEvaluation.verdict.reason}.` : ""}`
         }
       >
@@ -226,10 +238,13 @@ function TrainingExplainer({ stats }: { stats: CuratedStats }) {
       <div className="training-explainer__body">
         <p>
           Every candidate that clears the rug screen - not just the ones that get curated - has its outcome
-          quietly tracked: did it 2x within an hour without first dropping 50%. That record is the training
-          set. Every 4 hours, a model retrains on it and is walk-forward tested against the hand-tuned gate
-          currently picking - trained on the past, graded on a slice of history it never saw, the way a real
-          deployment would be judged.
+          quietly tracked: did it 2x within 15 minutes without first dropping 50%, and how far did it run by
+          the hour. That record is the training set, and both halves count. A call is only a win if it doubled
+          <em> fast</em> - a token that took 40 minutes to double trains as a miss, because a slow grind is the
+          hardest thing to actually trade - and a win is then worth more the closer it came to 4x. So the model
+          is pulled toward one specific shape: doubles quickly, keeps running. Every 4 hours it retrains on
+          that record and is walk-forward tested against the hand-tuned gate currently picking - trained on the
+          past, graded on a slice of history it never saw, the way a real deployment would be judged.
         </p>
         <p>
           The model only takes the job when it clearly beats the gate, including on the most recent slice of
