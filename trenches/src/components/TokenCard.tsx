@@ -153,10 +153,13 @@ function CuratedStrip({ curated, standalone }: { curated: CuratedMeta; standalon
   );
 }
 
+/** The win window, in minutes - mirrors WIN_WINDOW_MINUTES in packages/core/src/curation/labels.ts. */
+const WIN_WINDOW_MINUTES = 15;
+
 /**
  * The verdict, or the countdown to it.
  *
- * The 2x flips the badge the moment it is observed rather than when the hour formally closes -
+ * The 2x flips the badge the moment it is observed rather than when the window formally closes -
  * waiting would mean showing "watching" to someone whose alert has already doubled. The
  * countdown ticks locally off the alert time (see useNow) instead of trusting a number computed
  * when the response was built, which would freeze between polls.
@@ -165,17 +168,28 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
   const now = useNow();
   const { outcome } = curated;
 
-  if (outcome.hit2x) return <span className="outcome-badge outcome-badge--won">2x ✓</span>;
+  if (outcome.hit2x) {
+    // A win that went on to clear the 4x goal says so - it is the run the feed is hunting.
+    return outcome.hitGoal ? (
+      <span className="outcome-badge outcome-badge--won" title="Doubled inside 15 minutes and went on to 4x within the hour.">
+        4x ✓
+      </span>
+    ) : (
+      <span className="outcome-badge outcome-badge--won" title="Doubled within 15 minutes of the alert.">
+        2x ✓
+      </span>
+    );
+  }
 
   if (outcome.status === "watching") {
     const minutesLeft = Math.max(
       0,
-      Math.ceil(60 - (now - new Date(curated.alertedAt).getTime()) / 60_000),
+      Math.ceil(WIN_WINDOW_MINUTES - (now - new Date(curated.alertedAt).getTime()) / 60_000),
     );
     return (
       <span
         className="outcome-badge outcome-badge--watching"
-        title="A win means doubling within an hour of the alert, without first dropping 50%."
+        title="A win means doubling within 15 minutes of the alert, without first dropping 50%. The run is then tracked for an hour to see if it reaches 4x."
       >
         watching · {minutesLeft}m
       </span>
@@ -183,7 +197,10 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
   }
   if (outcome.status === "missed") {
     return (
-      <span className="outcome-badge outcome-badge--missed" title="Did not double within the hour.">
+      <span
+        className="outcome-badge outcome-badge--missed"
+        title="Did not double within 15 minutes of the alert."
+      >
         missed
       </span>
     );
@@ -192,7 +209,7 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
     return (
       <span
         className="outcome-badge outcome-badge--missed"
-        title="It did double - but only after first dropping 50%+, which would have stopped out anyone who bought the alert. Counted as a loss on purpose."
+        title="It did double inside the window - but only after first dropping 50%+, which would have stopped out anyone who bought the alert. Counted as a loss on purpose."
       >
         stopped out
       </span>
@@ -201,7 +218,7 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
   return null;
 }
 
-/** The alert's own scorecard: how far it ran in its first hour, and the worst it got. */
+/** The alert's own scorecard: how far it ran in its first hour (the 4x goal window), and the worst it got. */
 function CuratedOutcomeRow({ outcome }: { outcome: CuratedMeta["outcome"] }) {
   if (outcome.peak1hReturnPct === null && outcome.maxDrawdown1hPct === null) return null;
   return (

@@ -370,12 +370,15 @@ export interface WhitelistEntry {
 /** How one curated call is going / went - see resolveOutcome in apps/api/src/curatedFeed.ts. */
 export interface CuratedOutcome {
   status: "watching" | "won" | "missed" | "disqualified" | "unknown";
+  /** Doubled inside the 15-minute win window - the bar. */
   hit2x: boolean;
+  /** Went on to 4x within the hour - the goal. Null while that's still an open question. */
+  hitGoal?: boolean | null;
   peak1hReturnPct: number | null;
   maxDrawdown1hPct: number | null;
   peak24hReturnPct: number | null;
   finalized: boolean;
-  /** Minutes left in the 1h window while watching; null once the verdict has landed. */
+  /** Minutes left in the 15-minute win window; null once the verdict has landed. */
   minutesLeft: number | null;
 }
 
@@ -422,6 +425,10 @@ export interface CuratedStats {
     graded: number;
     wins: number;
     hitRatePct: number | null;
+    /** How many graded alerts went on to 4x within the hour - the goal behind the 15-minute bar.
+     *  Optional so the tab keeps rendering against an API that predates the goal tracking. */
+    goalHits?: number;
+    goalRatePct?: number | null;
     bestPeak24hReturnPct: number | null;
   };
   /**
