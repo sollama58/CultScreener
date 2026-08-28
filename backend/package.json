@@ -12,7 +12,8 @@
     "db:migrate:seed": "node db/migrate.js --seed",
     "db:status": "node db/migrate.js --status",
     "db:reset": "node db/migrate.js --reset",
-    "postinstall": "if [ -n \"$DATABASE_URL\" ]; then node db/migrate.js || echo 'Migration failed (will retry on startup)'; else echo 'Migration skipped - no DATABASE_URL'; fi"
+    "postinstall": "if [ -n \"$DATABASE_URL\" ]; then node db/migrate.js || echo 'Migration failed (will retry on startup)'; else echo 'Migration skipped - no DATABASE_URL'; fi",
+    "test": "node --test src/**/*.test.js"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listCurated, listMatches, openCuratedStream, openMatchesStream } from "../api/client";
 import { usePreferences, type ScrollSource } from "../context/PreferencesContext";
 import { proxiedImageUrl } from "../api/images";
+import { TokenArtwork } from "../components/TokenArtwork";
 import type { Match } from "../api/types";
 
 /**
@@ -550,9 +551,14 @@ function ScrollCard({
   const mcapAlert = match.snapshot.marketCapUsd;
   const changePct = mcapNow !== null && mcapAlert > 0 ? ((mcapNow - mcapAlert) / mcapAlert) * 100 : null;
   const isCurated = match.kind === "curated";
-  // Both the backdrop and the thumbnail come from the same proxied URL, so the browser fetches
-  // the bytes once and reuses them for the second element.
-  const artUrl = proxiedImageUrl(match.token.imageUrl);
+  // "backdrop" (1024px) rather than the list avatar's 512, because this card is full-bleed and
+  // then scaled up again by its own transform - a 512 source stretched across a phone screen is
+  // exactly what forced the backdrop to be blurred into abstraction to look acceptable.
+  //
+  // Both the backdrop and the thumbnail use this one URL, so the browser fetches the bytes once
+  // and reuses them; the thumbnail simply draws the same image small. One request per card beats
+  // a second, smaller one, which on a phone is the scarcer resource.
+  const artUrl = proxiedImageUrl(match.token.imageUrl, "backdrop");
   const symbol = match.token.symbol ?? match.token.mintAddress.slice(0, 4);
 
   return (
@@ -611,13 +617,15 @@ function ScrollCard({
 
         <div className="scroll-card__main">
         <div className="scroll-card__identity">
-          {artUrl ? (
-            <img className="scroll-card__art" src={artUrl} alt="" loading="lazy" />
-          ) : (
-            <span className="scroll-card__art scroll-card__art--blank" aria-hidden="true">
-              {symbol.slice(0, 2).toUpperCase()}
-            </span>
-          )}
+          {/* Falls back to initials on a failed load as well as on no-artwork-at-all. Without
+              that this was the browser's broken-image glyph, dead centre of a full-screen card -
+              the most visible image in the app and the only one with no fallback. */}
+          <TokenArtwork
+            src={artUrl}
+            label={symbol}
+            className="scroll-card__art"
+            fallbackClassName="scroll-card__art--blank"
+          />
           <div className="scroll-card__names">
             <h2 className="scroll-card__symbol">{symbol}</h2>
             {match.token.name && <p className="scroll-card__name">{match.token.name}</p>}

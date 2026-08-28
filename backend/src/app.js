@@ -366,22 +366,24 @@ app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
 // frontend (a different origin) from loading it at all — surfacing in the browser as
 // net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin on literally every proxied image, regardless
 // of which third-party host it points at.
-// Suffix-based allowlist prevents open-proxy abuse while covering all known token CDNs.
-const IMAGE_PROXY_SUFFIX_ALLOWED = [
-  '.dexscreener.com', '.coingecko.com', '.geckoterminal.com',
-  '.githubusercontent.com', '.arweave.net', '.nftstorage.link',
-  '.ipfs.io', '.cloudflare-ipfs.com', '.irys.xyz', '.pinata.cloud',
-  '.mypinata.cloud', '.w3s.link', '.dweb.link', '.rapidlaunch.io',
-];
-const IMAGE_PROXY_EXACT_ALLOWED = new Set([
-  'arweave.net', 'ipfs.io', 'cloudflare-ipfs.com', 'nftstorage.link',
-  'pbs.twimg.com', 'i.imgur.com', 'storage.googleapis.com',
-  's2.coinmarketcap.com', 'metadata.jup.ag', 'irys.xyz',
-]);
-function isImageHostAllowed(hostname) {
-  if (IMAGE_PROXY_EXACT_ALLOWED.has(hostname)) return true;
-  return IMAGE_PROXY_SUFFIX_ALLOWED.some(s => hostname.endsWith(s));
-}
+//
+// There is deliberately NO host allowlist here any more.
+//
+// There used to be, and measured against this project's own Token table it was rejecting 51% of
+// all token artwork across 59 distinct hosts - including axiomtrading-v2.axiom-cdn.io, the single
+// most common source in the data. That is not a list anybody can keep current: a memecoin's
+// metadata points wherever its deployer felt like hosting it that day, and the tail is one-off
+// domains and bare IPs. Every miss rendered as a broken image, which reads to a user as "this
+// site is broken", not as "that host isn't approved".
+//
+// What the allowlist was actually protecting was not "only reputable hosts" but "never fetch our
+// own infrastructure" - and that is a property of the resolved ADDRESS, not of the name. So it is
+// enforced there instead, by the agents in services/safeFetchAgent.js, which refuse to connect to
+// private, loopback, link-local (cloud metadata!) or otherwise reserved space, on every
+// connection including each redirect hop. Combined with https-only entry, a hard byte cap, an
+// image-only content type and this route's rate limiter, that covers open-proxy abuse without
+// pretending we can enumerate the internet's image hosts.
+const { agentsFor, isBlockedHostLiteral } = require('./services/safeFetchAgent');
 // Dedicated rate limiter for image proxy. Every table row's logo now routes through
 // this endpoint (not just the old canvas share-image feature), so a single page load
 // can legitimately request dozens of distinct images at once — 20/min was sized for
@@ -399,7 +401,19 @@ const imageProxyLimiter = require('express-rate-limit')({
 // one request warms the cache, every other viewer's <img> is served from Redis instead
 // of hammering the origin again.
 const IMAGE_PROXY_TTL_MS = 24 * 60 * 60 * 1000;      // 24h — matches the Cache-Control max-age below
-const IMAGE_PROXY_FAIL_TTL_MS = 5 * 60 * 1000;       // 5m — retry a dead/blocked source periodically, not on every request
+/**
+ * How long a failure is remembered. Split, because the two kinds are not alike:
+ *
+ * A 404/410 is a settled fact - that URL has no image and will not grow one - so it is worth
+ * remembering for a while to stop re-asking on every page view.
+ *
+ * Everything else (a 429 from a busy IPFS gateway, a timeout, a connection reset) is a moment in
+ * time. The old single 5-minute TTL treated those the same, so one unlucky fetch blanked that
+ * token's artwork for EVERY visitor for five minutes - which is a large part of why images looked
+ * randomly broken rather than consistently broken.
+ */
+const IMAGE_PROXY_GONE_TTL_MS = 30 * 60 * 1000;      // 30m — the source really has no image
+const IMAGE_PROXY_FAIL_TTL_MS = 45 * 1000;           // 45s — a blip; recover quickly
 const IMAGE_PROXY_MAX_BYTES = 3 * 1024 * 1024;       // 3MB — logos/banners only, reject anything larger
 const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — see withTimeout below
 
@@ -408,7 +422,17 @@ const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — se
 // backdrop. Serving that untouched is the single largest cost of a feed page on a phone, so the
 // proxy downsizes once, on the way into the cache, and every visitor thereafter gets the small
 // version.
-const IMAGE_PROXY_MAX_DIMENSION = 512;   // generous for a retina avatar and for the blurred backdrop
+/**
+ * The two sizes this proxy serves, and nothing in between.
+ *
+ * 512 is the list avatar: generous for a 56px tile at 3x. 1024 is the PumpScroll card backdrop,
+ * which is full-bleed on a phone and then scaled up further by the card's own transform - at 512
+ * that meant upscaling a small image across a whole screen, and the only way to hide it was to
+ * blur it into abstraction. Serving a real 1024 is what lets that blur come down to something you
+ * can actually recognise the token by.
+ */
+const IMAGE_PROXY_WIDTHS = new Set([512, 1024]);
+const IMAGE_PROXY_DEFAULT_WIDTH = 512;
 const IMAGE_PROXY_WEBP_QUALITY = 82;     // visually lossless at these sizes
 
 // sharp is optional on purpose. It is a native module, and if a platform ever fails to build it
@@ -426,7 +450,7 @@ try {
 const IMAGE_PROXY_PASSTHROUGH = /^image\/(svg\+xml|gif)/i;
 
 /**
- * Downscales to at most IMAGE_PROXY_MAX_DIMENSION on the long edge and re-encodes as WebP,
+ * Downscales to at most `maxDimension` on the long edge and re-encodes as WebP,
  * which is universally supported by any browser able to run this app and typically an order of
  * magnitude smaller than the source PNG.
  *
@@ -434,14 +458,14 @@ const IMAGE_PROXY_PASSTHROUGH = /^image\/(svg\+xml|gif)/i;
  * Any failure - unsupported codec, corrupt bytes, sharp missing - returns the ORIGINAL buffer, so
  * the worst case is the behaviour we had before this existed.
  */
-async function downscaleImage(buffer, contentType) {
+async function downscaleImage(buffer, contentType, maxDimension = IMAGE_PROXY_DEFAULT_WIDTH) {
   if (!sharp || IMAGE_PROXY_PASSTHROUGH.test(contentType)) return { buffer, contentType };
   try {
     const out = await sharp(buffer)
       .rotate() // honour EXIF orientation before resizing, or a phone photo comes out sideways
       .resize({
-        width: IMAGE_PROXY_MAX_DIMENSION,
-        height: IMAGE_PROXY_MAX_DIMENSION,
+        width: maxDimension,
+        height: maxDimension,
         fit: 'inside',
         withoutEnlargement: true,
       })
@@ -491,12 +515,22 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   let parsed;
   try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid url' }); }
   if (parsed.protocol !== 'https:') return res.status(400).json({ error: 'https only' });
-  if (!isImageHostAllowed(parsed.hostname)) return res.status(403).json({ error: 'Host not allowed' });
+  // Refused before any fetch is attempted, and unlike the DNS guard this one still applies when
+  // the request would leave through an egress proxy - see agentsFor.
+  if (isBlockedHostLiteral(parsed.hostname)) return res.status(400).json({ error: 'Invalid url' });
+
+  // Requested width, from a fixed set rather than any integer. Two reasons: an open size
+  // parameter multiplies the cache into one entry per width anyone cares to ask for, and it turns
+  // a cheap endpoint into a resize-on-demand service. The two sizes are the two real uses - a
+  // list avatar and a full-bleed card backdrop.
+  const width = IMAGE_PROXY_WIDTHS.has(Number(req.query.w))
+    ? Number(req.query.w)
+    : IMAGE_PROXY_DEFAULT_WIDTH;
 
   const { cache } = require('./services/cache');
-  // v2: entries cached before downscaling existed hold full-size bytes, and would otherwise keep
-  // being served for a day after this ships. Bumping the prefix retires them immediately.
-  const cacheKey = `image-proxy:v2:${url}`;
+  // v3: v2 entries are all 512px wide and carry no width in the key, so they would be served for
+  // backdrop requests too. Bumping the prefix retires them rather than mixing the two.
+  const cacheKey = `image-proxy:v3:${width}:${url}`;
 
   const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
   if (cached) {
@@ -506,8 +540,9 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     return res.send(Buffer.from(cached.data, 'base64'));
   }
 
-  // Share one in-flight fetch across concurrent requests for the same URL
-  let fetchPromise = imageProxyInFlight.get(url);
+  // Share one in-flight fetch across concurrent requests for the same URL AT THE SAME WIDTH -
+  // keyed on the cache key rather than the URL, since the two widths produce different bytes.
+  let fetchPromise = imageProxyInFlight.get(cacheKey);
   if (!fetchPromise) {
     fetchPromise = (async () => {
       const axios = require('axios');
@@ -516,6 +551,11 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
         timeout: 8000,
         maxContentLength: IMAGE_PROXY_MAX_BYTES,
         maxBodyLength: IMAGE_PROXY_MAX_BYTES,
+        // The address guard lives in these. Every hop of a redirect chain opens a new connection
+        // through them, so a public URL that bounces to 169.254.169.254 is refused at the hop.
+        // Empty where an egress proxy is configured, which axios must be left to handle itself.
+        ...agentsFor(),
+        maxRedirects: 3,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; HolDEX/1.0)',
           'Accept': 'image/webp,image/png,image/jpeg,image/*',
@@ -526,10 +566,17 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
       if (!sourceType.startsWith('image/')) throw new Error(`Non-image response: ${sourceType}`);
       // Downscaled BEFORE the cache write, so the expensive part happens once per image rather
       // than once per request, and every cache hit is already small.
-      return downscaleImage(Buffer.from(response.data), sourceType);
+      return downscaleImage(Buffer.from(response.data), sourceType, width);
     })();
-    fetchPromise.finally(() => imageProxyInFlight.delete(url));
-    imageProxyInFlight.set(url, fetchPromise);
+    // then(fn, fn) rather than .finally(fn): `.finally` returns a NEW promise that rejects
+    // whenever the original does, and nothing was awaiting that one. Every failed image fetch -
+    // a dead IPFS link, a 429, a timeout - therefore surfaced as an unhandledRejection, which
+    // this process treats as fatal and answers with a graceful shutdown. One bad token logo
+    // could restart the entire API. Passing the same cleanup as both handlers settles the
+    // derived promise either way.
+    const forget = () => imageProxyInFlight.delete(cacheKey);
+    fetchPromise.then(forget, forget);
+    imageProxyInFlight.set(cacheKey, fetchPromise);
   }
 
   try {
@@ -542,8 +589,12 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(buffer);
   } catch (err) {
+    const upstreamStatus = err.response?.status;
+    const gone = upstreamStatus === 404 || upstreamStatus === 410;
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
-    cache.set(cacheKey, { notFound: true }, IMAGE_PROXY_FAIL_TTL_MS).catch(() => {});
+    cache
+      .set(cacheKey, { notFound: true }, gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
+      .catch(() => {});
     res.status(502).send('Bad Gateway');
   }
 });
