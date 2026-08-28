@@ -3,6 +3,7 @@ import { acquireImageSlot } from "../utils/imageQueue";
 import { useNow } from "../utils/useNow";
 import { usePreferences } from "../context/PreferencesContext";
 import type { CuratedMeta, Match } from "../api/types";
+import { proxiedImageUrl } from "../api/images";
 import { fmtUsd, fmtAge } from "../utils/format";
 import { changeSinceAlertPct } from "../utils/feedFilter";
 
@@ -37,7 +38,7 @@ export function TokenCard({ match }: { match: Match }) {
       {match.curated && <CuratedStrip curated={match.curated} standalone={match.kind === "curated"} />}
       <div className="token-card__header">
         <a className="token-card__title" href={dexUrl} target="_blank" rel="noreferrer">
-          <TokenImage src={token.imageUrl} label={ticker ?? name} />
+          <TokenImage src={proxiedImageUrl(token.imageUrl)} label={ticker ?? name} />
           <span className="token-card__title-text">
             <span className="token-card__name" title={name}>
               {name}
