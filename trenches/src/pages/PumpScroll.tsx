@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listCurated, listMatches, openCuratedStream, openMatchesStream } from "../api/client";
 import { usePreferences, type ScrollSource } from "../context/PreferencesContext";
+import { proxiedImageUrl } from "../api/images";
 import type { Match } from "../api/types";
 
 /**
@@ -549,6 +550,9 @@ function ScrollCard({
   const mcapAlert = match.snapshot.marketCapUsd;
   const changePct = mcapNow !== null && mcapAlert > 0 ? ((mcapNow - mcapAlert) / mcapAlert) * 100 : null;
   const isCurated = match.kind === "curated";
+  // Both the backdrop and the thumbnail come from the same proxied URL, so the browser fetches
+  // the bytes once and reuses them for the second element.
+  const artUrl = proxiedImageUrl(match.token.imageUrl);
   const symbol = match.token.symbol ?? match.token.mintAddress.slice(0, 4);
 
   return (
@@ -579,11 +583,11 @@ function ScrollCard({
             url() can. Heavily blurred and scrimmed below - the art sets the mood, the numbers
             still have to be readable at a glance. A token with no artwork (most of this band)
             simply falls back to the flat surface. */}
-        {match.token.imageUrl && (
+        {artUrl && (
           <>
             <img
               className="scroll-card__bg"
-              src={match.token.imageUrl}
+              src={artUrl}
               alt=""
               aria-hidden="true"
               loading="lazy"
@@ -607,8 +611,8 @@ function ScrollCard({
 
         <div className="scroll-card__main">
         <div className="scroll-card__identity">
-          {match.token.imageUrl ? (
-            <img className="scroll-card__art" src={match.token.imageUrl} alt="" loading="lazy" />
+          {artUrl ? (
+            <img className="scroll-card__art" src={artUrl} alt="" loading="lazy" />
           ) : (
             <span className="scroll-card__art scroll-card__art--blank" aria-hidden="true">
               {symbol.slice(0, 2).toUpperCase()}
