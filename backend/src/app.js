@@ -394,6 +394,60 @@ const IMAGE_PROXY_FAIL_TTL_MS = 5 * 60 * 1000;       // 5m — retry a dead/bloc
 const IMAGE_PROXY_MAX_BYTES = 3 * 1024 * 1024;       // 3MB — logos/banners only, reject anything larger
 const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — see withTimeout below
 
+// Token artwork arrives at whatever size the creator uploaded - routinely a 1200px+ PNG of
+// several megabytes, for something this UI renders into a 56px avatar or a heavily blurred card
+// backdrop. Serving that untouched is the single largest cost of a feed page on a phone, so the
+// proxy downsizes once, on the way into the cache, and every visitor thereafter gets the small
+// version.
+const IMAGE_PROXY_MAX_DIMENSION = 512;   // generous for a retina avatar and for the blurred backdrop
+const IMAGE_PROXY_WEBP_QUALITY = 82;     // visually lossless at these sizes
+
+// sharp is optional on purpose. It is a native module, and if a platform ever fails to build it
+// the right outcome is full-size images - not a broken image route. Loaded once here so a missing
+// install costs one warning rather than a try/catch per request.
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch {
+  console.warn('[ImageProxy] sharp unavailable - serving artwork at original size');
+}
+
+// Formats that must pass through untouched: SVG is vector (rasterising it would make it WORSE,
+// and larger), and an animated GIF would lose its animation on a naive resize.
+const IMAGE_PROXY_PASSTHROUGH = /^image\/(svg\+xml|gif)/i;
+
+/**
+ * Downscales to at most IMAGE_PROXY_MAX_DIMENSION on the long edge and re-encodes as WebP,
+ * which is universally supported by any browser able to run this app and typically an order of
+ * magnitude smaller than the source PNG.
+ *
+ * Never enlarges: a 32px logo stays 32px rather than being blown up into a blurry 512.
+ * Any failure - unsupported codec, corrupt bytes, sharp missing - returns the ORIGINAL buffer, so
+ * the worst case is the behaviour we had before this existed.
+ */
+async function downscaleImage(buffer, contentType) {
+  if (!sharp || IMAGE_PROXY_PASSTHROUGH.test(contentType)) return { buffer, contentType };
+  try {
+    const out = await sharp(buffer)
+      .rotate() // honour EXIF orientation before resizing, or a phone photo comes out sideways
+      .resize({
+        width: IMAGE_PROXY_MAX_DIMENSION,
+        height: IMAGE_PROXY_MAX_DIMENSION,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .webp({ quality: IMAGE_PROXY_WEBP_QUALITY })
+      .toBuffer();
+    // Guard against the pathological case where re-encoding grows the file (already-tiny or
+    // already-WebP sources): keep whichever is smaller.
+    if (out.length >= buffer.length) return { buffer, contentType };
+    return { buffer: out, contentType: 'image/webp' };
+  } catch (err) {
+    console.warn('[ImageProxy] resize failed, serving original -', err.message);
+    return { buffer, contentType };
+  }
+}
+
 // Races a promise against a timeout, resolving to `fallback` if the timeout wins.
 // Used so a slow/unresponsive Redis can never stall this route long enough to trip
 // the app's global request-timeout middleware (which would otherwise surface as a
@@ -431,7 +485,9 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   if (!isImageHostAllowed(parsed.hostname)) return res.status(403).json({ error: 'Host not allowed' });
 
   const { cache } = require('./services/cache');
-  const cacheKey = `image-proxy:${url}`;
+  // v2: entries cached before downscaling existed hold full-size bytes, and would otherwise keep
+  // being served for a day after this ships. Bumping the prefix retires them immediately.
+  const cacheKey = `image-proxy:v2:${url}`;
 
   const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
   if (cached) {
@@ -457,9 +513,11 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
           'Referer': `https://${parsed.hostname}/`,
         },
       });
-      const contentType = response.headers['content-type'] || 'image/png';
-      if (!contentType.startsWith('image/')) throw new Error(`Non-image response: ${contentType}`);
-      return { contentType, buffer: Buffer.from(response.data) };
+      const sourceType = response.headers['content-type'] || 'image/png';
+      if (!sourceType.startsWith('image/')) throw new Error(`Non-image response: ${sourceType}`);
+      // Downscaled BEFORE the cache write, so the expensive part happens once per image rather
+      // than once per request, and every cache hit is already small.
+      return downscaleImage(Buffer.from(response.data), sourceType);
     })();
     fetchPromise.finally(() => imageProxyInFlight.delete(url));
     imageProxyInFlight.set(url, fetchPromise);

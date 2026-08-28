@@ -207,6 +207,13 @@ select {
   gap: 10px;
 }
 
+/* The compact phone navigation. Hidden entirely on desktop, where the horizontal tab strip and
+   the account block do the job - see the breakpoint below. */
+.navbar__menu {
+  display: none;
+  position: relative;
+}
+
 .navbar__wallet {
   color: var(--text-muted);
   font-size: 0.85rem;
@@ -582,6 +589,11 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Without this the ellipsis above never fires. A flex item defaults to min-width:auto, which
+     refuses to shrink below min-content - and min-content for an unbreakable 44-character mint
+     address under white-space:nowrap is the whole address. The card was therefore forced to
+     ~400px wide, and on a 320px phone the entire PAGE scrolled sideways to accommodate it. */
+  min-width: 0;
 }
 
 .token-card__copy {
@@ -1080,13 +1092,28 @@ select {
     padding: 16px 14px 48px;
   }
 
-  /* Brand | tabs | account no longer fit on one row, so stack them. */
+  /* One row, always: brand on the left, everything else behind the menu on the right. Stacking
+     brand + wrapped tabs + an account row cost roughly 200px of chrome - a quarter of a phone
+     viewport spent on navigation before a single alert. */
   .navbar {
-    gap: 12px;
-    padding: 12px 14px;
-    align-items: stretch;
-    flex-direction: column;
+    gap: 10px;
+    padding: 10px 14px;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-between;
     min-width: 0;
+  }
+
+  /* Replaced wholesale by .navbar__menu below this width. */
+  .navbar__tabs,
+  .navbar__account {
+    display: none;
+  }
+
+  .navbar__menu {
+    display: block;
+    flex: none;
   }
 
   /* The shell is itself a flex column; it needs the same treatment or it re-expands to fit
@@ -1096,41 +1123,21 @@ select {
     min-width: 0;
   }
 
-  /* Wrap onto a second row rather than scrolling sideways. A scrolling strip fits in one
-     line, but it puts Settings (and Admin, for admins) off-screen with no affordance that
-     they exist — on a 320px screen only the first two-and-a-bit tabs are visible. Wrapping
-     keeps every tab reachable, which matters more here than saving one row of height.
-     max-width also stops a stretched flex item resolving to its max-content width (measured:
-     345px inside a 320px navbar), which made the *page* scroll sideways. */
-  .navbar__tabs {
-    flex: none;
-    flex-wrap: wrap;
-    max-width: 100%;
-    min-width: 0;
-    gap: 6px;
-  }
-
-  .navbar__tab {
-    white-space: nowrap;
-    /* ~44px tall: the minimum comfortable touch target. */
-    padding: 11px 14px;
-  }
-
   /* Every direct child needs min-width:0. Left at the default `auto`, each one refuses to go
      below its own min-content width; the account row (health badge + wallet + Sign out)
      demands ~345px, which inflates the navbar's content box and drags the other two children
      out to match, pushing the page sideways. Measured at 320px before this: children 345px
      wide inside a 320px navbar. */
   .navbar__brand,
-  .navbar__tabs,
-  .navbar__account {
+  .navbar__menu {
     min-width: 0;
   }
 
-  .navbar__account {
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
+  /* The brand is the only flexible thing in the row now, so it is what gives way. */
+  .navbar__brand {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Wallet address is a single unbreakable monospace token — clip it rather than let it set
@@ -1220,6 +1227,15 @@ select {
   /* One card per row: below this the two-column auto-fill leaves cards too narrow to read. */
   .token-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* A grid item's automatic minimum size is its CONTENT's minimum, so a card whose contents
+     want ~390px simply overflows a 276px track and takes the whole page sideways with it - the
+     page scrolled horizontally on any phone narrower than about 400px. min-width:0 lets the
+     card take the track's width and hand the squeeze down to its own children, which are all
+     wrappable or already truncated. */
+  .token-card {
+    min-width: 0;
   }
 
   .admin-stat-grid {
@@ -3199,4 +3215,122 @@ select {
   .scroll-new-pill,
   .scroll-card__hint { animation: none; }
   .scroll-deck { scroll-behavior: auto; }
+}
+
+/* ── Compact phone navigation ───────────────────────────────────────────────
+ * The trigger and its menu. Only ever visible under the 768px breakpoint (see
+ * .navbar__menu's display rules there); these are the looks, not the switch.
+ */
+.navbar__menu-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 44px tall - the smallest comfortable touch target. */
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  max-width: 62vw;
+}
+
+.navbar__menu-trigger:hover,
+.navbar__menu-trigger[aria-expanded="true"] {
+  border-color: var(--accent-dim);
+}
+
+/* Names where you are, so the bar still answers "which tab am I on?" once the
+   tab strip is gone. */
+.navbar__menu-current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navbar__menu-caret {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  transition: transform 140ms ease;
+}
+
+.navbar__menu-caret.is-open {
+  transform: rotate(180deg);
+}
+
+/* Absolutely positioned: opening the menu must never reflow the page underneath
+   it. The z-index clears the Scroll deck's own layers (its pills sit at 5-6). */
+.navbar__menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  min-width: 208px;
+  max-width: min(78vw, 280px);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-raised, var(--surface));
+  box-shadow: 0 18px 40px rgb(0 0 0 / 55%);
+  animation: navbar-menu-in 130ms ease-out;
+}
+
+@keyframes navbar-menu-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.navbar__menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.navbar__menu-item:hover,
+.navbar__menu-item:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.navbar__menu-item--active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* The account actions, fenced off from navigation by a rule so "Sign out" can
+   never be mistaken for one more place to go. */
+.navbar__menu-account {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.navbar__menu-account .wallet-chip {
+  padding: 4px 12px 8px;
+}
+
+.navbar__menu-item--signout {
+  color: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navbar__menu-panel { animation: none; }
+  .navbar__menu-caret { transition: none; }
 }
