@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { getTelegramStatus, linkTelegram, setAlertMode, unlinkTelegram } from "../api/client";
 import type { AlertMode, TelegramStatus } from "../api/types";
-import { usePreferences, type AlertSoundName } from "../context/PreferencesContext";
+import { usePreferences, type AlertSoundName,
+  SCROLL_STALE_MIN_MINUTES,
+  SCROLL_STALE_MAX_MINUTES,
+} from "../context/PreferencesContext";
 import { playAlertSound, unlockAudio } from "../utils/alertSound";
 import { useSubscription } from "../context/SubscriptionContext";
 
@@ -19,6 +22,7 @@ export function Settings() {
       <AccessCard />
       <TelegramCard />
       <LiveFeedCard />
+      <ScrollCard />
       <DisplayCard />
       <SoundCard />
     </div>
@@ -215,6 +219,42 @@ function LiveFeedCard() {
             caught, tinted and marked ★ Curated. Off by default, so the Live Feed answers one question -
             what did my filters find? Either way they keep their own tab.
           </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+/**
+ * The Scroll tab's staleness window. Its own card rather than a line in Display, because it
+ * changes what the deck CONTAINS rather than how it looks - a two-minute window and a
+ * thirty-minute one are different products.
+ */
+function ScrollCard() {
+  const { prefs, update } = usePreferences();
+
+  return (
+    <div className="settings-card">
+      <h3>Scroll</h3>
+
+      <label className="settings-slider">
+        <span className="settings-slider__row">
+          <span className="settings-toggle__title">Show alerts from the last</span>
+          <span className="settings-slider__value">{prefs.scrollStaleMinutes} min</span>
+        </span>
+        <input
+          type="range"
+          min={SCROLL_STALE_MIN_MINUTES}
+          max={SCROLL_STALE_MAX_MINUTES}
+          step={1}
+          value={prefs.scrollStaleMinutes}
+          onChange={(e) => update({ scrollStaleMinutes: Number(e.target.value) })}
+        />
+        <span className="settings-toggle__hint">
+          The Scroll tab plays alerts newest-first and drops anything older than this, so what you
+          swipe through is always current. Thirty minutes is the ceiling on purpose - past that, the
+          token has usually stopped being the one the alert described. The deck simply empties on a
+          quiet stretch rather than showing you stale calls.
         </span>
       </label>
     </div>

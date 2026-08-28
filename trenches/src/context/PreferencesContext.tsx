@@ -3,6 +3,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 /** The three alert sounds offered in Settings. Synthesised, not sampled - see utils/alertSound.ts. */
 export type AlertSoundName = "cork" | "ring" | "bell";
 
+/** Which alerts the Scroll tab plays. Mirrors the Live Feed's own sources - see PumpScroll.tsx. */
+export type ScrollSource = "matches" | "curated" | "both";
+
+/**
+ * The oldest an alert may be and still appear in the Scroll deck. Capped at 30 minutes on
+ * purpose: the deck exists to be acted on right now, and a token that first alerted half an hour
+ * ago is a different trade than the one the alert described.
+ */
+export const SCROLL_STALE_MIN_MINUTES = 1;
+export const SCROLL_STALE_MAX_MINUTES = 30;
+
 export interface Preferences {
   /** Show the detected theme chips (AI, MEME, DOG...) on each card. Off by default: they are a
    *  guess made from the token's name, so they are opt-in rather than presented as fact. */
@@ -17,6 +28,10 @@ export interface Preferences {
   alertSound: AlertSoundName;
   /** 0-1. Applied as the master gain, so 0 is genuinely silent. */
   alertVolume: number;
+  /** Which feed the Scroll tab plays when you open it. */
+  scrollSource: ScrollSource;
+  /** Minutes: alerts older than this drop out of the Scroll deck. Clamped to 1-30. */
+  scrollStaleMinutes: number;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -25,10 +40,15 @@ export const DEFAULT_PREFERENCES: Preferences = {
   alertSoundEnabled: false,
   alertSound: "cork",
   alertVolume: 0.5,
+  scrollSource: "both",
+  // Ten minutes matches the curated feed's own pace (about one alert per ten minutes), so the
+  // deck holds roughly the last handful of calls rather than a backlog.
+  scrollStaleMinutes: 10,
 };
 
 const STORAGE_KEY = "trenches.preferences";
 const SOUND_NAMES: AlertSoundName[] = ["cork", "ring", "bell"];
+const SCROLL_SOURCES: ScrollSource[] = ["matches", "curated", "both"];
 
 /**
  * Read stored preferences, field by field.
@@ -78,6 +98,13 @@ function readStored(): Preferences {
       typeof source.alertVolume === "number" && Number.isFinite(source.alertVolume)
         ? Math.min(1, Math.max(0, source.alertVolume))
         : DEFAULT_PREFERENCES.alertVolume,
+    scrollSource: SCROLL_SOURCES.includes(source.scrollSource as ScrollSource)
+      ? (source.scrollSource as ScrollSource)
+      : DEFAULT_PREFERENCES.scrollSource,
+    scrollStaleMinutes:
+      typeof source.scrollStaleMinutes === "number" && Number.isFinite(source.scrollStaleMinutes)
+        ? Math.min(SCROLL_STALE_MAX_MINUTES, Math.max(SCROLL_STALE_MIN_MINUTES, source.scrollStaleMinutes))
+        : DEFAULT_PREFERENCES.scrollStaleMinutes,
   };
 }
 
