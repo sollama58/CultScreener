@@ -21,9 +21,24 @@
  * somebody a watchlist, not let them act as its owner.
  */
 const deviceLink = {
-  /** Same value as the backend's PAIRING_TTL_MS / LINK_CODE_TTL_MS. Display only - the codes
-   *  expire server-side regardless of what this page believes. */
+  /**
+   * Fallback only, for a backend that does not report its own TTL. Both of them do, and the
+   * countdown uses what they say (see mintSiteCode / mintTrenchesCode): a constant duplicated
+   * across three codebases is a constant that will eventually disagree with two of them, and the
+   * failure mode is a QR that reads as live after it is dead.
+   */
   CODE_TTL_MS: 2 * 60 * 1000,
+
+  /**
+   * Turns a TTL into a deadline on THIS clock. Deliberately built from the relative ttlMs rather
+   * than the absolute expiresAt a server may also send: a phone or desktop with a skewed clock
+   * would misread an absolute timestamp, and skew of a few minutes is common enough to matter
+   * against a two-minute window.
+   */
+  deadlineFrom(ttlMs) {
+    const ttl = Number(ttlMs);
+    return Date.now() + (Number.isFinite(ttl) && ttl > 0 ? ttl : this.CODE_TTL_MS);
+  },
 
   siteApi() {
     return (typeof config !== 'undefined' && config.api?.baseUrl) || '';
@@ -109,7 +124,13 @@ const deviceLink = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Could not create a pairing code');
-    return { pairingToken: data.pairingToken, devices: data.devices || [] };
+    return {
+      pairingToken: data.pairingToken,
+      // Measured from now, which is when this response arrived - so the clock the user sees
+      // starts where the server's did, not where the page decided it should.
+      expiresAt: this.deadlineFrom(data.expiresInMs),
+      devices: data.devices || []
+    };
   },
 
   /**
@@ -117,6 +138,7 @@ const deviceLink = {
    * there is no session: not being signed into Trenches is an ordinary state, and the desktop
    * panel says so instead of failing the whole pairing.
    */
+  /* eslint-disable-next-line no-unused-vars */
   async mintTrenchesCode() {
     try {
       // No Content-Type header, because there is no body. Declaring application/json on an
@@ -128,7 +150,8 @@ const deviceLink = {
       });
       if (!res.ok) return null;
       const data = await res.json();
-      return typeof data.code === 'string' ? data.code : null;
+      if (typeof data.code !== 'string') return null;
+      return { code: data.code, expiresAt: this.deadlineFrom(data.ttlMs) };
     } catch (_) {
       return null;
     }

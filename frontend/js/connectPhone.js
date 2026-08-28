@@ -114,10 +114,15 @@
 
     let siteToken = null;
     let trenchesToken = null;
+    // The earliest moment any half of this QR stops working. The two are minted seconds apart and
+    // each server grants its own TTL, so the honest deadline is whichever expires first - not the
+    // later one, and not a constant this page made up.
+    let expiresAt = Infinity;
 
     try {
       const minted = await deviceLink.mintSiteCode(wallet);
       siteToken = minted.pairingToken;
+      expiresAt = Math.min(expiresAt, minted.expiresAt);
       state.siteDevices = minted.devices;
       setScope(dom.siteDot, dom.siteNote, 'ready',
         'Your watchlist and holdings, read-only. Trading still needs a wallet on the phone.');
@@ -127,8 +132,10 @@
 
     // Trenches is opportunistic: no session here simply means there is nothing of theirs to pair.
     try {
-      trenchesToken = await deviceLink.mintTrenchesCode();
-      if (trenchesToken) {
+      const minted = await deviceLink.mintTrenchesCode();
+      trenchesToken = minted ? minted.code : null;
+      if (minted) {
+        expiresAt = Math.min(expiresAt, minted.expiresAt);
         setScope(dom.trenchesDot, dom.trenchesNote, 'ready',
           'Full access, exactly as on this screen - alerts, filters and PumpScroll.');
         state.trenchesDevices = await deviceLink.listTrenchesDevices();
@@ -155,7 +162,7 @@
     }
 
     state.linkUrl = deviceLink.buildLinkUrl(window.location.origin, siteToken, trenchesToken);
-    state.expiresAt = Date.now() + deviceLink.CODE_TTL_MS;
+    state.expiresAt = Number.isFinite(expiresAt) ? expiresAt : deviceLink.deadlineFrom(null);
     dom.veilText.textContent = 'Code expired';
     renderQr(state.linkUrl);
     dom.manualUrl.textContent = state.linkUrl;

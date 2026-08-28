@@ -72,9 +72,13 @@ const jobProcessors = {
     }
 
     const count = await db.cleanupExpiredAdminSessions();
-    console.log(`[Worker] Cleaned up ${count} expired sessions`);
+    // Unscanned pairing codes from Mobile Connect. Each is one row with a two-minute life, so
+    // they are individually trivial and collectively unbounded - a QR regenerated a few times a
+    // day by every user adds up to a table nobody ever looks at.
+    const devices = await db.cleanupExpiredDeviceSessions();
+    console.log(`[Worker] Cleaned up ${count} expired sessions, ${devices} expired device sessions`);
 
-    return { cleanedSessions: count };
+    return { cleanedSessions: count, cleanedDeviceSessions: devices };
   },
 
   /**

@@ -428,9 +428,17 @@ const wallet = {
     const session = deviceLink.getSession();
     if (!session) return false;
 
+    // wallet.init() awaits this, and everything gated on `walletReady` waits on init - so an API
+    // that accepts the connection and then never answers would leave a paired phone looking at a
+    // page that never finishes booting. A few seconds is far longer than this call needs; past
+    // that, carrying on unlinked is the better answer than waiting.
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), 6000);
+
     try {
       const res = await fetch(`${deviceLink.siteApi()}/api/device/me`, {
-        headers: { 'X-Device-Session': session.token }
+        headers: { 'X-Device-Session': session.token },
+        signal: abort.signal
       });
       if (res.status === 401) {
         // Revoked from the desktop, or expired. Forget it rather than retrying every page.
@@ -448,9 +456,12 @@ const wallet = {
       window.dispatchEvent(new CustomEvent('walletLinked', { detail: { address: data.wallet } }));
       return true;
     } catch (_) {
-      // Offline, or the API is down. Keep the stored session - this is not evidence of
-      // revocation, and throwing it away would un-pair a phone over a dropped connection.
+      // Offline, timed out, or the API is down. Keep the stored session - none of that is
+      // evidence of revocation, and throwing it away would un-pair a phone over a dropped
+      // connection. The next page load asks again.
       return false;
+    } finally {
+      clearTimeout(timeout);
     }
   },
 
