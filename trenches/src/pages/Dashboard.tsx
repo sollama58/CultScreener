@@ -173,6 +173,16 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     seen.add(matchId);
   }, []);
 
+  /**
+   * Refreshes whatever list is actually on screen. The filtered view renders from its own buffer
+   * (see ensureFilteredPage), which the plain `refetch` below does not touch - so with a feed
+   * filter on, a live alert used to chime immediately and then not appear until the 45-second
+   * poll caught up. Held in a ref, and reassigned every render, so the stream effect can call the
+   * current one without listing filter state as a dependency and tearing the SSE connection down
+   * on every keystroke in the filter bar.
+   */
+  const refreshVisibleRef = useRef<() => void>(() => {});
+
   const refetch = useCallback(async () => {
     const id = ++requestIdRef.current;
     try {
@@ -257,7 +267,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         // Malformed or absent payload - announce anyway, that part doesn't depend on the id.
       }
       announceNewAlert();
-      void refetch();
+      refreshVisibleRef.current();
     };
     const handleError = () => {
       setStreamLive(false);
@@ -378,6 +388,14 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     const lastValidPage = Math.max(1, Math.ceil(filteredMatches.length / DISPLAY_PAGE_SIZE));
     if (filteredPage > lastValidPage) setFilteredPage(lastValidPage);
   }, [filterActive, filteredLoading, filteredExhausted, filteredMatches.length, filteredPage]);
+
+  // Assigned every render so the SSE handler always calls the current one - see the ref's own
+  // comment. Mirrors exactly what the page renders: the filtered buffer when a filter is on,
+  // the plain feed otherwise.
+  refreshVisibleRef.current = () => {
+    if (filterActive) void ensureFilteredPage(filteredPage, filter);
+    else void refetch();
+  };
 
   const displayedMatches = filterActive ? filteredSlice : visibleMatches;
 
