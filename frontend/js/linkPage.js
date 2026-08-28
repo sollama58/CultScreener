@@ -92,12 +92,17 @@
     }
 
     let wallet = null;
-    let anyOk = false;
+    // Whether each half actually PAIRED, which is not the same question as whether the QR
+    // carried a code for it. The buttons below are built from these, never from the tokens:
+    // sending somebody to Trenches because a Trenches code was present, when redeeming it just
+    // failed, lands them on a sign-in screen with no idea why.
+    let siteOk = false;
+    let trenchesOk = false;
 
     if (siteToken) {
       try {
         wallet = await deviceLink.redeemSiteCode(siteToken);
-        anyOk = true;
+        siteOk = true;
         addResult('HolDEX', 'Connected. Your watchlist and holdings are here.', true);
       } catch (err) {
         addResult('HolDEX', err.message || 'Could not connect', false);
@@ -108,12 +113,14 @@
       try {
         const trenchesWallet = await deviceLink.redeemTrenchesCode(trenchesToken);
         wallet = wallet || trenchesWallet;
-        anyOk = true;
+        trenchesOk = true;
         addResult('Trenches', 'Signed in. Alerts, filters and PumpScroll are ready.', true);
       } catch (err) {
         addResult('Trenches', err.message || 'Could not connect', false);
       }
     }
+
+    const anyOk = siteOk || trenchesOk;
 
     dom.spinner.remove();
 
@@ -126,8 +133,13 @@
     }
 
     setIcon('ok');
-    dom.heading.textContent = 'Your phone is connected';
-    dom.message.textContent = 'Stays connected until you disconnect it from the desktop.';
+    // "Partly" matters: one half working and the other not is a different situation from both
+    // working, and the heading is the only part of this screen somebody is guaranteed to read.
+    const partial = (siteToken && !siteOk) || (trenchesToken && !trenchesOk);
+    dom.heading.textContent = partial ? 'Partly connected' : 'Your phone is connected';
+    dom.message.textContent = partial
+      ? 'One half of the pairing did not go through. Generate a fresh code on your desktop to finish it.'
+      : 'Stays connected until you disconnect it from the desktop.';
 
     if (wallet) {
       dom.walletChip.textContent = `${wallet.slice(0, 4)}…${wallet.slice(-4)}`;
@@ -135,9 +147,9 @@
     }
 
     // Trenches first when it paired: it is the thing with a real session, and the reason most
-    // people are scanning at all.
-    if (trenchesToken) addAction('Open Trenches', '/trenches/', true);
-    addAction('Open HolDEX', '/', !trenchesToken);
+    // people are scanning at all. Built from what succeeded, never from what was offered.
+    if (trenchesOk) addAction('Open Trenches', '/trenches/', true);
+    if (siteOk) addAction('Open HolDEX', '/', !trenchesOk);
   }
 
   run().catch(() => {

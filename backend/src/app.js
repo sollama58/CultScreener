@@ -95,6 +95,10 @@ function startFallbackCleanup() {
 
     try {
       await db.cleanupExpiredAdminSessions();
+      // Mobile Connect leaves a row behind for every QR that is generated and never scanned -
+      // the pairing code lives two minutes, the row lived forever. Activated device sessions are
+      // long-lived and are not touched by this; only rows past their own expires_at go.
+      await db.cleanupExpiredDeviceSessions();
       cleanupFailureCount = 0; // Reset on success
     } catch (err) {
       cleanupFailureCount++;

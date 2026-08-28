@@ -12,7 +12,7 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v50';
+const CACHE_VERSION = 'holdex-v52';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -24,8 +24,8 @@ const APP_SHELL = [
   '/css/styles.css?v=15',
   '/js/config.js?v=3',
   '/js/api.js?v=7',
-  '/js/deviceLink.js?v=1',
-  '/js/wallet.js?v=3',
+  '/js/deviceLink.js?v=2',
+  '/js/wallet.js?v=4',
   '/js/conviction.js?v=15',
   '/js/tech.js?v=5',
   '/js/emerging.js?v=5',
