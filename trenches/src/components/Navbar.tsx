@@ -1,9 +1,10 @@
 import { useAuth } from "../context/AuthContext";
 
-export type Tab = "dashboard" | "curated" | "filters" | "leaderboard" | "settings" | "admin";
+export type Tab = "dashboard" | "scroll" | "curated" | "filters" | "leaderboard" | "settings" | "admin";
 
 const BASE_TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Live Feed" },
+  { id: "scroll", label: "Scroll" },
   { id: "curated", label: "Curated" },
   { id: "filters", label: "Filters" },
   { id: "leaderboard", label: "Leaderboard" },
