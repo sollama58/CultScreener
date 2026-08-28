@@ -6,7 +6,7 @@ import { TokenArtwork } from "../components/TokenArtwork";
 import type { Match } from "../api/types";
 
 /**
- * PumpScroll - the alert feed as a deck instead of a page.
+ * PumpTok - the alert feed as a deck instead of a page.
  *
  * The Live Feed answers "what has fired lately"; this answers "what should I look at RIGHT NOW".
  * One alert fills the screen, newest first, and everything older than the staleness window is
@@ -43,6 +43,15 @@ const SWIPE_COMMIT_PX = 96;
 /** Below this, a horizontal drag is treated as an intent to scroll vertically instead. */
 const SWIPE_DIRECTION_LOCK_PX = 12;
 
+/**
+ * How long an alert may sit in the deck unread before it is worth pointing at.
+ *
+ * Deliberately shorter than the staleness window: the point is to catch something while there is
+ * still time to act on it, not to announce it on the way out. At the default 10-minute window
+ * this leaves roughly half the alert's life to notice it.
+ */
+const MISSED_AFTER_MS = 5 * 60_000;
+
 interface DeckCard {
   match: Match;
   key: string;
@@ -50,7 +59,7 @@ interface DeckCard {
   expired: boolean;
 }
 
-export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
+export function PumpTok({ onGoToSettings }: { onGoToSettings: () => void }) {
   const { prefs, update } = usePreferences();
   const [source, setSource] = useState<ScrollSource>(prefs.scrollSource);
   const [alerts, setAlerts] = useState<Match[]>([]);
@@ -166,6 +175,28 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
   const [activeKey, setActiveKey] = useState("");
 
   /**
+   * Every alert that has been the centred card, so "did you actually see this one" is answerable.
+   * A Set in state rather than a ref because the missed-alert bubble renders from it.
+   *
+   * Never pruned. It is one string per alert seen in a session, and the alternative - dropping
+   * keys as cards age out - would let an alert you HAVE read come back as unread if it briefly
+   * left the deck and returned.
+   */
+  const [viewed, setViewed] = useState<ReadonlySet<string>>(() => new Set());
+  const markViewed = useCallback((key: string) => {
+    setActiveKey(key);
+    setViewed((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  }, []);
+
+  /**
+   * A request for the deck to scroll somewhere, which only the deck can carry out - it owns the
+   * card refs. The nonce is what makes a repeat of the same request fire again: tapping "3 new"
+   * twice must scroll to the top both times, and a bare key would compare equal and do nothing
+   * the second time.
+   */
+  const [jump, setJump] = useState<{ nonce: number; key: string | "newest" } | null>(null);
+
+  /**
    * The deck: newest first, nothing past the staleness window - with one exception. The card the
    * reader is currently on is KEPT even once it ages out, marked expired, and drops away only
    * once they have moved off it.
@@ -193,6 +224,35 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
     return queued.filter((m) => !known.has(m.id) && now - new Date(m.matchedAt).getTime() <= staleMs)
       .length;
   }, [queued, alerts, now, staleMs]);
+
+  /**
+   * Alerts sitting in the deck, old enough to be slipping away, that have never been on screen.
+   *
+   * Deliberately disjoint from `queuedCount` above: anything still queued is already advertised
+   * by the "N new" pill at the top, and counting it here as well would show the same alert twice
+   * in two places that offer different actions. The pill is "there is more"; this is "you missed
+   * some of what you already have".
+   */
+  const missed = useMemo(
+    () => deck.filter((c) => !viewed.has(c.key) && now - new Date(c.match.matchedAt).getTime() > MISSED_AFTER_MS),
+    [deck, viewed, now],
+  );
+
+  /**
+   * Jump to the OLDEST unseen one, not the nearest. In a newest-first deck the oldest is the one
+   * about to drop out of the window entirely - it is the alert you are actually about to lose,
+   * and the rest are still reachable by scrolling the way the deck already works.
+   */
+  const goToMissed = () => {
+    const target = missed[missed.length - 1];
+    if (target) setJump({ nonce: Date.now(), key: target.key });
+  };
+
+  /** Load, then put the reader back at the top - see the pill's own note below. */
+  const showNewest = async () => {
+    await load(source, { silent: true });
+    setJump({ nonce: Date.now(), key: "newest" });
+  };
 
   const changeSource = (next: ScrollSource) => {
     setSource(next);
@@ -230,9 +290,9 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
   }, []);
 
   return (
-    <div className="scroll-page" ref={pageRef}>
-      <header className="scroll-page__bar">
-        <div className="scroll-source" role="group" aria-label="Which alerts to play">
+    <div className="pumptok-page" ref={pageRef}>
+      <header className="pumptok-page__bar">
+        <div className="pumptok-source" role="group" aria-label="Which alerts to play">
           {(
             [
               ["matches", "My Filters"],
@@ -243,7 +303,7 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
             <button
               key={id}
               type="button"
-              className={`scroll-source__btn ${source === id ? "scroll-source__btn--on" : ""}`}
+              className={`pumptok-source__btn ${source === id ? "pumptok-source__btn--on" : ""}`}
               aria-pressed={source === id}
               onClick={() => changeSource(id)}
             >
@@ -251,13 +311,19 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
             </button>
           ))}
         </div>
-        <button type="button" className="scroll-page__stale" onClick={onGoToSettings}>
+        <button type="button" className="pumptok-page__stale" onClick={onGoToSettings}>
           last {prefs.scrollStaleMinutes}m
         </button>
       </header>
 
+      {/*
+        Tapping this used to reload the deck and leave the reader exactly where they were, which
+        on a full-screen pager is indistinguishable from nothing happening: the new alerts land
+        ABOVE the current card, off screen, and the pill just disappears. It now scrolls to the
+        newest as well, which is the thing the arrow was already promising.
+      */}
       {queuedCount > 0 && (
-        <button type="button" className="scroll-new-pill" onClick={() => void load(source, { silent: true })}>
+        <button type="button" className="pumptok-new-pill" onClick={() => void showNewest()}>
           ↑ {queuedCount} new
         </button>
       )}
@@ -272,7 +338,17 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
         />
       )}
 
-      {deck.length > 0 && <Deck cards={deck} now={now} activeKey={activeKey} onActiveChange={setActiveKey} />}
+      {deck.length > 0 && (
+        <Deck
+          cards={deck}
+          now={now}
+          activeKey={activeKey}
+          onActiveChange={markViewed}
+          jump={jump}
+          missedCount={missed.length}
+          onGoToMissed={goToMissed}
+        />
+      )}
     </div>
   );
 }
@@ -287,9 +363,9 @@ function DeckMessage({
   action?: { label: string; onClick: () => void };
 }) {
   return (
-    <div className="scroll-empty">
-      <p className="scroll-empty__title">{title}</p>
-      {body && <p className="scroll-empty__body">{body}</p>}
+    <div className="pumptok-empty">
+      <p className="pumptok-empty__title">{title}</p>
+      {body && <p className="pumptok-empty__body">{body}</p>}
       {action && (
         <button type="button" className="btn" onClick={action.onClick}>
           {action.label}
@@ -309,14 +385,25 @@ function Deck({
   now,
   activeKey,
   onActiveChange,
+  jump,
+  missedCount,
+  onGoToMissed,
 }: {
   cards: DeckCard[];
   now: number;
   activeKey: string;
   onActiveChange: (key: string) => void;
+  /** A scroll the page above asked for; see the note on `jump` there. */
+  jump: { nonce: number; key: string | "newest" } | null;
+  missedCount: number;
+  onGoToMissed: () => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
+  /** The deck as it stands right now, for the jump effect to resolve "newest" against without
+   *  taking a dependency on it. */
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
   /** The last swipe, so a mis-swipe can be walked back rather than losing the alert. */
   const [undo, setUndo] = useState<{ key: string; venue: string } | null>(null);
 
@@ -352,7 +439,7 @@ function Deck({
     if (!activeKey && cards[0]) onActiveChange(cards[0].key);
   }, [activeKey, cards, onActiveChange]);
 
-  const goTo = useCallback((key: string) => {
+  const goTo = useCallback((key: string, opts: { instant?: boolean } = {}) => {
     // Someone who has asked their OS for less motion should not be given a smooth-scrolling
     // carousel; jumping straight there is the honest reading of that preference.
     const reduced =
@@ -360,8 +447,26 @@ function Deck({
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
     cardRefs.current
       .get(key)
-      ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+      ?.scrollIntoView({ behavior: opts.instant || reduced ? "auto" : "smooth", block: "start" });
   }, []);
+
+  /**
+   * Carry out a scroll the page asked for. Keyed on the nonce alone: `cards` deliberately is not
+   * a dependency, or every arriving alert would re-run the last jump and yank the deck out from
+   * under whoever had since scrolled away from it.
+   */
+  const lastJump = useRef(0);
+  useEffect(() => {
+    if (!jump || jump.nonce === lastJump.current) return;
+    lastJump.current = jump.nonce;
+    const key = jump.key === "newest" ? cardsRef.current[0]?.key : jump.key;
+    // Instant, not smooth. A jump can cross several cards, and smooth-scrolling past them trips
+    // the intersection observer on each one - marking as "seen" the very alerts the bubble exists
+    // to say you have NOT seen. Landing directly means one tap clears exactly one of them, so
+    // repeated taps walk back through the unread ones instead of wiping them all at once.
+    if (key) goTo(key, { instant: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump, goTo]);
 
   const advance = useCallback(
     (fromKey: string) => {
@@ -394,7 +499,7 @@ function Deck({
       // The source switcher and the staleness button live in the bar above the deck. Arrow keys
       // there belong to whoever is tabbing through them, not to the deck.
       const target = event.target as HTMLElement | null;
-      if (target?.closest?.("input, select, textarea, .scroll-page__bar")) return;
+      if (target?.closest?.("input, select, textarea, .pumptok-page__bar")) return;
       const card = cards.find((c) => c.key === activeKey);
       if (!card) return;
       const index = cards.indexOf(card);
@@ -418,9 +523,9 @@ function Deck({
 
   return (
     <>
-      <div className="scroll-deck" ref={scrollerRef}>
+      <div className="pumptok-deck" ref={scrollerRef}>
         {cards.map((card) => (
-          <ScrollCard
+          <PumpTokCard
             key={card.key}
             card={card}
             now={now}
@@ -434,8 +539,23 @@ function Deck({
         ))}
       </div>
 
+      {/*
+        A quiet corner bubble, not a banner: an alert going unread is worth pointing at, but it is
+        not worth interrupting the deck for. Sits opposite the undo pill (which is centred) so the
+        two can be on screen together without colliding, and above the action buttons rather than
+        over them.
+      */}
+      {missedCount > 0 && (
+        <button type="button" className="pumptok-missed" onClick={onGoToMissed}>
+          <span className="pumptok-missed__count">{missedCount}</span>
+          <span className="pumptok-missed__label">
+            unseen · <strong>jump</strong>
+          </span>
+        </button>
+      )}
+
       {undo && (
-        <div className="scroll-undo" role="status">
+        <div className="pumptok-undo" role="status">
           <span>Opened on {undo.venue}</span>
           <button
             type="button"
@@ -478,7 +598,7 @@ function ageLabel(ms: number): string {
  * lock, every attempt to scroll the deck would drag the card sideways a little, which reads as
  * broken even when nothing commits.
  */
-function ScrollCard({
+function PumpTokCard({
   card,
   now,
   isFirst,
@@ -563,7 +683,7 @@ function ScrollCard({
 
   return (
     <article
-      className={`scroll-card ${card.expired ? "scroll-card--expired" : ""}`}
+      className={`pumptok-card ${card.expired ? "pumptok-card--expired" : ""}`}
       data-key={card.key}
       ref={register}
       onPointerDown={onPointerDown}
@@ -573,16 +693,16 @@ function ScrollCard({
       style={{ ["--drag-x" as string]: `${dragX}px`, ["--drag-progress" as string]: Math.min(1, Math.abs(dragX) / SWIPE_COMMIT_PX) }}
     >
       {/* The two venues, revealed by the drag itself rather than sitting on top of the art. */}
-      <div className={`scroll-card__venue scroll-card__venue--left ${direction === "left" ? "is-shown" : ""} ${commit && direction === "left" ? "is-armed" : ""}`}>
-        <span className="scroll-card__venue-name">{VENUES.left.label}</span>
-        <span className="scroll-card__venue-hint">{commit ? "release to open" : "keep swiping"}</span>
+      <div className={`pumptok-card__venue pumptok-card__venue--left ${direction === "left" ? "is-shown" : ""} ${commit && direction === "left" ? "is-armed" : ""}`}>
+        <span className="pumptok-card__venue-name">{VENUES.left.label}</span>
+        <span className="pumptok-card__venue-hint">{commit ? "release to open" : "keep swiping"}</span>
       </div>
-      <div className={`scroll-card__venue scroll-card__venue--right ${direction === "right" ? "is-shown" : ""} ${commit && direction === "right" ? "is-armed" : ""}`}>
-        <span className="scroll-card__venue-name">{VENUES.right.label}</span>
-        <span className="scroll-card__venue-hint">{commit ? "release to open" : "keep swiping"}</span>
+      <div className={`pumptok-card__venue pumptok-card__venue--right ${direction === "right" ? "is-shown" : ""} ${commit && direction === "right" ? "is-armed" : ""}`}>
+        <span className="pumptok-card__venue-name">{VENUES.right.label}</span>
+        <span className="pumptok-card__venue-hint">{commit ? "release to open" : "keep swiping"}</span>
       </div>
 
-      <div className="scroll-card__body">
+      <div className="pumptok-card__body">
         {/* The token's own art, as the card's backdrop. An <img> rather than a CSS
             background-image on purpose: the URL is third-party data from the token's metadata,
             and an element attribute cannot escape into the stylesheet the way an interpolated
@@ -592,7 +712,7 @@ function ScrollCard({
         {artUrl && (
           <>
             <img
-              className="scroll-card__bg"
+              className="pumptok-card__bg"
               src={artUrl}
               alt=""
               aria-hidden="true"
@@ -603,48 +723,53 @@ function ScrollCard({
                 e.currentTarget.style.display = "none";
               }}
             />
-            <span className="scroll-card__scrim" aria-hidden="true" />
+            <span className="pumptok-card__scrim" aria-hidden="true" />
           </>
         )}
-        <div className="scroll-card__head">
-          <span className={`scroll-card__badge ${isCurated ? "scroll-card__badge--curated" : ""}`}>
+        <div className="pumptok-card__head">
+          <span className={`pumptok-card__badge ${isCurated ? "pumptok-card__badge--curated" : ""}`}>
             {isCurated ? "★ Curated" : (match.filter?.name ?? "My filter")}
           </span>
-          <span className="scroll-card__age">
+          <span className="pumptok-card__age">
             {card.expired ? "expired" : ageLabel(ageMs)}
           </span>
         </div>
 
-        <div className="scroll-card__main">
-        <div className="scroll-card__identity">
+        <div className="pumptok-card__main">
+        <div className="pumptok-card__identity">
           {/* Falls back to initials on a failed load as well as on no-artwork-at-all. Without
               that this was the browser's broken-image glyph, dead centre of a full-screen card -
               the most visible image in the app and the only one with no fallback. */}
           <TokenArtwork
             src={artUrl}
             label={symbol}
-            className="scroll-card__art"
-            fallbackClassName="scroll-card__art--blank"
+            className="pumptok-card__art"
+            fallbackClassName="pumptok-card__art--blank"
           />
-          <div className="scroll-card__names">
-            <h2 className="scroll-card__symbol">{symbol}</h2>
-            {match.token.name && <p className="scroll-card__name">{match.token.name}</p>}
+          <div className="pumptok-card__names">
+            <h2 className="pumptok-card__symbol">{symbol}</h2>
+            {match.token.name && <p className="pumptok-card__name">{match.token.name}</p>}
           </div>
         </div>
 
-        <div className="scroll-card__mcap">
-          <span className="scroll-card__mcap-value">{money(mcapNow ?? mcapAlert)}</span>
+        <div className="pumptok-card__mcap">
+          <span className="pumptok-card__mcap-value">{money(mcapNow ?? mcapAlert)}</span>
           {changePct !== null && (
-            <span className={`scroll-card__delta ${changePct >= 0 ? "is-up" : "is-down"}`}>
+            <span className={`pumptok-card__delta ${changePct >= 0 ? "is-up" : "is-down"}`}>
               {changePct >= 0 ? "+" : ""}
               {changePct.toFixed(0)}% since alert
             </span>
           )}
         </div>
 
-        <dl className="scroll-card__stats">
+        {/*
+          Liquidity is gone from this row deliberately. It is a number you check before you size a
+          position, and this deck is for the decision one step earlier - is this worth opening at
+          all. The two holder-quality figures answer that far better: they are what separate a
+          launch with real buyers from one held by wallets created to hold it.
+        */}
+        <dl className="pumptok-card__stats">
           <Stat label="At alert" value={money(mcapAlert)} />
-          <Stat label="Liquidity" value={money(match.snapshot.liquidityUsd)} />
           <Stat label="24h vol" value={money(match.snapshot.volume24hUsd)} />
           <Stat
             label="Age"
@@ -656,10 +781,15 @@ function ScrollCard({
                   : `${(match.snapshot.ageMinutes / 60).toFixed(1)}h`
             }
           />
+          {/* Both are "lower is better" and both are often unknown - the holder list may not have
+              been fetched, or the wallets could not be priced. An em dash says so; a 0% would be
+              a claim we have not earned. */}
+          <Stat label="Fresh" value={pct(match.snapshot.freshTop10WalletPct)} tone="risk" />
+          <Stat label="Empty" value={pct(match.snapshot.emptyTop10WalletPct)} tone="risk" />
         </dl>
 
         {isCurated && match.curated?.reasons?.length ? (
-          <ul className="scroll-card__reasons">
+          <ul className="pumptok-card__reasons">
             {match.curated.reasons.slice(0, 3).map((reason) => (
               <li key={reason}>{reason}</li>
             ))}
@@ -670,7 +800,7 @@ function ScrollCard({
         {/* Shown once, on the very first card: the action buttons already teach left and right
             (their labels carry the arrows), but nothing otherwise says the deck goes vertically. */}
         {isFirst && (
-          <p className="scroll-card__hint" aria-hidden="true">
+          <p className="pumptok-card__hint" aria-hidden="true">
             Swipe up for the next alert
           </p>
         )}
@@ -678,11 +808,11 @@ function ScrollCard({
 
       {/* Real buttons, not just a gesture: this is the whole interaction on a desktop, and it is
           the accessible path everywhere. */}
-      <div className="scroll-card__actions">
-        <button type="button" className="scroll-action scroll-action--left" onClick={() => onAct("left")}>
+      <div className="pumptok-card__actions">
+        <button type="button" className="pumptok-action pumptok-action--left" onClick={() => onAct("left")}>
           <span aria-hidden="true">←</span> {VENUES.left.label}
         </button>
-        <button type="button" className="scroll-action scroll-action--right" onClick={() => onAct("right")}>
+        <button type="button" className="pumptok-action pumptok-action--right" onClick={() => onAct("right")}>
           {VENUES.right.label} <span aria-hidden="true">→</span>
         </button>
       </div>
@@ -690,11 +820,22 @@ function ScrollCard({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "risk" }) {
   return (
-    <div className="scroll-card__stat">
+    <div className={`pumptok-card__stat${tone ? ` pumptok-card__stat--${tone}` : ""}`}>
       <dt>{label}</dt>
       <dd>{value}</dd>
     </div>
   );
+}
+
+/**
+ * A top-10 holder percentage, or an em dash when it was never established.
+ *
+ * Rounded to whole numbers: these come from a ten-wallet sample, so a decimal place would imply
+ * a precision the measurement does not have - 10% here means exactly one wallet.
+ */
+function pct(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return `${Math.round(value)}%`;
 }

@@ -9,7 +9,7 @@ import { acquireImageSlot } from "../utils/imageQueue";
  *
  *  1. A fallback that covers BOTH "this token has no artwork" (common - most of this band never
  *     gets any) and "it has a URL that did not load". Those are indistinguishable to a user and
- *     must render identically. PumpScroll previously had neither on its thumbnail, so a failed
+ *     must render identically. PumpTok previously had neither on its thumbnail, so a failed
  *     load left the browser's broken-image glyph in the middle of a full-screen card.
  *  2. A queue, so a screenful of cards does not fire a dozen simultaneous requests.
  *  3. The slot released the moment the image settles - not when the component unmounts - or only

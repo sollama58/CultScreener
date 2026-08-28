@@ -9,7 +9,7 @@ import { Paywall } from "./pages/Paywall";
 import { Navbar, type Tab } from "./components/Navbar";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
-import { PumpScroll } from "./pages/PumpScroll";
+import { PumpTok } from "./pages/PumpTok";
 import { Curated } from "./pages/Curated";
 import { Filters } from "./pages/Filters";
 import { Leaderboard } from "./pages/Leaderboard";
@@ -42,10 +42,10 @@ function AppShell() {
   // whether someone sees a paywall or a wall of failed requests.
   const gated =
     tab === "dashboard" ||
-    // Scroll plays the same paid feeds the Live Feed and Curated tab do, so it gates with them -
-    // an ungated Scroll tab would fire /matches and the SSE stream and collect a 402 on each,
+    // PumpTok plays the same paid feeds the Live Feed and Curated tab do, so it gates with them -
+    // an ungated PumpTok tab would fire /matches and the SSE stream and collect a 402 on each,
     // which is precisely the wall of red the note above exists to prevent.
-    tab === "scroll" ||
+    tab === "pumptok" ||
     tab === "curated" ||
     tab === "filters" ||
     tab === "leaderboard";
@@ -67,7 +67,7 @@ function AppShell() {
         {gated && accessKnown && status.hasAccess && (
           <>
             {tab === "dashboard" && <Dashboard onGoToFilters={() => setTab("filters")} />}
-            {tab === "scroll" && <PumpScroll onGoToSettings={() => setTab("settings")} />}
+            {tab === "pumptok" && <PumpTok onGoToSettings={() => setTab("settings")} />}
             {tab === "curated" && <Curated />}
             {tab === "filters" && <Filters />}
             {tab === "leaderboard" && <Leaderboard />}

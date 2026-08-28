@@ -31,7 +31,7 @@ export function Settings() {
       <DevicesCard />
       <TelegramCard />
       <LiveFeedCard />
-      <ScrollCard />
+      <PumpTokSettingsCard />
       <DisplayCard />
       <SoundCard />
     </div>
@@ -383,16 +383,16 @@ function LiveFeedCard() {
 }
 
 /**
- * The Scroll tab's staleness window. Its own card rather than a line in Display, because it
+ * The PumpTok tab's staleness window. Its own card rather than a line in Display, because it
  * changes what the deck CONTAINS rather than how it looks - a two-minute window and a
  * thirty-minute one are different products.
  */
-function ScrollCard() {
+function PumpTokSettingsCard() {
   const { prefs, update } = usePreferences();
 
   return (
     <div className="settings-card">
-      <h3>Scroll</h3>
+      <h3>PumpTok</h3>
 
       <label className="settings-slider">
         <span className="settings-slider__row">
@@ -408,7 +408,7 @@ function ScrollCard() {
           onChange={(e) => update({ scrollStaleMinutes: Number(e.target.value) })}
         />
         <span className="settings-toggle__hint">
-          The Scroll tab plays alerts newest-first and drops anything older than this, so what you
+          PumpTok plays alerts newest-first and drops anything older than this, so what you
           swipe through is always current. Thirty minutes is the ceiling on purpose - past that, the
           token has usually stopped being the one the alert described. The deck simply empties on a
           quiet stretch rather than showing you stale calls.

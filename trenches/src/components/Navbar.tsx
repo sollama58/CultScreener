@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { FeedStatus } from "./FeedStatus";
 
-export type Tab = "dashboard" | "scroll" | "curated" | "filters" | "leaderboard" | "settings" | "admin";
+export type Tab = "dashboard" | "pumptok" | "curated" | "filters" | "leaderboard" | "settings" | "admin";
 
 const BASE_TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Live Feed" },
-  { id: "scroll", label: "Scroll" },
+  { id: "pumptok", label: "PumpTok" },
   { id: "curated", label: "Curated" },
   { id: "filters", label: "Filters" },
   { id: "leaderboard", label: "Leaderboard" },
