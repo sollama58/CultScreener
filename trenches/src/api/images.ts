@@ -29,11 +29,27 @@ const SITE_API_URL: string =
     : "https://cultscreener-api.onrender.com");
 
 /**
+ * The two sizes the proxy will resize to. Anything else is ignored server-side and served at
+ * "avatar", so this type is the honest description of the choice rather than a free number.
+ *
+ *  - "avatar"   (512px) for list tiles and thumbnails.
+ *  - "backdrop" (1024px) for the PumpScroll card, which is full-bleed and then scaled up again by
+ *    the card's own transform. At 512 that meant upscaling a small image across a whole phone
+ *    screen, and the only way to hide the softness was to blur it into abstraction.
+ */
+export type ArtworkSize = "avatar" | "backdrop";
+
+const SIZE_PX: Record<ArtworkSize, number> = { avatar: 512, backdrop: 1024 };
+
+/**
  * Rewrites a third-party image URL to go through the proxy. Left untouched: data: URIs (already
  * inline), anything already proxied, and non-https sources, which the proxy declines anyway.
  * A null/absent URL passes straight through so callers can keep their own "no artwork" branch.
  */
-export function proxiedImageUrl(url: string | null | undefined): string | null | undefined {
+export function proxiedImageUrl(
+  url: string | null | undefined,
+  size: ArtworkSize = "avatar",
+): string | null | undefined {
   if (!url) return url;
   if (url.startsWith("data:") || url.includes("/api/image-proxy")) return url;
   try {
@@ -41,5 +57,5 @@ export function proxiedImageUrl(url: string | null | undefined): string | null |
   } catch {
     return url; // not a URL we can reason about - hand it back rather than mangling it
   }
-  return `${SITE_API_URL}/api/image-proxy?url=${encodeURIComponent(url)}`;
+  return `${SITE_API_URL}/api/image-proxy?url=${encodeURIComponent(url)}&w=${SIZE_PX[size]}`;
 }

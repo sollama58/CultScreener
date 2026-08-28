@@ -2883,10 +2883,22 @@ select {
 }
 
 /*
- * The artwork backdrop. Three things make a memecoin PFP usable as a background:
- * blur (so detail never competes with the numbers), a scale-up (so the blur's
- * soft edges fall outside the card instead of showing a halo), and the scrim
- * below. Saturation is nudged up because heavy blurring washes colour out.
+ * The artwork backdrop.
+ *
+ * The blur used to be 34px, which is past the point where a picture is still a
+ * picture - every token became the same coloured haze and you could not tell
+ * what you were looking at. Most of that blur was doing a second job it should
+ * never have had: hiding that the source was a 512px avatar stretched over a
+ * whole phone screen. The card now asks the proxy for a 1024px copy (see
+ * PumpScroll's "backdrop" size), so the blur only has to do its real job -
+ * keeping detail from competing with the numbers - and 7px does that while
+ * leaving the art recognisable. Checked against near-white artwork, which is
+ * the legibility worst case: the white card text has to survive it.
+ *
+ * The scale-up keeps the blur's soft edges outside the card rather than showing
+ * a halo, and needs to be no more than the blur radius demands. Saturation is
+ * still nudged up, though less than before: it was compensating for how much
+ * colour a 34px blur washes out.
  */
 .scroll-card__bg {
   position: absolute;
@@ -2895,9 +2907,9 @@ select {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transform: scale(1.25);
-  filter: blur(34px) saturate(1.35);
-  opacity: 0.5;
+  transform: scale(1.06);
+  filter: blur(7px) saturate(1.1);
+  opacity: 0.78;
   pointer-events: none;
 }
 
@@ -2914,8 +2926,8 @@ select {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(120% 80% at 50% 0%, rgb(0 0 0 / 20%), rgb(0 0 0 / 62%) 70%),
-    linear-gradient(180deg, rgb(0 0 0 / 35%) 0%, rgb(0 0 0 / 70%) 55%, rgb(0 0 0 / 88%) 100%);
+    radial-gradient(120% 80% at 50% 0%, rgb(0 0 0 / 16%), rgb(0 0 0 / 54%) 70%),
+    linear-gradient(180deg, rgb(0 0 0 / 34%) 0%, rgb(0 0 0 / 64%) 55%, rgb(0 0 0 / 85%) 100%);
 }
 
 /* Everything real sits above both layers. Listed rather than blanket-selected so a
@@ -3225,7 +3237,7 @@ select {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .scroll-card__bg { transform: scale(1.15); }
+  .scroll-card__bg { transform: scale(1.05); }
   .scroll-card__body,
   .scroll-card__venue,
   .scroll-card__venue.is-armed .scroll-card__venue-name { transition: none; }

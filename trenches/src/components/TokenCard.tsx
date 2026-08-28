@@ -4,6 +4,7 @@ import { useNow } from "../utils/useNow";
 import { usePreferences } from "../context/PreferencesContext";
 import type { CuratedMeta, Match } from "../api/types";
 import { proxiedImageUrl } from "../api/images";
+import { TokenArtwork } from "./TokenArtwork";
 import { fmtUsd, fmtAge } from "../utils/format";
 import { changeSinceAlertPct } from "../utils/feedFilter";
 
@@ -38,7 +39,16 @@ export function TokenCard({ match }: { match: Match }) {
       {match.curated && <CuratedStrip curated={match.curated} standalone={match.kind === "curated"} />}
       <div className="token-card__header">
         <a className="token-card__title" href={dexUrl} target="_blank" rel="noreferrer">
-          <TokenImage src={proxiedImageUrl(token.imageUrl)} label={ticker ?? name} />
+          {/* The wrapper is the hover-preview's positioning context and must stay even when the
+              artwork falls back to initials, so the header's layout never shifts. */}
+          <span className="token-card__image-wrap">
+            <TokenArtwork
+              src={proxiedImageUrl(token.imageUrl)}
+              label={ticker ?? name}
+              className="token-card__image"
+              fallbackClassName="token-card__image--empty"
+            />
+          </span>
           <span className="token-card__title-text">
             <span className="token-card__name" title={name}>
               {name}
@@ -238,81 +248,6 @@ function fmtSignedPct(n: number | null): string {
   if (n === null || !Number.isFinite(n)) return "—";
   const rounded = Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 10) / 10;
   return `${rounded > 0 ? "+" : ""}${rounded}%`;
-}
-
-/**
- * The token's logo, falling back to its initials.
- *
- * The fallback covers two different situations that look the same on screen and must not be
- * distinguished: DexScreener has no artwork for the mint (common for brand-new tokens), and it has
- * a URL that fails to load. An earlier version only handled the first, and hid the image on error
- * - which left a hole in the header exactly where the tile should be, and only in the case where
- * something had already gone wrong.
- */
-function TokenImage({ src, label }: { src?: string | null; label: string }) {
-  const [failed, setFailed] = useState(false);
-  // Held back until the queue says go, so a page of twelve cards doesn't hit a public IPFS
-  // gateway with twelve simultaneous requests - see imageQueue.ts.
-  const [started, setStarted] = useState(false);
-  // The slot has to be released the moment the image settles, not when the card unmounts: a
-  // loaded image that keeps its slot would mean only MAX_CONCURRENT images ever appear and the
-  // rest sit queued until their timeout. The ref is what lets onLoad/onError reach it.
-  const releaseRef = useRef<(() => void) | undefined>(undefined);
-
-  useEffect(() => {
-    if (!src) return;
-    setStarted(false);
-    setFailed(false);
-    let cancelled = false;
-
-    void acquireImageSlot().then((release) => {
-      // Unmounted, or re-rendered onto a different token, while queued: give the slot straight
-      // back rather than letting a load nobody is waiting for hold it.
-      if (cancelled) {
-        release();
-        return;
-      }
-      releaseRef.current = release;
-      setStarted(true);
-    });
-
-    return () => {
-      cancelled = true;
-      releaseRef.current?.();
-      releaseRef.current = undefined;
-    };
-  }, [src]);
-
-  const settle = () => {
-    releaseRef.current?.();
-    releaseRef.current = undefined;
-  };
-
-  // Both branches sit in the same wrapper so the header's layout doesn't shift depending on
-  // whether a logo exists, and so the hover preview has one positioning context to anchor to.
-  return (
-    <span className="token-card__image-wrap">
-      {!src || failed ? (
-        <span className="token-card__image token-card__image--empty" aria-hidden="true">
-          {label.slice(0, 2).toUpperCase()}
-        </span>
-      ) : (
-        <img
-          className="token-card__image"
-          // Rendered from the start so the box reserves its space, but with no src until the
-          // queue releases it - an <img> with no src requests nothing.
-          src={started ? src : undefined}
-          alt=""
-          decoding="async"
-          onLoad={settle}
-          onError={() => {
-            settle();
-            setFailed(true);
-          }}
-        />
-      )}
-    </span>
-  );
 }
 
 /**
