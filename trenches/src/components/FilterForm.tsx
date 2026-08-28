@@ -32,6 +32,7 @@ interface FormState {
   narrativeKeywords: string;
   minScore: string;
   maxFreshTop10WalletPct: string;
+  maxEmptyTop10WalletPct: string;
   isActive: boolean;
 }
 
@@ -53,6 +54,7 @@ function toFormState(config: PublicConfig, filter?: UserFilter): FormState {
     narrativeKeywords: filter?.narrativeKeywords?.join(", ") ?? "",
     minScore: filter?.minScore?.toString() ?? "",
     maxFreshTop10WalletPct: filter?.maxFreshTop10WalletPct?.toString() ?? "",
+    maxEmptyTop10WalletPct: filter?.maxEmptyTop10WalletPct?.toString() ?? "",
     isActive: filter?.isActive ?? true,
   };
 }
@@ -130,6 +132,7 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
       maxTokenAgeMinutes: text(settings.maxTokenAgeMinutes),
       minScore: text(settings.minScore),
       maxFreshTop10WalletPct: text(settings.maxFreshTop10WalletPct),
+      maxEmptyTop10WalletPct: text(settings.maxEmptyTop10WalletPct),
       narrativeKeywords: settings.narrativeKeywords ?? "",
     }));
     setAppliedTemplate(template.name);
@@ -175,6 +178,7 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
           .filter(Boolean),
         minScore: toNumberOrNull(form.minScore),
         maxFreshTop10WalletPct: toNumberOrNull(form.maxFreshTop10WalletPct),
+        maxEmptyTop10WalletPct: toNumberOrNull(form.maxEmptyTop10WalletPct),
         isActive: form.isActive,
       });
     } catch (err) {
@@ -305,6 +309,20 @@ export function FilterForm({ initial, config, onSave, onCancel }: FilterFormProp
             placeholder="e.g. 30"
             value={form.maxFreshTop10WalletPct}
             onChange={(e) => update("maxFreshTop10WalletPct", e.target.value)}
+          />
+        </label>
+        <label>
+          <span className="filter-form__label-row">
+            Max empty top-10 wallets %
+            <Hint text="What share of the 10 biggest wallet-holders hold almost nothing else - under $25 worth of any token other than SOL, USDC or USDT. A wallet that holds this coin and nothing else was probably funded just to hold this coin, which is what a sniper farm looks like. It pairs with the fresh-wallet check above: that one asks how OLD the wallets are, this one asks whether they have anything to their name, and faking the second costs real money. Leave blank to not check this - and note it's skipped automatically whenever we can't price a token's holders." />
+          </span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            placeholder="e.g. 50"
+            value={form.maxEmptyTop10WalletPct}
+            onChange={(e) => update("maxEmptyTop10WalletPct", e.target.value)}
           />
         </label>
       </div>
