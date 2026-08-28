@@ -146,8 +146,15 @@ export function deleteFilter(id: string) {
 }
 
 // ── Matches ──────────────────────────────────────────────────────────────
-export function listMatches(page = 1) {
-  return request<MatchesPage>(`/matches?page=${page}`);
+/**
+ * The Live Feed. `includeCurated` mixes the global curated feed in alongside this user's own
+ * matches - opt-in, and sent as a query param rather than filtered here, so pagination counts
+ * stay exact rather than a page of twelve arriving with some of it dropped client-side.
+ */
+export function listMatches(page = 1, includeCurated = false) {
+  const query = new URLSearchParams({ page: String(page) });
+  if (includeCurated) query.set("includeCurated", "true");
+  return request<MatchesPage>(`/matches?${query.toString()}`);
 }
 
 // ── Tokens ───────────────────────────────────────────────────────────────

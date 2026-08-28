@@ -7,6 +7,10 @@ export interface Preferences {
   /** Show the detected theme chips (AI, MEME, DOG...) on each card. Off by default: they are a
    *  guess made from the token's name, so they are opt-in rather than presented as fact. */
   showThemeLabels: boolean;
+  /** Mix the global Curated Alerts feed into the Live Feed alongside your own matches. Off by
+   *  default: the Live Feed answers "what did MY filters catch", and quietly folding in picks
+   *  nobody asked for makes that harder to read. Curated alerts have their own tab either way. */
+  includeCuratedInFeed: boolean;
   /** Play a sound when a new alert lands on the feed. Off by default - a page that makes noise
    *  without being asked to is a page people close. */
   alertSoundEnabled: boolean;
@@ -17,6 +21,7 @@ export interface Preferences {
 
 export const DEFAULT_PREFERENCES: Preferences = {
   showThemeLabels: false,
+  includeCuratedInFeed: false,
   alertSoundEnabled: false,
   alertSound: "cork",
   alertVolume: 0.5,
@@ -58,6 +63,10 @@ function readStored(): Preferences {
       typeof source.showThemeLabels === "boolean"
         ? source.showThemeLabels
         : DEFAULT_PREFERENCES.showThemeLabels,
+    includeCuratedInFeed:
+      typeof source.includeCuratedInFeed === "boolean"
+        ? source.includeCuratedInFeed
+        : DEFAULT_PREFERENCES.includeCuratedInFeed,
     alertSoundEnabled:
       typeof source.alertSoundEnabled === "boolean"
         ? source.alertSoundEnabled
