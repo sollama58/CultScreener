@@ -429,6 +429,16 @@ export interface CuratedStats {
      *  Optional so the tab keeps rendering against an API that predates the goal tracking. */
     goalHits?: number;
     goalRatePct?: number | null;
+    /**
+     * The emission governor's pace check: the feed is held near targetPerHour (about one alert
+     * per ten minutes at the default), and actualPerHour24h is the last day's measured rate.
+     * Optional so the tab keeps rendering against an API that predates the governor.
+     */
+    pace?: {
+      targetPerHour: number;
+      alerts24h: number;
+      actualPerHour24h: number;
+    };
     bestPeak24hReturnPct: number | null;
   };
   /**

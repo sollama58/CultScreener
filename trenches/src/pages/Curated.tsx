@@ -198,11 +198,19 @@ function CuratorScoreboard({ stats }: { stats: CuratedStats }) {
         value={feed.bestPeak24hReturnPct !== null ? `+${feed.bestPeak24hReturnPct.toFixed(0)}%` : "—"}
         hint="Highest 24h peak of any curated alert."
       />
-      <Stat
-        label="Alerts (7d)"
-        value={feed.alerts7d.toLocaleString()}
-        hint={`${feed.alertsTotal.toLocaleString()} in total.`}
-      />
+      {feed.pace ? (
+        <Stat
+          label="Pace (24h)"
+          value={`${feed.pace.actualPerHour24h.toFixed(1)}/hr`}
+          hint={`${feed.pace.alerts24h.toLocaleString()} alerts in the last day against a ceiling of ${feed.pace.targetPerHour}/hr - about one every ${Math.round(60 / feed.pace.targetPerHour)} minutes. A pace, not a quota: only the strongest of what qualifies is emitted, and a dead hour emits nothing. ${feed.alerts7d.toLocaleString()} this week, ${feed.alertsTotal.toLocaleString()} in total.`}
+        />
+      ) : (
+        <Stat
+          label="Alerts (7d)"
+          value={feed.alerts7d.toLocaleString()}
+          hint={`${feed.alertsTotal.toLocaleString()} in total.`}
+        />
+      )}
       <span
         className={`scoreboard__phase ${modelLive ? "scoreboard__phase--live" : ""}`}
         title={
