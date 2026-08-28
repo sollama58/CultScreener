@@ -43,8 +43,9 @@ const SWIPE_DIRECTION_LOCK_PX = 12;
 
 interface DeckCard {
   match: Match;
-  /** Milliseconds since this alert fired, refreshed on a ticker - drives the freshness ring. */
   key: string;
+  /** Past the staleness window, but retained because it is the card being read - see `deck`. */
+  expired: boolean;
 }
 
 export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
@@ -68,6 +69,11 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
     if (which === "curated") return (await listCurated(1)).alerts;
     return (await listMatches(1, which === "both")).matches;
   }, []);
+
+  /** The deck as it currently stands, for the stream and poll callbacks to compare against
+   *  without reaching into a state updater to do it. */
+  const alertsRef = useRef<Match[]>([]);
+  alertsRef.current = alerts;
 
   const load = useCallback(
     async (which: ScrollSource, opts: { silent?: boolean } = {}) => {
@@ -110,12 +116,8 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
     const onNudge = async () => {
       try {
         const fresh = await fetchAlerts(sourceRef.current);
-        setAlerts((current) => {
-          const known = new Set(current.map((m) => m.id));
-          const arrivals = fresh.filter((m) => !known.has(m.id));
-          if (arrivals.length > 0) setQueued(fresh);
-          return current;
-        });
+        const known = new Set(alertsRef.current.map((m) => m.id));
+        if (fresh.some((m) => !known.has(m.id))) setQueued(fresh);
       } catch {
         // A missed nudge is a non-event: the poll below picks the same alerts up shortly.
       }
@@ -145,11 +147,8 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
       void (async () => {
         try {
           const fresh = await fetchAlerts(sourceRef.current);
-          setAlerts((current) => {
-            const known = new Set(current.map((m) => m.id));
-            if (fresh.some((m) => !known.has(m.id))) setQueued(fresh);
-            return current;
-          });
+          const known = new Set(alertsRef.current.map((m) => m.id));
+          if (fresh.some((m) => !known.has(m.id))) setQueued(fresh);
         } catch {
           /* handled on the next tick */
         }
@@ -158,15 +157,33 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
     return () => window.clearInterval(id);
   }, [fetchAlerts]);
 
-  /** The deck: newest first, nothing past the staleness window. */
-  const deck = useMemo<DeckCard[]>(
-    () =>
-      alerts
-        .filter((m) => now - new Date(m.matchedAt).getTime() <= staleMs)
-        .sort((a, b) => new Date(b.matchedAt).getTime() - new Date(a.matchedAt).getTime())
-        .map((m) => ({ match: m, key: m.id })),
-    [alerts, now, staleMs],
-  );
+  /**
+   * Which card is centred. Owned here rather than in the deck because the deck's own membership
+   * depends on it - see the retention below.
+   */
+  const [activeKey, setActiveKey] = useState("");
+
+  /**
+   * The deck: newest first, nothing past the staleness window - with one exception. The card the
+   * reader is currently on is KEPT even once it ages out, marked expired, and drops away only
+   * once they have moved off it.
+   *
+   * Without that exception the ticker deletes whatever you are reading the moment it turns
+   * eleven minutes old, and scroll-snap jumps you somewhere else mid-sentence - the exact
+   * under-the-thumb movement that queueing new arrivals exists to prevent. Stale cards sit at the
+   * BOTTOM of a newest-first deck, so retaining one never shifts anything above it.
+   */
+  const deck = useMemo<DeckCard[]>(() => {
+    const isFresh = (m: Match) => now - new Date(m.matchedAt).getTime() <= staleMs;
+    const fresh = alerts.filter(isFresh);
+    const retained =
+      activeKey && !fresh.some((m) => m.id === activeKey)
+        ? alerts.find((m) => m.id === activeKey)
+        : undefined;
+    return [...fresh, ...(retained ? [retained] : [])]
+      .sort((a, b) => new Date(b.matchedAt).getTime() - new Date(a.matchedAt).getTime())
+      .map((m) => ({ match: m, key: m.id, expired: !isFresh(m) }));
+  }, [alerts, now, staleMs, activeKey]);
 
   const queuedCount = useMemo(() => {
     if (queued.length === 0) return 0;
@@ -253,7 +270,7 @@ export function PumpScroll({ onGoToSettings }: { onGoToSettings: () => void }) {
         />
       )}
 
-      {deck.length > 0 && <Deck cards={deck} now={now} />}
+      {deck.length > 0 && <Deck cards={deck} now={now} activeKey={activeKey} onActiveChange={setActiveKey} />}
     </div>
   );
 }
@@ -285,12 +302,29 @@ function DeckMessage({
  * card is centred, so the keyboard shortcuts and the action bar act on what you're actually
  * looking at.
  */
-function Deck({ cards, now }: { cards: DeckCard[]; now: number }) {
+function Deck({
+  cards,
+  now,
+  activeKey,
+  onActiveChange,
+}: {
+  cards: DeckCard[];
+  now: number;
+  activeKey: string;
+  onActiveChange: (key: string) => void;
+}) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
-  const [activeKey, setActiveKey] = useState(cards[0]?.key ?? "");
   /** The last swipe, so a mis-swipe can be walked back rather than losing the alert. */
   const [undo, setUndo] = useState<{ key: string; venue: string } | null>(null);
+
+  // Auto-dismissed: it is a safety net for a mis-swipe, not a status bar. Left up it would sit
+  // over the next alert's action buttons.
+  useEffect(() => {
+    if (!undo) return;
+    const id = window.setTimeout(() => setUndo(null), 6_000);
+    return () => window.clearTimeout(id);
+  }, [undo]);
 
   // Which card is centred, via IntersectionObserver rather than scroll math: it survives
   // momentum, rubber-banding and a resized viewport without a single magic number.
@@ -302,7 +336,7 @@ function Deck({ cards, now }: { cards: DeckCard[]; now: number }) {
         for (const entry of entries) {
           if (entry.isIntersecting && entry.intersectionRatio > 0.6) {
             const key = (entry.target as HTMLElement).dataset.key;
-            if (key) setActiveKey(key);
+            if (key) onActiveChange(key);
           }
         }
       },
@@ -310,10 +344,21 @@ function Deck({ cards, now }: { cards: DeckCard[]; now: number }) {
     );
     for (const el of cardRefs.current.values()) observer.observe(el);
     return () => observer.disconnect();
-  }, [cards]);
+  }, [cards, onActiveChange]);
+
+  useEffect(() => {
+    if (!activeKey && cards[0]) onActiveChange(cards[0].key);
+  }, [activeKey, cards, onActiveChange]);
 
   const goTo = useCallback((key: string) => {
-    cardRefs.current.get(key)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Someone who has asked their OS for less motion should not be given a smooth-scrolling
+    // carousel; jumping straight there is the honest reading of that preference.
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    cardRefs.current
+      .get(key)
+      ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
   }, []);
 
   const advance = useCallback(
@@ -344,6 +389,10 @@ function Deck({ cards, now }: { cards: DeckCard[]; now: number }) {
   // else. Arrow up/down page the deck, left/right act on the centred card.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // The source switcher and the staleness button live in the bar above the deck. Arrow keys
+      // there belong to whoever is tabbing through them, not to the deck.
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.("input, select, textarea, .scroll-page__bar")) return;
       const card = cards.find((c) => c.key === activeKey);
       if (!card) return;
       const index = cards.indexOf(card);
@@ -373,7 +422,7 @@ function Deck({ cards, now }: { cards: DeckCard[]; now: number }) {
             key={card.key}
             card={card}
             now={now}
-            isActive={card.key === activeKey}
+            isFirst={card.key === cards[0]?.key}
             onAct={(direction) => act(card, direction)}
             register={(el) => {
               if (el) cardRefs.current.set(card.key, el);
@@ -430,18 +479,22 @@ function ageLabel(ms: number): string {
 function ScrollCard({
   card,
   now,
-  isActive,
+  isFirst,
   onAct,
   register,
 }: {
   card: DeckCard;
   now: number;
-  isActive: boolean;
+  isFirst: boolean;
   onAct: (direction: "left" | "right") => void;
   register: (el: HTMLElement | null) => void;
 }) {
   const { match } = card;
   const [dragX, setDragX] = useState(0);
+  /** The same value as dragX, but readable synchronously. The pointerup handler closes over the
+   *  LAST RENDER's dragX, so a gesture whose final move and release land in the same frame would
+   *  otherwise be judged on a stale offset - and silently not commit. */
+  const dragRef = useRef(0);
   const gesture = useRef<{ id: number; startX: number; startY: number; locked: boolean } | null>(null);
 
   const commit = Math.abs(dragX) >= SWIPE_COMMIT_PX;
@@ -473,6 +526,7 @@ function ScrollCard({
     // keeps telling you it has already done its job.
     const overshoot = Math.max(0, Math.abs(dx) - SWIPE_COMMIT_PX);
     const eased = Math.sign(dx) * (Math.min(Math.abs(dx), SWIPE_COMMIT_PX) + overshoot * 0.25);
+    dragRef.current = eased;
     setDragX(eased);
   };
 
@@ -483,8 +537,9 @@ function ScrollCard({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    const committed = Math.abs(dragX) >= SWIPE_COMMIT_PX;
-    const dir: "left" | "right" = dragX > 0 ? "right" : "left";
+    const committed = Math.abs(dragRef.current) >= SWIPE_COMMIT_PX;
+    const dir: "left" | "right" = dragRef.current > 0 ? "right" : "left";
+    dragRef.current = 0;
     setDragX(0);
     if (committed) onAct(dir);
   };
@@ -498,7 +553,7 @@ function ScrollCard({
 
   return (
     <article
-      className={`scroll-card ${isActive ? "scroll-card--active" : ""}`}
+      className={`scroll-card ${card.expired ? "scroll-card--expired" : ""}`}
       data-key={card.key}
       ref={register}
       onPointerDown={onPointerDown}
@@ -545,7 +600,9 @@ function ScrollCard({
           <span className={`scroll-card__badge ${isCurated ? "scroll-card__badge--curated" : ""}`}>
             {isCurated ? "★ Curated" : (match.filter?.name ?? "My filter")}
           </span>
-          <span className="scroll-card__age">{ageLabel(ageMs)}</span>
+          <span className="scroll-card__age">
+            {card.expired ? "expired" : ageLabel(ageMs)}
+          </span>
         </div>
 
         <div className="scroll-card__main">
@@ -588,7 +645,6 @@ function ScrollCard({
             }
           />
         </dl>
-        </div>
 
         {isCurated && match.curated?.reasons?.length ? (
           <ul className="scroll-card__reasons">
@@ -597,6 +653,15 @@ function ScrollCard({
             ))}
           </ul>
         ) : null}
+        </div>
+
+        {/* Shown once, on the very first card: the action buttons already teach left and right
+            (their labels carry the arrows), but nothing otherwise says the deck goes vertically. */}
+        {isFirst && (
+          <p className="scroll-card__hint" aria-hidden="true">
+            Swipe up for the next alert
+          </p>
+        )}
       </div>
 
       {/* Real buttons, not just a gesture: this is the whole interaction on a desktop, and it is

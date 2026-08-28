@@ -2889,7 +2889,7 @@ select {
    future child has to opt in deliberately. */
 .scroll-card__head,
 .scroll-card__main,
-.scroll-card__reasons {
+.scroll-card__hint {
   position: relative;
   z-index: 1;
 }
@@ -3041,7 +3041,7 @@ select {
 }
 
 .scroll-card__reasons {
-  margin: 0;
+  margin: 4px 0 0;
   padding: 0;
   list-style: none;
   display: flex;
@@ -3061,6 +3061,33 @@ select {
   position: absolute;
   left: 0;
   color: var(--accent);
+}
+
+/* Shown on the first card only. The action buttons already teach left and right
+   (their labels carry the arrows); nothing otherwise says the deck runs vertically. */
+.scroll-card__hint {
+  margin: 0;
+  padding-bottom: 4px;
+  text-align: center;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  animation: scroll-hint 2.6s ease-in-out 3;
+}
+
+@keyframes scroll-hint {
+  0%, 100% { opacity: 0.35; transform: translateY(0); }
+  50% { opacity: 0.9; transform: translateY(-3px); }
+}
+
+/* An alert kept on screen only because it is the one being read - see the deck's
+   retention note in PumpScroll.tsx. Dimmed so it cannot pass for a live call. */
+.scroll-card--expired .scroll-card__body { opacity: 0.72; }
+
+.scroll-card--expired .scroll-card__age {
+  color: var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.68rem;
 }
 
 .scroll-card__actions {
@@ -3169,6 +3196,7 @@ select {
   .scroll-card__body,
   .scroll-card__venue,
   .scroll-card__venue.is-armed .scroll-card__venue-name { transition: none; }
-  .scroll-new-pill { animation: none; }
+  .scroll-new-pill,
+  .scroll-card__hint { animation: none; }
   .scroll-deck { scroll-behavior: auto; }
 }
