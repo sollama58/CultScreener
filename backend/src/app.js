@@ -29,6 +29,8 @@ if (process.env.NODE_ENV !== 'production' && (process.env.DATABASE_URL || proces
 // Import routes
 const tokenRoutes = require('./routes/tokens');
 const watchlistRoutes = require('./routes/watchlist');
+const deviceRoutes = require('./routes/device');
+const { validateDeviceSession } = require('./middleware/validation');
 const healthRoutes = require('./routes/health');
 const curatedRoutes = require('./routes/curated');
 const adminRoutes = require('./routes/admin');
@@ -177,7 +179,10 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') {
     if (allowed && normalizedOrigin) {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Session, X-Admin-Password, X-API-Key');
+      // X-Device-Session is what a phone paired via Mobile Connect sends. Omitting it here does
+      // not fail loudly: the browser blocks the request at preflight, so every call from a paired
+      // phone simply never leaves it.
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Session, X-Admin-Password, X-API-Key, X-Device-Session');
       res.setHeader('Access-Control-Max-Age', '86400');
     }
     return res.status(204).end();
@@ -542,6 +547,10 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
 // API Routes
 app.use('/api/tokens', tokenRoutes);
 app.use('/api/watchlist', watchlistRoutes);
+// Mobile Connect. The resolver runs ahead of the router (and only for these routes) so
+// /api/device/me can answer from the X-Device-Session header; it is deliberately non-blocking,
+// so an absent or stale header just means "not linked" rather than an error.
+app.use('/api/device', validateDeviceSession, deviceRoutes);
 app.use('/api/curated', curatedRoutes);
 app.use(ADMIN_ROUTE_PREFIX, adminRoutes);
 app.use('/api/sentiment', sentimentRoutes);

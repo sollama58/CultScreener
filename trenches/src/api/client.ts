@@ -24,6 +24,7 @@ import type {
   WhitelistEntry,
   CuratedPage,
   CuratedStats,
+  LinkedDevicesResponse,
 } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_URL;
@@ -178,6 +179,25 @@ export function getStreamHealth() {
 }
 
 // ── Telegram ─────────────────────────────────────────────────────────────
+/**
+ * Mobile Connect. The desktop mints a code here and renders it as a QR; the phone redeems it on
+ * the main site's /link page, which is why nothing in this app calls /auth/link/redeem - by the
+ * time the phone has a session, it is an ordinary signed-in client.
+ */
+export function getLinkedDevices() {
+  return request<LinkedDevicesResponse>("/auth/devices");
+}
+
+export function revokeLinkedDevice(deviceId: string) {
+  return request<{ ok: boolean }>(`/auth/devices/${encodeURIComponent(deviceId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function revokeAllLinkedDevices() {
+  return request<{ ok: boolean; revoked: number }>("/auth/devices", { method: "DELETE" });
+}
+
 export function getTelegramStatus() {
   return request<TelegramStatus>("/telegram/status");
 }

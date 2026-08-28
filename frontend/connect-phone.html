@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Connect Phone - HolDEX</title>
+  <meta name="description" content="Scan a single-use QR code to open HolDEX and Trenches on your phone.">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#09090b">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/thisisfine8bit.jpg" type="image/jpeg">
+  <link rel="apple-touch-icon" href="/thisisfine8bit.jpg">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HolDEX">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css?v=15">
+  <link rel="stylesheet" href="css/device-link.css?v=1">
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">
+        <span class="logo-text">HolDEX</span>
+      </a>
+
+      <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle navigation" aria-expanded="false">
+        <svg class="icon-hamburger" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <svg class="icon-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+
+      <nav class="nav" id="main-nav">
+        <a href="/" class="nav-link">Diamond Hands</a>
+        <a href="community.html" class="nav-link">Watchlist</a>
+        <a href="api-keys.html" class="nav-link">API</a>
+        <a href="about.html" class="nav-link">About</a>
+        <a href="cultify.html" class="nav-link">Analyze</a>
+        <a href="/trenches/" class="nav-link">Trenches</a>
+      </nav>
+
+      <div class="header-actions">
+        <button class="btn btn-wallet" id="connect-wallet">Connect Wallet</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="dl-page">
+      <div class="dl-head">
+        <h1 class="dl-title">Connect your phone</h1>
+        <p class="dl-sub">
+          Scan the code with your phone's camera to open HolDEX and Trenches there, already
+          recognised as you. The code works once and expires after two minutes.
+        </p>
+      </div>
+
+      <!-- Shown until a wallet is connected. Everything below needs one. -->
+      <section class="dl-card dl-gate" id="dl-gate" hidden>
+        <div class="dl-gate-icon" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="2" y="5" width="20" height="14" rx="2"/><path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
+          </svg>
+        </div>
+        <h2 class="dl-card-title">Connect a wallet first</h2>
+        <p class="dl-note">
+          Your wallet is the identity we hand to the phone, so there is nothing to pair until one
+          is connected here.
+        </p>
+        <button class="btn btn-primary" id="dl-connect-wallet">Connect Wallet</button>
+      </section>
+
+      <div class="dl-grid" id="dl-main" hidden>
+        <!-- The QR itself -->
+        <section class="dl-card dl-qr-card">
+          <div class="dl-qr-frame" id="dl-qr-frame">
+            <div class="dl-qr" id="dl-qr" role="img" aria-label="Pairing QR code"></div>
+            <div class="dl-qr-veil" id="dl-qr-veil" hidden>
+              <span class="dl-veil-text" id="dl-veil-text">Code expired</span>
+              <button class="btn btn-primary btn-sm" id="dl-refresh">New code</button>
+            </div>
+          </div>
+
+          <div class="dl-qr-status">
+            <span class="dl-countdown" id="dl-countdown">&nbsp;</span>
+            <button class="dl-linkish" id="dl-regen" type="button" hidden>New code</button>
+          </div>
+
+          <div class="dl-manual" id="dl-manual" hidden>
+            <span class="dl-manual-label">Can't scan? Open this on your phone</span>
+            <div class="dl-manual-row">
+              <code class="dl-manual-url" id="dl-manual-url"></code>
+              <button class="btn btn-secondary btn-sm" id="dl-copy" type="button">Copy</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- What the code will actually pair, and what the phone can then do -->
+        <section class="dl-card dl-side">
+          <h2 class="dl-card-title">What gets connected</h2>
+          <ul class="dl-scope" id="dl-scope">
+            <li class="dl-scope-row" id="dl-scope-site">
+              <span class="dl-dot" data-state="pending"></span>
+              <span class="dl-scope-body">
+                <strong>HolDEX</strong>
+                <span class="dl-scope-note" id="dl-scope-site-note">Preparing…</span>
+              </span>
+            </li>
+            <li class="dl-scope-row" id="dl-scope-trenches">
+              <span class="dl-dot" data-state="pending"></span>
+              <span class="dl-scope-body">
+                <strong>Trenches</strong>
+                <span class="dl-scope-note" id="dl-scope-trenches-note">Preparing…</span>
+              </span>
+            </li>
+          </ul>
+
+          <h2 class="dl-card-title dl-steps-title">How it works</h2>
+          <ol class="dl-steps">
+            <li>Point your phone's camera at the code.</li>
+            <li>Tap the link it offers.</li>
+            <li>That's it &mdash; both apps open already signed in.</li>
+          </ol>
+
+          <p class="dl-note dl-fineprint">
+            Your phone can read everything tied to your wallet. It can't spend, sign or move
+            anything &mdash; your keys never leave this browser. To trade from the phone, connect
+            a wallet there as usual.
+          </p>
+        </section>
+      </div>
+
+      <!-- Currently paired phones -->
+      <section class="dl-card dl-devices" id="dl-devices" hidden>
+        <div class="dl-devices-head">
+          <h2 class="dl-card-title">Connected phones</h2>
+          <button class="dl-linkish dl-danger" id="dl-revoke-all" type="button" hidden>Disconnect all</button>
+        </div>
+        <div id="dl-device-list" class="dl-device-list"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-content">
+      <span>HolDEX &copy; 2025-2026</span>
+      <span class="footer-divider">|</span>
+      <a href="https://alonisthe.dev" target="_blank" rel="noopener" class="footer-link">alonisthe.dev</a>
+    </div>
+  </footer>
+
+  <script src="js/config.js?v=3"></script>
+  <script src="js/api.js?v=7"></script>
+  <script src="js/wallet.js?v=3"></script>
+  <script src="js/vendor/qrcode.min.js?v=1"></script>
+  <script src="js/deviceLink.js?v=1"></script>
+  <script src="js/connectPhone.js?v=1"></script>
+</body>
+</html>

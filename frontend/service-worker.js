@@ -1,6 +1,10 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
+// v50: Mobile Connect ships js/deviceLink.js and bumps config.js / wallet.js / conviction.js /
+// communityPage.js. A precache list that names stale ?v= URLs is worse than no precache: the SW
+// downloads files no page will ever request, and the pages fetch their real versions from the
+// network anyway.
 // v49: two inline <script> blocks in index.html (the main-view tab switcher and the King of
 // the Pill widget) never ran under this site's CSP - script-src has no 'unsafe-inline', so the
 // browser silently drops inline scripts with no console error a user would notice. Moved to
@@ -8,7 +12,7 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v49';
+const CACHE_VERSION = 'holdex-v50';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -18,10 +22,11 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=15',
-  '/js/config.js?v=2',
+  '/js/config.js?v=3',
   '/js/api.js?v=7',
-  '/js/wallet.js?v=2',
-  '/js/conviction.js?v=14',
+  '/js/deviceLink.js?v=1',
+  '/js/wallet.js?v=3',
+  '/js/conviction.js?v=15',
   '/js/tech.js?v=5',
   '/js/emerging.js?v=5',
   '/js/versus.js?v=9',
@@ -29,7 +34,7 @@ const APP_SHELL = [
   '/js/kotp.js?v=1',
   '/js/tokenDetail.js?v=21',
   '/js/watchlist.js?v=2',
-  '/js/communityPage.js?v=3',
+  '/js/communityPage.js?v=4',
   '/js/sentiment.js?v=2',
   '/js/holderBehavior.js?v=4',
   '/js/announcements.js?v=2',

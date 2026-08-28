@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Connecting - HolDEX</title>
+  <meta name="robots" content="noindex, nofollow">
+  <!-- No Referer at all from this page. The pairing tokens live in the fragment and are never
+       sent to a server, but a referrer on any outbound click is one less thing to reason about. -->
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#09090b">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/thisisfine8bit.jpg" type="image/jpeg">
+  <link rel="apple-touch-icon" href="/thisisfine8bit.jpg">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HolDEX">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css?v=15">
+  <link rel="stylesheet" href="css/device-link.css?v=1">
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">
+        <span class="logo-text">HolDEX</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="dl-landing">
+      <div class="dl-landing-icon" id="dl-icon" data-state="working">
+        <div class="dl-spinner" id="dl-spinner"></div>
+      </div>
+
+      <h1 class="dl-title" id="dl-heading">Connecting your phone</h1>
+      <p class="dl-sub" id="dl-message">One moment.</p>
+
+      <div class="dl-wallet-chip" id="dl-wallet" hidden></div>
+
+      <div class="dl-landing-results" id="dl-results" hidden></div>
+
+      <div class="dl-actions" id="dl-actions" hidden></div>
+    </div>
+  </main>
+
+  <script src="js/config.js?v=3"></script>
+  <script src="js/deviceLink.js?v=1"></script>
+  <script src="js/linkPage.js?v=1"></script>
+</body>
+</html>

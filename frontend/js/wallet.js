@@ -3,6 +3,17 @@ const wallet = {
   connected: false,
   address: null,
   provider: null,
+
+  /**
+   * Mobile Connect. A phone paired from a desktop knows WHICH wallet it belongs to without
+   * holding its key, so it gets a third state alongside connected/disconnected: linked.
+   *
+   * `connected` stays false in that state, deliberately. Everything that signs is gated on it,
+   * and a linked phone cannot sign - there is no key here. What it can do is read: see
+   * viewerAddress(), which is what personalised views ask for instead of `address`.
+   */
+  linked: false,
+  linkedAddress: null,
   providerName: null,
   initialized: false,
 
@@ -396,6 +407,53 @@ const wallet = {
     }
   },
 
+  /**
+   * The wallet whose data should be shown, which is not the same question as "whose wallet can
+   * sign". A connected wallet answers both; a phone linked over Mobile Connect answers only this
+   * one. Read-only views should ask here; anything that writes must keep checking `connected`.
+   */
+  viewerAddress() {
+    return this.address || this.linkedAddress || null;
+  },
+
+  /**
+   * Re-establish a linked phone's identity on load, and notice when the desktop has revoked it.
+   *
+   * The round trip is the point: the token is checked server-side on every visit, so a
+   * disconnected phone loses its personalised view on the next load rather than keeping a stale
+   * one out of localStorage forever.
+   */
+  async restoreDeviceLink() {
+    if (typeof deviceLink === 'undefined') return false;
+    const session = deviceLink.getSession();
+    if (!session) return false;
+
+    try {
+      const res = await fetch(`${deviceLink.siteApi()}/api/device/me`, {
+        headers: { 'X-Device-Session': session.token }
+      });
+      if (res.status === 401) {
+        // Revoked from the desktop, or expired. Forget it rather than retrying every page.
+        deviceLink.clearSession();
+        return false;
+      }
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (!data.wallet) return false;
+
+      this.linked = true;
+      this.linkedAddress = data.wallet;
+      deviceLink.setSession(session.token, data.wallet);
+      this.updateUI();
+      window.dispatchEvent(new CustomEvent('walletLinked', { detail: { address: data.wallet } }));
+      return true;
+    } catch (_) {
+      // Offline, or the API is down. Keep the stored session - this is not evidence of
+      // revocation, and throwing it away would un-pair a phone over a dropped connection.
+      return false;
+    }
+  },
+
   // Sign message (for vote/submission verification)
   async signMessage(message) {
     if (!this.connected || !this.provider) {
@@ -442,6 +500,22 @@ const wallet = {
 
         connectBtn.classList.add('connected');
         connectBtn.onclick = () => this.showWalletMenu();
+      } else if (this.linked && this.linkedAddress) {
+        // Linked, not connected. Shown as the wallet it belongs to - because that is what the
+        // views on screen are keyed to - with a phone glyph so the difference is legible, and a
+        // menu that says plainly what this device can and cannot do.
+        connectBtn.innerHTML = '';
+        const icon = document.createElement('span');
+        icon.className = 'wallet-btn-icon';
+        icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>';
+        connectBtn.appendChild(icon);
+
+        const addressSpan = document.createElement('span');
+        addressSpan.textContent = utils.truncateAddress(this.linkedAddress);
+        connectBtn.appendChild(addressSpan);
+
+        connectBtn.classList.add('connected');
+        connectBtn.onclick = () => this.showLinkedMenu();
       } else {
         connectBtn.innerHTML = `
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -581,10 +655,98 @@ const wallet = {
       menu.remove();
     };
 
+    const phoneBtn = document.createElement('button');
+    phoneBtn.className = 'btn btn-secondary';
+    phoneBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="6" y="2" width="12" height="20" rx="2"/>
+        <line x1="11" y1="18" x2="13" y2="18"/>
+      </svg>
+      Connect Phone
+    `;
+    phoneBtn.onclick = () => {
+      menu.remove();
+      window.location.href = '/connect-phone.html';
+    };
+
     actions.appendChild(copyBtn);
+    actions.appendChild(phoneBtn);
     actions.appendChild(utilitiesBtn);
     actions.appendChild(viewBtn);
     actions.appendChild(disconnectBtn);
+    content.appendChild(actions);
+
+    menu.appendChild(overlay);
+    menu.appendChild(content);
+    document.body.appendChild(menu);
+  },
+
+  /**
+   * The menu a linked phone gets in place of the wallet menu.
+   *
+   * It exists mostly to answer the question the header raises: why does it show my address when
+   * I never connected anything here? So it says what this device is, what it can do, and offers
+   * the two things that are actually actionable from a phone - connect a real wallet, or unlink.
+   */
+  showLinkedMenu() {
+    document.querySelector('.wallet-menu')?.remove();
+
+    const menu = document.createElement('div');
+    menu.className = 'wallet-menu';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'wallet-menu-overlay';
+    overlay.onclick = () => menu.remove();
+
+    const content = document.createElement('div');
+    content.className = 'wallet-menu-content';
+
+    const header = document.createElement('div');
+    header.className = 'wallet-menu-header';
+    const label = document.createElement('span');
+    label.className = 'wallet-menu-name';
+    label.textContent = 'Linked from desktop';
+    header.appendChild(label);
+    content.appendChild(header);
+
+    const addressP = document.createElement('p');
+    addressP.className = 'wallet-address';
+    addressP.textContent = this.linkedAddress;
+    content.appendChild(addressP);
+
+    const note = document.createElement('p');
+    note.style.cssText = 'font-size:0.78rem;line-height:1.6;color:var(--text-muted);margin:0;';
+    note.textContent = 'This phone can see everything tied to this wallet. To trade, vote or edit your watchlist here, connect a wallet on this device.';
+    content.appendChild(note);
+
+    const actions = document.createElement('div');
+    actions.className = 'wallet-menu-actions';
+
+    const connectBtn = document.createElement('button');
+    connectBtn.className = 'btn btn-primary';
+    connectBtn.textContent = 'Connect a wallet here';
+    connectBtn.onclick = () => {
+      menu.remove();
+      this.connect();
+    };
+
+    const unlinkBtn = document.createElement('button');
+    unlinkBtn.className = 'btn btn-danger';
+    unlinkBtn.textContent = 'Unlink this phone';
+    unlinkBtn.onclick = () => {
+      // Local only. The device row stays until the desktop revokes it - this browser cannot
+      // prove it owns the wallet, so it is not allowed to delete anything server-side. Which is
+      // the right boundary: "forget me here" is not "revoke my access everywhere".
+      deviceLink.clearSession();
+      this.linked = false;
+      this.linkedAddress = null;
+      menu.remove();
+      this.updateUI();
+      toast.info('This phone is no longer linked');
+    };
+
+    actions.appendChild(connectBtn);
+    actions.appendChild(unlinkBtn);
     content.appendChild(actions);
 
     menu.appendChild(overlay);
@@ -1003,6 +1165,12 @@ const wallet = {
 
     // Try auto-connect (await it!)
     await this.autoConnect();
+
+    // Only if no real wallet turned up: a wallet on this device always outranks a link from
+    // another one, and re-checking the link would be a wasted round trip.
+    if (!this.connected) {
+      await this.restoreDeviceLink();
+    }
 
     // Mark as initialized and emit ready event
     this.initialized = true;

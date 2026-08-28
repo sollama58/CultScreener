@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
-import { getTelegramStatus, linkTelegram, setAlertMode, unlinkTelegram } from "../api/client";
-import type { AlertMode, TelegramStatus } from "../api/types";
+import {
+  getLinkedDevices,
+  getTelegramStatus,
+  linkTelegram,
+  revokeAllLinkedDevices,
+  revokeLinkedDevice,
+  setAlertMode,
+  unlinkTelegram,
+} from "../api/client";
+import type { AlertMode, LinkedDevice, TelegramStatus } from "../api/types";
 import { usePreferences, type AlertSoundName,
   SCROLL_STALE_MIN_MINUTES,
   SCROLL_STALE_MAX_MINUTES,
@@ -20,6 +28,7 @@ export function Settings() {
     <div className="settings-page">
       <h2>Settings</h2>
       <AccessCard />
+      <DevicesCard />
       <TelegramCard />
       <LiveFeedCard />
       <ScrollCard />
@@ -78,6 +87,154 @@ function AccessCard() {
       )}
     </div>
   );
+}
+
+/**
+ * Mobile Connect: the phones signed in to this account, and the way to cut one off.
+ *
+ * Pairing itself happens on the main site, which is the only place that can mint BOTH halves of
+ * the code - Trenches' own session and HolDEX's wallet-signed device token - so this card links
+ * there rather than growing a second, half-working QR. What it does own is the part that has to
+ * be reachable from wherever you notice a problem: revocation.
+ */
+function DevicesCard() {
+  const [devices, setDevices] = useState<LinkedDevice[] | null>(null);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const result = await getLinkedDevices();
+      setDevices(result.devices);
+      setCurrentId(result.currentDeviceId);
+      setError(null);
+    } catch {
+      setError("Could not load your connected phones.");
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const revokeOne = async (id: string) => {
+    setBusy(id);
+    try {
+      await revokeLinkedDevice(id);
+      await refresh();
+    } catch {
+      setError("Could not disconnect that phone.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const revokeAll = async () => {
+    setBusy("all");
+    try {
+      await revokeAllLinkedDevices();
+      await refresh();
+    } catch {
+      setError("Could not disconnect everything.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="settings-card">
+      <h3>Connected phones</h3>
+
+      {devices === null && !error && <p className="empty-state">Loading…</p>}
+      {error && <p className="settings-card__status">{error}</p>}
+
+      {devices !== null && devices.length === 0 && (
+        <p className="settings-toggle__hint">
+          No phones connected. Open HolDEX on a desktop and choose <strong>Connect Phone</strong> from
+          the wallet menu to scan a code - it signs you in here and on the main site at once.
+        </p>
+      )}
+
+      {devices !== null && devices.length > 0 && (
+        <ul className="device-list">
+          {devices.map((device) => (
+            <li key={device.id} className="device-row">
+              <span className="device-row__body">
+                <span className="device-row__name">
+                  {describeDevice(device.userAgent)}
+                  {device.id === currentId && <span className="device-row__tag">This device</span>}
+                </span>
+                <span className="device-row__meta">
+                  {device.lastSeenAt
+                    ? `Last used ${new Date(device.lastSeenAt).toLocaleString()}`
+                    : `Connected ${new Date(device.createdAt).toLocaleString()}`}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn btn--ghost device-row__revoke"
+                disabled={busy !== null}
+                onClick={() => void revokeOne(device.id)}
+              >
+                {busy === device.id ? "…" : "Disconnect"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {devices !== null && devices.length > 1 && (
+        <button
+          type="button"
+          className="btn settings-card__preview"
+          disabled={busy !== null}
+          onClick={() => void revokeAll()}
+        >
+          {busy === "all" ? "Disconnecting…" : "Disconnect all"}
+        </button>
+      )}
+
+      <p className="settings-toggle__hint">
+        A disconnected phone loses access on its next request. Signing in again means scanning a
+        fresh code.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * A user-agent string, reduced to something recognisable. Best-effort: the question this answers
+ * is "is that the phone in my hand?", and guessing confidently at an unfamiliar string would
+ * answer it worse than admitting the miss.
+ */
+function describeDevice(userAgent: string | null): string {
+  if (!userAgent) return "Unknown device";
+  const os = /iPhone/i.test(userAgent)
+    ? "iPhone"
+    : /iPad/i.test(userAgent)
+      ? "iPad"
+      : /Android/i.test(userAgent)
+        ? "Android"
+        : /Macintosh|Mac OS X/i.test(userAgent)
+          ? "Mac"
+          : /Windows/i.test(userAgent)
+            ? "Windows"
+            : null;
+  // Order matters: Edge and Opera both also claim "Chrome", and Chrome also claims "Safari".
+  const browser = /Edg\//i.test(userAgent)
+    ? "Edge"
+    : /OPR\//i.test(userAgent)
+      ? "Opera"
+      : /Firefox\//i.test(userAgent)
+        ? "Firefox"
+        : /Chrome\//i.test(userAgent)
+          ? "Chrome"
+          : /Safari\//i.test(userAgent)
+            ? "Safari"
+            : null;
+  if (os && browser) return `${os} · ${browser}`;
+  return os ?? browser ?? "Unknown device";
 }
 
 /**

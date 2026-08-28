@@ -636,6 +636,86 @@ function createDataDeletionSignatureMessage(wallet, timestamp) {
 }
 
 /**
+ * The message a desktop signs to authorise pairing a phone.
+ *
+ * Distinct wording from every other signed message on this site, and deliberately so: a signature
+ * is only a proof of intent if the text says what is being agreed to. If pairing reused, say, the
+ * data-deletion message, a signature gathered for one purpose would silently authorise the other.
+ * It names the action in plain language, because this is what the wallet shows the user.
+ */
+function createDeviceLinkSignatureMessage(wallet, timestamp) {
+  return `HolDEX Link Device: ${wallet} at ${timestamp}`;
+}
+
+/**
+ * Device tokens are stored hashed, never raw - a pairing code and a device session token are both
+ * bearer credentials, so a dump of the table would otherwise be a pile of working sessions.
+ * Unsalted SHA-256 is the right tool and would not be for a password: the input is 32 bytes of
+ * entropy, so there is nothing to precompute against.
+ */
+function hashDeviceToken(token) {
+  return require('crypto').createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * Proves the caller holds the wallet it claims, for device pairing and revocation. Same shape as
+ * validateWalletSignature (timestamp window, replay window, 64-byte signature) but bound to the
+ * pairing message above.
+ */
+async function validateDeviceLinkSignature(req, res, next) {
+  const { wallet, signature, signatureTimestamp } = req.body;
+
+  if (!signature || !signatureTimestamp || !wallet) {
+    return res.status(400).json({
+      error: 'Signature required',
+      message: 'Please sign with your wallet to link a device',
+      code: 'SIGNATURE_REQUIRED'
+    });
+  }
+  if (!SOLANA_ADDRESS_REGEX.test(wallet)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+
+  const now = Date.now();
+  const timestamp = parseInt(signatureTimestamp);
+  if (isNaN(timestamp)) {
+    return res.status(400).json({ error: 'Invalid timestamp', code: 'INVALID_TIMESTAMP' });
+  }
+  if (now - timestamp > SIGNATURE_EXPIRY_MS) {
+    return res.status(400).json({ error: 'Signature expired', code: 'SIGNATURE_EXPIRED' });
+  }
+  if (timestamp > now + 10000) {
+    return res.status(400).json({ error: 'Invalid timestamp', code: 'FUTURE_TIMESTAMP' });
+  }
+  if (!Array.isArray(signature) || signature.length !== 64 ||
+      !signature.every(b => Number.isInteger(b) && b >= 0 && b <= 255)) {
+    return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
+  }
+
+  const expectedMessage = createDeviceLinkSignatureMessage(wallet, timestamp);
+  if (!verifyWalletSignature(expectedMessage, signature, wallet)) {
+    return res.status(401).json({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' });
+  }
+
+  // Burn the signature, exactly as every other signed route here does. Without this a signature
+  // stays good for the whole SIGNATURE_EXPIRY_MS window, so anyone who saw one go past could mint
+  // further pairing codes for that wallet - and a pairing code becomes a session. Signature
+  // verification alone proves the wallet signed something once, never that it meant to authorise
+  // THIS request.
+  const alreadyUsed = await checkAndMarkSignature(signature.join(','), SIGNATURE_EXPIRY_MS);
+  if (alreadyUsed) {
+    return res.status(400).json({
+      error: 'Signature already used',
+      message: 'Each signature can only be used once',
+      code: 'SIGNATURE_REPLAY'
+    });
+  }
+
+  req.linkedWallet = wallet;
+  next();
+}
+
+/**
  * Middleware to validate wallet signature for data deletion (GDPR)
  * Requires: wallet, signature, signatureTimestamp in request body
  */
@@ -1677,7 +1757,7 @@ async function validateDeviceSession(req, res, next) {
   if (!/^[a-f0-9]{64}$/i.test(sessionToken)) return next();
 
   try {
-    const session = await db.getDeviceSession(sessionToken);
+    const session = await db.getDeviceSession(hashDeviceToken(sessionToken));
     if (session && session.activated) {
       req.deviceSession = session;
       req.deviceWallet = session.wallet_address;
@@ -1714,6 +1794,9 @@ function catchUnlessOverloaded(fallback) {
 }
 
 module.exports = {
+  createDeviceLinkSignatureMessage,
+  validateDeviceLinkSignature,
+  hashDeviceToken,
   validateMint,
   validateWallet,
   validateSubmission,

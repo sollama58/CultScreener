@@ -1538,7 +1538,10 @@ async function cleanupExpiredAdminSessions() {
 // ==========================================
 
 const DEVICE_SESSION_ACTIVATION_WINDOW_MS = 5 * 60 * 1000; // 5 minutes to scan QR
-const DEVICE_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// A linked phone lasts until somebody revokes it, so this is a backstop rather than a policy:
+// long enough not to log people out on its own, finite so an abandoned row cannot live forever.
+// Revocation (deleteDeviceSession) is the real control.
+const DEVICE_SESSION_DURATION_MS = 5 * 365 * 24 * 60 * 60 * 1000; // 5 years
 
 async function createDeviceSession(sessionToken, walletAddress, activationExpiresAt, ipAddress = null, userAgent = null) {
   if (!pool) return null;
@@ -1563,16 +1566,32 @@ async function getDeviceSession(sessionToken) {
   return result.rows[0];
 }
 
-async function activateDeviceSession(sessionToken) {
+/**
+ * Redeems a pairing code and turns it into a device session, ROTATING the secret as it goes.
+ *
+ * Two different credentials share this row over its life. The first is the pairing code, which
+ * travels in a QR on a screen and through a URL fragment; the second is the session token the
+ * phone then sends on every request. They must not be the same string: a QR that is also a
+ * standing session token would mean anyone who photographed the screen holds the account, and
+ * neither expiry nor single-use helps once the value has been captured and used once legitimately.
+ * So activation writes a fresh secret and hands it back exactly once.
+ *
+ * Single-use is enforced by the WHERE clause, not by a read followed by a write - two phones
+ * scanning the same screen race inside the database, where only one can win.
+ *
+ * Both hashes are of the caller's making: this layer never sees a raw token (see hashDeviceToken).
+ */
+async function activateDeviceSession(pairingHash, newSessionHash, userAgent = null, ipAddress = null) {
   if (!pool) return null;
 
   const newExpiry = new Date(Date.now() + DEVICE_SESSION_DURATION_MS);
   const result = await pool.query(
     `UPDATE device_sessions
-     SET activated = TRUE, activated_at = NOW(), expires_at = $2
+     SET activated = TRUE, activated_at = NOW(), expires_at = $3, session_token = $2,
+         user_agent = COALESCE($4, user_agent), ip_address = COALESCE($5, ip_address)
      WHERE session_token = $1 AND activated = FALSE AND expires_at > NOW()
-     RETURNING *`,
-    [sessionToken, newExpiry]
+     RETURNING id, wallet_address, created_at, activated_at, expires_at`,
+    [pairingHash, newSessionHash, newExpiry, userAgent, ipAddress]
   );
   return result.rows[0];
 }
@@ -1583,6 +1602,20 @@ async function deleteDeviceSession(sessionToken) {
   const result = await pool.query(
     `DELETE FROM device_sessions WHERE session_token = $1 RETURNING *`,
     [sessionToken]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Revokes one device. Scoped by wallet in the WHERE clause rather than by checking the row after
+ * fetching it, so an id belonging to somebody else simply matches nothing.
+ */
+async function deleteDeviceSessionById(id, walletAddress) {
+  if (!pool) return null;
+
+  const result = await pool.query(
+    `DELETE FROM device_sessions WHERE id = $1 AND wallet_address = $2 RETURNING id`,
+    [id, walletAddress]
   );
   return result.rows[0];
 }
@@ -1601,9 +1634,9 @@ async function getDeviceSessionsByWallet(walletAddress) {
   if (!pool) return [];
 
   const result = await pool.query(
-    `SELECT id, created_at, activated, activated_at, expires_at
+    `SELECT id, created_at, activated, activated_at, expires_at, user_agent
      FROM device_sessions
-     WHERE wallet_address = $1 AND expires_at > NOW()
+     WHERE wallet_address = $1 AND expires_at > NOW() AND activated = TRUE
      ORDER BY created_at DESC`,
     [walletAddress]
   );
@@ -3588,6 +3621,7 @@ module.exports = {
   getDeviceSession,
   activateDeviceSession,
   deleteDeviceSession,
+  deleteDeviceSessionById,
   deleteDeviceSessionsByWallet,
   getDeviceSessionsByWallet,
   cleanupExpiredDeviceSessions,

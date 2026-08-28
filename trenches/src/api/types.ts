@@ -463,3 +463,21 @@ export interface CuratorRecord30d {
   wins: number;
   hitRatePct: number | null;
 }
+
+/** A phone paired to this account over Mobile Connect. */
+export interface LinkedDevice {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+  /**
+   * The phone's own user-agent string, kept only so a row is recognisable in a list. Attacker
+   * controlled, so React's escaping is doing real work here - never render it as HTML.
+   */
+  userAgent: string | null;
+}
+
+export interface LinkedDevicesResponse {
+  devices: LinkedDevice[];
+  /** Which row is the device you are reading this on, if any. Null on a desktop session. */
+  currentDeviceId: string | null;
+}

@@ -1,0 +1,489 @@
+/* Mobile Connect - the desktop pairing screen and the phone's landing page.
+   Kept out of styles.css because it is two pages' worth of layout that nothing else uses. */
+
+/* Author styles beat the UA stylesheet, so a rule like `.dl-grid { display: grid }` silently
+   defeats the `hidden` attribute and the QR panel renders on top of the gate that is supposed to
+   be replacing it. Restoring it here rather than swapping every toggle to a class: `hidden` is
+   the attribute that also hides the element from assistive technology, which a class does not. */
+[hidden] { display: none !important; }
+
+.dl-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 0 3rem;
+}
+
+.dl-head {
+  text-align: center;
+  margin-bottom: 1.75rem;
+}
+
+.dl-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.dl-sub {
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 46ch;
+  margin: 0 auto;
+}
+
+.dl-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+}
+
+.dl-card-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.dl-note {
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ the wallet gate */
+
+.dl-gate {
+  text-align: center;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.dl-gate-icon {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 1rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--accent-muted);
+  color: var(--accent-primary);
+}
+
+.dl-gate .dl-card-title { margin-bottom: 0.5rem; }
+.dl-gate .dl-note { margin-bottom: 1.25rem; }
+
+/* ------------------------------------------------------------------------ the layout */
+
+.dl-grid {
+  display: grid;
+  /* The QR column is fixed so the code never reflows to a size that is awkward to scan;
+     the explanation column takes whatever is left. */
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: 1rem;
+  /* Equal heights, so the explanation's closing note sits on the same baseline as the QR card's
+     bottom edge instead of leaving a ragged hole beside it. */
+  align-items: stretch;
+}
+
+/* ---------------------------------------------------------------------------- the QR */
+
+.dl-qr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.dl-qr-frame {
+  position: relative;
+  width: 100%;
+  max-width: 256px;
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+  /* White quiet zone is part of the spec, not decoration: scanners need the contrast. */
+  background: #ffffff;
+  padding: 12px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.dl-qr, .dl-qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* While a code is being minted there is nothing to show yet - a shimmer beats an empty white
+   square that looks like a broken image. */
+.dl-qr-frame[data-loading="true"] {
+  background: var(--bg-tertiary);
+}
+.dl-qr-frame[data-loading="true"]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.05) 50%, transparent 80%);
+  animation: dlShimmer 1.4s ease-in-out infinite;
+}
+@keyframes dlShimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* Expired codes are covered rather than removed: a QR that vanishes reads as an error, one
+   that greys out with a button on it reads as "get another". */
+.dl-qr-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: rgba(9, 9, 11, 0.92);
+  backdrop-filter: blur(3px);
+}
+
+.dl-veil-text {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dl-qr-status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 1.2rem;
+}
+
+.dl-countdown {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dl-countdown[data-urgent="true"] { color: var(--yellow); }
+
+.dl-linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--accent-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dl-linkish:hover { color: var(--accent-hover); }
+.dl-linkish.dl-danger { color: var(--red); }
+.dl-linkish.dl-danger:hover { color: #ff7b7b; }
+.dl-linkish:disabled { color: var(--text-dim); cursor: default; text-decoration: none; }
+
+/* The typed-out fallback, for a camera that refuses to cooperate. */
+.dl-manual {
+  width: 100%;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dl-manual-label {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dl-manual-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.dl-manual-url {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.55rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------- what is being connected */
+
+.dl-side { display: flex; flex-direction: column; }
+
+.dl-scope {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.dl-scope-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.dl-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  margin-top: 0.42rem;
+  background: var(--text-dim);
+}
+.dl-dot[data-state="ready"] { background: var(--green); box-shadow: 0 0 0 3px var(--green-light); }
+.dl-dot[data-state="skipped"] { background: var(--text-dim); }
+.dl-dot[data-state="error"] { background: var(--red); box-shadow: 0 0 0 3px var(--red-light); }
+.dl-dot[data-state="pending"] { background: var(--yellow); }
+
+.dl-scope-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.dl-scope-body strong {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dl-scope-note {
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.dl-steps-title { margin-top: 0.25rem; }
+
+.dl-steps {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.dl-steps li::marker {
+  color: var(--accent-primary);
+  font-weight: 700;
+}
+
+.dl-fineprint {
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------- connected phones */
+
+.dl-devices { margin-top: 1rem; }
+
+.dl-devices-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.25rem;
+}
+.dl-devices-head .dl-card-title { margin-bottom: 0.75rem; }
+
+.dl-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dl-device {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.dl-device-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.dl-device-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dl-device-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-device-meta {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.dl-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-xs);
+  background: var(--accent-muted);
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.dl-empty {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 0.5rem 0;
+}
+
+/* ------------------------------------------------------------------- the phone's landing */
+
+.dl-landing {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 2rem 0 3rem;
+  text-align: center;
+}
+
+.dl-landing-icon {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 1.25rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--accent-muted);
+  color: var(--accent-primary);
+}
+.dl-landing-icon[data-state="ok"] { background: var(--green-light); color: var(--green); }
+.dl-landing-icon[data-state="error"] { background: var(--red-light); color: var(--red); }
+
+/* The spinner state, while both halves are being redeemed. */
+.dl-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--accent-muted);
+  border-top-color: var(--accent-primary);
+  animation: dlSpin 0.8s linear infinite;
+}
+@keyframes dlSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .dl-spinner { animation-duration: 2.4s; }
+  .dl-qr-frame[data-loading="true"]::after { animation: none; }
+}
+
+.dl-landing-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 1.5rem 0;
+  text-align: left;
+}
+
+.dl-result {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.dl-result-body { flex: 1; min-width: 0; }
+
+.dl-result-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dl-result-note {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.dl-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  /* The failure path has no result rows above it, so the buttons would otherwise crowd the
+     sentence explaining what went wrong. */
+  margin-top: 1.5rem;
+}
+.dl-landing-results + .dl-actions { margin-top: 0; }
+
+.dl-actions .btn { width: 100%; justify-content: center; }
+
+.dl-wallet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-full);
+  padding: 0.3rem 0.7rem;
+  margin-top: 0.5rem;
+}
+
+/* ----------------------------------------------------------------------------- narrow */
+
+@media (max-width: 720px) {
+  .dl-grid { grid-template-columns: minmax(0, 1fr); }
+  /* On a phone the explanation is what matters; the QR is for the machine you are NOT holding. */
+  .dl-qr-card { order: 2; }
+  .dl-side { order: 1; }
+  .dl-card { padding: 1.15rem; }
+  .dl-title { font-size: 1.25rem; }
+}
