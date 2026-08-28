@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listFilters, listMatches, openMatchesStream } from "../api/client";
-import { HealthBadge } from "../components/HealthBadge";
+
 import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
 import { FeedFilterBar } from "../components/FeedFilterBar";
 import { DEFAULT_FEED_FILTER, isDefaultFilter, passesFeedFilter, type FeedFilter } from "../utils/feedFilter";
 import { usePreferences } from "../context/PreferencesContext";
+import { useFeedStatus } from "../context/FeedStatusContext";
 import { playAlertSound } from "../utils/alertSound";
 import { useNow } from "../utils/useNow";
 
@@ -123,6 +124,14 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   // When the next refresh is actually due, in epoch ms - what the countdown in the header reads
   // from. Null until the first fetch has landed and set a real deadline.
   const [nextRefreshAt, setNextRefreshAt] = useState<number | null>(null);
+
+  // The bar renders this - see FeedStatusContext. Cleared on unmount so switching tabs doesn't
+  // leave a frozen "Updated 4:43:57 PM" from a feed that is no longer running.
+  const { setStatus: setFeedStatus } = useFeedStatus();
+  useEffect(() => {
+    setFeedStatus({ streamConnected: streamLive, lastUpdated, nextRefreshAt });
+  }, [setFeedStatus, streamLive, lastUpdated, nextRefreshAt]);
+  useEffect(() => () => setFeedStatus(null), [setFeedStatus]);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Lets the timer below call the current refetch without either one having to be declared first.
   const refetchRef = useRef<(() => Promise<void>) | undefined>(undefined);
@@ -401,17 +410,6 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
 
   return (
     <div className="dashboard">
-      <div className="dashboard__header">
-        <h2>Live Feed</h2>
-        <div className="dashboard__status">
-          <HealthBadge streamConnected={streamLive} />
-          <span className="dashboard__updated">
-            {lastUpdated && <span>Updated {lastUpdated.toLocaleTimeString()}</span>}
-            <RefreshCountdown at={nextRefreshAt} />
-          </span>
-        </div>
-      </div>
-
       {hasFilters === false ? (
         <div className="welcome-card">
           <h3>Welcome to TrenchScanner 👋</h3>
@@ -520,28 +518,3 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   );
 }
 
-/**
- * How long until the feed next refreshes its figures.
- *
- * Worth showing because "Live" answers a different question than people read into it: the badge
- * is about the scanner still running, while the market caps on the cards move on this timer.
- * Without it a number that hasn't changed for half a minute is ambiguous between "nothing
- * happened" and "nothing has been fetched".
- *
- * Alerts are not on this clock - they arrive over the push stream the moment they exist, which is
- * what the badge's pulsing dot indicates. This is only about the periodic refresh of the figures.
- */
-function RefreshCountdown({ at }: { at: number | null }) {
-  const now = useNow();
-  if (at === null) return null;
-
-  const secondsLeft = Math.max(0, Math.ceil((at - now) / 1000));
-  return (
-    <span
-      className="dashboard__countdown"
-      title="Market caps and other figures refresh on this timer. New alerts don't wait for it - they're pushed as soon as they happen."
-    >
-      {secondsLeft === 0 ? "refreshing…" : `next in ${secondsLeft}s`}
-    </span>
-  );
-}

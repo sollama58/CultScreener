@@ -2,6 +2,7 @@ import { useState } from "react";
 import { SolanaWalletProvider } from "./wallet/SolanaWalletProvider";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { PreferencesProvider } from "./context/PreferencesContext";
+import { FeedStatusProvider } from "./context/FeedStatusContext";
 import { SubscriptionProvider, useSubscription } from "./context/SubscriptionContext";
 import { WalletBridgeProvider } from "./bridge/WalletBridgeContext";
 import { Paywall } from "./pages/Paywall";
@@ -87,9 +88,13 @@ export function App() {
       <WalletBridgeProvider>
         <AuthProvider>
           <PreferencesProvider>
+            {/* Above the shell: the Live Feed publishes its freshness here and the app bar renders
+                it, so the two are siblings rather than one reaching into the other. */}
+            <FeedStatusProvider>
             <SubscriptionProvider>
               <AppShell />
             </SubscriptionProvider>
+            </FeedStatusProvider>
           </PreferencesProvider>
         </AuthProvider>
       </WalletBridgeProvider>
