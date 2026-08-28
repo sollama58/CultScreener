@@ -3,11 +3,18 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 /** The three alert sounds offered in Settings. Synthesised, not sampled - see utils/alertSound.ts. */
 export type AlertSoundName = "cork" | "ring" | "bell";
 
-/** Which alerts the Scroll tab plays. Mirrors the Live Feed's own sources - see PumpScroll.tsx. */
+/**
+ * Which alerts PumpTok plays. Mirrors the Live Feed's own sources - see PumpTok.tsx.
+ *
+ * The `scroll*` field names below are deliberately NOT renamed alongside the feature. They are
+ * the keys this object is persisted under in localStorage, so renaming them would silently reset
+ * the window and source for everybody who has ever set one. The stored name is not user-visible;
+ * the label on the tab is.
+ */
 export type ScrollSource = "matches" | "curated" | "both";
 
 /**
- * The oldest an alert may be and still appear in the Scroll deck. Capped at 30 minutes on
+ * The oldest an alert may be and still appear in the PumpTok deck. Capped at 30 minutes on
  * purpose: the deck exists to be acted on right now, and a token that first alerted half an hour
  * ago is a different trade than the one the alert described.
  */
@@ -28,9 +35,9 @@ export interface Preferences {
   alertSound: AlertSoundName;
   /** 0-1. Applied as the master gain, so 0 is genuinely silent. */
   alertVolume: number;
-  /** Which feed the Scroll tab plays when you open it. */
+  /** Which feed PumpTok plays when you open it. */
   scrollSource: ScrollSource;
-  /** Minutes: alerts older than this drop out of the Scroll deck. Clamped to 1-30. */
+  /** Minutes: alerts older than this drop out of the PumpTok deck. Clamped to 1-30. */
   scrollStaleMinutes: number;
 }
 

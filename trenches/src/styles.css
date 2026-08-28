@@ -2659,7 +2659,7 @@ select {
   }
 }
 
-/* ── PumpScroll ─────────────────────────────────────────────────────────────
+/* ── PumpTok ─────────────────────────────────────────────────────────────
  *
  * The alert feed as a full-bleed deck. Two things drive every choice here:
  *
@@ -2672,9 +2672,9 @@ select {
  *    guess. Hence the panels behind the card rather than a toast after it.
  */
 
-.scroll-page {
+.pumptok-page {
   position: relative;
-  /* Height is measured in PumpScroll.tsx - see the note there on why a constant
+  /* Height is measured in PumpTok.tsx - see the note there on why a constant
      is wrong here. This is only the floor for the first paint. */
   min-height: 420px;
   /* A deck is a phone shape. Letting it run the full width of a desktop reads as
@@ -2691,7 +2691,7 @@ select {
   background: var(--bg);
 }
 
-.scroll-page__bar {
+.pumptok-page__bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2701,7 +2701,7 @@ select {
   background: var(--surface);
 }
 
-.scroll-source {
+.pumptok-source {
   display: inline-flex;
   padding: 3px;
   gap: 2px;
@@ -2710,7 +2710,7 @@ select {
   border: 1px solid var(--border);
 }
 
-.scroll-source__btn {
+.pumptok-source__btn {
   border: 0;
   background: transparent;
   color: var(--text-muted);
@@ -2722,13 +2722,13 @@ select {
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.scroll-source__btn--on {
+.pumptok-source__btn--on {
   background: var(--grad-brand);
   color: #08110c;
   font-weight: 600;
 }
 
-.scroll-page__stale {
+.pumptok-page__stale {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-muted);
@@ -2739,14 +2739,14 @@ select {
   cursor: pointer;
 }
 
-.scroll-page__stale:hover {
+.pumptok-page__stale:hover {
   color: var(--text);
   border-color: var(--accent-dim);
 }
 
 /* The queued-arrivals pill. Floats over the deck so it never shifts what you
    are reading - the whole reason arrivals are queued in the first place. */
-.scroll-new-pill {
+.pumptok-new-pill {
   position: absolute;
   top: 58px;
   left: 50%;
@@ -2762,15 +2762,15 @@ select {
   background: var(--grad-brand);
   box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
   cursor: pointer;
-  animation: scroll-pill-in 220ms ease-out;
+  animation: pumptok-pill-in 220ms ease-out;
 }
 
-@keyframes scroll-pill-in {
+@keyframes pumptok-pill-in {
   from { opacity: 0; transform: translate(-50%, -8px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
-.scroll-deck {
+.pumptok-deck {
   flex: 1;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
@@ -2778,11 +2778,11 @@ select {
   overscroll-behavior-y: contain;
 }
 
-.scroll-deck::-webkit-scrollbar {
+.pumptok-deck::-webkit-scrollbar {
   display: none;
 }
 
-.scroll-card {
+.pumptok-card {
   position: relative;
   height: 100%;
   scroll-snap-align: start;
@@ -2797,7 +2797,7 @@ select {
 }
 
 /* The card face slides with the drag; the venue panels beneath do not. */
-.scroll-card__body {
+.pumptok-card__body {
   position: relative;
   z-index: 2;
   flex: 1;
@@ -2816,11 +2816,11 @@ select {
 
 /* While a finger is down the card must track it exactly - a transition here
    would make the drag feel like it is lagging behind the thumb. */
-.scroll-card:active .scroll-card__body {
+.pumptok-card:active .pumptok-card__body {
   transition: none;
 }
 
-.scroll-card__venue {
+.pumptok-card__venue {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -2836,30 +2836,30 @@ select {
   pointer-events: none;
 }
 
-.scroll-card__venue.is-shown {
+.pumptok-card__venue.is-shown {
   opacity: calc(0.35 + var(--drag-progress, 0) * 0.65);
 }
 
-.scroll-card__venue--left {
+.pumptok-card__venue--left {
   right: 0;
   background: linear-gradient(270deg, rgb(124 92 255 / 28%), transparent);
 }
 
-.scroll-card__venue--right {
+.pumptok-card__venue--right {
   left: 0;
   background: linear-gradient(90deg, rgb(51 209 122 / 28%), transparent);
 }
 
-.scroll-card__venue-name {
+.pumptok-card__venue-name {
   font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
-.scroll-card__venue--right .scroll-card__venue-name { color: var(--pos); }
-.scroll-card__venue--left .scroll-card__venue-name { color: var(--accent-2); }
+.pumptok-card__venue--right .pumptok-card__venue-name { color: var(--pos); }
+.pumptok-card__venue--left .pumptok-card__venue-name { color: var(--accent-2); }
 
-.scroll-card__venue-hint {
+.pumptok-card__venue-hint {
   font-size: 0.72rem;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2868,12 +2868,12 @@ select {
 
 /* Armed = past the commit threshold. The scale bump is the "it will fire when
    you let go" signal, and it is the only animation on the gesture path. */
-.scroll-card__venue.is-armed .scroll-card__venue-name {
+.pumptok-card__venue.is-armed .pumptok-card__venue-name {
   transform: scale(1.12);
   transition: transform 120ms ease;
 }
 
-.scroll-card__main {
+.pumptok-card__main {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2890,7 +2890,7 @@ select {
  * what you were looking at. Most of that blur was doing a second job it should
  * never have had: hiding that the source was a 512px avatar stretched over a
  * whole phone screen. The card now asks the proxy for a 1024px copy (see
- * PumpScroll's "backdrop" size), so the blur only has to do its real job -
+ * PumpTok's "backdrop" size), so the blur only has to do its real job -
  * keeping detail from competing with the numbers - and 7px does that while
  * leaving the art recognisable. Checked against near-white artwork, which is
  * the legibility worst case: the white card text has to survive it.
@@ -2900,7 +2900,7 @@ select {
  * still nudged up, though less than before: it was compensating for how much
  * colour a 34px blur washes out.
  */
-.scroll-card__bg {
+.pumptok-card__bg {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -2920,7 +2920,7 @@ select {
  * where the art reads as atmosphere, heaviest at the foot where the stats and
  * reasons sit.
  */
-.scroll-card__scrim {
+.pumptok-card__scrim {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -2932,36 +2932,36 @@ select {
 
 /* Everything real sits above both layers. Listed rather than blanket-selected so a
    future child has to opt in deliberately. */
-.scroll-card__head,
-.scroll-card__main,
-.scroll-card__hint {
+.pumptok-card__head,
+.pumptok-card__main,
+.pumptok-card__hint {
   position: relative;
   z-index: 1;
 }
 
 /* With art behind it the thumbnail needs its own edge to sit on, or it dissolves
    into the blur it came from. */
-.scroll-card__bg ~ .scroll-card__main .scroll-card__art {
+.pumptok-card__bg ~ .pumptok-card__main .pumptok-card__art {
   box-shadow: 0 4px 16px rgb(0 0 0 / 55%);
   border-color: rgb(255 255 255 / 18%);
 }
 
 /* Same reason: the stat tiles are translucent so the art shows through, but they
    need to stay separable from it. */
-.scroll-card__bg ~ .scroll-card__main .scroll-card__stat {
+.pumptok-card__bg ~ .pumptok-card__main .pumptok-card__stat {
   background: rgb(0 0 0 / 42%);
   border-color: rgb(255 255 255 / 12%);
   backdrop-filter: blur(4px);
 }
 
-.scroll-card__head {
+.pumptok-card__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.scroll-card__badge {
+.pumptok-card__badge {
   font-size: 0.72rem;
   font-weight: 600;
   padding: 4px 10px;
@@ -2975,70 +2975,99 @@ select {
   white-space: nowrap;
 }
 
-.scroll-card__badge--curated {
+.pumptok-card__badge--curated {
   color: var(--accent);
   border-color: var(--accent-dim);
 }
 
-.scroll-card__age {
+.pumptok-card__age {
   font-size: 0.75rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.scroll-card__identity {
+/*
+ * The token, as the thing the card is actually about: artwork centred with its
+ * ticker and name stacked beneath, rather than a small tile with the text beside
+ * it. At this size the picture is the identification - you recognise a launch by
+ * its PFP long before you read its ticker - which is the whole reason the deck
+ * exists as a full-screen format.
+ */
+.pumptok-card__identity {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  text-align: center;
+  gap: 10px;
 }
 
-.scroll-card__art {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
+.pumptok-card__art {
+  /* 3x the 56px tile this replaced. Fixed rather than a percentage so it does not
+     collapse on a short viewport where flex would otherwise squeeze it. */
+  width: 168px;
+  height: 168px;
+  border-radius: 28px;
   object-fit: cover;
   border: 1px solid var(--border);
   flex-shrink: 0;
 }
 
-.scroll-card__art--blank {
+.pumptok-card__art--blank {
   display: grid;
   place-items: center;
   background: var(--grad-brand);
   color: #08110c;
   font-weight: 700;
-  font-size: 1.1rem;
+  /* Scaled with the tile: two letters at the old 1.1rem would swim in a 168px box. */
+  font-size: 3.2rem;
 }
 
-.scroll-card__names { min-width: 0; }
+/* Centred text needs a width to be centred WITHIN, and min-width:0 so a long name
+   ellipsises instead of stretching the column. */
+.pumptok-card__names {
+  min-width: 0;
+  max-width: 100%;
+}
 
-.scroll-card__symbol {
+.pumptok-card__symbol {
   margin: 0;
-  font-size: 1.55rem;
+  font-size: 1.75rem;
   line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.scroll-card__name {
-  margin: 2px 0 0;
-  font-size: 0.85rem;
+.pumptok-card__name {
+  margin: 3px 0 0;
+  font-size: 0.9rem;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Short viewports - a landscape phone, or a desktop window dragged small - cannot
+   afford 168px of picture AND the numbers. The art is what gives way. */
+@media (max-height: 720px) {
+  .pumptok-card__art {
+    width: 120px;
+    height: 120px;
+    border-radius: 22px;
+  }
+  .pumptok-card__art--blank { font-size: 2.4rem; }
+  .pumptok-card__symbol { font-size: 1.5rem; }
+}
+
 /* The one number the whole card exists to show. */
-.scroll-card__mcap {
+.pumptok-card__mcap {
   display: flex;
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.scroll-card__mcap-value {
+.pumptok-card__mcap-value {
   font-size: 2.6rem;
   font-weight: 700;
   line-height: 1;
@@ -3046,23 +3075,35 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-.scroll-card__delta {
+.pumptok-card__delta {
   font-size: 0.9rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.scroll-card__delta.is-up { color: var(--pos); }
-.scroll-card__delta.is-down { color: var(--neg); }
+.pumptok-card__delta.is-up { color: var(--pos); }
+.pumptok-card__delta.is-down { color: var(--neg); }
 
-.scroll-card__stats {
+/*
+ * Five tiles. Fixed column counts rather than auto-fit, because auto-fit picks whatever
+ * happens to fit and at several common widths that is four - which leaves the fifth tile
+ * alone on a row of its own. Three then two is the shape that always reads as deliberate,
+ * and it falls out along the meaning: market facts on the first row, holder quality on
+ * the second.
+ */
+.pumptok-card__stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin: 0;
 }
 
-.scroll-card__stat {
+/* Wide enough for one row of five without the labels wrapping. */
+@media (min-width: 700px) {
+  .pumptok-card__stats { grid-template-columns: repeat(5, 1fr); }
+}
+
+.pumptok-card__stat {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -3071,21 +3112,26 @@ select {
   min-width: 0;
 }
 
-.scroll-card__stat dt {
+.pumptok-card__stat dt {
   font-size: 0.66rem;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.scroll-card__stat dd {
+.pumptok-card__stat dd {
   margin: 3px 0 0;
   font-size: 0.95rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.scroll-card__reasons {
+/* The two holder-quality figures read as warnings, not as measurements like the rest -
+   so they are tinted, but only enough to group them. Colour-coding by threshold would be
+   the app second-guessing a judgement the filters already made. */
+.pumptok-card__stat--risk dt { color: color-mix(in srgb, var(--warn, #f59e0b) 70%, var(--text-muted)); }
+
+.pumptok-card__reasons {
   margin: 4px 0 0;
   padding: 0;
   list-style: none;
@@ -3094,14 +3140,14 @@ select {
   gap: 5px;
 }
 
-.scroll-card__reasons li {
+.pumptok-card__reasons li {
   font-size: 0.8rem;
   color: var(--text-muted);
   padding-left: 16px;
   position: relative;
 }
 
-.scroll-card__reasons li::before {
+.pumptok-card__reasons li::before {
   content: "▸";
   position: absolute;
   left: 0;
@@ -3110,7 +3156,7 @@ select {
 
 /* Shown on the first card only. The action buttons already teach left and right
    (their labels carry the arrows); nothing otherwise says the deck runs vertically. */
-.scroll-card__hint {
+.pumptok-card__hint {
   margin: 0;
   padding-bottom: 4px;
   text-align: center;
@@ -3125,17 +3171,17 @@ select {
 }
 
 /* An alert kept on screen only because it is the one being read - see the deck's
-   retention note in PumpScroll.tsx. Dimmed so it cannot pass for a live call. */
-.scroll-card--expired .scroll-card__body { opacity: 0.72; }
+   retention note in PumpTok.tsx. Dimmed so it cannot pass for a live call. */
+.pumptok-card--expired .pumptok-card__body { opacity: 0.72; }
 
-.scroll-card--expired .scroll-card__age {
+.pumptok-card--expired .pumptok-card__age {
   color: var(--warn);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-size: 0.68rem;
 }
 
-.scroll-card__actions {
+.pumptok-card__actions {
   position: relative;
   z-index: 2;
   display: grid;
@@ -3145,7 +3191,7 @@ select {
   background: var(--surface);
 }
 
-.scroll-action {
+.pumptok-action {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
@@ -3158,10 +3204,56 @@ select {
   transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
 }
 
-.scroll-action--right:hover { border-color: var(--pos); color: var(--pos); }
-.scroll-action--left:hover { border-color: var(--accent-2); color: var(--accent-2); }
+.pumptok-action--right:hover { border-color: var(--pos); color: var(--pos); }
+.pumptok-action--left:hover { border-color: var(--accent-2); color: var(--accent-2); }
 
-.scroll-undo {
+/*
+ * The missed-alert bubble. Bottom-RIGHT, where the undo pill is bottom-centre, so an
+ * accidental swipe and an unread alert can be flagged at the same moment without
+ * either covering the other. Sits above the action bar for the same reason the undo
+ * pill does: nothing may block the two buttons this whole view exists to offer.
+ */
+.pumptok-missed {
+  position: absolute;
+  right: 12px;
+  bottom: 76px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--surface-hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+  animation: pumptok-pill-in 220ms ease-out;
+}
+
+.pumptok-missed:hover {
+  border-color: var(--accent);
+}
+
+.pumptok-missed__count {
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--grad-brand);
+  color: #08110c;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pumptok-missed__label { color: var(--text-muted); }
+.pumptok-missed__label strong { color: var(--accent); font-weight: 600; }
+
+.pumptok-undo {
   position: absolute;
   left: 50%;
   bottom: 76px;
@@ -3178,7 +3270,7 @@ select {
   box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
 }
 
-.scroll-undo button {
+.pumptok-undo button {
   border: 0;
   background: transparent;
   color: var(--accent);
@@ -3188,7 +3280,7 @@ select {
   padding: 0;
 }
 
-.scroll-empty {
+.pumptok-empty {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -3199,13 +3291,13 @@ select {
   text-align: center;
 }
 
-.scroll-empty__title {
+.pumptok-empty__title {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 600;
 }
 
-.scroll-empty__body {
+.pumptok-empty__body {
   margin: 0;
   max-width: 40ch;
   color: var(--text-muted);
@@ -3231,19 +3323,19 @@ select {
 /* Roomier on a real screen: the deck is designed thumb-first, but it should not
    look like a stretched phone on a desktop. */
 @media (min-width: 720px) {
-  .scroll-card__body { padding: 24px 22px 12px; }
-  .scroll-card__mcap-value { font-size: 2.9rem; }
-  .scroll-card__actions { padding: 12px 22px 16px; }
+  .pumptok-card__body { padding: 24px 22px 12px; }
+  .pumptok-card__mcap-value { font-size: 2.9rem; }
+  .pumptok-card__actions { padding: 12px 22px 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .scroll-card__bg { transform: scale(1.05); }
-  .scroll-card__body,
-  .scroll-card__venue,
-  .scroll-card__venue.is-armed .scroll-card__venue-name { transition: none; }
-  .scroll-new-pill,
-  .scroll-card__hint { animation: none; }
-  .scroll-deck { scroll-behavior: auto; }
+  .pumptok-card__bg { transform: scale(1.05); }
+  .pumptok-card__body,
+  .pumptok-card__venue,
+  .pumptok-card__venue.is-armed .pumptok-card__venue-name { transition: none; }
+  .pumptok-new-pill,
+  .pumptok-card__hint { animation: none; }
+  .pumptok-deck { scroll-behavior: auto; }
 }
 
 /* ── Compact phone navigation ───────────────────────────────────────────────
@@ -3291,7 +3383,7 @@ select {
 }
 
 /* Absolutely positioned: opening the menu must never reflow the page underneath
-   it. The z-index clears the Scroll deck's own layers (its pills sit at 5-6). */
+   it. The z-index clears the PumpTok deck's own layers (its pills sit at 5-6). */
 .navbar__menu-panel {
   position: absolute;
   top: calc(100% + 8px);

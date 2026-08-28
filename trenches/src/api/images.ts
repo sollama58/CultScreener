@@ -33,7 +33,7 @@ const SITE_API_URL: string =
  * "avatar", so this type is the honest description of the choice rather than a free number.
  *
  *  - "avatar"   (512px) for list tiles and thumbnails.
- *  - "backdrop" (1024px) for the PumpScroll card, which is full-bleed and then scaled up again by
+ *  - "backdrop" (1024px) for the PumpTok card, which is full-bleed and then scaled up again by
  *    the card's own transform. At 512 that meant upscaling a small image across a whole phone
  *    screen, and the only way to hide the softness was to blur it into abstraction.
  */
