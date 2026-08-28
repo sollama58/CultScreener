@@ -23,6 +23,7 @@ export interface UserFilter {
   narrativeKeywords: string[];
   minScore: number | null;
   maxFreshTop10WalletPct: number | null;
+  maxEmptyTop10WalletPct: number | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -82,6 +83,9 @@ export interface TokenSnapshot {
   riskFlags: string[];
   /** % of the top-10 holders whose wallet was funded <24h ago. Null if there was no holder list to check. */
   freshTop10WalletPct: number | null;
+  /** % of the top-10 holders holding under $25 of any token other than SOL/USDC/USDT - wallets
+   *  that look funded purely to hold this one launch. Null if the holders could not be priced. */
+  emptyTop10WalletPct: number | null;
   /** Was the mint launched in Pump.fun's Mayhem Mode? An automatic, non-optional rejection: their
    *  own AI agents mint an extra 1B supply and trade it for the token's first 24h, which
    *  manufactures the volume and holder growth this app scores on. Null means the check never ran

@@ -29,6 +29,7 @@ export interface TemplateSettings {
   maxTokenAgeMinutes?: number | null;
   minScore?: number | null;
   maxFreshTop10WalletPct?: number | null;
+  maxEmptyTop10WalletPct?: number | null;
   narrativeKeywords?: string;
   mcapMin?: number;
   mcapMax?: number;
@@ -53,6 +54,7 @@ const CLEARED: TemplateSettings = {
   maxTokenAgeMinutes: null,
   minScore: null,
   maxFreshTop10WalletPct: null,
+  maxEmptyTop10WalletPct: null,
   narrativeKeywords: "",
 };
 
@@ -63,7 +65,7 @@ export const FILTER_TEMPLATES: FilterTemplate[] = [
     description:
       "Catches almost everything the scanner screens. Two loose guards only - a cap on brand-new wallets among the top holders, and enough age that the token has at least been seen twice.",
     summary: ["Max fresh top-10 wallets 30%", "Min age 1 minute", "Every other criterion left open"],
-    settings: { maxFreshTop10WalletPct: 30, minTokenAgeMinutes: 1 },
+    settings: { maxFreshTop10WalletPct: 30, maxEmptyTop10WalletPct: 60, minTokenAgeMinutes: 1 },
   },
 ];
 
