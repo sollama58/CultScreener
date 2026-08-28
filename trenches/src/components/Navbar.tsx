@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { FeedStatus } from "./FeedStatus";
 
 export type Tab = "dashboard" | "scroll" | "curated" | "filters" | "leaderboard" | "settings" | "admin";
 
@@ -26,7 +27,10 @@ export function Navbar({ tab, onTabChange }: { tab: Tab; onTabChange: (tab: Tab)
       {/* "Trenches" rather than "TrenchScanner": this bar sits directly under the HolDEX site
           header, so it names the section of the site you're in, matching the top-nav tab. */}
       <div className="navbar__brand">
-        <span className="navbar__logo">🎯</span> Trenches
+        <span className="navbar__logo">🎯</span>
+        {/* The wordmark is dropped on narrow phones rather than clipped - "Tren" reads as a bug,
+            and the logo alone still identifies the section. */}
+        <span className="navbar__wordmark">Trenches</span>
       </div>
       <nav className="navbar__tabs">
         {tabs.map((t) => (
@@ -56,10 +60,12 @@ export function Navbar({ tab, onTabChange }: { tab: Tab; onTabChange: (tab: Tab)
         onSignOut={() => void signOut()}
       />
 
-      {/* Scanner status deliberately does NOT live here. It used to sit beside the wallet while
-          the Live Feed header showed its own "Live" pill for the push connection - two different
-          facts wearing the same word, a few hundred pixels apart. There is now one status
-          element, in the Live Feed header, and it carries both. */}
+      <FeedStatus />
+
+      {/* The status element now lives in this bar (rendered above), not on the page. It carries
+          both facts it ever needed to - is the scanner running, and is my push connection open -
+          and pinning it here means it stays in one place instead of being a row the Live Feed
+          spends on repeating its own tab name. */}
       <div className="navbar__account">
         {user && (
           <span className="wallet-chip" title={user.walletAddress}>

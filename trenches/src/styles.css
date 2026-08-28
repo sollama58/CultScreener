@@ -174,6 +174,11 @@ select {
   display: flex;
   gap: 4px;
   flex: 1;
+  /* Without this the strip refuses to go below its min-content width and the whole bar wraps
+     instead. It is the one child here that can give: the labels stay legible well before it
+     matters, and it is preferable to a two-row app bar. */
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .navbar__tab {
@@ -1087,11 +1092,16 @@ select {
  */
 
 /* Tablets and phones */
-@media (max-width: 768px) {
-  .app-content {
-    padding: 16px 14px 48px;
-  }
-
+/*
+ * Tablet and below: the tab strip gives way to the dropdown.
+ *
+ * The breakpoint is far above a phone width because of what sits in this bar - brand, seven
+ * tabs, the feed status and the account block. Measured, those want about 1275px; at 1280 they
+ * share one row and at 1100 the tab strip wrapped inside itself into a 97px-tall app bar, which
+ * is the thing the collapse exists to prevent. So the menu takes everything below the width the
+ * full bar actually fits in, and the bar is a single row at every size.
+ */
+@media (max-width: 1279px) {
   /* One row, always: brand on the left, everything else behind the menu on the right. Stacking
      brand + wrapped tabs + an account row cost roughly 200px of chrome - a quarter of a phone
      viewport spent on navigation before a single alert. */
@@ -1116,6 +1126,13 @@ select {
     flex: none;
   }
 
+}
+
+@media (max-width: 768px) {
+  .app-content {
+    padding: 16px 14px 48px;
+  }
+
   /* The shell is itself a flex column; it needs the same treatment or it re-expands to fit
      the widest descendant regardless of what the navbar does. */
   .app-shell,
@@ -1133,10 +1150,10 @@ select {
     min-width: 0;
   }
 
-  /* The brand is the only flexible thing in the row now, so it is what gives way. */
+  /* The brand gives way first, but by dropping its wordmark wholesale rather than clipping it
+     to a fragment - see the note in Navbar.tsx. */
   .navbar__brand {
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex: none;
     white-space: nowrap;
   }
 
@@ -3333,4 +3350,94 @@ select {
 @media (prefers-reduced-motion: reduce) {
   .navbar__menu-panel { animation: none; }
   .navbar__menu-caret { transition: none; }
+}
+
+/* ── Feed status in the app bar ─────────────────────────────────────────────
+ * Produced by the Live Feed, displayed here - see FeedStatusContext. Absent on
+ * every other tab, so this takes no space unless it has something to say.
+ */
+.feed-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.feed-status__detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  /* The countdown is the part worth keeping when the bar runs out of room, so it never gives -
+     the badge beside it shrinks instead (below). Without this the nowrap text simply spilled
+     out of its shrunk parent and pushed the page 19px sideways on a 390px phone. */
+  flex: none;
+}
+
+/* The badge is what yields: "Status unavailable" is the longest thing in this cluster and the
+   least urgent - its colour already carries the state at a glance. */
+.feed-status > .health-badge {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A middot between the timestamp and the countdown, only when both are present -
+   otherwise a lone countdown would start with a stray separator. */
+.feed-status__updated + .feed-status__countdown::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--border);
+}
+
+/* Detail is shed as the bar narrows rather than wrapping or squeezing the tabs.
+   The timestamp goes first: the countdown answers "is this current?" in a
+   quarter of the characters, and the exact clock time is the part nobody reads. */
+@media (max-width: 1400px) {
+  /* Measured: brand + seven tabs + account already want ~950px, and the full status is another
+     ~350 - so below this the bar wrapped to two rows, which is worse than losing a clock nobody
+     reads to the second. The badge and the countdown together still answer both questions. */
+  .feed-status__updated {
+    display: none;
+  }
+
+  /* Tighter rhythm buys back another ~24px before anything has to be dropped. */
+  .navbar {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 1279px) {
+  /* With the tabs gone the bar is brand | status | menu, so the status sits between them
+     rather than being pushed against the right edge by an auto margin. */
+  .feed-status {
+    margin-left: 0;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 768px) {
+  .feed-status__detail {
+    font-size: 0.72rem;
+  }
+}
+
+/* Logo only: below this the wordmark, the menu and the status cannot all have their full width,
+   and the wordmark is the one whose absence costs nothing. */
+@media (max-width: 460px) {
+  .navbar__wordmark {
+    display: none;
+  }
+}
+
+/* Under ~380px there is no room for three things: the badge alone still says
+   whether data is arriving, which is the part that matters at a glance. */
+@media (max-width: 380px) {
+  .feed-status__detail {
+    display: none;
+  }
 }
