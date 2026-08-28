@@ -18,6 +18,7 @@ export function Settings() {
       <h2>Settings</h2>
       <AccessCard />
       <TelegramCard />
+      <LiveFeedCard />
       <DisplayCard />
       <SoundCard />
     </div>
@@ -189,6 +190,33 @@ function TelegramCard() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** What the Live Feed is allowed to show. Device-local - see PreferencesContext. */
+function LiveFeedCard() {
+  const { prefs, update } = usePreferences();
+
+  return (
+    <div className="settings-card">
+      <h3>Live Feed</h3>
+
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={prefs.includeCuratedInFeed}
+          onChange={(e) => update({ includeCuratedInFeed: e.target.checked })}
+        />
+        <span className="settings-toggle__text">
+          <span className="settings-toggle__title">Include Curated Alerts</span>
+          <span className="settings-toggle__hint">
+            Mixes the curator&apos;s picks into the Live Feed alongside the tokens your own filters
+            caught, tinted and marked ★ Curated. Off by default, so the Live Feed answers one question -
+            what did my filters find? Either way they keep their own tab.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

@@ -176,7 +176,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   const refetch = useCallback(async () => {
     const id = ++requestIdRef.current;
     try {
-      const result = await listMatches(pageRef.current);
+      const result = await listMatches(pageRef.current, prefsRef.current.includeCuratedInFeed);
       if (id !== requestIdRef.current) return; // superseded by a later request
       setMatches(result.matches);
       setTotalCount(result.totalCount);
@@ -228,7 +228,10 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
       if (refreshTimerRef.current !== undefined) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = undefined;
     };
-  }, [page, refetch]);
+    // includeCuratedInFeed changes what the server returns, so it has to re-run this - the
+    // fetchers read it through prefsRef precisely so they DON'T re-run on every volume nudge,
+    // which means nothing else would notice the toggle. Listed here, not in refetch's deps.
+  }, [page, refetch, prefs.includeCuratedInFeed]);
 
   // Live alerts. A 'match' event means the server just created a match for this user; it
   // carries only an id, so the render still comes from a refetch - the event just removes the
@@ -298,7 +301,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     let rawPage = 1;
     try {
       for (;;) {
-        const result = await listMatches(rawPage);
+        const result = await listMatches(rawPage, prefsRef.current.includeCuratedInFeed);
         if (id !== filteredRequestIdRef.current) return; // superseded by a newer request
         serverTotal = result.totalCount;
         raw = raw.concat(result.matches);
@@ -331,7 +334,9 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     const delay = filterJustChanged ? 300 : 0;
     const t = setTimeout(() => void ensureFilteredPage(filteredPage, filter), delay);
     return () => clearTimeout(t);
-  }, [filterActive, filter, filteredPage, ensureFilteredPage]);
+    // Same reason as the unfiltered effect above: the toggle changes the server's answer, and
+    // the filtered walk re-runs from page 1 anyway.
+  }, [filterActive, filter, filteredPage, ensureFilteredPage, prefs.includeCuratedInFeed]);
 
   // Keeps the filtered view "live" the same way the unfiltered one is: a fresh alert or a stale
   // market cap shouldn't sit unnoticed just because a filter happens to be on.
@@ -394,8 +399,9 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
           <h3>Welcome to TrenchScanner 👋</h3>
           <p>
             This feed shows tokens matched to <strong>your own filters</strong> - and you don't have any set
-            up yet. Until you do, it shows the ★ Curated picks: the pipeline's own highest-conviction calls,
-            the same for everyone.
+            up yet, so it's empty. The <strong>Curated</strong> tab has picks to read in the meantime: the
+            pipeline's own highest-conviction calls, the same for everyone. You can also mix those into this
+            feed from Settings.
           </p>
           <p>
             Every token is already screened for basic safety before it ever reaches you (see the Filters page
