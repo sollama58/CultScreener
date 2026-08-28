@@ -11,6 +11,8 @@ const communityPage = {
 
     window.addEventListener('walletConnected', () => this.loadMyWatchlist());
     window.addEventListener('walletDisconnected', () => this.loadMyWatchlist());
+    // Fires when a phone paired over Mobile Connect confirms which wallet it belongs to.
+    window.addEventListener('walletLinked', () => this.loadMyWatchlist());
     window.addEventListener('watchlistReady', () => this.loadMyWatchlist());
   },
 
@@ -22,7 +24,10 @@ const communityPage = {
     const tbody = document.getElementById('my-watchlist-body');
     if (!connectEl || !contentEl || !tbody) return;
 
-    if (typeof wallet === 'undefined' || !wallet.connected || !wallet.address) {
+    // viewerAddress rather than address: a phone linked from a desktop has no wallet of its own
+    // but is entitled to see this wallet's watchlist. Reading is all this does.
+    const viewer = typeof wallet !== 'undefined' ? wallet.viewerAddress?.() : null;
+    if (!viewer) {
       connectEl.style.display = '';
       contentEl.style.display = 'none';
       return;
@@ -33,7 +38,7 @@ const communityPage = {
     tbody.innerHTML = '<tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading your watchlist...</span></div></td></tr>';
 
     try {
-      const data = await api.watchlist.get(wallet.address);
+      const data = await api.watchlist.get(viewer);
       const tokens = data?.tokens || [];
 
       if (tokens.length === 0) {

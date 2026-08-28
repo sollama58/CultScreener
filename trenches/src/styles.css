@@ -3441,3 +3441,69 @@ select {
     display: none;
   }
 }
+
+/* Connected phones (Settings) - Mobile Connect's revocation list.
+   Rows are read on a phone as often as a desktop, so nothing here relies on hover. */
+.device-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  /* Without this the name column refuses to shrink below its content and the Disconnect
+     button is pushed off a narrow screen - flex items default to min-width:auto. */
+  min-width: 0;
+}
+
+.device-row__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.device-row__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #e8e8ea);
+  min-width: 0;
+}
+
+.device-row__tag {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(255, 87, 34, 0.14);
+  color: #ff8a5c;
+}
+
+.device-row__meta {
+  font-size: 11px;
+  color: var(--text-dim, #8b8b93);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-row__revoke {
+  flex: none;
+}

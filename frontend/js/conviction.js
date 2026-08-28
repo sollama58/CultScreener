@@ -24,6 +24,10 @@ const convictionPage = {
     window.addEventListener('walletConnected', () => {
       if (this._activeTier === 'watchlist') this.loadData();
     });
+    // A linked phone resolves its identity a beat after load, same as an auto-connected wallet.
+    window.addEventListener('walletLinked', () => {
+      if (this._activeTier === 'watchlist') this.loadData();
+    });
     window.addEventListener('walletDisconnected', () => {
       if (this._activeTier === 'watchlist') {
         this._activeTier = 'all';
@@ -91,9 +95,9 @@ const convictionPage = {
       const mcap = pill.dataset.mcap;
 
       if (tier) {
-        // Watchlist requires wallet connection
+        // Watchlist needs an identity - a connected wallet, or a phone linked from a desktop.
         if (tier === 'watchlist') {
-          if (typeof wallet === 'undefined' || !wallet.connected) {
+          if (typeof wallet === 'undefined' || !wallet.viewerAddress()) {
             if (typeof toast !== 'undefined') toast.info('Connect your wallet to view watchlist');
             if (typeof wallet !== 'undefined') wallet.connect();
             return;
@@ -277,8 +281,11 @@ const convictionPage = {
 
     try {
       // Watchlist mode: fetch user's watchlisted tokens instead of leaderboard
-      if (this._activeTier === 'watchlist' && typeof wallet !== 'undefined' && wallet.connected) {
-        const wlData = await api.watchlist.get(wallet.address);
+      // viewerAddress covers a phone linked from a desktop as well as a connected wallet -
+      // the watchlist tab is a read, and a linked phone is entitled to it.
+      const wlViewer = typeof wallet !== 'undefined' ? wallet.viewerAddress?.() : null;
+      if (this._activeTier === 'watchlist' && wlViewer) {
+        const wlData = await api.watchlist.get(wlViewer);
         const wlTokens = wlData?.tokens || [];
 
         // Map watchlist tokens to the same shape as conviction leaderboard

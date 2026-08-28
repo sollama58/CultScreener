@@ -18,6 +18,18 @@ const config = {
       return 'https://cultscreener-api.onrender.com';
     })(),
 
+    // TrenchScanner's API - a DIFFERENT service from baseUrl above, with its own database and
+    // its own session cookie. Mobile Connect is the one feature on this site that talks to both,
+    // because a single QR has to pair the phone with both halves of HolDEX at once.
+    // Kept in sync with trenches/.env.production's VITE_API_URL.
+    trenchesUrl: (() => {
+      const hostname = window.location.hostname;
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return 'http://localhost:3001';
+      }
+      return 'https://api.holdex.live';
+    })(),
+
     // Request timeout in milliseconds
     timeout: 30000,
 
@@ -104,7 +116,12 @@ const config = {
     walletConnected: 'holdex_wallet_connected',   // Legacy: boolean string
     walletAddress: 'holdex_wallet_address',       // Legacy: address string
     theme: 'holdex_theme',
-    lastFilter: 'holdex_last_filter'
+    lastFilter: 'holdex_last_filter',
+    // Mobile Connect: the device session a paired phone holds, and the wallet it was paired to.
+    // The token is a bearer credential, so it lives here and nowhere else - never in a URL,
+    // never in a query string that could reach a server log.
+    deviceSession: 'holdex_device_session',
+    deviceWallet: 'holdex_device_wallet'
   }
 };
 
