@@ -115,6 +115,20 @@ export function TokenCard({ match }: { match: Match }) {
             <TokenAge ageMinutes={snapshot.ageMinutes} takenAt={snapshot.takenAt} />
           </dd>
         </div>
+        <WalletStat
+          label="Fresh wallets"
+          pct={snapshot.freshTop10WalletPct}
+          checked={snapshot.top10WalletsChecked}
+          tone="fresh"
+          hint="Top-10 holders whose wallet was first funded in the last 24 hours - a sniper or insider signal."
+        />
+        <WalletStat
+          label="Empty wallets"
+          pct={snapshot.emptyTop10WalletPct}
+          checked={snapshot.top10WalletsChecked}
+          tone="empty"
+          hint="Top-10 holders we cannot see $25 of holdings in besides this launch - wallets that look funded purely to hold it."
+        />
         <div className="token-card__stat--wide">
           <dt>Alerted</dt>
           <dd className="token-card__alerted">
@@ -162,6 +176,71 @@ function CuratedStrip({ curated, standalone }: { curated: CuratedMeta; standalon
       <OutcomeBadge curated={curated} />
     </div>
   );
+}
+
+/**
+ * One of the two top-10 wallet signals, as a share and - when we know the denominator - a count.
+ *
+ * Three states, kept distinct on purpose. A percentage with a count ("40%  4 of 10") is the full
+ * answer. A percentage alone is a snapshot written before the denominator was recorded, so the
+ * count is omitted rather than guessed at ten - the list excludes pool and LP addresses and is
+ * frequently shorter. And null is genuinely unknown: the holder list was unavailable, or the
+ * per-cycle lookup budget deferred part of it. Unknown renders as a dash, never as 0%, because
+ * "0% of holders are shells" is a claim and this is the absence of one.
+ */
+function WalletStat({
+  label,
+  pct,
+  checked,
+  tone,
+  hint,
+}: {
+  label: string;
+  pct: number | null;
+  checked: number | null;
+  tone: "fresh" | "empty";
+  hint: string;
+}) {
+  const known = pct !== null;
+  // Rounded from the percentage rather than carried separately - they are the same fact, and the
+  // worker computes the percentage from exactly this denominator.
+  const count = known && checked ? Math.round((pct / 100) * checked) : null;
+
+  return (
+    <div className="token-card__stat--wallet">
+      <dt title={hint}>{label}</dt>
+      <dd
+        className={known ? `token-card__wallet token-card__wallet--${severity(pct, tone)}` : "token-card__wallet"}
+        title={known ? hint : `${hint} Not known for this alert - the holder list could not be fully checked.`}
+      >
+        {known ? (
+          <>
+            <span className="token-card__wallet-pct">{Math.round(pct)}%</span>
+            {count !== null && (
+              <span className="token-card__wallet-count">
+                {count} of {checked}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="token-card__wallet-unknown">not checked</span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * Colour bands. Both signals read the same direction - higher is worse - but they are not equally
+ * damning at the same number, so they get their own thresholds: the Default filter allows up to
+ * 40% fresh and 60% empty, and the bands are set either side of those so a card that passed the
+ * starter filter does not glow red.
+ */
+function severity(pct: number, tone: "fresh" | "empty"): "ok" | "warn" | "bad" {
+  const [warn, bad] = tone === "fresh" ? [25, 40] : [40, 60];
+  if (pct > bad) return "bad";
+  if (pct > warn) return "warn";
+  return "ok";
 }
 
 /** The win window, in minutes - mirrors WIN_WINDOW_MINUTES in packages/core/src/curation/labels.ts. */

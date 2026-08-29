@@ -580,6 +580,53 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+/* The two top-10 wallet signals. They share a row and are read against each other, so they get
+   the same shape: a percentage at stat size with the raw count trailing it, quieter and smaller,
+   for anyone who wants to know whether "40%" was 4 of 10 or 2 of 5. */
+.token-card__stat--wallet dd {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  /* Long labels ("not checked") must not force the two-column grid wider than the card. */
+  min-width: 0;
+}
+
+.token-card__wallet-pct {
+  font-variant-numeric: tabular-nums;
+}
+
+.token-card__wallet-count {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.token-card__wallet-unknown {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  font-style: italic;
+}
+
+/* Higher is worse for both signals, so only the bad end is coloured. "ok" is deliberately left
+   at the ordinary stat colour rather than turned green: a low number here is the absence of a bad
+   sign, not a reason to buy, and a card glowing green on two of eight stats would say otherwise.
+
+   The percentage carries the colour and the count stays muted - one emphasis per stat.
+
+   These have to out-specify `.token-card__stats > div:not(.token-card__stat--hero) dd` above,
+   which colours every non-hero stat and would otherwise win on specificity and flatten all three
+   states to the same grey. Hence naming the stats container rather than the tone alone. */
+.token-card__stats .token-card__wallet--warn .token-card__wallet-pct {
+  color: var(--warn);
+}
+
+.token-card__stats .token-card__wallet--bad .token-card__wallet-pct {
+  color: var(--danger);
+}
+
 .token-card__mint {
   display: flex;
   align-items: center;
