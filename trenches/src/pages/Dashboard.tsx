@@ -3,6 +3,7 @@ import { listFilters, listMatches, openMatchesStream } from "../api/client";
 
 import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
+import { TokenGridSkeleton } from "../components/TokenCardSkeleton";
 import { FeedFilterBar } from "../components/FeedFilterBar";
 import { DEFAULT_FEED_FILTER, isDefaultFilter, passesFeedFilter, type FeedFilter } from "../utils/feedFilter";
 import { usePreferences } from "../context/PreferencesContext";
@@ -192,8 +193,12 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
    */
   const refreshVisibleRef = useRef<() => void>(() => {});
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (opts: { showPending?: boolean } = {}) => {
     const id = ++requestIdRef.current;
+    // Only a move the reader made - first load, or turning a page - blanks the grid for
+    // skeletons. The 45-second background poll deliberately does not: replacing a readable page
+    // with placeholders every poll would be worse than showing nothing at all.
+    if (opts.showPending) setLoading(true);
     try {
       const result = await listMatches(pageRef.current, prefsRef.current.includeCuratedInFeed);
       if (id !== requestIdRef.current) return; // superseded by a later request
@@ -242,7 +247,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   // technically in the feed.
   useEffect(() => {
     // No interval here: each fetch arms the next one itself (see scheduleRefresh).
-    void refetch();
+    void refetch({ showPending: true });
     return () => {
       if (refreshTimerRef.current !== undefined) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = undefined;
@@ -408,6 +413,16 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
 
   const displayedMatches = filterActive ? filteredSlice : visibleMatches;
 
+  /**
+   * Whether the grid should show placeholders rather than cards.
+   *
+   * `loading` is only ever set for something the reader did - the first load, or turning a page.
+   * The 45-second background poll deliberately leaves it alone, because swapping a readable page
+   * for placeholders on every poll would be worse than showing nothing at all.
+   */
+  const showSkeleton =
+    loading || (filterActive && filteredLoading && displayedMatches.length === 0);
+
   return (
     <div className="dashboard">
       {hasFilters === false ? (
@@ -430,8 +445,6 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         </div>
       ) : (
         <>
-          {loading && matches.length === 0 && <p className="empty-state">Loading matches…</p>}
-
           {!loading && matches.length === 0 && (
             <p className="empty-state">
               Nothing here yet. Once a token in the trenches passes the screen and matches one of your
@@ -463,14 +476,25 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         </p>
       )}
 
-      <div className="token-grid">
-        {displayedMatches.map((match) => (
-          <TokenCard key={match.id} match={match} />
-        ))}
-      </div>
-
-      {filterActive && filteredLoading && displayedMatches.length === 0 && (
-        <p className="empty-state">Loading matches…</p>
+      {/* One decision covers every way the grid can be waiting - first load, a page turn, and a
+          filtered fetch with nothing to show yet. Written as separate conditions these could all
+          be true at once and render two placeholder grids stacked on top of each other. */}
+      {showSkeleton ? (
+        <>
+          {/* Announced once, for readers who cannot see the placeholders. */}
+          <p className="sr-only" role="status">
+            Loading matches…
+          </p>
+          <TokenGridSkeleton count={Math.max(1, displayedMatches.length || pageSize)} />
+        </>
+      ) : (
+        <div className="token-grid">
+          {displayedMatches.map((match, i) => (
+            // The stagger is capped: past the eighth card the delay stops reading as sequence and
+            // starts reading as lag, and a reader scrolling straight down should not overtake it.
+            <TokenCard key={match.id} match={match} index={Math.min(i, 8)} />
+          ))}
+        </div>
       )}
 
       {filterActive ? (

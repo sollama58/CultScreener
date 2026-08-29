@@ -627,6 +627,152 @@ select {
   color: var(--danger);
 }
 
+/* Visually hidden, still announced. Used for the feed's loading status: the skeletons carry that
+   message to anyone who can see them, and this carries it to anyone who cannot. Clipped rather
+   than display:none, which would take it out of the accessibility tree entirely. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Feed loading state -------------------------------------------------
+   Skeletons stand in for cards while a page is on its way, so the grid has its
+   real height from the first frame instead of growing under the reader. */
+
+.token-card--skeleton {
+  /* Not interactive and not readable - it must not take hover styling or a tab stop. */
+  pointer-events: none;
+}
+
+.skeleton {
+  display: inline-block;
+  border-radius: 6px;
+  /* The block is sized by the text inside it, which is then painted out. This is what keeps every
+     placeholder exactly as tall as the line it replaces without hardcoding a pixel height that
+     goes stale the next time a font size changes. */
+  color: transparent;
+  user-select: none;
+  /* A gradient wide enough to sweep across, moved rather than resized: animating
+     background-position stays on the compositor, animating width does not. */
+  background: linear-gradient(
+    90deg,
+    var(--surface-hover) 0%,
+    color-mix(in srgb, var(--surface-hover) 55%, var(--text-muted)) 50%,
+    var(--surface-hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+.skeleton--sm { font-size: 0.8em; }
+
+.skeleton--avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  flex: none;
+}
+
+.skeleton--score {
+  width: 42px;
+  height: 26px;
+  border-radius: 999px;
+  margin-left: auto;
+  flex: none;
+}
+
+.skeleton--chip {
+  width: 74px;
+  height: 28px;
+  border-radius: 999px;
+}
+
+.skeleton-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.skeleton-title .skeleton {
+  max-width: 100%;
+}
+
+/* Matches token-card__stats: same two columns and gap, so the fill-in doesn't reflow. */
+.skeleton--chip-sm {
+  width: 62px;
+  height: 24px;
+}
+
+/* Placeholder bars fill the width of the stat they stand in for. Height comes from the dt/dd's
+   own font, inherited from .token-card__stats - see the note on TokenCardSkeleton. */
+.token-card--skeleton dt .skeleton { width: 60%; }
+.token-card--skeleton dd .skeleton { width: 85%; }
+.token-card--skeleton .token-card__mint-text { max-width: 60%; }
+
+/* Real chips, painted out: same padding, same font, so the row wraps exactly as it will.
+   The colour has to be re-stated at this specificity - .token-card__link and
+   .token-card__mint-text set their own, which beats a lone .skeleton class and left the
+   placeholder showing "PumpFun / Terminal / FOMO / Axiom" as if the card had already loaded. */
+.token-card--skeleton .skeleton {
+  color: transparent;
+}
+
+.token-card--skeleton .token-card__link,
+.token-card--skeleton .tag {
+  pointer-events: none;
+  /* .tag carries the accent colour, which made the placeholder badge glow orange against an
+     otherwise neutral card. A skeleton should not have a highlight in it. */
+  border-color: transparent;
+  background-image: none;
+}
+
+/* ---- Card entrance ------------------------------------------------------
+   A page arrives as one response, so this is not a claim that cards loaded
+   separately - it is a short stagger that lets the grid resolve instead of
+   snapping into place all at once, which reads as faster even though it is
+   marginally slower.
+
+   The delay is capped in the component rather than here: past about the eighth
+   card the wait stops feeling like sequence and starts feeling like lag. */
+.token-card--entering {
+  animation: card-in 260ms ease-out both;
+  animation-delay: calc(var(--card-index, 0) * 45ms);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The blanket reduced-motion rule near the top of this file already collapses both animations to
+   an instant; this only stops the skeleton sweep leaving a half-swept gradient frozen on screen. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    background: var(--surface-hover);
+  }
+}
+
 .token-card__mint {
   display: flex;
   align-items: center;
