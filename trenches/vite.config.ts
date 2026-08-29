@@ -103,6 +103,14 @@ function vendorChunkFor(id: string): string | undefined {
   if (pkgName?.startsWith("@solana/wallet-adapter") || pkgName?.startsWith("@solana/wallet-standard")) {
     return "vendor-wallet";
   }
-  if (pkgName === "@solana/web3.js" || pkgName === "bs58" || pkgName === "buffer") return "vendor-solana";
+  // buffer gets its OWN chunk, and must not simply be left unbucketed. The Buffer polyfill runs
+  // at boot, before anything can touch a PublicKey (see polyfills.ts), while web3.js also depends
+  // on buffer - so with no rule for it Rollup parks the shared dependency inside vendor-solana and
+  // the entry then has to import that whole chunk. 81KB gzipped of chain code stayed pinned to the
+  // boot path no matter how carefully the wallet screens were made lazy, which the build manifest
+  // showed and reading the code did not. Naming it breaks that tie: both sides import a small
+  // shared chunk instead.
+  if (pkgName === "buffer" || pkgName === "base64-js" || pkgName === "ieee754") return "vendor-buffer";
+  if (pkgName === "@solana/web3.js" || pkgName === "bs58") return "vendor-solana";
   return undefined;
 }

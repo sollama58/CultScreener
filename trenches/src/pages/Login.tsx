@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAuth } from "../context/AuthContext";
+import { useWalletSignIn } from "../wallet/useWalletSignIn";
 import { useWalletBridge } from "../bridge/WalletBridgeContext";
 import { requestSiteWalletConnect } from "../bridge/holdexWallet";
 
@@ -8,7 +8,7 @@ function shortAddress(address: string): string {
 }
 
 export function Login() {
-  const { signIn, signingIn, error } = useAuth();
+  const { signIn, signingIn, error } = useWalletSignIn();
   const { state, siteAddress, refresh } = useWalletBridge();
   const autoTriggered = useRef(false);
   const [noHeaderButton, setNoHeaderButton] = useState(false);

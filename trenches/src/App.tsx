@@ -1,13 +1,9 @@
-import { useState } from "react";
-import { SolanaWalletProvider } from "./wallet/SolanaWalletProvider";
+import { Suspense, lazy, useState } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { PreferencesProvider } from "./context/PreferencesContext";
 import { FeedStatusProvider } from "./context/FeedStatusContext";
 import { SubscriptionProvider, useSubscription } from "./context/SubscriptionContext";
-import { WalletBridgeProvider } from "./bridge/WalletBridgeContext";
-import { Paywall } from "./pages/Paywall";
 import { Navbar, type Tab } from "./components/Navbar";
-import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { PumpTok } from "./pages/PumpTok";
 import { Curated } from "./pages/Curated";
@@ -15,6 +11,43 @@ import { Filters } from "./pages/Filters";
 import { Leaderboard } from "./pages/Leaderboard";
 import { Settings } from "./pages/Settings";
 import { Admin } from "./pages/Admin";
+
+/**
+ * The wallet adapter and web3.js, behind a dynamic import.
+ *
+ * They are 131KB gzipped - 57% of this app's boot JavaScript - and nothing on the reading path
+ * needs them: a returning reader arrives with a valid session cookie and wants their feed, not a
+ * signature. Only two screens do, and both are moments where the reader is already braced for a
+ * wallet popup, so fetching the chunk then is invisible.
+ *
+ * Loading it must never be a blank screen: the fallback keeps the shell in place while it
+ * arrives.
+ */
+const WalletGate = lazy(() => import("./wallet/WalletGate"));
+
+/**
+ * Lazy for the same reason, and it has to be: Paywall imports web3.js directly for the burn
+ * transaction, so a static import here would drag the whole wallet stack back onto the boot path
+ * however carefully the provider tree was arranged. Verified by watching the build manifest -
+ * moving the providers alone left vendor-solana and vendor-wallet still preloaded.
+ */
+const Paywall = lazy(() => import("./pages/Paywall").then((m) => ({ default: m.Paywall })));
+
+/**
+ * Lazy for the same reason as Paywall: Login reaches the wallet through useWalletSignIn and the
+ * bridge, so a static import here keeps the adapter on the boot path. It only ever renders for
+ * someone who has no session, which is exactly when fetching it is free - they are about to be
+ * asked for a signature anyway.
+ */
+const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
+
+function WithWallet({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<p className="empty-state">Loading wallet…</p>}>
+      <WalletGate>{children}</WalletGate>
+    </Suspense>
+  );
+}
 
 function AppShell() {
   const { user, loading } = useAuth();
@@ -30,7 +63,12 @@ function AppShell() {
   }
 
   if (!user) {
-    return <Login />;
+    // Signing in is the one read-path moment that genuinely needs a wallet.
+    return (
+      <WithWallet>
+        <Login />
+      </WithWallet>
+    );
   }
 
   // The three product tabs are what the subscription buys; Settings and Admin are not. That split
@@ -63,7 +101,12 @@ function AppShell() {
       <Navbar tab={tab} onTabChange={setTab} />
       <main className="app-content">
         {waiting && <p className="empty-state">Checking your access…</p>}
-        {blocked && <Paywall />}
+        {blocked && (
+          // The burn flow signs a transaction, so the paywall brings the wallet with it.
+          <WithWallet>
+            <Paywall />
+          </WithWallet>
+        )}
         {gated && accessKnown && status.hasAccess && (
           <>
             {tab === "dashboard" && <Dashboard onGoToFilters={() => setTab("filters")} />}
@@ -82,22 +125,16 @@ function AppShell() {
 
 export function App() {
   return (
-    <SolanaWalletProvider>
-      {/* Outside AuthProvider: the bridge has to keep running whether or not there's a session,
-          because a signed-in user with a disconnected wallet still needs it to sign a burn. */}
-      <WalletBridgeProvider>
-        <AuthProvider>
-          <PreferencesProvider>
-            {/* Above the shell: the Live Feed publishes its freshness here and the app bar renders
-                it, so the two are siblings rather than one reaching into the other. */}
-            <FeedStatusProvider>
-            <SubscriptionProvider>
-              <AppShell />
-            </SubscriptionProvider>
-            </FeedStatusProvider>
-          </PreferencesProvider>
-        </AuthProvider>
-      </WalletBridgeProvider>
-    </SolanaWalletProvider>
+    <AuthProvider>
+      <PreferencesProvider>
+        {/* Above the shell: the Live Feed publishes its freshness here and the app bar renders
+            it, so the two are siblings rather than one reaching into the other. */}
+        <FeedStatusProvider>
+          <SubscriptionProvider>
+            <AppShell />
+          </SubscriptionProvider>
+        </FeedStatusProvider>
+      </PreferencesProvider>
+    </AuthProvider>
   );
 }
