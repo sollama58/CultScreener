@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { acquireImageSlot } from "../utils/imageQueue";
 import { useNow } from "../utils/useNow";
@@ -8,7 +9,12 @@ import { TokenArtwork } from "./TokenArtwork";
 import { fmtUsd, fmtAge } from "../utils/format";
 import { changeSinceAlertPct } from "../utils/feedFilter";
 
-export function TokenCard({ match }: { match: Match }) {
+/**
+ * `index` is the card's position in the grid, used only to stagger its entrance - see
+ * .token-card--entering. Capped by the caller, not here, so a long page's last card is not
+ * noticeably late.
+ */
+export function TokenCard({ match, index }: { match: Match; index?: number }) {
   const { prefs } = usePreferences();
   const { token, snapshot, latestSnapshot } = match;
   const name = token.name ?? token.symbol ?? token.mintAddress.slice(0, 8);
@@ -35,7 +41,12 @@ export function TokenCard({ match }: { match: Match }) {
      * the quick links below impossible - nested anchors are not allowed and browsers unnest them.
      * The link moved onto the title instead, which is also the thing you would expect to click.
      */
-    <article className={`token-card${match.curated ? " token-card--curated" : ""}`}>
+    <article
+      className={`token-card${match.curated ? " token-card--curated" : ""}${
+        index === undefined ? "" : " token-card--entering"
+      }`}
+      style={index === undefined ? undefined : ({ "--card-index": index } as CSSProperties)}
+    >
       {match.curated && <CuratedStrip curated={match.curated} standalone={match.kind === "curated"} />}
       <div className="token-card__header">
         <a className="token-card__title" href={dexUrl} target="_blank" rel="noreferrer">
