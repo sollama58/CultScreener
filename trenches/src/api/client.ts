@@ -58,9 +58,26 @@ export class ApiError extends Error {
  * mid-session. Broadcasting either would make the app react to something that has not happened.
  * The real call that follows is not quiet and will broadcast properly if it needs to.
  */
+/**
+ * How long any one call may take before it is given up on.
+ *
+ * There was no bound at all, and `fetch` does not impose one: a connection that dies without
+ * closing - a keep-alive the far end forgot about overnight, a laptop that slept, a server
+ * restarted underneath an open tab - leaves the promise pending forever. Every caller here awaits
+ * in a try/finally, so a promise that never settles means the finally never runs: the Live Feed
+ * stayed on its loading placeholders AND never re-armed its poll, so the page was stuck until
+ * someone reloaded it by hand. Reproduced, and fixed by making sure every request ends somehow.
+ *
+ * Generous rather than tight. This is a stuck-forever guard, not a latency budget - the API
+ * answers a feed page in about ten milliseconds, and a slow mobile connection should be allowed
+ * to finish rather than be cut off and retried into the same congestion.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 async function request<T>(path: string, init: RequestInit & { quiet?: boolean } = {}): Promise<T> {
   const { quiet, ...rest } = init;
   const res = await fetch(`${BASE_URL}${path}`, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...rest,
     credentials: "include",
     headers: {

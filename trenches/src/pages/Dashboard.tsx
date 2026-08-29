@@ -30,6 +30,9 @@ import { useNow } from "../utils/useNow";
  */
 const POLL_INTERVAL_MS = 45_000;
 
+/** Minimum gap between two focus-triggered catch-ups - see the visibility effect. */
+const VISIBILITY_REFETCH_GRACE_MS = 10_000;
+
 /**
  * The shortest gap between two alert chimes.
  *
@@ -259,6 +262,39 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   // Each fetch only ever asks for the 12 matches on the current page, and the API only stamps
   // those 12 tokens' lastViewedAt - nothing off-page gets refreshed just because it's still
   // technically in the feed.
+  /** Guards the visibility catch-up below against a burst of alt-tabs. */
+  const lastVisibleFetchRef = useRef(0);
+
+  /**
+   * Catch up the moment the tab comes back to the foreground.
+   *
+   * Two things make a backgrounded tab untrustworthy. Browsers throttle timers in hidden tabs
+   * heavily - a 45-second poll can stretch to minutes or stop altogether - so the feed a reader
+   * comes back to may be hours stale even though nothing failed. And a laptop that slept wakes
+   * with dead sockets, where the in-flight request is now guaranteed to time out rather than
+   * answer.
+   *
+   * Asking again on the way back in costs one request and is the behaviour a reader expects:
+   * looking at the tab is a statement that they want to see what is there now.
+   */
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      // Both events fire for a single alt-tab, and someone switching windows repeatedly would
+      // otherwise put a request on the wire each time. A few seconds' grace makes this a catch-up
+      // for a tab that has actually been away, not a refresh button bound to window focus.
+      if (Date.now() - lastVisibleFetchRef.current < VISIBILITY_REFETCH_GRACE_MS) return;
+      lastVisibleFetchRef.current = Date.now();
+      void refetchRef.current?.();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, []);
+
   useEffect(() => {
     // No interval here: each fetch arms the next one itself (see scheduleRefresh).
     void refetch({ showPending: true });
