@@ -32,11 +32,14 @@ export function TokenCardSkeleton() {
         <span className="skeleton skeleton--score" />
       </div>
 
-      {/* Empty, but present: .token-card__tags carries a 12px bottom margin whether or not it has
-          any badges in it, and leaving it out made every skeleton exactly that much too short.
-          Deliberately no placeholder badge - a card with no tags is the shorter case, and a
-          skeleton that undershoots lets content settle rather than snapping upward. */}
-      <div className="token-card__tags" />
+      {/* Present, with one badge. The row carries a 12px bottom margin whether or not it holds
+          anything, so omitting it made every skeleton that much too short - and nearly every real
+          card does have a badge here, because `graduated` is known for almost every token. One is
+          the common case: cards with none are 22px shorter, cards with narrative tags on top are
+          taller, and no fixed placeholder can be right for both. */}
+      <div className="token-card__tags">
+        <span className="tag skeleton">Graduated</span>
+      </div>
 
       {/* Mirrors the real grid: two hero stats, four ordinary, one full-width. */}
       <dl className="token-card__stats">

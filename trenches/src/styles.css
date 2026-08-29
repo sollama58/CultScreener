@@ -678,11 +678,6 @@ select {
 }
 
 .skeleton--sm { font-size: 0.8em; }
-.skeleton--w40 { width: 40%; }
-.skeleton--w50 { width: 50%; }
-.skeleton--w60 { width: 60%; }
-.skeleton--w70 { width: 70%; }
-.skeleton--w80 { width: 80%; }
 
 .skeleton--avatar {
   width: 38px;
@@ -737,9 +732,13 @@ select {
   color: transparent;
 }
 
-.token-card--skeleton .token-card__link {
+.token-card--skeleton .token-card__link,
+.token-card--skeleton .tag {
   pointer-events: none;
+  /* .tag carries the accent colour, which made the placeholder badge glow orange against an
+     otherwise neutral card. A skeleton should not have a highlight in it. */
   border-color: transparent;
+  background-image: none;
 }
 
 /* ---- Card entrance ------------------------------------------------------

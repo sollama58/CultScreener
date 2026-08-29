@@ -413,6 +413,16 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
 
   const displayedMatches = filterActive ? filteredSlice : visibleMatches;
 
+  /**
+   * Whether the grid should show placeholders rather than cards.
+   *
+   * `loading` is only ever set for something the reader did - the first load, or turning a page.
+   * The 45-second background poll deliberately leaves it alone, because swapping a readable page
+   * for placeholders on every poll would be worse than showing nothing at all.
+   */
+  const showSkeleton =
+    loading || (filterActive && filteredLoading && displayedMatches.length === 0);
+
   return (
     <div className="dashboard">
       {hasFilters === false ? (
@@ -435,16 +445,6 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         </div>
       ) : (
         <>
-          {loading && matches.length === 0 && (
-            <>
-              {/* Announced once, for readers who cannot see the placeholders. */}
-              <p className="sr-only" role="status">
-                Loading matches…
-              </p>
-              <TokenGridSkeleton count={pageSize} />
-            </>
-          )}
-
           {!loading && matches.length === 0 && (
             <p className="empty-state">
               Nothing here yet. Once a token in the trenches passes the screen and matches one of your
@@ -476,8 +476,17 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         </p>
       )}
 
-      {loading && matches.length > 0 ? (
-        <TokenGridSkeleton count={Math.max(1, displayedMatches.length || pageSize)} />
+      {/* One decision covers every way the grid can be waiting - first load, a page turn, and a
+          filtered fetch with nothing to show yet. Written as separate conditions these could all
+          be true at once and render two placeholder grids stacked on top of each other. */}
+      {showSkeleton ? (
+        <>
+          {/* Announced once, for readers who cannot see the placeholders. */}
+          <p className="sr-only" role="status">
+            Loading matches…
+          </p>
+          <TokenGridSkeleton count={Math.max(1, displayedMatches.length || pageSize)} />
+        </>
       ) : (
         <div className="token-grid">
           {displayedMatches.map((match, i) => (
@@ -486,15 +495,6 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
             <TokenCard key={match.id} match={match} index={Math.min(i, 8)} />
           ))}
         </div>
-      )}
-
-      {filterActive && filteredLoading && displayedMatches.length === 0 && (
-        <>
-          <p className="sr-only" role="status">
-            Loading matches…
-          </p>
-          <TokenGridSkeleton count={pageSize} />
-        </>
       )}
 
       {filterActive ? (
