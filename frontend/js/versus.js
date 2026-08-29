@@ -250,10 +250,10 @@ const versusPage = {
       const safeName = utils.escapeHtml(token.name || token.symbol || '');
       const safeAddr = utils.escapeHtml(token.mintAddress || token.address || '');
       return `
-        <div class="podium-card ${displayClass[i]}" onclick="window.location.href='token.html?mint=${safeAddr}'" style="cursor:pointer;">
+        <div class="podium-card ${displayClass[i]}" data-navigate="${safeAddr}" style="cursor:pointer;">
           <div class="podium-medal">${displayMedals[i]}</div>
           <img class="podium-logo" src="${logoSrc}" alt="${utils.escapeHtml(token.symbol || '')}"
-               onerror="this.onerror=null;this.src='${utils.escapeHtml(defaultLogo)}'">
+               data-fallback="${utils.escapeHtml(defaultLogo)}">
           <div class="podium-name">${safeName}</div>
           <div class="podium-vs ${token._vsSol >= 0 ? 'vs-pos' : 'vs-neg'}">
             ${sign}${token._vsSol.toFixed(2)}% vs SOL
@@ -264,6 +264,9 @@ const versusPage = {
         </div>
       `;
     }).join('');
+
+    this.bindNavigation(podium);
+    utils.bindImageFallbacks(podium);
   },
 
   render() {
@@ -335,7 +338,7 @@ const versusPage = {
           <td class="cell-token cell-token-clickable" data-navigate="${safeAddress}">
             <div class="token-cell">
               <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy"
-                   onerror="this.onerror=null;this.src='${utils.escapeHtml(defaultLogo)}'">
+                   data-fallback="${utils.escapeHtml(defaultLogo)}">
               <div class="token-info">
                 <span class="token-name">${safeName}</span>
                 <span class="token-symbol-cell">${safeSymbol}</span>
@@ -352,7 +355,15 @@ const versusPage = {
       `;
     }).join('');
 
-    tbody.querySelectorAll('[data-navigate]').forEach(el => {
+    this.bindNavigation(tbody);
+    utils.bindImageFallbacks(tbody);
+  },
+
+  // Click-to-open for anything carrying data-navigate. The podium cards used to do this with an
+  // inline onclick="window.location.href=...", which the site's CSP refuses for want of
+  // 'unsafe-inline' in script-src - so the cards looked clickable and did nothing.
+  bindNavigation(root) {
+    root.querySelectorAll('[data-navigate]').forEach(el => {
       el.addEventListener('click', () => {
         const mint = el.dataset.navigate;
         if (mint) window.location.href = `token.html?mint=${encodeURIComponent(mint)}`;

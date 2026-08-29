@@ -108,9 +108,15 @@ services:
     headers:
       # Security headers. These sat in frontend/_headers, which Render ignores, so production
       # served none of them - a wallet-connected site with no CSP and no clickjacking defence.
+      #
+      # Note the font hosts appear in connect-src as well as style-src/font-src. The service
+      # worker caches Google Fonts for offline use, and a fetch() from a worker is checked
+      # against connect-src whatever the resource's type - so with style-src alone the stylesheet
+      # loaded fine normally and was refused the moment the worker intercepted it, which then
+      # failed the request outright and left the page on its fallback fonts.
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://cultscreener-api.onrender.com https://api.holdex.live https://solana-rpc.publicnode.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'"
+        value: "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://cultscreener-api.onrender.com https://api.holdex.live https://solana-rpc.publicnode.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'"
       - path: /*
         name: X-Content-Type-Options
         value: "nosniff"

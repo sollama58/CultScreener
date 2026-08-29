@@ -70,7 +70,7 @@ const communityPage = {
             <td class="cell-rank">${i + 1}</td>
             <td class="cell-token">
               <div class="token-cell">
-                <img class="token-logo" src="${logo}" alt="${symbol}" loading="lazy" data-fallback="${defaultLogo}" onerror="this.onerror=null;this.src=this.dataset.fallback">
+                <img class="token-logo" src="${logo}" alt="${symbol}" loading="lazy" data-fallback="${defaultLogo}">
                 <div class="token-info">
                   <span class="token-name">${name}</span>
                   <span class="token-symbol-cell">${symbol}</span>
@@ -79,11 +79,12 @@ const communityPage = {
             </td>
             <td class="cell-price mono-num">${price}</td>
             <td class="cell-mcap mono-num">${mcap}</td>
-            <td><button class="action-btn danger" data-remove-wl="${utils.escapeHtml(mint)}" onclick="event.stopPropagation();">Remove</button></td>
+            <td><button class="action-btn danger" data-remove-wl="${utils.escapeHtml(mint)}">Remove</button></td>
           </tr>`;
       }).join('');
 
       this.bindRowClicks(tbody);
+      utils.bindImageFallbacks(tbody);
 
       tbody.querySelectorAll('[data-remove-wl]').forEach(btn => {
         btn.addEventListener('click', async (e) => {
@@ -133,7 +134,7 @@ const communityPage = {
             <td class="cell-rank">${i + 1}</td>
             <td class="cell-token">
               <div class="token-cell">
-                <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy" data-fallback="${defaultLogo}" onerror="this.onerror=null;this.src=this.dataset.fallback">
+                <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy" data-fallback="${defaultLogo}">
                 <div class="token-info">
                   <span class="token-name">${safeName}</span>
                   <span class="token-symbol-cell">${safeSymbol}</span>
@@ -147,6 +148,7 @@ const communityPage = {
       }).join('');
 
       this.bindRowClicks(tbody);
+      utils.bindImageFallbacks(tbody);
     } catch (err) {
       console.error('Watchlist leaderboard error:', err.message);
       tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state">Failed to load leaderboard</div></td></tr>';

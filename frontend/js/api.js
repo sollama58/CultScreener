@@ -925,6 +925,29 @@ const utils = {
     return `${API_BASE_URL}/api/image-proxy?url=${encodeURIComponent(url)}`;
   },
 
+  // Attach the logo fallback that used to be written as an onerror="" attribute on each <img>.
+  //
+  // The site's CSP has no 'unsafe-inline' in script-src, so the browser refused every one of
+  // those attributes outright - a logo that failed to load kept the broken-image icon instead of
+  // swapping to the default, and each render logged a violation. Markup now carries the fallback
+  // in data-fallback and calls this once the HTML is in the document.
+  //
+  // Pass the container that was just populated so only its images are walked. The swap happens
+  // at most once per image, so a fallback that 404s in turn cannot loop the way
+  // onerror="this.src=..." could without its own guard.
+  bindImageFallbacks(root) {
+    const scope = root || document;
+    scope.querySelectorAll('img[data-fallback]').forEach((img) => {
+      const fallback = img.dataset.fallback;
+      img.removeAttribute('data-fallback');
+      if (!fallback) return;
+      img.addEventListener('error', () => { img.src = fallback; }, { once: true });
+      // An image that already finished and decoded nothing failed before this ran, and its error
+      // event is long gone - the listener above would never hear it.
+      if (img.complete && img.naturalWidth === 0) img.src = fallback;
+    });
+  },
+
   // Create element with attributes
   createElement(tag, attrs = {}, children = []) {
     const el = document.createElement(tag);

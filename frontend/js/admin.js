@@ -1115,11 +1115,25 @@ const admin = {
           <td>${key.request_count || 0}</td>
           <td><span class="badge ${key.is_active ? 'badge-green' : 'badge-red'}">${key.is_active ? 'Active' : 'Revoked'}</span></td>
           <td>
-            ${key.is_active ? `<button class="action-btn danger" onclick="admin.revokeApiKey(${key.id}, '${this.esc(key.owner_wallet.slice(0, 8))}...')">Revoke</button>` : `<button class="action-btn success" onclick="admin.restoreApiKey(${key.id})">Restore</button>`}
-            <button class="action-btn danger" onclick="admin.deleteApiKey(${key.id}, '${this.esc(key.owner_wallet.slice(0, 8))}...')">Delete</button>
+            ${key.is_active
+              ? `<button class="action-btn danger" data-revoke-key="${key.id}" data-key-owner="${this.esc(key.owner_wallet.slice(0, 8))}...">Revoke</button>`
+              : `<button class="action-btn success" data-restore-key="${key.id}">Restore</button>`}
+            <button class="action-btn danger" data-delete-key="${key.id}" data-key-owner="${this.esc(key.owner_wallet.slice(0, 8))}...">Delete</button>
           </td>
         </tr>
       `).join('');
+
+      // Bound here rather than through onclick="" attributes, which this site's CSP refuses for
+      // want of 'unsafe-inline' in script-src - Revoke, Restore and Delete were inert.
+      tbody.querySelectorAll('[data-revoke-key]').forEach(btn => {
+        btn.addEventListener('click', () => this.revokeApiKey(btn.dataset.revokeKey, btn.dataset.keyOwner));
+      });
+      tbody.querySelectorAll('[data-restore-key]').forEach(btn => {
+        btn.addEventListener('click', () => this.restoreApiKey(btn.dataset.restoreKey));
+      });
+      tbody.querySelectorAll('[data-delete-key]').forEach(btn => {
+        btn.addEventListener('click', () => this.deleteApiKey(btn.dataset.deleteKey, btn.dataset.keyOwner));
+      });
     } catch (err) {
       tbody.innerHTML = `<tr><td colspan="8" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
     }

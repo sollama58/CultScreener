@@ -50,6 +50,7 @@
   }
   function showResults(html) {
     resultsEl.innerHTML = html;
+    if (typeof utils !== 'undefined') utils.bindImageFallbacks(resultsEl);
     resultsEl.classList.add('visible');
   }
   function hideResults() {
@@ -67,6 +68,7 @@
 
   function showPreview(html) {
     previewEl.innerHTML = html;
+    if (typeof utils !== 'undefined') utils.bindImageFallbacks(previewEl);
     previewEl.classList.add('visible');
   }
   function hidePreview() {
@@ -106,7 +108,7 @@
       previewData = { name, symbol, logo, pairCreatedAt, price, priceChange24h };
 
       showPreview(`<div class="cultify-preview-card">
-        <img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'">
+        <img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" data-fallback="${escapeHtml(defaultLogo)}">
         <div class="cultify-preview-info">
           <div class="cultify-preview-name">${escapeHtml(name)}</div>
           <div class="cultify-preview-ticker">$${escapeHtml(symbol)}</div>
@@ -189,7 +191,7 @@
         const timeStr = hoursLeft > 0 ? `${hoursLeft}h ${minsLeft}m left` : `${minsLeft}m left`;
 
         html += `<div class="cultify-my-token" data-mint="${escapeHtml(t.mint)}">
-          <img class="cultify-my-token-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'">
+          <img class="cultify-my-token-logo" src="${escapeHtml(logo)}" alt="" data-fallback="${escapeHtml(defaultLogo)}">
           <div class="cultify-my-token-info">
             <div class="cultify-my-token-name">${name} ${symbol ? '<span style="color:var(--text-dim);font-weight:500;">' + symbol + '</span>' : ''}</div>
             <div class="cultify-my-token-addr">${short}</div>
@@ -200,6 +202,7 @@
       html += '</div>';
 
       myTokensEl.innerHTML = html;
+      if (typeof utils !== 'undefined') utils.bindImageFallbacks(myTokensEl);
       myTokensEl.classList.add('visible');
 
       // Click to analyze
@@ -653,7 +656,7 @@
       : null;
 
     let html = '<div class="cultify-results-header">';
-    html += `<img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" onerror="this.src='${defaultLogo}'" style="width:32px;height:32px;">`;
+    html += `<img class="cultify-preview-logo" src="${escapeHtml(logo)}" alt="" data-fallback="${escapeHtml(defaultLogo)}" style="width:32px;height:32px;">`;
     html += `<span class="cultify-token-name">${escapeHtml(name)}</span>`;
     if (symbol) html += `<span class="cultify-preview-ticker">$${escapeHtml(symbol)}</span>`;
     html += `<span class="cultify-token-address">${escapeHtml(shortMint)}</span>`;
