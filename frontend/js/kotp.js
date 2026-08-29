@@ -20,7 +20,12 @@
 
   function render(token) {
     if (!token) { wrap.innerHTML = ''; return; }
-    var logo = token.logoUri || '';
+    // Through the image proxy, like every other logo on the site. Hotlinked straight from the
+    // source this 403s on ipfs.io and other hotlink-blocking gateways, and cross-origin
+    // resource policies block what does come back - the proxy fetches and re-serves it from our
+    // own domain once, so only the first request after the cache expires touches the origin.
+    var raw = token.logoUri || '';
+    var logo = (typeof utils !== 'undefined' && utils.proxyImageUrl) ? utils.proxyImageUrl(raw) : raw;
     var chg  = fmtChange(token.priceChange24h);
     var mint = token.mintAddress || '';
     var name = esc(token.name || token.symbol || '');
@@ -31,7 +36,7 @@
     el.innerHTML  =
       '<span class="kotp-badge">💊 King of the Pill</span>' +
       '<span class="kotp-divider"></span>' +
-      (logo ? '<img class="kotp-logo" src="' + esc(logo) + '" alt="" onerror="this.style.display=\'none\'">' : '') +
+      (logo ? '<img class="kotp-logo" src="' + esc(logo) + '" alt="">' : '') +
       '<span class="kotp-info">' +
         '<span class="kotp-name">' + name + '</span>' +
         (sym ? '<span class="kotp-symbol">$' + sym + '</span>' : '') +
@@ -43,6 +48,17 @@
       '<span class="kotp-tooltip-box">King of the Pill is chosen by the most-raided community token, including their HolDEX link. Winner determined by ASDF CultRaid Tech.</span>';
     wrap.innerHTML = '';
     wrap.appendChild(el);
+
+    // Attached rather than written as an onerror="" attribute. The page's CSP has no
+    // 'unsafe-inline' or 'unsafe-hashes' in script-src, so an inline event handler is refused
+    // outright - the widget logged a violation on every render and, when a logo really did fail,
+    // kept the browser's broken-image icon instead of hiding it.
+    var logoEl = el.querySelector('.kotp-logo');
+    if (logoEl) {
+      logoEl.addEventListener('error', function () {
+        this.style.display = 'none';
+      });
+    }
 
     var box  = el.querySelector('.kotp-tooltip-box');
     var icon = el.querySelector('.kotp-tooltip-icon');

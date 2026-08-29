@@ -135,7 +135,7 @@ const performancePage = {
               class="perf-logo"
               src="${logo}"
               alt="${symbol}"
-              onerror="this.src='${fallback}'"
+              data-fallback="${fallback}"
             />
             <div class="perf-token-info">
               <div class="table-name-line">
@@ -150,6 +150,8 @@ const performancePage = {
         </tr>
       `;
     }).join('');
+
+    utils.bindImageFallbacks(tbody);
 
     // Row click â†' token page
     tbody.querySelectorAll('.perf-row').forEach(row => {
