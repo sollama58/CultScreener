@@ -83,9 +83,13 @@ export interface TokenSnapshot {
   riskFlags: string[];
   /** % of the top-10 holders whose wallet was funded <24h ago. Null if there was no holder list to check. */
   freshTop10WalletPct: number | null;
-  /** % of the top-10 holders holding under $25 of any token other than SOL/USDC/USDT - wallets
-   *  that look funded purely to hold this one launch. Null if the holders could not be priced. */
+  /** % of the top-10 holders holding under $25 of any token BESIDES this launch - wallets that
+   *  look funded purely to hold it. Null if the holders could not be priced. */
   emptyTop10WalletPct: number | null;
+  /** How many holders the two percentages above were computed over. The "top 10" list excludes
+   *  pool and LP addresses, so it is often fewer than ten - which is why a card showing a count
+   *  needs this rather than assuming the denominator. Null on older snapshots. */
+  top10WalletsChecked: number | null;
   /** Was the mint launched in Pump.fun's Mayhem Mode? An automatic, non-optional rejection: their
    *  own AI agents mint an extra 1B supply and trade it for the token's first 24h, which
    *  manufactures the volume and holder growth this app scores on. Null means the check never ran
