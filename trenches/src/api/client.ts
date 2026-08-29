@@ -74,17 +74,48 @@ export class ApiError extends Error {
  */
 const REQUEST_TIMEOUT_MS = 20_000;
 
+/**
+ * A response public/boot-prefetch.js already started fetching, if this is that request.
+ *
+ * That script runs before the bundle, so by the time anything here calls `request` the answer may
+ * already be in flight or arrived. Taking it saves the round trip entirely.
+ *
+ * Consumed once and expired quickly, for two different reasons. Once, because a Response body can
+ * only be read a single time - handing the same one to a later caller would throw. Quickly,
+ * because the point is to serve the app's first paint: a refetch minutes later wants fresh prices,
+ * not whatever the page loaded with. Both failure modes are the same and harmless - no warmed
+ * response, so the normal fetch below runs.
+ */
+const WARM_MAX_AGE_MS = 30_000;
+
+type WarmStore = { at: number; store: Record<string, Promise<Response>> };
+
+function takeWarmed(path: string, init: RequestInit): Promise<Response> | null {
+  const warm = (window as unknown as { __trenchesWarm?: WarmStore }).__trenchesWarm;
+  if (!warm) return null;
+  // Only plain GETs were warmed; anything with a method or body is a different request.
+  if ((init.method && init.method !== "GET") || init.body) return null;
+  if (Date.now() - warm.at > WARM_MAX_AGE_MS) return null;
+  const hit = warm.store[path];
+  if (!hit) return null;
+  delete warm.store[path];
+  return hit;
+}
+
 async function request<T>(path: string, init: RequestInit & { quiet?: boolean } = {}): Promise<T> {
   const { quiet, ...rest } = init;
-  const res = await fetch(`${BASE_URL}${path}`, {
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    ...rest,
-    credentials: "include",
-    headers: {
-      ...(init.body ? { "content-type": "application/json" } : {}),
-      ...init.headers,
-    },
-  });
+  const warmed = takeWarmed(path, init);
+  const res = warmed
+    ? await warmed
+    : await fetch(`${BASE_URL}${path}`, {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        ...rest,
+        credentials: "include",
+        headers: {
+          ...(init.body ? { "content-type": "application/json" } : {}),
+          ...init.headers,
+        },
+      });
 
   if (!res.ok) {
     // The session is httpOnly and server-owned, so the only way this app learns it has expired
