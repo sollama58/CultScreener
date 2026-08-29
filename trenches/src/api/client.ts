@@ -49,9 +49,19 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/**
+ * `quiet` suppresses the global 401/402 broadcasts for this one call.
+ *
+ * Only the boot prefetch uses it. Those requests are fired speculatively before the app knows
+ * whether anyone is signed in, so a 401 from them is an expected answer rather than a session
+ * that just expired - and a 402 is the paywall doing its job, not a subscription lapsing
+ * mid-session. Broadcasting either would make the app react to something that has not happened.
+ * The real call that follows is not quiet and will broadcast properly if it needs to.
+ */
+async function request<T>(path: string, init: RequestInit & { quiet?: boolean } = {}): Promise<T> {
+  const { quiet, ...rest } = init;
   const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
+    ...rest,
     credentials: "include",
     headers: {
       ...(init.body ? { "content-type": "application/json" } : {}),
@@ -65,14 +75,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // caller just swallows the failure into its own catch: the feed silently stops updating and
     // the user sits looking at a frozen page that still says they're signed in. Broadcasting it
     // once here lets AuthContext drop back to the sign-in screen from anywhere.
-    if (res.status === 401) {
+    if (res.status === 401 && !quiet) {
       window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
     }
     // Same reasoning as the 401 above, one step along: the subscription can lapse mid-session, or
     // be revoked, and the only way this app finds out is a 402 on some later call. Broadcasting it
     // once here means the feed drops to the paywall from wherever it happened, rather than each
     // caller swallowing it and leaving a page that quietly stops updating.
-    if (res.status === 402) {
+    if (res.status === 402 && !quiet) {
       window.dispatchEvent(new CustomEvent(PAYMENT_REQUIRED_EVENT));
     }
     let message = `Request failed with status ${res.status}`;
@@ -116,8 +126,8 @@ export function verifySignMessage(walletAddress: string, nonce: string, signatur
   });
 }
 
-export function getMe() {
-  return request<User>("/auth/me");
+export function getMe(opts: { quiet?: boolean } = {}) {
+  return request<User>("/auth/me", opts);
 }
 
 export function logout() {
@@ -130,8 +140,8 @@ export function getConfig() {
 }
 
 // ── Filters ──────────────────────────────────────────────────────────────
-export function listFilters() {
-  return request<UserFilter[]>("/filters");
+export function listFilters(opts: { quiet?: boolean } = {}) {
+  return request<UserFilter[]>("/filters", opts);
 }
 
 export function createFilter(input: Partial<FilterInput>) {
@@ -152,10 +162,10 @@ export function deleteFilter(id: string) {
  * matches - opt-in, and sent as a query param rather than filtered here, so pagination counts
  * stay exact rather than a page of twelve arriving with some of it dropped client-side.
  */
-export function listMatches(page = 1, includeCurated = false) {
+export function listMatches(page = 1, includeCurated = false, opts: { quiet?: boolean } = {}) {
   const query = new URLSearchParams({ page: String(page) });
   if (includeCurated) query.set("includeCurated", "true");
-  return request<MatchesPage>(`/matches?${query.toString()}`);
+  return request<MatchesPage>(`/matches?${query.toString()}`, opts);
 }
 
 // ── Tokens ───────────────────────────────────────────────────────────────
@@ -283,8 +293,8 @@ export function openCuratedStream(): EventSource | null {
 }
 
 // ── Subscription ─────────────────────────────────────────────────────────
-export function getSubscription() {
-  return request<SubscriptionStatus>("/subscription");
+export function getSubscription(opts: { quiet?: boolean } = {}) {
+  return request<SubscriptionStatus>("/subscription", opts);
 }
 
 /**

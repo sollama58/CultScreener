@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import bs58 from "bs58";
+import { forgetSignedIn, rememberSignedIn, takePrefetched } from "../api/bootPrefetch";
 import {
   getMe,
   getNonce,
@@ -31,17 +32,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getMe()
-      .then(setUser)
-      .catch(() => setUser(null))
-      .finally(() => setLoading(false));
+    // The boot prefetch already asked, in parallel with everything else this load needs - see
+    // bootPrefetch.ts. Null means it failed or was too old to trust, so ask properly.
+    void (async () => {
+      const prefetched = await takePrefetched("me");
+      if (prefetched) {
+        setUser(prefetched);
+        rememberSignedIn();
+        setLoading(false);
+        return;
+      }
+      try {
+        setUser(await getMe());
+        rememberSignedIn();
+      } catch {
+        setUser(null);
+        forgetSignedIn();
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
   // Any 401 anywhere means the session is gone — drop straight back to the sign-in screen
   // rather than leaving the user on a page that looks signed in but can no longer load
   // anything. The bridge will re-adopt their wallet, so signing back in is one signature.
   useEffect(() => {
-    const onUnauthorized = () => setUser(null);
+    const onUnauthorized = () => {
+      setUser(null);
+      // Stop prefetching the gated endpoints on the next load - the session is gone.
+      forgetSignedIn();
+    };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
@@ -81,6 +102,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signedInUser = await verifySignMessage(wallet, nonce, bs58.encode(signatureBytes));
       }
       setUser(signedInUser);
+      // From here on this device may prefetch the gated endpoints on load - see bootPrefetch.
+      rememberSignedIn();
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -108,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     await apiLogout().catch(() => undefined);
     setUser(null);
+    forgetSignedIn();
   }, []);
 
   return (

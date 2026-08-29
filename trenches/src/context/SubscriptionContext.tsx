@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { getSubscription, PAYMENT_REQUIRED_EVENT } from "../api/client";
+import { takePrefetched } from "../api/bootPrefetch";
 import type { SubscriptionStatus } from "../api/types";
 import { useAuth } from "./AuthContext";
 
@@ -34,7 +35,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      setStatus(await getSubscription());
+      // First ask of the session can come from the boot prefetch, which asked in parallel with
+      // /auth/me rather than waiting behind it. Later refreshes always go to the server.
+      setStatus((await takePrefetched("subscription")) ?? (await getSubscription()));
     } catch {
       // Leave the previous answer in place rather than guessing. Guessing "no access" on a network
       // blip would throw a paying user onto the paywall; guessing "access" would show them a feed
