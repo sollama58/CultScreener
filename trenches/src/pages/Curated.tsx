@@ -17,17 +17,35 @@ const STATS_INTERVAL_MS = 60_000;
 const MIN_GRADED_FOR_HIT_RATE = 10;
 
 /**
+ * The last page-1 answer this session rendered, kept across unmounts - the same treatment the
+ * Live Feed gives its feed, for the same reason: App.tsx renders one tab at a time, so every
+ * return to this tab used to remount it into skeletons and a full round trip to re-show the
+ * cards that were on screen moments ago. A seeded mount paints those immediately and refreshes
+ * quietly behind them. Trusted for a few poll intervals, then it is a cold start again.
+ */
+let lastCuratedPage: { alerts: Match[]; totalCount: number; pageSize: number; at: number } | null = null;
+
+const LAST_PAGE_MAX_AGE_MS = 3 * POLL_INTERVAL_MS;
+
+function takeLastCuratedPage() {
+  if (!lastCuratedPage) return null;
+  if (Date.now() - lastCuratedPage.at > LAST_PAGE_MAX_AGE_MS) return null;
+  return lastCuratedPage;
+}
+
+/**
  * The Curated Alerts tab: one global feed of the pipeline's highest-conviction calls, rendered
  * with the same card as the Live Feed (curated alerts also appear there, tinted) plus a compact
  * scoreboard for how the self-learning curator behind it is doing.
  */
 export function Curated() {
-  const [alerts, setAlerts] = useState<Match[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const [seed] = useState(() => takeLastCuratedPage());
+  const [alerts, setAlerts] = useState<Match[]>(seed?.alerts ?? []);
+  const [totalCount, setTotalCount] = useState(seed?.totalCount ?? 0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(12);
+  const [pageSize, setPageSize] = useState(seed?.pageSize ?? 12);
   const [stats, setStats] = useState<CuratedStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(seed === null);
   const [error, setError] = useState<string | null>(null);
   const [streamLive, setStreamLive] = useState(false);
 
@@ -48,6 +66,10 @@ export function Curated() {
       setTotalCount(result.totalCount);
       setPageSize(result.pageSize);
       setError(null);
+      // What the next mount of this tab paints first. Page 2+ is not kept - a remount lands on 1.
+      if (targetPage === 1) {
+        lastCuratedPage = { alerts: result.alerts, totalCount: result.totalCount, pageSize: result.pageSize, at: Date.now() };
+      }
     } catch {
       if (seq === requestSeq.current) setError("Failed to load curated alerts.");
     } finally {
