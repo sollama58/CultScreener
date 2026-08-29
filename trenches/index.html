@@ -18,7 +18,26 @@
       under .trenches-app at build time (see vite.config.ts) so the two can't fight.
       Absolute paths: this document is served from /trenches/, the site's assets are at the root.
     -->
-    <link rel="stylesheet" href="/css/styles.css?v=15" />
+    <link rel="stylesheet" href="/css/styles.css?v=16" />
+
+    <!--
+      Open the connection to the API before anything needs it.
+      This app talks to a different origin than the one serving this document, so the first request
+      to it pays a DNS lookup, a TCP connect and a TLS handshake before a byte of feed data moves -
+      measured at 687ms to first byte on a fresh connection against 140ms on an established one.
+      Without a hint that work starts only once the bundle has downloaded and run. With one it
+      overlaps the bundle download instead.
+    -->
+    <link rel="preconnect" href="%VITE_API_URL%" crossorigin />
+    <link rel="dns-prefetch" href="%VITE_API_URL%" />
+
+    <!--
+      And start the requests themselves. A classic script runs the moment it lands, so this fires
+      the same four calls bootPrefetch would, a round trip and a bundle-evaluation earlier. Kept
+      out of line because script-src has no 'unsafe-inline'; kept tiny so it never delays the
+      module chunks the preload scanner has already found below.
+    -->
+    <script src="/trenches/boot-prefetch.js" data-api="%VITE_API_URL%"></script>
   </head>
   <body>
     <!--
@@ -87,9 +106,9 @@
     <div id="root" class="trenches-app"></div>
 
     <script src="/js/config.js?v=3"></script>
-    <script src="/js/api.js?v=7"></script>
+    <script src="/js/api.js?v=9"></script>
     <script src="/js/deviceLink.js?v=2"></script>
-    <script src="/js/wallet.js?v=4"></script>
+    <script src="/js/wallet.js?v=5"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
