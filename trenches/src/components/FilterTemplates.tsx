@@ -60,6 +60,30 @@ const CLEARED: TemplateSettings = {
 
 export const FILTER_TEMPLATES: FilterTemplate[] = [
   {
+    id: "default",
+    name: "Default",
+    description:
+      "What every account starts with. A middle setting - loose enough that the feed moves, strict enough that what arrives is worth opening. Pick this to get back to the filter you began with.",
+    summary: [
+      "Max fresh top-10 wallets 40%",
+      "Max empty top-10 wallets 60%",
+      "Min age 30 seconds",
+      "Max RugCheck score 70",
+    ],
+    /**
+     * These four MUST match the filter seeded on first sign-in - see starterFilterInput in
+     * TrenchScanner (packages/core/src/filters/starterFilter.ts). This template is how somebody
+     * who deleted that filter rebuilds exactly it, so a number that drifts here quietly breaks
+     * that promise rather than failing loudly. Change one, change both.
+     */
+    settings: {
+      maxFreshTop10WalletPct: 40,
+      maxEmptyTop10WalletPct: 60,
+      minTokenAgeMinutes: 0.5,
+      maxRiskScore: 70,
+    },
+  },
+  {
     id: "wide",
     name: "Wide Filters",
     description:
