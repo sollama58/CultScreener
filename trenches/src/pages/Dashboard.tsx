@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listFilters, listMatches, openMatchesStream } from "../api/client";
 import { prefetchedMatchesIncludeCurated, takePrefetched } from "../api/bootPrefetch";
 
-import type { Match } from "../api/types";
+import type { Match, MatchesPage } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
 import { TokenGridSkeleton } from "../components/TokenCardSkeleton";
 import { FeedFilterBar } from "../components/FeedFilterBar";
@@ -58,6 +58,34 @@ const DISPLAY_PAGE_SIZE = 12;
  */
 const MAX_FILTER_LOOKAHEAD_PAGES = 25;
 
+/**
+ * The last page-1 feed this session rendered, kept across unmounts.
+ *
+ * App.tsx renders one tab at a time, so switching to PumpTok and back rebuilds this component
+ * from scratch: loading starts true, the grid is skeletons, and the reader waits a full round
+ * trip to be shown the same twelve cards they were looking at seconds ago. The boot prefetch
+ * cannot help - it is consumed once, on the first mount of the page load - so every return to
+ * this tab paid the full cold-load ceremony.
+ *
+ * Seeding the next mount from the previous one's answer makes returning to the tab immediate,
+ * and stays honest: the mount still refetches straight away, it just does so behind real cards
+ * instead of behind skeletons. Module state, so it dies with the page - this never outlives a
+ * reload - and it is only trusted for a few poll intervals, past which briefly painting stale
+ * prices would read as wrong data rather than as a fast tab.
+ */
+let lastFeed: { result: MatchesPage; includeCurated: boolean; at: number } | null = null;
+
+const LAST_FEED_MAX_AGE_MS = 3 * POLL_INTERVAL_MS;
+
+function takeLastFeed(includeCurated: boolean): MatchesPage | null {
+  if (!lastFeed) return null;
+  // A page fetched with curated alerts folded in is the wrong answer for a reader who has them
+  // switched off - same rule the boot prefetch applies.
+  if (lastFeed.includeCurated !== includeCurated) return null;
+  if (Date.now() - lastFeed.at > LAST_FEED_MAX_AGE_MS) return null;
+  return lastFeed.result;
+}
+
 interface DashboardProps {
   /** Jumps to the Filters tab - wired to the same tab state the Navbar uses (see App.tsx). */
   onGoToFilters: () => void;
@@ -66,10 +94,13 @@ interface DashboardProps {
 export function Dashboard({ onGoToFilters }: DashboardProps) {
   const { prefs } = usePreferences();
   const [page, setPage] = useState(1);
-  const [matches, setMatches] = useState<Match[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [pageSize, setPageSize] = useState(12);
-  const [loading, setLoading] = useState(true);
+  // Computed once per mount: either the previous mount's page 1, or null for a genuinely cold
+  // start. Everything below renders real cards immediately when it is present.
+  const [seed] = useState(() => takeLastFeed(prefs.includeCuratedInFeed));
+  const [matches, setMatches] = useState<Match[]>(seed?.matches ?? []);
+  const [totalCount, setTotalCount] = useState(seed?.totalCount ?? 0);
+  const [pageSize, setPageSize] = useState(seed?.pageSize ?? 12);
+  const [loading, setLoading] = useState(seed === null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   // null while we haven't checked yet - distinct from `false` so the welcome message can't
   // flash-and-disappear before the first /filters response comes back.
@@ -169,7 +200,12 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   prefsRef.current = prefs;
 
   // The newest matchedAt this tab has seen, in epoch ms. Null until the first response lands.
-  const newestSeenRef = useRef<number | null>(null);
+  // A seeded mount starts from the cached page's newest instead: those cards were already seen,
+  // so anything the background refresh finds beyond them is genuinely new and should chime -
+  // whereas a null start would classify the whole first response as "first load" and stay quiet.
+  const newestSeenRef = useRef<number | null>(
+    seed ? seed.matches.reduce((max, m) => Math.max(max, new Date(m.matchedAt).getTime() || 0), 0) || null : null,
+  );
   const lastSoundAtRef = useRef(0);
   // Ids already chimed for, so the two detection paths can't both announce the same match.
   const announcedIdsRef = useRef(new Set<string>());
@@ -223,6 +259,12 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
       setTotalCount(result.totalCount);
       setPageSize(result.pageSize);
       setLastUpdated(new Date());
+
+      // Every page-1 answer - first load, poll, stream nudge - refreshes what the next mount of
+      // this tab will paint first. Page 2+ is deliberately not kept: a remount lands on page 1.
+      if (pageRef.current === 1) {
+        lastFeed = { result, includeCurated: prefsRef.current.includeCuratedInFeed, at: Date.now() };
+      }
 
       // Which of these count as *new* is tracked as a high-water mark on matchedAt, not as a set
       // of ids already seen. Paging backwards hands us twelve matches this tab has never seen and
@@ -295,9 +337,16 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     };
   }, []);
 
+  // True only for the very first fetch of a mount that seeded from the cache: that fetch is a
+  // freshness pass behind cards already on screen, not a load the reader should be shown. Every
+  // later run of the effect - a page turn, the curated toggle - is a real navigation and blanks.
+  const seededFirstFetchRef = useRef(seed !== null);
+
   useEffect(() => {
     // No interval here: each fetch arms the next one itself (see scheduleRefresh).
-    void refetch({ showPending: true });
+    const quiet = seededFirstFetchRef.current;
+    seededFirstFetchRef.current = false;
+    void refetch({ showPending: !quiet });
     return () => {
       if (refreshTimerRef.current !== undefined) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = undefined;

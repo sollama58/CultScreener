@@ -105,10 +105,19 @@
     <!-- .trenches-app is the scope root every rule in this app's stylesheet hangs off. -->
     <div id="root" class="trenches-app"></div>
 
-    <script src="/js/config.js?v=3"></script>
-    <script src="/js/api.js?v=9"></script>
-    <script src="/js/deviceLink.js?v=2"></script>
-    <script src="/js/wallet.js?v=5"></script>
+    <!--
+      Deferred, in a specific order of priority. Without defer these four block the parser at the
+      end of the body, and a module script does not execute until parsing completes - so React,
+      the feed, everything this page exists for, waited for the shared header's wallet code to
+      download and run first. defer keeps their relative order (config before api, which its
+      globals require) but moves all four behind the app's own module chunks in the execution
+      queue, so the feed no longer queues behind the Connect Wallet button. Nothing in the app
+      reads these at startup: the wallet bridge reads sessionStorage, not wallet.js itself.
+    -->
+    <script defer src="/js/config.js?v=3"></script>
+    <script defer src="/js/api.js?v=9"></script>
+    <script defer src="/js/deviceLink.js?v=2"></script>
+    <script defer src="/js/wallet.js?v=5"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
