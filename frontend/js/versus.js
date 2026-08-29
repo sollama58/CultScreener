@@ -113,10 +113,10 @@ const versusPage = {
       this.render();
 
       if (statusEl) {
-        const solPct = this.benchmarks.sol?.priceChange24h;
-        statusEl.textContent = solPct != null
-          ? `SOL ${solPct >= 0 ? '+' : ''}${solPct.toFixed(2)}% 24h`
-          : 'LIVE';
+        // Liveness, not the SOL figure. This pill used to repeat the benchmark bar's
+        // "SOL +1.85% 24h" about 380px below it, which duplicated a number that already had its
+        // price alongside it up there, and cost the view its only connection indicator.
+        statusEl.textContent = 'LIVE';
         statusEl.parentElement.classList.remove('loading', 'error');
       }
     } catch (err) {
@@ -295,6 +295,9 @@ const versusPage = {
     const solPct = this.benchmarks.sol?.priceChange24h ?? null;
     const btcPct = this.benchmarks.btc?.priceChange24h ?? null;
 
+    // One scale for the whole page, so bars are comparable down the column.
+    const convScale = this.convictionScale(sorted);
+
     tbody.innerHTML = sorted.map((token, index) => {
       const address = token.mintAddress || token.address || '';
       if (!address) return '';
@@ -329,7 +332,7 @@ const versusPage = {
 
       const dist = token.conviction || {};
       const distHtml = Object.keys(dist).length > 0
-        ? this.renderMiniBars(dist)
+        ? this.renderMiniBars(dist, convScale, token.convictionUpdatedAt)
         : '<span class="vs-na">--</span>';
 
       return `
@@ -372,7 +375,43 @@ const versusPage = {
     });
   },
 
-  renderMiniBars(dist) {
+  // The domain the bars are drawn against, derived from the rows actually on screen.
+  //
+  // These were drawn against a fixed 0-100 scale, on a table sorted by conviction descending, so
+  // every value on a page sat between about 88 and 100 - measured over 25 rows, all 125 bars fell
+  // in the top colour band and 94 per cent were within 2px of the 28px maximum. The chart could
+  // not show the thing it exists to show.
+  //
+  // The floor keeps that fix from overcorrecting: when a page genuinely is uniform, a spread of a
+  // fraction of a point should not be stretched into a full-height swing. Below a 10-point spread
+  // the scale stays 10 points wide and the bars stay close together, which is the truth.
+  // Past this, a score is old enough that the reader should be told before trusting it.
+  STALE_CONVICTION_MS: 7 * 24 * 60 * 60 * 1000,
+
+  convictionScale(tokens) {
+    const keys = ['6h', '24h', '3d', '1w', '1m'];
+    const MIN_SPAN = 10;
+    let lo = Infinity;
+    let hi = -Infinity;
+    (tokens || []).forEach(t => {
+      const dist = (t && t.conviction) || {};
+      keys.forEach(k => {
+        const v = dist[k];
+        if (typeof v === 'number' && isFinite(v)) {
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+      });
+    });
+    if (!isFinite(lo) || !isFinite(hi)) return { base: 0, span: 100 };
+    const span = Math.max(hi - lo, MIN_SPAN);
+    return { base: Math.max(0, hi - span), span };
+  },
+
+  // Age is shown because a conviction score is only as good as when it was computed. The API has
+  // always returned convictionUpdatedAt; nothing rendered it, so a score from an hour ago and one
+  // from two months ago looked identical. On a live leaderboard that spread reached 64 days.
+  renderMiniBars(dist, scale, updatedAt) {
     const buckets = [
       { key: '6h', label: '6h' },
       { key: '24h', label: '24h' },
@@ -381,10 +420,23 @@ const versusPage = {
       { key: '1m', label: '1m' }
     ];
     const maxH = 28;
-    return `<div class="conviction-mini-bars terminal-bars">${buckets.map(b => {
+    const s = (scale && scale.span > 0) ? scale : { base: 0, span: 100 };
+
+    const ageMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : null;
+    const ageText = (updatedAt && isFinite(ageMs) && ageMs >= 0 && typeof utils !== 'undefined')
+      ? utils.formatAge(updatedAt)
+      : null;
+    const stale = ageMs != null && isFinite(ageMs) && ageMs > this.STALE_CONVICTION_MS;
+    const groupTitle = ageText ? ` title="Scored ${ageText} ago"` : '';
+    const staleCls = stale ? ' conviction-mini-bars--stale' : '';
+
+    return `<div class="conviction-mini-bars terminal-bars${staleCls}"${groupTitle}>${buckets.map(b => {
       const val = dist[b.key] || 0;
-      const h = Math.max(1, Math.round((val / 100) * maxH));
-      const colorClass = val >= 50 ? 'bar-high' : val >= 25 ? 'bar-mid' : 'bar-low';
+      const pos = Math.min(1, Math.max(0, (val - s.base) / s.span));
+      const h = Math.max(2, Math.round(pos * maxH));
+      // Colour tracks the same position as height, so the two channels agree instead of one of
+      // them sitting permanently saturated. The tooltip still carries the real percentage.
+      const colorClass = pos >= 0.66 ? 'bar-high' : pos >= 0.33 ? 'bar-mid' : 'bar-low';
       return `<div class="conviction-mini-bar" title="${b.label}: ${val.toFixed(1)}%">
         <div class="conviction-mini-fill ${colorClass}" style="height:${h}px"></div>
         <span class="conviction-mini-label">${b.label}</span>
@@ -401,7 +453,7 @@ const versusPage = {
         await Promise.race([
           new Promise((resolve, reject) => {
             const s = document.createElement('script');
-            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
             s.crossOrigin = 'anonymous';
             s.onload = resolve;
             s.onerror = () => reject(new Error('Failed to load screenshot library'));

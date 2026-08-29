@@ -7,8 +7,8 @@
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#09090b">
   <meta name="color-scheme" content="dark">
-  <link rel="icon" href="/thisisfine8bit.jpg" type="image/jpeg">
-  <link rel="apple-touch-icon" href="/thisisfine8bit.jpg">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="manifest" href="/manifest.json">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=15">
+  <link rel="stylesheet" href="css/styles.css?v=16">
   <style>
     .admin-login {
       display: flex;
@@ -425,7 +425,7 @@
           <button class="btn btn-sm" id="curated-backfill-ath-btn">Backfill Historical ATH</button>
         </div>
         <table class="admin-table">
-          <thead><tr><th>Token</th><th>Mint</th><th>Socials</th><th>Added</th><th>MCap Listed</th><th>ATH MCap</th><th>Emerging</th><th>Tech</th><th>Actions</th></tr></thead>
+          <thead><tr><th scope="col">Token</th><th scope="col">Mint</th><th scope="col">Socials</th><th scope="col">Added</th><th scope="col">MCap Listed</th><th scope="col">ATH MCap</th><th scope="col">Emerging</th><th scope="col">Tech</th><th scope="col">Actions</th></tr></thead>
           <tbody id="curated-table-body"><tr><td colspan="9" class="empty-msg">Loading...</td></tr></tbody>
         </table>
       </div>
@@ -461,7 +461,7 @@
           </div>
         </div>
         <table class="admin-table">
-          <thead><tr><th>Title</th><th>Type</th><th>Active</th><th>Created</th><th>Actions</th></tr></thead>
+          <thead><tr><th scope="col">Title</th><th scope="col">Type</th><th scope="col">Active</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead>
           <tbody id="ann-table-body"><tr><td colspan="5" class="empty-msg">Loading...</td></tr></tbody>
         </table>
       </div>
@@ -481,7 +481,7 @@
           </div>
         </div>
         <table class="admin-table">
-          <thead><tr><th>ID</th><th>Category</th><th>Description</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+          <thead><tr><th scope="col">ID</th><th scope="col">Category</th><th scope="col">Description</th><th scope="col">Status</th><th scope="col">Date</th><th scope="col">Actions</th></tr></thead>
           <tbody id="bugs-table-body"><tr><td colspan="6" class="empty-msg">Loading...</td></tr></tbody>
         </table>
       </div>
@@ -500,7 +500,7 @@
           </div>
         </div>
         <table class="admin-table">
-          <thead><tr><th>ID</th><th>Token</th><th>Type</th><th>Content</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+          <thead><tr><th scope="col">ID</th><th scope="col">Token</th><th scope="col">Type</th><th scope="col">Content</th><th scope="col">Status</th><th scope="col">Date</th><th scope="col">Actions</th></tr></thead>
           <tbody id="subs-table-body"><tr><td colspan="7" class="empty-msg">Loading...</td></tr></tbody>
         </table>
       </div>
@@ -521,7 +521,7 @@
         </div>
         <span id="wl-status" style="font-size:0.78rem;color:var(--text-muted);display:block;margin-bottom:0.75rem;"></span>
         <table class="admin-table">
-          <thead><tr><th>Wallet</th><th>Note</th><th>Added</th><th>Actions</th></tr></thead>
+          <thead><tr><th scope="col">Wallet</th><th scope="col">Note</th><th scope="col">Added</th><th scope="col">Actions</th></tr></thead>
           <tbody id="wl-table-body"><tr><td colspan="4" class="empty-msg">Loading...</td></tr></tbody>
         </table>
       </div>
@@ -529,7 +529,7 @@
       <!-- API Keys -->
       <div id="tab-api-keys" class="tab-panel">
         <table class="admin-table">
-          <thead><tr><th>Key Prefix</th><th>Owner Wallet</th><th>Name</th><th>Created</th><th>Last Used</th><th>Requests</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th scope="col">Key Prefix</th><th scope="col">Owner Wallet</th><th scope="col">Name</th><th scope="col">Created</th><th scope="col">Last Used</th><th scope="col">Requests</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
           <tbody id="api-keys-table-body"><tr><td colspan="8" class="empty-msg">Loading...</td></tr></tbody>
         </table>
       </div>
@@ -550,7 +550,7 @@
   </footer>
 
   <script src="js/config.js?v=3"></script>
-  <script src="js/api.js?v=8"></script>
+  <script src="js/api.js?v=9"></script>
   <script src="js/admin.js?v=16"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>

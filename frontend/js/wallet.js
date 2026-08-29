@@ -842,7 +842,7 @@ const wallet = {
           <div class="utilities-section">
             <div class="utilities-section-title">${icon} ${title}</div>
             <table class="utilities-table">
-              <thead><tr><th>Token</th><th>Expires In</th></tr></thead>
+              <thead><tr><th scope="col">Token</th><th scope="col">Expires In</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>
