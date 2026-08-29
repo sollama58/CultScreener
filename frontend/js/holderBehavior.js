@@ -621,8 +621,8 @@
     let html = `<div class="hb-table-wrap">
       <table class="hb-table">
         <thead><tr>
-          <th>#</th><th>Address</th><th class="text-right">Tokens</th>
-          <th class="text-right">Avg Hold</th><th class="text-right">Swaps</th><th></th>
+          <th scope="col">#</th><th scope="col">Address</th><th scope="col" class="text-right">Tokens</th>
+          <th scope="col" class="text-right">Avg Hold</th><th scope="col" class="text-right">Swaps</th><th scope="col"></th>
         </tr></thead>
         <tbody>`;
 
@@ -643,8 +643,8 @@
             <div class="hb-pairs-wrap">
               <table class="hb-pairs-table">
                 <thead><tr>
-                  <th>Token</th><th>Type</th><th>Hold Time</th>
-                  <th>Bought</th><th>Sold / Still Holding</th>
+                  <th scope="col">Token</th><th scope="col">Type</th><th scope="col">Hold Time</th>
+                  <th scope="col">Bought</th><th scope="col">Sold / Still Holding</th>
                 </tr></thead>
                 <tbody>
                   ${h.pairs.map(p => `
@@ -673,8 +673,8 @@
     let html = `<div class="hb-table-wrap">
       <table class="hb-table">
         <thead><tr>
-          <th>Token</th><th class="text-right">Holders</th><th class="text-right">Pairs</th>
-          <th class="text-right">Avg Hold</th><th class="text-right">Min</th><th class="text-right">Max</th>
+          <th scope="col">Token</th><th scope="col" class="text-right">Holders</th><th scope="col" class="text-right">Pairs</th>
+          <th scope="col" class="text-right">Avg Hold</th><th scope="col" class="text-right">Min</th><th scope="col" class="text-right">Max</th>
         </tr></thead>
         <tbody>`;
 

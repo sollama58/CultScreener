@@ -7,8 +7,8 @@
   <meta name="description" content="HolDEX is a Solana token conviction analyzer. Track diamond hands, filter by conviction score, and discover tokens with the strongest holder bases.">
   <meta name="theme-color" content="#07080a">
   <meta name="color-scheme" content="dark">
-  <link rel="icon" href="/thisisfine8bit.jpg" type="image/jpeg">
-  <link rel="apple-touch-icon" href="/thisisfine8bit.jpg">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="manifest" href="/manifest.json">
   <meta name="robots" content="index, follow">
   <meta name="mobile-web-app-capable" content="yes">
@@ -35,7 +35,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/styles.css?v=15">
+  <link rel="stylesheet" href="css/styles.css?v=16">
 
   <style>
     /* ── King of the Pill widget ────────────────────────── */
@@ -309,25 +309,28 @@
       color: var(--text-dim);
       white-space: nowrap;
     }
+    /* Outline, not filled. This was the only solid-accent button on the view, which made sharing
+       the loudest thing on a page whose primary action is reading the table. The filled accent is
+       reserved for Connect Wallet. */
     .perf-share-btn {
       display: flex;
       align-items: center;
       gap: 0.4rem;
       padding: 0.45rem 1rem;
-      background: linear-gradient(135deg, var(--fire-primary), var(--ember));
-      color: #fff;
-      font-weight: 700;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+      font-weight: 600;
       font-size: 0.78rem;
-      border: none;
       border-radius: var(--radius-md);
       cursor: pointer;
       white-space: nowrap;
-      transition: opacity var(--transition-fast);
+      transition: border-color var(--transition-fast), color var(--transition-fast);
       font-family: var(--font-sans);
       margin-left: auto;
       letter-spacing: 0.02em;
     }
-    .perf-share-btn:hover { opacity: 0.88; }
+    .perf-share-btn:hover { border-color: var(--fire-primary); color: var(--fire-primary); }
     .perf-share-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
     /* Sort buttons */
@@ -699,9 +702,9 @@
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=3" as="script">
-  <link rel="preload" href="js/api.js?v=8" as="script">
-  <link rel="preload" href="js/wallet.js?v=4" as="script">
-  <link rel="preload" href="js/conviction.js?v=15" as="script">
+  <link rel="preload" href="js/api.js?v=9" as="script">
+  <link rel="preload" href="js/wallet.js?v=5" as="script">
+  <link rel="preload" href="js/conviction.js?v=16" as="script">
 </head>
 <body>
   <header class="header">
@@ -772,7 +775,8 @@
       </button>
     </div>
 
-    <section id="view-diamond" class="community-section conviction-section terminal-section">
+    <section id="view-diamond" class="community-section conviction-section terminal-section" role="tabpanel" aria-labelledby="tab-diamond">
+      <h2 class="sr-only">Diamond Hands leaderboard</h2>
       <!-- Toolbar: Search + Filters toggle + Status -->
       <div class="terminal-toolbar">
         <div class="terminal-search-wrap">
@@ -828,13 +832,13 @@
         <table class="token-table community-table conviction-table terminal-table">
           <thead>
             <tr>
-              <th class="cell-rank">#</th>
-              <th class="cell-token">Token</th>
-              <th class="cell-price sortable" data-sort="price">Price <span class="sort-arrow"></span></th>
-              <th class="cell-mcap sortable" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
-              <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
-              <th class="cell-updated sortable" data-sort="holders">Holders <span class="sort-arrow"></span></th>
-              <th class="cell-dist" title="Holder conviction distribution by hold time">Distribution</th>
+              <th scope="col" class="cell-rank">#</th>
+              <th scope="col" class="cell-token">Token</th>
+              <th scope="col" class="cell-price sortable" data-sort="price">Price <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-mcap sortable" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th scope="col" class="cell-updated sortable" data-sort="holders">Holders <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-dist" title="Holder conviction distribution by hold time">Distribution</th>
             </tr>
           </thead>
           <tbody id="conviction-table-body">
@@ -876,6 +880,7 @@
 
     <!-- Tech Coins View -->
     <section id="view-tech" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-tech">
+      <h2 class="sr-only">Tech coins</h2>
       <div class="terminal-toolbar">
         <div class="terminal-search-wrap">
           <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -894,12 +899,12 @@
         <table class="token-table community-table conviction-table terminal-table">
           <thead>
             <tr>
-              <th class="cell-rank">#</th>
-              <th class="cell-token">Token</th>
-              <th class="cell-price">Price</th>
-              <th class="cell-mcap">MCap</th>
-              <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
-              <th class="cell-updated">Holders</th>
+              <th scope="col" class="cell-rank">#</th>
+              <th scope="col" class="cell-token">Token</th>
+              <th scope="col" class="cell-price">Price</th>
+              <th scope="col" class="cell-mcap">MCap</th>
+              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th scope="col" class="cell-updated">Holders</th>
             </tr>
           </thead>
           <tbody id="tech-table-body"></tbody>
@@ -909,6 +914,7 @@
 
     <!-- Emerging Cult View -->
     <section id="view-emerging" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-emerging">
+      <h2 class="sr-only">Emerging cults</h2>
       <div class="terminal-toolbar">
         <div class="terminal-search-wrap">
           <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -927,12 +933,12 @@
         <table class="token-table community-table conviction-table terminal-table">
           <thead>
             <tr>
-              <th class="cell-rank">#</th>
-              <th class="cell-token">Token</th>
-              <th class="cell-price">Price</th>
-              <th class="cell-mcap">MCap</th>
-              <th class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
-              <th class="cell-updated">Holders</th>
+              <th scope="col" class="cell-rank">#</th>
+              <th scope="col" class="cell-token">Token</th>
+              <th scope="col" class="cell-price">Price</th>
+              <th scope="col" class="cell-mcap">MCap</th>
+              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th scope="col" class="cell-updated">Holders</th>
             </tr>
           </thead>
           <tbody id="emerging-table-body"></tbody>
@@ -942,6 +948,7 @@
 
     <!-- Performance Leaderboard View -->
     <section id="view-performance" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-performance">
+      <h2 class="sr-only">Performance since listing</h2>
       <!-- Toolbar -->
       <div class="perf-toolbar">
         <div class="perf-sort-group">
@@ -981,11 +988,11 @@
         <table class="terminal-table perf-table">
           <thead>
             <tr>
-              <th class="perf-th-rank">#</th>
-              <th class="perf-th-token">Token</th>
-              <th class="perf-th-ath">ATH % since Listing</th>
-              <th class="perf-th-current">Current % since Listing</th>
-              <th class="perf-th-mcap">Current MCap</th>
+              <th scope="col" class="perf-th-rank">#</th>
+              <th scope="col" class="perf-th-token">Token</th>
+              <th scope="col" class="perf-th-ath">ATH % since Listing</th>
+              <th scope="col" class="perf-th-current">Current % since Listing</th>
+              <th scope="col" class="perf-th-mcap">Current MCap</th>
             </tr>
           </thead>
           <tbody id="perf-table-body"></tbody>
@@ -1000,6 +1007,7 @@
 
     <!-- vs SOL/BTC View -->
     <section id="view-versus" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-versus">
+      <h2 class="sr-only">Performance versus SOL</h2>
       <!-- Benchmark bar -->
       <div id="versus-benchmark-bar" class="versus-benchmark-bar"></div>
 
@@ -1033,14 +1041,14 @@
         <table id="versus-table" class="token-table community-table conviction-table terminal-table">
           <thead>
             <tr>
-              <th class="cell-rank">#</th>
-              <th class="cell-token">Token</th>
-              <th class="cell-change" data-sort="change24h">24h % <span class="sort-arrow"></span></th>
-              <th class="cell-vs-sol" data-sort="vsSol">vs SOL <span class="sort-arrow desc"></span></th>
-              <th class="cell-vs-btc" data-sort="vsBtc">vs BTC <span class="sort-arrow"></span></th>
-              <th class="cell-mcap" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
-              <th class="cell-updated" data-sort="holders">Holders <span class="sort-arrow"></span></th>
-              <th class="cell-dist">Distribution</th>
+              <th scope="col" class="cell-rank">#</th>
+              <th scope="col" class="cell-token">Token</th>
+              <th scope="col" class="cell-change" data-sort="change24h">24h % <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-vs-sol" data-sort="vsSol">vs SOL <span class="sort-arrow desc"></span></th>
+              <th scope="col" class="cell-vs-btc" data-sort="vsBtc">vs BTC <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-mcap" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-updated" data-sort="holders">Holders <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-dist">Distribution</th>
             </tr>
           </thead>
           <tbody id="versus-table-body">
@@ -1068,16 +1076,16 @@
   </footer>
 
   <script src="js/config.js?v=3"></script>
-  <script src="js/api.js?v=8"></script>
+  <script src="js/api.js?v=9"></script>
   <script src="js/announcements.js?v=2"></script>
   <script src="js/deviceLink.js?v=2"></script>
-  <script src="js/wallet.js?v=4"></script>
+  <script src="js/wallet.js?v=5"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/conviction.js?v=15"></script>
+  <script src="js/conviction.js?v=16"></script>
   <script src="js/tech.js?v=5"></script>
   <script src="js/emerging.js?v=5"></script>
-  <script src="js/performance.js?v=21"></script>
-  <script src="js/versus.js?v=10"></script>
+  <script src="js/performance.js?v=22"></script>
+  <script src="js/versus.js?v=11"></script>
   <script src="js/mainViewTabs.js?v=1"></script>
   <script src="js/pwa.js?v=3"></script>
   <script src="js/kotp.js?v=2"></script>

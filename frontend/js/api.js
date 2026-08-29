@@ -948,6 +948,47 @@ const utils = {
     });
   },
 
+  // Mark a horizontally scrolling element so its edges can show there is more to reach.
+  //
+  // The tab strip and the wide tables both scroll sideways on small screens with no fade, no
+  // shadow and no scrollbar - at 390px the strip hides 94px and clips a tab mid-word, at 320px it
+  // hides 164px. Nothing on screen said the content continued.
+  //
+  // Sets data-scroll-fade to "right", "left" or "both" while there is content past that edge, and
+  // removes it entirely when the element fits, so the fade never lingers at the end of a scroll.
+  bindScrollFade(el) {
+    if (!el || el.dataset.scrollFadeBound) return;
+    el.dataset.scrollFadeBound = '1';
+
+    const update = () => {
+      const slack = el.scrollWidth - el.clientWidth;
+      if (slack <= 2) {
+        el.removeAttribute('data-scroll-fade');
+        return;
+      }
+      const atStart = el.scrollLeft <= 2;
+      const atEnd = el.scrollLeft >= slack - 2;
+      el.setAttribute('data-scroll-fade', atStart ? 'right' : atEnd ? 'left' : 'both');
+    };
+
+    el.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    // Content arrives after render, so re-measure when it changes size.
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(update);
+      ro.observe(el);
+      if (el.firstElementChild) ro.observe(el.firstElementChild);
+    }
+    update();
+  },
+
+  // Bind every scroller on the page that has not been bound yet.
+  bindScrollFades(root) {
+    const scope = root || document;
+    scope.querySelectorAll('.main-view-tabs, .community-table-container, .table-container')
+      .forEach(el => this.bindScrollFade(el));
+  },
+
   // Create element with attributes
   createElement(tag, attrs = {}, children = []) {
     const el = document.createElement(tag);
@@ -1125,36 +1166,28 @@ const utils = {
   },
 
   // Handle horizontal scroll indicators for tables
+  // Keep the edge fades in sync as tables and tab strips come and go.
+  //
+  // This previously toggled a .scroll-end class on .token-table-container. Neither existed: the
+  // class was styled nowhere in the stylesheet, and no page renders that container class - the
+  // real ones are .community-table-container and .table-container. So it measured scroll state
+  // and threw the answer away. It now drives the data-scroll-fade attribute instead.
   initTableScrollIndicators() {
-    const setupScrollIndicator = (wrapper) => {
-      const checkScroll = () => {
-        const isAtEnd = wrapper.scrollLeft + wrapper.clientWidth >= wrapper.scrollWidth - 5;
-        wrapper.classList.toggle('scroll-end', isAtEnd);
-      };
+    this.bindScrollFades();
 
-      wrapper.addEventListener('scroll', this.debounce(checkScroll, 50), { passive: true });
-      // Check initial state
-      checkScroll();
-    };
-
-    // Setup for existing table wrappers
-    document.querySelectorAll('.token-table-container').forEach(setupScrollIndicator);
-
-    // Observe for dynamically added table wrappers
+    // Tables are rendered after their page's data arrives, so catch the ones added later.
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) {
-            if (node.classList?.contains('token-table-wrapper')) {
-              setupScrollIndicator(node);
-            }
-            node.querySelectorAll?.('.token-table-container').forEach(setupScrollIndicator);
+          if (node.nodeType !== 1) return;
+          if (node.matches?.('.main-view-tabs, .community-table-container, .table-container')) {
+            this.bindScrollFade(node);
           }
+          this.bindScrollFades(node);
         });
       });
     });
 
-    // Scope observer to main content area instead of document.body to reduce mutation noise
     const observeTarget = document.querySelector('main') || document.querySelector('.content') || document.body;
     observer.observe(observeTarget, { childList: true, subtree: true });
   }

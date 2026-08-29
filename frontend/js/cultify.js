@@ -736,7 +736,7 @@
       html += '<section class="holders-section" style="margin-top:1rem;">';
       html += '<div class="holders-header"><h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Top Holders</h2></div>';
       html += '<div class="holders-table-wrap"><table class="holders-table">';
-      html += '<thead><tr><th>#</th><th>Address</th><th class="text-right">Balance</th><th class="text-right">%</th></tr></thead>';
+      html += '<thead><tr><th scope="col">#</th><th scope="col">Address</th><th scope="col" class="text-right">Balance</th><th scope="col" class="text-right">%</th></tr></thead>';
       html += '<tbody>';
       holders.forEach(h => {
         const addr = escapeHtml(h.address);
@@ -811,7 +811,7 @@
       if (typeof html2canvas === 'undefined') {
         await new Promise((resolve, reject) => {
           const script = document.createElement('script');
-          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+          script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
           script.crossOrigin = 'anonymous';
           script.onload = resolve;
           script.onerror = () => reject(new Error('Failed to load screenshot library'));

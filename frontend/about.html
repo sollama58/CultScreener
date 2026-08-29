@@ -7,8 +7,8 @@
   <meta name="description" content="Learn how HolDEX analyzes Solana token holder conviction and diamond hands data.">
   <meta name="theme-color" content="#09090b">
   <meta name="color-scheme" content="dark">
-  <link rel="icon" href="/thisisfine8bit.jpg" type="image/jpeg">
-  <link rel="apple-touch-icon" href="/thisisfine8bit.jpg">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="manifest" href="/manifest.json">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=15">
+  <link rel="stylesheet" href="css/styles.css?v=16">
   <style>
     .about-content {
       max-width: 800px;
@@ -247,7 +247,7 @@
       <div class="about-section">
         <h2>Data Sources</h2>
         <table class="about-table">
-          <thead><tr><th>Data</th><th>Source</th><th>Notes</th></tr></thead>
+          <thead><tr><th scope="col">Data</th><th scope="col">Source</th><th scope="col">Notes</th></tr></thead>
           <tbody>
             <tr><td>Holder list &amp; hold times</td><td>Solana RPC via Helius</td><td>DAS API for token accounts, standard RPC for signature history</td></tr>
             <tr><td>Price, volume, liquidity</td><td>GeckoTerminal</td><td>Free tier, rate-limited with circuit breakers</td></tr>
@@ -266,7 +266,7 @@
 
         <h3>Server-Side Cache</h3>
         <table class="about-table">
-          <thead><tr><th>Data</th><th>Cache Duration</th><th>Notes</th></tr></thead>
+          <thead><tr><th scope="col">Data</th><th scope="col">Cache Duration</th><th scope="col">Notes</th></tr></thead>
           <tbody>
             <tr><td>Per-wallet hold time</td><td><code>48 hours</code></td><td>Cached per wallet per token. A wallet holding for 30d won't change meaningfully in 48h.</td></tr>
             <tr><td>Diamond Hands distribution</td><td><code>3 hours</code></td><td>Full distribution recomputed when cache expires</td></tr>
@@ -280,7 +280,7 @@
 
         <h3>Frontend Cache (Browser)</h3>
         <table class="about-table">
-          <thead><tr><th>Data</th><th>Cache Duration</th><th>Notes</th></tr></thead>
+          <thead><tr><th scope="col">Data</th><th scope="col">Cache Duration</th><th scope="col">Notes</th></tr></thead>
           <tbody>
             <tr><td>Token list page</td><td><code>2 min</code></td><td>Auto-refreshes every 2 minutes</td></tr>
             <tr><td>Token detail page</td><td><code>5 min</code></td><td>Price refreshes every 5 minutes with freshness indicator</td></tr>
@@ -291,7 +291,7 @@
 
         <h3>Background Jobs</h3>
         <table class="about-table">
-          <thead><tr><th>Job</th><th>Interval</th><th>Notes</th></tr></thead>
+          <thead><tr><th scope="col">Job</th><th scope="col">Interval</th><th scope="col">Notes</th></tr></thead>
           <tbody>
             <tr><td>Curated token conviction refresh</td><td><code>1 hour</code></td><td>Re-analyzes all admin-curated tokens</td></tr>
             <tr><td>Top token conviction warm</td><td><code>10 min</code></td><td>Re-analyzes up to 3 most-viewed tokens per cycle</td></tr>
@@ -338,10 +338,10 @@
   </footer>
 
   <script src="js/config.js?v=3"></script>
-  <script src="js/api.js?v=8"></script>
+  <script src="js/api.js?v=9"></script>
   <script src="js/announcements.js?v=2"></script>
   <script src="js/deviceLink.js?v=2"></script>
-  <script src="js/wallet.js?v=4"></script>
+  <script src="js/wallet.js?v=5"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>

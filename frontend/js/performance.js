@@ -192,7 +192,7 @@ const performancePage = {
         await Promise.race([
           new Promise((resolve, reject) => {
             const s = document.createElement('script');
-            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
             s.crossOrigin = 'anonymous';
             s.onload = resolve;
             s.onerror = () => reject(new Error('Failed to load screenshot library'));
@@ -311,10 +311,10 @@ const performancePage = {
       <table class="psg-table">
         <thead>
           <tr>
-            <th style="width:32px">#</th>
-            <th>Token</th>
-            <th class="right">ATH %</th>
-            <th class="right">Current %</th>
+            <th scope="col" style="width:32px">#</th>
+            <th scope="col">Token</th>
+            <th scope="col" class="right">ATH %</th>
+            <th scope="col" class="right">Current %</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>

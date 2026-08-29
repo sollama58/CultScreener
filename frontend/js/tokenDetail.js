@@ -1515,7 +1515,7 @@ const tokenDetail = {
         await Promise.race([
           new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
             script.crossOrigin = 'anonymous';
             script.onload = resolve;
             script.onerror = () => reject(new Error('Failed to load screenshot library'));

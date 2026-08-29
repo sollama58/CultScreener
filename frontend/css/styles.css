@@ -28,8 +28,13 @@
   /* Text — better contrast hierarchy */
   --text-primary: #f0f0f2;
   --text-secondary: #a0a0a8;
-  --text-muted: #6b6b74;
-  --text-dim: #45454d;
+  /* Lifted to clear WCAG AA (4.5:1) on every surface these sit on, the lightest being the
+     #16181d card. Before: dim 1.87:1 and muted 3.37:1 against that card, which put every table
+     column header - Token, Price, MCap, Holders - below the threshold at 10.9px. The three tiers
+     are closer together than they were; three distinct steps that all clear 4.5:1 on this ground
+     is not available without brightening the whole palette. */
+  --text-muted: #9a9aa4;
+  --text-dim: #8b8b95;
 
   /* Borders — subtle, layered */
   --border-color: #1e1f22;
@@ -769,7 +774,7 @@ img {
   border: 1px solid var(--border-color, #1e1f22);
   border-radius: var(--radius-sm, 6px);
   background-color: var(--bg-tertiary, #161719);
-  color: var(--text-muted, #6b6b74);
+  color: var(--text-muted, #9a9aa4);
   cursor: pointer;
   transition: all var(--transition-fast);
   white-space: nowrap;
@@ -869,7 +874,7 @@ img {
   background-color: var(--bg-tertiary, #161719);
   border: 1px solid var(--border-color, #1e1f22);
   border-radius: var(--radius-full, 9999px);
-  color: var(--text-muted, #6b6b74);
+  color: var(--text-muted, #9a9aa4);
   font-size: 0.76rem;
   font-weight: 600;
   font-family: var(--font-sans);
@@ -1130,7 +1135,7 @@ select:focus {
   background-color: transparent;
   border: 1px solid var(--border-color, #1e1f22);
   border-radius: var(--radius-md, 10px);
-  color: var(--text-muted, #6b6b74);
+  color: var(--text-muted, #9a9aa4);
   font-size: 0.72rem;
   font-weight: 600;
   font-family: var(--font-mono);
@@ -1165,6 +1170,26 @@ select:focus {
   overflow-x: auto;
   margin: 0 -1.25rem;
   padding: 0 1.25rem;
+}
+
+/* Edge fades for anything that scrolls sideways. utils.bindScrollFade() sets the attribute only
+   while there is content past that edge, so the fade disappears once you reach the end rather
+   than implying there is always more. */
+[data-scroll-fade] {
+  -webkit-mask-image: var(--scroll-fade);
+  mask-image: var(--scroll-fade);
+}
+
+[data-scroll-fade="right"] {
+  --scroll-fade: linear-gradient(to right, #000 calc(100% - 48px), transparent 100%);
+}
+
+[data-scroll-fade="left"] {
+  --scroll-fade: linear-gradient(to right, transparent 0, #000 48px);
+}
+
+[data-scroll-fade="both"] {
+  --scroll-fade: linear-gradient(to right, transparent 0, #000 48px, #000 calc(100% - 48px), transparent 100%);
 }
 
 .terminal-table,
@@ -1466,6 +1491,27 @@ select:focus {
 
 .conviction-mini-fill.bar-low {
   background: var(--text-dim);
+}
+
+/* A score older than a week is drawn back so it does not read with the same authority as a fresh
+   one. The group's tooltip carries the exact age. */
+.conviction-mini-bars--stale {
+  opacity: 0.45;
+}
+
+.conviction-mini-bars--stale::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.conviction-mini-bars {
+  position: relative;
 }
 
 .conviction-mini-label {
@@ -4468,7 +4514,16 @@ select:focus {
   cursor: pointer;
   font-size: 1.1rem;
   line-height: 1;
-  padding: 0 0.15rem;
+  /* The glyph is small but the target should not be: this measured 13x15px, well under the 44px
+     WCAG asks for. Padding grows the hit area without moving the x, and the negative margin keeps
+     the banner's layout where it was. */
+  padding: 0.75rem;
+  margin: -0.75rem -0.6rem -0.75rem 0;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.5;
   transition: opacity var(--transition-fast);
   font-family: var(--font-sans);
@@ -4668,6 +4723,37 @@ select:focus {
 
 
 /* =============================================
+   35b. Nav collapse (940px)
+   =============================================
+   The header stops fitting long before the phone breakpoint. Measured on the real page: the nav
+   links wrap to two lines from 920px down, and below 861px the Connect Wallet button is pushed off
+   the right edge — 105px of it at 769px, taking the whole page into horizontal scroll. That band is
+   iPad portrait (768 and 834), iPad Air (820) and most Android tablets, so it is not a rare case.
+
+   Only the nav swap moves up here. Everything else in the 768px block below is tuned for phone
+   widths and stays there — a tablet keeps the full-size header, and keeps the wallet button in it,
+   because at these widths there is room for it once the links are in the dropdown. */
+
+@media (max-width: 940px) {
+  .nav-hamburger {
+    display: flex;
+    order: 99;
+    margin-left: auto;
+  }
+
+  /* The dropdown replaces the inline links. */
+  .header .nav {
+    display: none;
+  }
+
+  /* The menu hangs off the bottom of the header, which is still full height up here. The 768px
+     block shortens the header to 52px and the base rule below already matches that. */
+  .mobile-nav-menu {
+    top: 56px;
+  }
+}
+
+/* =============================================
    36. Responsive Design - Tablet (768px)
    ============================================= */
 
@@ -4689,17 +4775,6 @@ select:focus {
   }
 
   /* Hamburger sits at the far right */
-  .nav-hamburger {
-    display: flex;
-    order: 99;
-    margin-left: auto;
-  }
-
-  /* Hide desktop nav on mobile — the hamburger menu replaces it */
-  .header .nav {
-    display: none;
-  }
-
   /* Wallet menu aligns to smaller header */
   .wallet-menu-content {
     top: 58px;
@@ -5597,7 +5672,7 @@ strong {
 }
 
 /* Never show install button on desktop — even if JS creates it */
-@media (min-width: 769px) {
+@media (min-width: 941px) {
   .nav-install-item,
   .nav-install-item.installable {
     display: none !important;

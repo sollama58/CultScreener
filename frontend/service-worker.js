@@ -12,7 +12,7 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v53';
+const CACHE_VERSION = 'holdex-v54';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -21,30 +21,30 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=15',
+  '/css/styles.css?v=16',
   '/js/config.js?v=3',
-  '/js/api.js?v=8',
+  '/js/api.js?v=9',
   '/js/deviceLink.js?v=2',
-  '/js/wallet.js?v=4',
-  '/js/conviction.js?v=15',
+  '/js/wallet.js?v=5',
+  '/js/conviction.js?v=16',
   '/js/tech.js?v=5',
   '/js/emerging.js?v=5',
-  '/js/versus.js?v=10',
+  '/js/versus.js?v=11',
   '/js/mainViewTabs.js?v=1',
   '/js/kotp.js?v=2',
-  '/js/tokenDetail.js?v=21',
+  '/js/tokenDetail.js?v=22',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=5',
   '/js/sentiment.js?v=2',
-  '/js/holderBehavior.js?v=4',
+  '/js/holderBehavior.js?v=5',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=21',
-  '/js/cultify.js?v=13',
+  '/js/performance.js?v=22',
+  '/js/cultify.js?v=14',
   '/js/admin.js?v=16',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
-  '/thisisfine8bit.jpg',
+  '/icons/icon.svg',
   '/CultScreenerBanner.jpg',
 ];
 
