@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listFilters, listMatches, openMatchesStream } from "../api/client";
+import { prefetchedMatchesIncludeCurated, takePrefetched } from "../api/bootPrefetch";
 
 import type { Match } from "../api/types";
 import { TokenCard } from "../components/TokenCard";
@@ -108,9 +109,14 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   // Checked once on mount, not on every poll tick - a brand new user creating their first filter
   // just needs the welcome message to go away next time they load the page, not live mid-session.
   useEffect(() => {
-    listFilters()
-      .then((filters) => setHasFilters(filters.length > 0))
-      .catch(() => setHasFilters(true)); // fail open - never block the feed on this check
+    void (async () => {
+      try {
+        const filters = (await takePrefetched("filters")) ?? (await listFilters());
+        setHasFilters(filters.length > 0);
+      } catch {
+        setHasFilters(true); // fail open - never block the feed on this check
+      }
+    })();
   }, []);
 
   // Both the poll and the live stream call this, so responses are sequenced by request id
@@ -200,7 +206,15 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     // with placeholders every poll would be worse than showing nothing at all.
     if (opts.showPending) setLoading(true);
     try {
-      const result = await listMatches(pageRef.current, prefsRef.current.includeCuratedInFeed);
+      // The very first page-1 load can be answered by the boot prefetch, which asked for it in
+      // parallel with the session and subscription checks instead of waiting behind them. It is
+      // only offered once, and only while fresh, so every poll and page turn is a real request.
+      const prefetched =
+        pageRef.current === 1 &&
+        prefsRef.current.includeCuratedInFeed === prefetchedMatchesIncludeCurated
+          ? await takePrefetched("matches")
+          : null;
+      const result = prefetched ?? (await listMatches(pageRef.current, prefsRef.current.includeCuratedInFeed));
       if (id !== requestIdRef.current) return; // superseded by a later request
       setMatches(result.matches);
       setTotalCount(result.totalCount);
