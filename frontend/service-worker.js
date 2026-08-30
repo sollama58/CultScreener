@@ -12,7 +12,7 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v54';
+const CACHE_VERSION = 'holdex-v55';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -66,11 +66,6 @@ const NEVER_CACHE_HOSTS = [
 ];
 
 // Font CDN patterns — cache long-term
-const FONT_PATTERNS = [
-  /fonts\.googleapis\.com/,
-  /fonts\.gstatic\.com/,
-];
-
 // Max entries in dynamic cache
 const MAX_DYNAMIC_ENTRIES = 100;
 const MAX_API_ENTRIES = 50;
@@ -138,11 +133,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Google Fonts â†’ Cache First (long-lived)
-  if (FONT_PATTERNS.some((p) => p.test(url.href))) {
-    event.respondWith(cacheFirstWithNetwork(request, DYNAMIC_CACHE));
-    return;
-  }
+  // Google Fonts — deliberately NOT intercepted, despite the caching being nice to have.
+  //
+  // A stylesheet the page loads is checked against style-src, and the font files against
+  // font-src; both have allowed the Google Fonts hosts in every version of this site's CSP. But
+  // a fetch() issued from this worker is a connection, checked against connect-src - and
+  // connect-src is part of the header configuration, which deploys on a different path from this
+  // file (a Render Blueprint sync, not a code push). The one time the two drifted, every visitor
+  // lost web fonts: this worker's fetch was refused, the request failed outright, and the page
+  // fell back to system fonts - while a plain browser load would have worked the whole time.
+  // Fonts are cheap, cacheable by the HTTP cache, and cosmetic offline; not worth the coupling.
 
   // HTML documents â†’ Network First so users always get fresh markup.
   // Fresh HTML references versioned assets (?v=N), ensuring JS/CSS is also fresh
@@ -151,6 +151,15 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(networkFirstWithCache(request, STATIC_CACHE));
     return;
   }
+
+  // The Trenches SPA's build output is content-hashed and served immutable - the HTTP cache
+  // already makes every repeat visit instant, so this worker adds nothing by storing a second
+  // copy. It does subtract, though: when a worker update takes control mid-navigation, the entry
+  // document's modulepreloads and the module requests behind them get answered in different
+  // worlds, Chrome discards the preloads as a "cross-world service worker resource mismatch",
+  // and the page's two biggest chunks download twice. Handing these back to the browser makes
+  // both requests live in the same world every time.
+  if (url.pathname.startsWith('/trenches/assets/')) return;
 
   // Same-origin static assets (JS, CSS, images) â†’ Cache First.
   // Assets use ?v=N versioning in their URLs, so cache-first is safe:
