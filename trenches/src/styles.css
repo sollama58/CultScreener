@@ -2507,8 +2507,23 @@ select {
   margin: 0 0 1.25rem;
 }
 .scoreboard__stat {
+  /* The positioning context for the tile's tap-open popover. */
+  position: relative;
   display: flex;
   flex-direction: column;
+}
+/* The tile itself is a button so its explanation is reachable by tap, not only by hover - but it
+   must read as a stat, not as a control: no chrome, the numbers do the talking. */
+.scoreboard__stat-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  text-align: left;
   cursor: help;
 }
 .scoreboard__value {
@@ -2528,6 +2543,31 @@ select {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+/* The raw counts behind the headline number - visible, so the tooltip is a repeat, not a gate. */
+.scoreboard__sub {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+/* The tap-opened explanation. Anchored under its tile; width capped so a long hint wraps into a
+   readable bubble rather than a one-line banner across the whole board. */
+.scoreboard__popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: min(320px, 80vw);
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-hover, var(--surface));
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
 .scoreboard__phase {
   margin-left: auto;
   font-size: 0.72rem;
@@ -2537,7 +2577,9 @@ select {
   border-radius: 999px;
   border: 1px solid var(--border);
   color: var(--text-muted);
-  cursor: help;
+  /* A button since it opens the training writeup below - but styled as the badge it always was. */
+  background: none;
+  cursor: pointer;
 }
 .scoreboard__phase--live {
   color: var(--accent-2);
@@ -2610,6 +2652,44 @@ select {
   color: var(--warn);
 }
 
+/* ── Outcome filter chips ─────────────────────────────────────────────
+   The feed's own vocabulary as one-tap filters. A flat chip row rather than the Live Feed's
+   collapsible slider panel: there are only six discrete answers here, and hiding them behind a
+   toggle would bury the tab's best question ("show me the wins") one tap deep. */
+.outcome-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.9rem;
+}
+.outcome-chip {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.outcome-chip:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent-2) 40%, var(--border));
+}
+.outcome-chip--active {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 55%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+}
+/* What the active filter actually searched - pagination honesty, in six words. */
+.outcome-chips__count {
+  margin-left: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* A curated card in either feed. The tint is what makes it stand out among ordinary matches in
    the Live Feed; it is deliberately a wash over the existing card rather than a different card,
    so the statistics stay in exactly the places people already read them. */
@@ -2661,6 +2741,37 @@ select {
   border-color: color-mix(in srgb, var(--accent-2) 45%, transparent);
 }
 
+/* Marks a pick the trained model made, once one holds the job - next to the star label. */
+.token-card__curated-source {
+  margin-left: 0.45rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 45%, transparent);
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+}
+
+/* Why the curator picked this token - the strip's tooltip made visible, since a title attribute
+   is unreachable on touch. Muted chips, not the theme-tag accent: these are the machine's own
+   reasons, context rather than category. */
+.token-card__curated-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.55rem 0 0;
+}
+.token-card__curated-reason {
+  font-size: 0.68rem;
+  padding: 0.14rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 30%, var(--border));
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent-2) 6%, transparent);
+}
+.token-card__curated-reason--more {
+  border-style: dashed;
+}
+
 /* The alert's own scorecard, sitting with the other after-the-alert numbers. */
 .token-card__curated-outcome {
   display: flex;
@@ -2671,6 +2782,12 @@ select {
   font-size: 0.82rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+.token-card__curated-outcome [data-tone="up"] {
+  color: var(--pos);
+}
+.token-card__curated-outcome [data-tone="down"] {
+  color: var(--neg);
 }
 .token-card__curated-outcome-label {
   font-size: 0.7rem;
