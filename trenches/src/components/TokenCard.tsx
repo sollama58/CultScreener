@@ -67,7 +67,15 @@ export function TokenCard({ match, index }: { match: Match; index?: number }) {
             {ticker && <span className="token-card__symbol">${ticker}</span>}
           </span>
         </a>
-        <span className="token-card__score" data-tier={scoreTier(match.score)}>
+        <span
+          className="token-card__score"
+          data-tier={scoreTier(match.score)}
+          title={
+            match.kind === "curated"
+              ? "The curator's confidence in this pick, in its own units - not the 0-100 scan score other cards show."
+              : undefined
+          }
+        >
           {match.score.toFixed(0)}
         </span>
       </div>
@@ -152,7 +160,8 @@ export function TokenCard({ match, index }: { match: Match; index?: number }) {
       <AthSection match={match} />
 
       {match.curated && match.kind === "curated" && <CuratedReasons reasons={match.curated.reasons} />}
-      {match.curated && <CuratedOutcomeRow outcome={match.curated.outcome} />}
+      {match.curated && <RunMeter curated={match.curated} match={match} />}
+      {match.curated && <CuratedOutcomeRow curated={match.curated} />}
 
       <QuickLinks mint={token.mintAddress} />
 
@@ -333,10 +342,21 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
   }
 
   if (outcome.status === "watching") {
-    const minutesLeft = Math.max(
-      0,
-      Math.ceil(WIN_WINDOW_MINUTES - (now - new Date(curated.alertedAt).getTime()) / 60_000),
+    const minutesLeft = Math.ceil(
+      WIN_WINDOW_MINUTES - (now - new Date(curated.alertedAt).getTime()) / 60_000,
     );
+    // The window has closed by the local clock but the verdict hasn't arrived yet - "watching ·
+    // 0m" at exactly the moment the answer lands reads as a frozen countdown, not a pending one.
+    if (minutesLeft <= 0) {
+      return (
+        <span
+          className="outcome-badge outcome-badge--watching"
+          title="The 15-minute window just closed - fetching the verdict."
+        >
+          settling…
+        </span>
+      );
+    }
     return (
       <span
         className="outcome-badge outcome-badge--watching"
@@ -356,16 +376,74 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
       </span>
     );
   }
+  if (outcome.status === "unknown") {
+    // The one honest badge for a pruned grade - silence here would be the grading UI's only
+    // dishonest-by-omission state.
+    return (
+      <span
+        className="outcome-badge"
+        title="This alert predates the outcome history we keep - its grade was pruned with the training row."
+      >
+        no record
+      </span>
+    );
+  }
   return null;
 }
 
+/**
+ * The 2x/4x bars as one glance: a log-scale track from the alert price to 4x, filled to the 1h
+ * peak, with a thin marker at where the token trades now. This is the card's grading system
+ * drawn instead of prosed - "did it clear the bar, and how close is it now" in half a second.
+ * Log scale so the 2x bar sits at the visual midpoint: each doubling is the same distance.
+ */
+function RunMeter({ curated, match }: { curated: CuratedMeta; match: Match }) {
+  const { outcome } = curated;
+  if (outcome.peak1hReturnPct === null || !Number.isFinite(outcome.peak1hReturnPct)) return null;
+  const position = (pct: number | null): number | null => {
+    if (pct === null || !Number.isFinite(pct)) return null;
+    const multiple = 1 + pct / 100;
+    if (multiple <= 1) return 0;
+    return Math.min(1, Math.log2(multiple) / 2);
+  };
+  const peakPos = position(outcome.peak1hReturnPct) ?? 0;
+  const nowPos = position(changeSinceAlertPct(match));
+  const cleared = outcome.hit2x && outcome.status !== "disqualified";
+  return (
+    <div
+      className="run-meter"
+      title="How far this call ran in its first hour, against the 2x bar (midpoint) and the 4x goal (right edge). The thin marker is where it trades now."
+    >
+      <div className="run-meter__track">
+        <div
+          className={`run-meter__fill${cleared ? " run-meter__fill--won" : ""}`}
+          style={{ width: `${peakPos * 100}%` }}
+        />
+        <div className="run-meter__tick run-meter__tick--2x" />
+        {nowPos !== null && <div className="run-meter__now" style={{ left: `${nowPos * 100}%` }} />}
+      </div>
+      <div className="run-meter__labels" aria-hidden="true">
+        <span>alert</span>
+        <span>2x</span>
+        <span>4x</span>
+      </div>
+    </div>
+  );
+}
+
 /** The alert's own scorecard: how far it ran in its first hour (the 4x goal window), and the worst it got. */
-function CuratedOutcomeRow({ outcome }: { outcome: CuratedMeta["outcome"] }) {
+function CuratedOutcomeRow({ curated }: { curated: CuratedMeta }) {
+  const now = useNow();
+  const { outcome } = curated;
   if (outcome.peak1hReturnPct === null && outcome.maxDrawdown1hPct === null) return null;
+  // While the hour is still running and the row hasn't finalized, the peak is a running maximum
+  // that will typically climb - "so far" keeps it from reading as a settled fact.
+  const inFirstHour = now - new Date(curated.alertedAt).getTime() < 3_600_000;
+  const provisional = !outcome.finalized && inFirstHour;
   return (
     <div className="token-card__curated-outcome">
       <span>
-        <span className="token-card__curated-outcome-label">1h peak</span>{" "}
+        <span className="token-card__curated-outcome-label">1h peak{provisional ? " so far" : ""}</span>{" "}
         <span data-tone={toneOf(outcome.peak1hReturnPct)}>{fmtSignedPct(outcome.peak1hReturnPct)}</span>
       </span>
       <span>
@@ -533,9 +611,22 @@ function AthSection({ match }: { match: Match }) {
   const pct =
     match.peakReturnPct ?? ((match.peakMcapUsd - snapshot.marketCapUsd) / snapshot.marketCapUsd) * 100;
 
+  // A curated card's peak comes from the outcome watcher, which follows a token for 24 hours
+  // after the call and then stops - a run on day 3 is invisible to it. Labelling that figure
+  // "All-Time High" would be factually wrong in exactly the direction sceptical readers check.
+  const curatedWatchPeak = match.kind === "curated";
   return (
     <div className="token-card__ath">
-      <div className="token-card__ath-label">All-Time High (after alert)</div>
+      <div
+        className="token-card__ath-label"
+        title={
+          curatedWatchPeak
+            ? "Curated alerts are watched for 24 hours after the call - this is the highest market cap seen in that window."
+            : undefined
+        }
+      >
+        {curatedWatchPeak ? "Peak (first 24h)" : "All-Time High (after alert)"}
+      </div>
       <div className="token-card__ath-value">
         {fmtUsd(match.peakMcapUsd)}
         <span className="token-card__ath-pct">+{Math.round(pct)}%</span>

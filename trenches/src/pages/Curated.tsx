@@ -325,6 +325,13 @@ export function Curated() {
         >
           {streamLive ? "Live" : "Polling"}
         </span>
+        {/* A dropped poll over healthy cards is "up to 30s stale", not "broken" - said quietly
+            here rather than as an error banner shoving the grid down. */}
+        {error && displayed.length > 0 && (
+          <span className="curated-retry" title={error}>
+            retrying…
+          </span>
+        )}
       </div>
 
       {/* One line, because that is all anyone needs before the cards: what a card is, and what
@@ -367,7 +374,7 @@ export function Curated() {
         </div>
       )}
 
-      {error && (
+      {error && displayed.length === 0 && (
         <p className="empty-state">
           {error}{" "}
           <button className="btn" onClick={() => refreshVisibleRef.current()}>
@@ -470,11 +477,14 @@ function CuratorScoreboard({ stats, onPhaseClick }: { stats: CuratedStats; onPha
     <section className="scoreboard">
       <Stat
         label="Hit rate"
-        value={rateable ? `${feed.hitRatePct!.toFixed(0)}%` : `${feed.graded}/${MIN_GRADED_FOR_HIT_RATE}`}
+        // Never a slash-fraction before the threshold: a big "3/10" under "Hit rate" reads
+        // universally as three wins out of ten graded - a losing record - when it means "three
+        // graded, ten needed". A dash plus the visible count says exactly what is known.
+        value={rateable ? `${feed.hitRatePct!.toFixed(0)}%` : "—"}
         sub={
           rateable
             ? `${feed.wins} of ${feed.graded} graded${edge !== null ? ` · ${edge.toFixed(1)}× random` : ""}`
-            : "graded so far"
+            : `${feed.graded} of ${MIN_GRADED_FOR_HIT_RATE} graded`
         }
         hint={
           rateable
@@ -532,7 +542,7 @@ function CuratorScoreboard({ stats, onPhaseClick }: { stats: CuratedStats; onPha
         onClick={onPhaseClick}
         title={
           modelLive
-            ? "A model trained on this pipeline's own recorded outcomes is picking - it earned the job by beating the hand-tuned gate on held-out history, and retrains every 4 hours. Tap for the full story."
+            ? `A model trained on this pipeline's own recorded outcomes is picking - it earned the job by beating the hand-tuned gate on held-out history, and retrains every 4 hours.${curator.modelTrainedAt ? ` Trained on data through ${new Date(curator.modelTrainedAt).toLocaleDateString()}.` : ""} Tap for the full story.`
             : `A hand-tuned quality gate is picking while the model learns. ${training.finalizedSamples.toLocaleString()} outcomes graded so far (+${training.samples7d.toLocaleString()} this week); it takes over automatically once it beats the gate on held-out history.${curator.latestEvaluation?.verdict ? ` Latest check: ${curator.latestEvaluation.verdict.reason}.` : ""} Tap for the full story.`
         }
       >
@@ -559,10 +569,6 @@ function TrainingExplainer({
 }) {
   const { curator, training, comparison30d } = stats;
   const modelLive = curator.phase === "model-live";
-  const recordLine = (record: { graded: number; hitRatePct: number | null }) =>
-    record.graded > 0 && record.hitRatePct !== null
-      ? `${record.hitRatePct.toFixed(0)}% of ${record.graded.toLocaleString()} graded picks`
-      : "no graded picks yet";
   const showComparison =
     comparison30d && (comparison30d.heuristic.graded > 0 || comparison30d.model.graded > 0);
   return (
@@ -599,11 +605,52 @@ function TrainingExplainer({
           {curator.latestEvaluation?.verdict && ` Latest check: ${curator.latestEvaluation.verdict.reason}.`}
         </p>
         {showComparison && (
-          <p className="training-explainer__comparison">
-            Last 30 days, graded in production - live picks and shadow picks together:{" "}
-            <strong>hand-tuned gate</strong> {recordLine(comparison30d.heuristic)} ·{" "}
-            <strong>model</strong> {recordLine(comparison30d.model)}.
-          </p>
+          <div className="training-explainer__comparison">
+            {/* A table, not a sentence: this is the product's most checkable claim - two curators
+                graded live on the same bar - and Picks vs Graded is what makes the rate honest
+                (a 60% rate on 8 graded picks out of 300 emitted is a different fact entirely). */}
+            <table className="curator-compare">
+              <thead>
+                <tr>
+                  <th scope="col">Last 30 days</th>
+                  <th scope="col">Picks</th>
+                  <th scope="col">Graded</th>
+                  <th scope="col">Hit rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className={!modelLive ? "curator-compare__live" : undefined}>
+                  <th scope="row">
+                    Hand-tuned gate
+                    {!modelLive && <span className="curator-compare__badge">picking now</span>}
+                  </th>
+                  <td>{comparison30d.heuristic.emitted.toLocaleString()}</td>
+                  <td>{comparison30d.heuristic.graded.toLocaleString()}</td>
+                  <td>
+                    {comparison30d.heuristic.hitRatePct !== null
+                      ? `${comparison30d.heuristic.hitRatePct.toFixed(0)}%`
+                      : "—"}
+                  </td>
+                </tr>
+                <tr className={modelLive ? "curator-compare__live" : undefined}>
+                  <th scope="row">
+                    Model
+                    {modelLive && <span className="curator-compare__badge">picking now</span>}
+                  </th>
+                  <td>{comparison30d.model.emitted.toLocaleString()}</td>
+                  <td>{comparison30d.model.graded.toLocaleString()}</td>
+                  <td>
+                    {comparison30d.model.hitRatePct !== null
+                      ? `${comparison30d.model.hitRatePct.toFixed(0)}%`
+                      : "—"}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="curator-compare__note">
+              Graded in production - live picks and shadow picks together, against the same bar.
+            </p>
+          </div>
         )}
         <p className="training-explainer__warning">
           <strong>Experimental:</strong> this self-learning system is new and trained on a small, fast-moving
