@@ -2231,6 +2231,25 @@ select {
   border-color: color-mix(in srgb, var(--warn) 30%, transparent);
 }
 
+/* The months selector above the burn button - one approval for a quarter instead of three. */
+.paywall__months {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 14px 0 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.paywall__months select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
 .paywall__footnote {
   margin: 14px 0 0;
   font-size: 0.8rem;

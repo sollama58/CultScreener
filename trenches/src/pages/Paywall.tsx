@@ -31,6 +31,11 @@ export function Paywall() {
   const { publicKey, signTransaction } = useWallet();
   const { state: bridgeState, refresh: refreshBridge } = useWalletBridge();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  // How many months this burn buys. The backend has always credited by amount (burning a
+  // multiple buys the multiple, capped at 12) and the bullet below has always said so - this
+  // selector is the control that was missing, so buying a quarter is one approval and one
+  // network fee rather than three of each.
+  const [months, setMonths] = useState(1);
   // Survives re-renders so a claim loop started before a refresh doesn't get orphaned.
   //
   // Reset on mount, not only set on unmount: refs persist across StrictMode's deliberate
@@ -125,7 +130,9 @@ export function Paywall() {
         tokenAccount,
         mint,
         publicKey,
-        toRawAmount(price.tokensPerMonth, price.decimals),
+        // Integer arithmetic throughout: tokensPerMonth and months are whole numbers, and
+        // toRawAmount only scales by 10^decimals as a bigint.
+        toRawAmount(price.tokensPerMonth * months, price.decimals),
       );
 
       const transaction = new Transaction().add(instruction);
@@ -228,9 +235,27 @@ export function Paywall() {
           wallet attached to this tab, and the button has to say why it can't do anything rather
           than sit there greyed out looking broken.
         */}
+        {walletReady && !busy && (
+          <label className="paywall__months">
+            Months
+            <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n} {n === 1 ? "month" : "months"} · {(status.price.tokensPerMonth * n).toLocaleString()}{" "}
+                  tokens
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         {walletReady || busy ? (
           <button className="btn btn--primary paywall__cta" onClick={() => void burn()} disabled={busy}>
-            {busy ? "Working…" : `Burn ${status.price.tokensPerMonth.toLocaleString()} $ASDFASDFA`}
+            {busy
+              ? "Working…"
+              : `Burn ${(status.price.tokensPerMonth * months).toLocaleString()} $ASDFASDFA for ${
+                  months * status.price.daysPerMonth
+                } days`}
           </button>
         ) : (
           // A separate button, not a disabled burn button: the action available right now is
