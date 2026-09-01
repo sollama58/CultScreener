@@ -247,47 +247,75 @@ function TelegramCard() {
   const [status, setStatus] = useState<TelegramStatus | null>(null);
   const [linkInfo, setLinkInfo] = useState<{ linkCode: string; deepLink: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  // ApiError messages are written to be shown verbatim - see the other cards' runAction pattern.
+  const [error, setError] = useState<string | null>(null);
 
-  const refresh = () => getTelegramStatus().then(setStatus);
+  // With a catch, unlike the bare .then it used to be: a single failed /telegram/status (a
+  // network blip, a transient 500) otherwise left this card on "Loading Telegram settings…"
+  // forever, with no retry and nothing but an unhandled rejection in the console.
+  const refresh = () =>
+    getTelegramStatus()
+      .then((s) => {
+        setStatus(s);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load Telegram settings.");
+      });
 
   useEffect(() => {
     void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only, refresh is stable in effect
   }, []);
 
-  const handleLink = async () => {
+  /** Runs one mutation, surfacing its failure in the card instead of as a silent dead click. */
+  const runAction = async (action: () => Promise<void>) => {
     setBusy(true);
+    setError(null);
     try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong - try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleLink = () =>
+    runAction(async () => {
       const result = await linkTelegram();
       setLinkInfo(result);
       await refresh();
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
-  const handleUnlink = async () => {
+  const handleUnlink = () => {
     if (!confirm("Unlink Telegram? You'll stop getting alerts there.")) return;
-    setBusy(true);
-    try {
+    void runAction(async () => {
       await unlinkTelegram();
       setLinkInfo(null);
       await refresh();
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const handleAlertModeChange = async (mode: AlertMode) => {
-    setBusy(true);
-    try {
+  const handleAlertModeChange = (mode: AlertMode) =>
+    runAction(async () => {
       await setAlertMode(mode);
       await refresh();
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
-  if (!status) return <p className="empty-state">Loading Telegram settings…</p>;
+  if (!status) {
+    return error ? (
+      <div className="settings-card">
+        <h3>Telegram alerts</h3>
+        <p className="settings-card__status">{error}</p>
+        <button className="btn" onClick={() => void refresh()}>
+          Retry
+        </button>
+      </div>
+    ) : (
+      <p className="empty-state">Loading Telegram settings…</p>
+    );
+  }
 
   // linkInfo only exists right after clicking "Link Telegram" this session; status.pendingLinkCode
   // survives a reload. Reconstruct the same deep link from status when linkInfo is gone so the
@@ -300,6 +328,8 @@ function TelegramCard() {
   return (
     <div className="settings-card">
       <h3>Telegram alerts</h3>
+
+      {error && <p className="form-error">{error}</p>}
 
       {!status.enabled ? (
         <p className="settings-card__status">

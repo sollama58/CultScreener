@@ -151,6 +151,7 @@ export function TokenCard({ match, index }: { match: Match; index?: number }) {
 
       <AthSection match={match} />
 
+      {match.curated && match.kind === "curated" && <CuratedReasons reasons={match.curated.reasons} />}
       {match.curated && <CuratedOutcomeRow outcome={match.curated.outcome} />}
 
       <QuickLinks mint={token.mintAddress} />
@@ -172,6 +173,10 @@ export function TokenCard({ match, index }: { match: Match; index?: number }) {
  * wording is honest about which happened.
  */
 function CuratedStrip({ curated, standalone }: { curated: CuratedMeta; standalone: boolean }) {
+  // "heuristic-v1" is the hand-tuned gate; anything else is the id of a promoted model. Worth a
+  // visible mark, not just a tooltip: once the model takes the job, which curator made a given
+  // call is exactly what the learning panel invites people to check.
+  const modelPick = !curated.source.startsWith("heuristic");
   return (
     <div className="token-card__curated-strip">
       <span
@@ -183,8 +188,38 @@ function CuratedStrip({ curated, standalone }: { curated: CuratedMeta; standalon
         }
       >
         ★ Curated{standalone ? "" : " + your filter"}
+        {modelPick && (
+          <span className="token-card__curated-source" title={`Picked by the trained model (${curated.source}), not the hand-tuned gate.`}>
+            model
+          </span>
+        )}
       </span>
       <OutcomeBadge curated={curated} />
+    </div>
+  );
+}
+
+/**
+ * Why the curator picked this token, as visible chips rather than only a hover tooltip.
+ *
+ * Only rendered on standalone curated cards (the Curated tab, and curator-only cards in the Live
+ * Feed): the title-attribute version above is unreachable on touch, and "why was this called" is
+ * the first question a curated pick invites. Folded match+curated cards skip it - those cards
+ * already carry the user's own filter as the reason they're here. Capped at three chips; the full
+ * list stays in the strip's tooltip.
+ */
+function CuratedReasons({ reasons }: { reasons: string[] }) {
+  if (reasons.length === 0) return null;
+  const shown = reasons.slice(0, 3);
+  const more = reasons.length - shown.length;
+  return (
+    <div className="token-card__curated-reasons" title={`Why the curator picked this: ${reasons.join(" · ")}`}>
+      {shown.map((reason) => (
+        <span key={reason} className="token-card__curated-reason">
+          {reason}
+        </span>
+      ))}
+      {more > 0 && <span className="token-card__curated-reason token-card__curated-reason--more">+{more}</span>}
     </div>
   );
 }
@@ -269,6 +304,21 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
   const now = useNow();
   const { outcome } = curated;
 
+  // Checked before the 2x branch, not after: a disqualified alert BY DEFINITION also hit 2x
+  // (you cannot be stopped out of a double you never had), so `hit2x` is true for every one of
+  // them and an early win-return would paint the exact runs the label exists to count as losses
+  // with a green badge - inflating the feed's visible record.
+  if (outcome.status === "disqualified") {
+    return (
+      <span
+        className="outcome-badge outcome-badge--missed"
+        title="It did double inside the window - but only after first dropping 50%+, which would have stopped out anyone who bought the alert. Counted as a loss on purpose."
+      >
+        stopped out
+      </span>
+    );
+  }
+
   if (outcome.hit2x) {
     // A win that went on to clear the 4x goal says so - it is the run the feed is hunting.
     return outcome.hitGoal ? (
@@ -306,16 +356,6 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
       </span>
     );
   }
-  if (outcome.status === "disqualified") {
-    return (
-      <span
-        className="outcome-badge outcome-badge--missed"
-        title="It did double inside the window - but only after first dropping 50%+, which would have stopped out anyone who bought the alert. Counted as a loss on purpose."
-      >
-        stopped out
-      </span>
-    );
-  }
   return null;
 }
 
@@ -325,13 +365,25 @@ function CuratedOutcomeRow({ outcome }: { outcome: CuratedMeta["outcome"] }) {
   return (
     <div className="token-card__curated-outcome">
       <span>
-        <span className="token-card__curated-outcome-label">1h peak</span> {fmtSignedPct(outcome.peak1hReturnPct)}
+        <span className="token-card__curated-outcome-label">1h peak</span>{" "}
+        <span data-tone={toneOf(outcome.peak1hReturnPct)}>{fmtSignedPct(outcome.peak1hReturnPct)}</span>
       </span>
       <span>
-        <span className="token-card__curated-outcome-label">worst</span> {fmtSignedPct(outcome.maxDrawdown1hPct)}
+        <span className="token-card__curated-outcome-label">worst</span>{" "}
+        <span data-tone={toneOf(outcome.maxDrawdown1hPct)}>{fmtSignedPct(outcome.maxDrawdown1hPct)}</span>
       </span>
     </div>
   );
+}
+
+/** Gain/loss colouring for the scorecard numbers - same rounding threshold as the text itself,
+ *  so a value that displays as "0%" never carries a colour claiming otherwise. */
+function toneOf(n: number | null): "up" | "down" | undefined {
+  if (n === null || !Number.isFinite(n)) return undefined;
+  const rounded = Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 10) / 10;
+  if (rounded > 0) return "up";
+  if (rounded < 0) return "down";
+  return undefined;
 }
 
 function fmtSignedPct(n: number | null): string {

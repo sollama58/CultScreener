@@ -87,8 +87,15 @@ export const FILTER_TEMPLATES: FilterTemplate[] = [
     id: "wide",
     name: "Wide Filters",
     description:
-      "Catches almost everything the scanner screens. Two loose guards only - a cap on brand-new wallets among the top holders, and enough age that the token has at least been seen twice.",
-    summary: ["Max fresh top-10 wallets 30%", "Min age 1 minute", "Every other criterion left open"],
+      "Catches almost everything the scanner screens. Three loose guards only - caps on brand-new and empty-looking wallets among the top holders, and enough age that the token has at least been seen twice.",
+    // Every criterion the settings set MUST appear here - the summary's whole job (see the
+    // interface comment) is that the effect is visible before applying, not discovered after.
+    summary: [
+      "Max fresh top-10 wallets 30%",
+      "Max empty top-10 wallets 60%",
+      "Min age 1 minute",
+      "Every other criterion left open",
+    ],
     settings: { maxFreshTop10WalletPct: 30, maxEmptyTop10WalletPct: 60, minTokenAgeMinutes: 1 },
   },
 ];

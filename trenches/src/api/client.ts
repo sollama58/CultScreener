@@ -102,20 +102,55 @@ function takeWarmed(path: string, init: RequestInit): Promise<Response> | null {
   return hit;
 }
 
+/**
+ * Bounds a warmed response the same way REQUEST_TIMEOUT_MS bounds a normal fetch.
+ *
+ * boot-prefetch.js runs in browsers this bundle never has to support, so its requests can arrive
+ * without an AbortSignal - and a warmed connection that dies without closing would otherwise
+ * leave the awaiting caller pending forever, resurrecting exactly the stuck-forever failure the
+ * timeout above exists to make impossible (with AuthProvider awaiting the warmed /auth/me, the
+ * whole app would sit on "Loading TrenchScanner…"). When the warm loses the race it is simply
+ * abandoned and the request is made normally, which carries its own timeout.
+ */
+function boundWarmed(warmed: Promise<Response>, fresh: () => Promise<Response>): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      fresh().then(resolve, reject);
+    }, REQUEST_TIMEOUT_MS);
+    warmed.then(
+      (res) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(res);
+      },
+      (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
 async function request<T>(path: string, init: RequestInit & { quiet?: boolean } = {}): Promise<T> {
   const { quiet, ...rest } = init;
   const warmed = takeWarmed(path, init);
-  const res = warmed
-    ? await warmed
-    : await fetch(`${BASE_URL}${path}`, {
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        ...rest,
-        credentials: "include",
-        headers: {
-          ...(init.body ? { "content-type": "application/json" } : {}),
-          ...init.headers,
-        },
-      });
+  const freshFetch = () =>
+    fetch(`${BASE_URL}${path}`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      ...rest,
+      credentials: "include",
+      headers: {
+        ...(init.body ? { "content-type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+  const res = warmed ? await boundWarmed(warmed, freshFetch) : await freshFetch();
 
   if (!res.ok) {
     // The session is httpOnly and server-owned, so the only way this app learns it has expired

@@ -22,7 +22,18 @@
 
   function warm(path) {
     try {
-      var p = fetch(api + path, { credentials: "include" });
+      var opts = { credentials: "include" };
+      // Bounded like the app's own requests, where the browser can: a connection that dies
+      // without closing must not leave the handed-over promise pending forever. client.ts guards
+      // its side of the handoff too (see boundWarmed there); aborting here also frees the socket.
+      try {
+        if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+          opts.signal = AbortSignal.timeout(20000);
+        }
+      } catch (err) {
+        // Older engine - the client-side bound still applies.
+      }
+      var p = fetch(api + path, opts);
       // Nothing awaits these yet. Without a catch here a network failure becomes an unhandled
       // rejection in the console before the app has had a chance to pick it up.
       p.catch(function () {});
