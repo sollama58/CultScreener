@@ -67,7 +67,15 @@ export function TokenCard({ match, index }: { match: Match; index?: number }) {
             {ticker && <span className="token-card__symbol">${ticker}</span>}
           </span>
         </a>
-        <span className="token-card__score" data-tier={scoreTier(match.score)}>
+        <span
+          className="token-card__score"
+          data-tier={scoreTier(match.score)}
+          title={
+            match.kind === "curated"
+              ? "The curator's confidence in this pick, in its own units - not the 0-100 scan score other cards show."
+              : undefined
+          }
+        >
           {match.score.toFixed(0)}
         </span>
       </div>
@@ -151,7 +159,9 @@ export function TokenCard({ match, index }: { match: Match; index?: number }) {
 
       <AthSection match={match} />
 
-      {match.curated && <CuratedOutcomeRow outcome={match.curated.outcome} />}
+      {match.curated && match.kind === "curated" && <CuratedReasons reasons={match.curated.reasons} />}
+      {match.curated && <RunMeter curated={match.curated} match={match} />}
+      {match.curated && <CuratedOutcomeRow curated={match.curated} />}
 
       <QuickLinks mint={token.mintAddress} />
 
@@ -172,6 +182,10 @@ export function TokenCard({ match, index }: { match: Match; index?: number }) {
  * wording is honest about which happened.
  */
 function CuratedStrip({ curated, standalone }: { curated: CuratedMeta; standalone: boolean }) {
+  // "heuristic-v1" is the hand-tuned gate; anything else is the id of a promoted model. Worth a
+  // visible mark, not just a tooltip: once the model takes the job, which curator made a given
+  // call is exactly what the learning panel invites people to check.
+  const modelPick = !curated.source.startsWith("heuristic");
   return (
     <div className="token-card__curated-strip">
       <span
@@ -183,8 +197,38 @@ function CuratedStrip({ curated, standalone }: { curated: CuratedMeta; standalon
         }
       >
         ★ Curated{standalone ? "" : " + your filter"}
+        {modelPick && (
+          <span className="token-card__curated-source" title={`Picked by the trained model (${curated.source}), not the hand-tuned gate.`}>
+            model
+          </span>
+        )}
       </span>
       <OutcomeBadge curated={curated} />
+    </div>
+  );
+}
+
+/**
+ * Why the curator picked this token, as visible chips rather than only a hover tooltip.
+ *
+ * Only rendered on standalone curated cards (the Curated tab, and curator-only cards in the Live
+ * Feed): the title-attribute version above is unreachable on touch, and "why was this called" is
+ * the first question a curated pick invites. Folded match+curated cards skip it - those cards
+ * already carry the user's own filter as the reason they're here. Capped at three chips; the full
+ * list stays in the strip's tooltip.
+ */
+function CuratedReasons({ reasons }: { reasons: string[] }) {
+  if (reasons.length === 0) return null;
+  const shown = reasons.slice(0, 3);
+  const more = reasons.length - shown.length;
+  return (
+    <div className="token-card__curated-reasons" title={`Why the curator picked this: ${reasons.join(" · ")}`}>
+      {shown.map((reason) => (
+        <span key={reason} className="token-card__curated-reason">
+          {reason}
+        </span>
+      ))}
+      {more > 0 && <span className="token-card__curated-reason token-card__curated-reason--more">+{more}</span>}
     </div>
   );
 }
@@ -269,6 +313,21 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
   const now = useNow();
   const { outcome } = curated;
 
+  // Checked before the 2x branch, not after: a disqualified alert BY DEFINITION also hit 2x
+  // (you cannot be stopped out of a double you never had), so `hit2x` is true for every one of
+  // them and an early win-return would paint the exact runs the label exists to count as losses
+  // with a green badge - inflating the feed's visible record.
+  if (outcome.status === "disqualified") {
+    return (
+      <span
+        className="outcome-badge outcome-badge--missed"
+        title="It did double inside the window - but only after first dropping 50%+, which would have stopped out anyone who bought the alert. Counted as a loss on purpose."
+      >
+        stopped out
+      </span>
+    );
+  }
+
   if (outcome.hit2x) {
     // A win that went on to clear the 4x goal says so - it is the run the feed is hunting.
     return outcome.hitGoal ? (
@@ -283,10 +342,21 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
   }
 
   if (outcome.status === "watching") {
-    const minutesLeft = Math.max(
-      0,
-      Math.ceil(WIN_WINDOW_MINUTES - (now - new Date(curated.alertedAt).getTime()) / 60_000),
+    const minutesLeft = Math.ceil(
+      WIN_WINDOW_MINUTES - (now - new Date(curated.alertedAt).getTime()) / 60_000,
     );
+    // The window has closed by the local clock but the verdict hasn't arrived yet - "watching ·
+    // 0m" at exactly the moment the answer lands reads as a frozen countdown, not a pending one.
+    if (minutesLeft <= 0) {
+      return (
+        <span
+          className="outcome-badge outcome-badge--watching"
+          title="The 15-minute window just closed - fetching the verdict."
+        >
+          settling…
+        </span>
+      );
+    }
     return (
       <span
         className="outcome-badge outcome-badge--watching"
@@ -306,32 +376,92 @@ function OutcomeBadge({ curated }: { curated: CuratedMeta }) {
       </span>
     );
   }
-  if (outcome.status === "disqualified") {
+  if (outcome.status === "unknown") {
+    // The one honest badge for a pruned grade - silence here would be the grading UI's only
+    // dishonest-by-omission state.
     return (
       <span
-        className="outcome-badge outcome-badge--missed"
-        title="It did double inside the window - but only after first dropping 50%+, which would have stopped out anyone who bought the alert. Counted as a loss on purpose."
+        className="outcome-badge"
+        title="This alert predates the outcome history we keep - its grade was pruned with the training row."
       >
-        stopped out
+        no record
       </span>
     );
   }
   return null;
 }
 
+/**
+ * The 2x/4x bars as one glance: a log-scale track from the alert price to 4x, filled to the 1h
+ * peak, with a thin marker at where the token trades now. This is the card's grading system
+ * drawn instead of prosed - "did it clear the bar, and how close is it now" in half a second.
+ * Log scale so the 2x bar sits at the visual midpoint: each doubling is the same distance.
+ */
+function RunMeter({ curated, match }: { curated: CuratedMeta; match: Match }) {
+  const { outcome } = curated;
+  if (outcome.peak1hReturnPct === null || !Number.isFinite(outcome.peak1hReturnPct)) return null;
+  const position = (pct: number | null): number | null => {
+    if (pct === null || !Number.isFinite(pct)) return null;
+    const multiple = 1 + pct / 100;
+    if (multiple <= 1) return 0;
+    return Math.min(1, Math.log2(multiple) / 2);
+  };
+  const peakPos = position(outcome.peak1hReturnPct) ?? 0;
+  const nowPos = position(changeSinceAlertPct(match));
+  const cleared = outcome.hit2x && outcome.status !== "disqualified";
+  return (
+    <div
+      className="run-meter"
+      title="How far this call ran in its first hour, against the 2x bar (midpoint) and the 4x goal (right edge). The thin marker is where it trades now."
+    >
+      <div className="run-meter__track">
+        <div
+          className={`run-meter__fill${cleared ? " run-meter__fill--won" : ""}`}
+          style={{ width: `${peakPos * 100}%` }}
+        />
+        <div className="run-meter__tick run-meter__tick--2x" />
+        {nowPos !== null && <div className="run-meter__now" style={{ left: `${nowPos * 100}%` }} />}
+      </div>
+      <div className="run-meter__labels" aria-hidden="true">
+        <span>alert</span>
+        <span>2x</span>
+        <span>4x</span>
+      </div>
+    </div>
+  );
+}
+
 /** The alert's own scorecard: how far it ran in its first hour (the 4x goal window), and the worst it got. */
-function CuratedOutcomeRow({ outcome }: { outcome: CuratedMeta["outcome"] }) {
+function CuratedOutcomeRow({ curated }: { curated: CuratedMeta }) {
+  const now = useNow();
+  const { outcome } = curated;
   if (outcome.peak1hReturnPct === null && outcome.maxDrawdown1hPct === null) return null;
+  // While the hour is still running and the row hasn't finalized, the peak is a running maximum
+  // that will typically climb - "so far" keeps it from reading as a settled fact.
+  const inFirstHour = now - new Date(curated.alertedAt).getTime() < 3_600_000;
+  const provisional = !outcome.finalized && inFirstHour;
   return (
     <div className="token-card__curated-outcome">
       <span>
-        <span className="token-card__curated-outcome-label">1h peak</span> {fmtSignedPct(outcome.peak1hReturnPct)}
+        <span className="token-card__curated-outcome-label">1h peak{provisional ? " so far" : ""}</span>{" "}
+        <span data-tone={toneOf(outcome.peak1hReturnPct)}>{fmtSignedPct(outcome.peak1hReturnPct)}</span>
       </span>
       <span>
-        <span className="token-card__curated-outcome-label">worst</span> {fmtSignedPct(outcome.maxDrawdown1hPct)}
+        <span className="token-card__curated-outcome-label">worst</span>{" "}
+        <span data-tone={toneOf(outcome.maxDrawdown1hPct)}>{fmtSignedPct(outcome.maxDrawdown1hPct)}</span>
       </span>
     </div>
   );
+}
+
+/** Gain/loss colouring for the scorecard numbers - same rounding threshold as the text itself,
+ *  so a value that displays as "0%" never carries a colour claiming otherwise. */
+function toneOf(n: number | null): "up" | "down" | undefined {
+  if (n === null || !Number.isFinite(n)) return undefined;
+  const rounded = Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 10) / 10;
+  if (rounded > 0) return "up";
+  if (rounded < 0) return "down";
+  return undefined;
 }
 
 function fmtSignedPct(n: number | null): string {
@@ -481,9 +611,22 @@ function AthSection({ match }: { match: Match }) {
   const pct =
     match.peakReturnPct ?? ((match.peakMcapUsd - snapshot.marketCapUsd) / snapshot.marketCapUsd) * 100;
 
+  // A curated card's peak comes from the outcome watcher, which follows a token for 24 hours
+  // after the call and then stops - a run on day 3 is invisible to it. Labelling that figure
+  // "All-Time High" would be factually wrong in exactly the direction sceptical readers check.
+  const curatedWatchPeak = match.kind === "curated";
   return (
     <div className="token-card__ath">
-      <div className="token-card__ath-label">All-Time High (after alert)</div>
+      <div
+        className="token-card__ath-label"
+        title={
+          curatedWatchPeak
+            ? "Curated alerts are watched for 24 hours after the call - this is the highest market cap seen in that window."
+            : undefined
+        }
+      >
+        {curatedWatchPeak ? "Peak (first 24h)" : "All-Time High (after alert)"}
+      </div>
       <div className="token-card__ath-value">
         {fmtUsd(match.peakMcapUsd)}
         <span className="token-card__ath-pct">+{Math.round(pct)}%</span>

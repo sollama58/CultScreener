@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listFilters, listMatches, openMatchesStream } from "../api/client";
+import { listFilters, listMatches, openCuratedStream, openMatchesStream } from "../api/client";
 import { prefetchedMatchesIncludeCurated, takePrefetched } from "../api/bootPrefetch";
 
 import type { Match, MatchesPage } from "../api/types";
@@ -57,6 +57,25 @@ const DISPLAY_PAGE_SIZE = 12;
  * loop the moment someone pages deep enough.
  */
 const MAX_FILTER_LOOKAHEAD_PAGES = 25;
+
+/**
+ * How many raw pages one backfill round fetches in parallel once the walk is past page 1.
+ *
+ * The first round always asks for a single page, so the common case - a loose filter satisfied
+ * from the newest page - costs exactly one request. Only a walk that genuinely needs more
+ * history widens to batches, which cuts a deep backfill from 25 serial round trips (a visibly
+ * laggy Next click) to a handful, without changing how many pages are fetched in the worst case.
+ */
+const FILTER_LOOKAHEAD_BATCH = 4;
+
+/**
+ * The server's interleaving depth for the curated-mixed feed - mirrors MAX_MERGE_DEPTH in
+ * TrenchScanner's apps/api/src/routes/matches.ts. Past this many cards the server stops merging
+ * curated alerts in and its totalCount collapses to matches-only, so pages past this depth are
+ * a cliff: navigable page numbers must be clamped to it while the curated toggle is on, or the
+ * pager promises pages that arrive empty with a nonsense "Page 26 of 5" label.
+ */
+const INTERLEAVED_MAX_CARDS = 300;
 
 /**
  * The last page-1 feed this session rendered, kept across unmounts.
@@ -126,6 +145,10 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   const [filteredPage, setFilteredPage] = useState(1);
   const [filteredRaw, setFilteredRaw] = useState<Match[]>([]);
   const [filteredServerTotal, setFilteredServerTotal] = useState(0);
+  // True when the last walk stopped at MAX_FILTER_LOOKAHEAD_PAGES rather than at the end of the
+  // data. The distinction drives pagination honesty: a capped buffer is "all we will scan", so
+  // Next must disable at its edge instead of promising pages that would render blank.
+  const [filteredCapped, setFilteredCapped] = useState(false);
   const [filteredLoading, setFilteredLoading] = useState(false);
   const filteredRequestIdRef = useRef(0);
 
@@ -327,7 +350,10 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
       // for a tab that has actually been away, not a refresh button bound to window focus.
       if (Date.now() - lastVisibleFetchRef.current < VISIBILITY_REFETCH_GRACE_MS) return;
       lastVisibleFetchRef.current = Date.now();
-      void refetchRef.current?.();
+      // The list actually on screen, which with a display filter active is the filtered buffer -
+      // refreshing only the hidden unfiltered list would leave the visible cards exactly as stale
+      // as they were, defeating the whole point of the catch-up. Same routing the SSE nudge uses.
+      refreshVisibleRef.current();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
@@ -348,6 +374,12 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     seededFirstFetchRef.current = false;
     void refetch({ showPending: !quiet });
     return () => {
+      // Invalidate any fetch still in flight, not just the armed timer: a refetch that settles
+      // after this cleanup would otherwise pass the winning-request check in its finally block
+      // and call scheduleRefresh() - arming a fresh 45s timer no cleanup will ever clear, which
+      // re-fetches and re-arms itself forever from an unmounted component. Bumping the id makes
+      // the late settle lose the check, so nothing re-arms.
+      requestIdRef.current++;
       if (refreshTimerRef.current !== undefined) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = undefined;
     };
@@ -404,6 +436,36 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     };
   }, [refetch, announceNewAlert, rememberAnnounced]);
 
+  // Curated picks mixed into this feed get the same push latency as the user's own matches:
+  // without this, a curator call - the global, time-sensitive alert - waited out up to a full
+  // poll interval while the header still showed the "Live" pill. Its own effect rather than a
+  // branch of the match-stream one, so flipping the Settings toggle doesn't tear down and reopen
+  // the match stream with it. Same nudge-only contract as everywhere else; PumpTok already pairs
+  // the two streams this way for its "both" source.
+  useEffect(() => {
+    if (!prefs.includeCuratedInFeed) return;
+    const es = openCuratedStream();
+    if (!es) return;
+    const handleCurated = (event: Event) => {
+      // In the interleaved feed a standalone curated card's id IS the alert id, so recording it
+      // keeps the refetch path from chiming a second time - the same dedupe the match events use.
+      try {
+        const data: unknown = JSON.parse((event as MessageEvent<string>).data);
+        const alertId = (data as { alertId?: unknown })?.alertId;
+        if (typeof alertId === "string") rememberAnnounced(alertId);
+      } catch {
+        // Malformed payload - the chime and refetch don't depend on it.
+      }
+      announceNewAlert();
+      refreshVisibleRef.current();
+    };
+    es.addEventListener("curated", handleCurated);
+    return () => {
+      es.removeEventListener("curated", handleCurated);
+      es.close();
+    };
+  }, [prefs.includeCuratedInFeed, announceNewAlert, rememberAnnounced]);
+
   /**
    * Ensures the filtered buffer has enough PASSING alerts to fill `targetPage`, pulling
    * additional raw server pages (starting fresh from page 1 each time) until it does, or until
@@ -422,17 +484,34 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     let raw: Match[] = [];
     let serverTotal = 0;
     let rawPage = 1;
+    let capped = false;
     try {
       for (;;) {
-        const result = await listMatches(rawPage, prefsRef.current.includeCuratedInFeed);
+        // Page 1 alone first (the common case needs nothing more), then parallel batches - see
+        // FILTER_LOOKAHEAD_BATCH. Pages land in order because Promise.all preserves input order.
+        const batchSize =
+          rawPage === 1 ? 1 : Math.min(FILTER_LOOKAHEAD_BATCH, MAX_FILTER_LOOKAHEAD_PAGES - rawPage + 1);
+        const results = await Promise.all(
+          Array.from({ length: batchSize }, (_, i) =>
+            listMatches(rawPage + i, prefsRef.current.includeCuratedInFeed),
+          ),
+        );
         if (id !== filteredRequestIdRef.current) return; // superseded by a newer request
-        serverTotal = result.totalCount;
-        raw = raw.concat(result.matches);
+        for (const result of results) {
+          serverTotal = result.totalCount;
+          raw = raw.concat(result.matches);
+        }
         const passingCount = raw.filter((m) => passesFeedFilter(m, activeFilter, nowMs)).length;
         const haveEnough = passingCount >= targetPage * DISPLAY_PAGE_SIZE;
-        const exhausted = result.matches.length === 0 || raw.length >= serverTotal;
-        if (haveEnough || exhausted || rawPage >= MAX_FILTER_LOOKAHEAD_PAGES) break;
-        rawPage += 1;
+        const exhausted = results.some((r) => r.matches.length === 0) || raw.length >= serverTotal;
+        if (haveEnough || exhausted) break;
+        rawPage += batchSize;
+        if (rawPage > MAX_FILTER_LOOKAHEAD_PAGES) {
+          // The cap ended the walk, not the data - remembered so the pager treats the buffer as
+          // complete rather than promising a next page the walk will never fill.
+          capped = true;
+          break;
+        }
       }
     } catch {
       // A failed page mid-backfill keeps whatever was already fetched successfully - a partial,
@@ -441,6 +520,7 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
       if (id === filteredRequestIdRef.current) {
         setFilteredRaw(raw);
         setFilteredServerTotal(serverTotal);
+        setFilteredCapped(capped);
         setFilteredLoading(false);
       }
     }
@@ -469,7 +549,15 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
     return () => clearInterval(interval);
   }, [filterActive, filteredPage, filter, ensureFilteredPage]);
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  // With curated alerts mixed in, pages past the server's merge depth are unreachable: the
+  // server stops interleaving there and its totalCount collapses to matches-only, so an
+  // unclamped pager walks the reader off a cliff into empty pages labelled "Page 26 of 5".
+  // Clamping the navigable range to the depth keeps every page it offers real; the curated
+  // history past it lives, complete, in the Curated tab.
+  const interleavedClamped =
+    prefs.includeCuratedInFeed && totalCount > INTERLEAVED_MAX_CARDS;
+  const effectiveTotalCount = interleavedClamped ? INTERLEAVED_MAX_CARDS : totalCount;
+  const totalPages = Math.max(1, Math.ceil(effectiveTotalCount / pageSize));
   // Ticks with the shared clock (the same one the cards' own timers use), so a card ages out of
   // a "last 5 minutes" filter on its own rather than at the next poll.
   const now = useNow();
@@ -480,27 +568,32 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
   // buffer that's merely paused mid-backfill (haveEnough tripped first) must not read as "that's
   // everything," or Next would wrongly disable itself one page early.
   const filteredExhausted = filteredRaw.length > 0 && filteredRaw.length >= filteredServerTotal;
+  // Exhausted and capped both mean "this buffer is everything the walk will produce" - they only
+  // differ in why (end of data vs. the lookahead cap), which the empty state words differently.
+  const filteredComplete = filteredExhausted || filteredCapped;
   const filteredSlice = filteredMatches.slice(
     (filteredPage - 1) * DISPLAY_PAGE_SIZE,
     filteredPage * DISPLAY_PAGE_SIZE,
   );
-  // Optimistic when not yet confirmed exhausted: ensureFilteredPage stops the instant it has
-  // enough for the CURRENT page, so it may not yet know whether a full next page exists. Clicking
-  // Next either reveals one or (once that resolves) confirms there isn't - either way this alone
-  // never has to guess wrong for longer than one backfill.
-  const filteredHasNext = filteredExhausted
+  // Optimistic when the walk stopped early because it had enough for the CURRENT page - it may
+  // not yet know whether a full next page exists. Clicking Next either reveals one or (once that
+  // resolves) confirms there isn't - either way this alone never has to guess wrong for longer
+  // than one backfill. A complete buffer (exhausted OR capped) is judged on what it holds:
+  // treating a capped walk as "there's always more" made Next an infinite corridor of blank
+  // pages, each click re-running the full walk to land on nothing.
+  const filteredHasNext = filteredComplete
     ? filteredMatches.length > filteredPage * DISPLAY_PAGE_SIZE
     : true;
 
   // A live update can shrink the passing set out from under a page the user was already on
   // (a token's price moved back inside a filter's exclusion range, say) - once the buffer is
-  // confirmed exhausted, land back on the last page that actually has something rather than
+  // known complete, land back on the last page that actually has something rather than
   // stranding them on a blank one.
   useEffect(() => {
-    if (!filterActive || filteredLoading || !filteredExhausted) return;
+    if (!filterActive || filteredLoading || !filteredComplete) return;
     const lastValidPage = Math.max(1, Math.ceil(filteredMatches.length / DISPLAY_PAGE_SIZE));
     if (filteredPage > lastValidPage) setFilteredPage(lastValidPage);
-  }, [filterActive, filteredLoading, filteredExhausted, filteredMatches.length, filteredPage]);
+  }, [filterActive, filteredLoading, filteredComplete, filteredMatches.length, filteredPage]);
 
   // Assigned every render so the SSE handler always calls the current one - see the ref's own
   // comment. Mirrors exactly what the page renders: the filtered buffer when a filter is on,
@@ -569,9 +662,11 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
         </p>
       )}
 
-      {filterActive && !filteredLoading && filteredExhausted && filteredMatches.length === 0 && (
+      {filterActive && !filteredLoading && filteredComplete && filteredMatches.length === 0 && (
         <p className="empty-state">
-          Nothing matches this filter yet - widen it or reset to see alerts again.
+          {filteredCapped
+            ? `Nothing in the newest ${filteredRaw.length} alerts matches this filter - older history isn't searched. Widen it or reset to see alerts again.`
+            : "Nothing matches this filter yet - widen it or reset to see alerts again."}
         </p>
       )}
 
@@ -624,7 +719,14 @@ export function Dashboard({ onGoToFilters }: DashboardProps) {
             <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
               ← Prev
             </button>
-            <span className="pagination__label">
+            <span
+              className="pagination__label"
+              title={
+                interleavedClamped
+                  ? "With curated alerts mixed in, this feed pages through the newest 300 cards. The full curated history is on the Curated tab; turn the mix off in Settings to browse your own older matches."
+                  : undefined
+              }
+            >
               Page {page} of {totalPages}
             </span>
             <button

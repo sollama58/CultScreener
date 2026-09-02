@@ -571,6 +571,12 @@ async function upsertToken(token) {
  * never visited would otherwise never get a row, leaving price/market_cap/logo_uri NULL
  * (rendering as blank/0 on the home page tables) forever, since this is the only place
  * the periodic price-refresh worker writes market data.
+ *
+ * Market-data columns (price, market_cap, volume_24h, price_change_24h) are overwritten with
+ * whatever the caller has — null included: "upstream has no figure right now" must replace a
+ * stale figure, not preserve it, or a token whose pool dries up keeps showing its last 24h%
+ * forever next to an otherwise-fresh row. Identity columns (name/symbol/logo/decimals) are
+ * COALESCE-kept instead, since those don't go stale.
  */
 async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h, priceChange24h, logoUri, name, symbol, decimals } = {}) {
   if (!pool || !mintAddress) return null;
@@ -581,7 +587,7 @@ async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h,
        price            = EXCLUDED.price,
        market_cap       = EXCLUDED.market_cap,
        volume_24h       = EXCLUDED.volume_24h,
-       price_change_24h = COALESCE(EXCLUDED.price_change_24h, tokens.price_change_24h),
+       price_change_24h = EXCLUDED.price_change_24h,
        logo_uri         = COALESCE(tokens.logo_uri, EXCLUDED.logo_uri),
        name             = COALESCE(tokens.name, EXCLUDED.name),
        symbol           = COALESCE(tokens.symbol, EXCLUDED.symbol),

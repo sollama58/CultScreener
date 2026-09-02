@@ -1,6 +1,14 @@
 ﻿// HolDEX Service Worker
 // Provides offline support, smart caching, and app-like experience
 
+// v56: two fixes from the Trenches/Curated audit. (1) Authenticated same-origin API responses
+// (/api/admin/*, /api/device/*) are no longer written to Cache Storage - the privacy rationale
+// NEVER_CACHE_HOSTS documents for the Trenches host applies just as hard to an admin session or
+// a device-link identity left on disk of a shared machine, still served after sign-out whenever
+// the network hiccups. (2) The whole /trenches/ path is handed back to the browser, not just
+// /trenches/assets/: boot-prefetch.js lives at /trenches/boot-prefetch.js with no ?v= and no
+// content hash, so the cache-first branch stored it forever and returning visitors kept running
+// a script whose warm keys could no longer match what a redeployed client.ts asks for.
 // v50: Mobile Connect ships js/deviceLink.js and bumps config.js / wallet.js / conviction.js /
 // communityPage.js. A precache list that names stale ?v= URLs is worse than no precache: the SW
 // downloads files no page will ever request, and the pages fetch their real versions from the
@@ -12,7 +20,7 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v55';
+const CACHE_VERSION = 'holdex-v56';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -25,7 +33,7 @@ const APP_SHELL = [
   '/js/config.js?v=3',
   '/js/api.js?v=9',
   '/js/deviceLink.js?v=2',
-  '/js/wallet.js?v=5',
+  '/js/wallet.js?v=6',
   '/js/conviction.js?v=16',
   '/js/tech.js?v=5',
   '/js/emerging.js?v=5',
@@ -39,7 +47,7 @@ const APP_SHELL = [
   '/js/holderBehavior.js?v=5',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=22',
+  '/js/performance.js?v=23',
   '/js/cultify.js?v=14',
   '/js/admin.js?v=16',
   '/js/apiKeys.js?v=2',
@@ -63,6 +71,17 @@ const API_PATTERNS = [
 // after sign-out whenever the network hiccups. Fetched pass-through instead, never stored.
 const NEVER_CACHE_HOSTS = [
   'api.holdex.live',
+];
+
+// Same-origin API prefixes whose responses are authenticated and must never be stored either.
+// The server already sends Cache-Control: no-store on these, but the Cache API ignores HTTP
+// caching headers - only this worker's own logic decides what cache.put() persists. An admin's
+// stats/curated management data and a phone's device-link identity (/api/device/me returns the
+// paired wallet) would otherwise sit in API_CACHE on disk, served after sign-out or revocation
+// whenever the network hiccups.
+const NEVER_CACHE_PATHS = [
+  '/api/admin/',
+  '/api/device/',
 ];
 
 // Font CDN patterns — cache long-term
@@ -127,6 +146,10 @@ self.addEventListener('fetch', (event) => {
   // which also keeps the request's credentials/CORS behaviour exactly as the page intended.
   if (NEVER_CACHE_HOSTS.includes(url.hostname)) return;
 
+  // Authenticated same-origin API paths — same pass-through, for the same privacy reason.
+  // Checked before API_PATTERNS, which would otherwise cache them. See NEVER_CACHE_PATHS.
+  if (NEVER_CACHE_PATHS.some((prefix) => url.pathname.startsWith(prefix))) return;
+
   // API requests â†’ Network First with cache fallback
   if (API_PATTERNS.some((p) => p.test(url.pathname))) {
     event.respondWith(networkFirstWithCache(request, API_CACHE, API_CACHE_TTL));
@@ -159,7 +182,13 @@ self.addEventListener('fetch', (event) => {
   // worlds, Chrome discards the preloads as a "cross-world service worker resource mismatch",
   // and the page's two biggest chunks download twice. Handing these back to the browser makes
   // both requests live in the same world every time.
-  if (url.pathname.startsWith('/trenches/assets/')) return;
+  //
+  // The whole /trenches/ prefix, not just /assets/: boot-prefetch.js is a Vite public/ file with
+  // no ?v= and no content hash, so the cache-first branch below violated its own "versioned URLs
+  // make cache-first safe" invariant on it - once stored, returning visitors ran the old script
+  // until the next manual CACHE_VERSION bump, silently degrading the boot prefetch after any
+  // deploy that changed it. (The SPA's HTML never reaches this line - documents returned above.)
+  if (url.pathname.startsWith('/trenches/')) return;
 
   // Same-origin static assets (JS, CSS, images) â†’ Cache First.
   // Assets use ?v=N versioning in their URLs, so cache-first is safe:
