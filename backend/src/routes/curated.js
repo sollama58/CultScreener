@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
 const db = require('../services/database');
-const geckoService = require('../services/geckoTerminal');
 const { cache } = require('../services/cache');
+const { addCuratedTokenFully, fetchDexScreenerData } = require('../services/curatedTokens');
 const { asyncHandler, requireDatabase, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { strictLimiter } = require('../middleware/rateLimit');
 
@@ -15,50 +14,6 @@ const isValidMint = (mint) => mint && SOLANA_ADDRESS_REGEX.test(mint);
 // Admin auth middleware — uses session-based auth (consistent with admin.js)
 const { validateAdminSession } = require('../middleware/validation');
 const requireAdmin = validateAdminSession;
-
-/**
- * Fetch banner image and social links from DexScreener for a given mint.
- * Returns null if the API call fails or no data is found.
- */
-async function fetchDexScreenerData(mint) {
-  try {
-    const response = await axios.get(
-      `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
-      { timeout: 10000 }
-    );
-
-    const pairs = response.data;
-    if (!Array.isArray(pairs) || pairs.length === 0) {
-      return null;
-    }
-
-    const info = pairs[0].info || {};
-    const socials = Array.isArray(info.socials) ? info.socials : [];
-    const websites = Array.isArray(info.websites) ? info.websites : [];
-
-    const findSocial = (type) => {
-      const entry = socials.find(s => s.type === type);
-      return entry ? entry.url : null;
-    };
-
-    return {
-      name: pairs[0].baseToken?.name || null,
-      symbol: pairs[0].baseToken?.symbol || null,
-      logoUri: info.imageUrl || null,
-      bannerUrl: info.header || null,
-      socials: {
-        twitter: findSocial('twitter'),
-        telegram: findSocial('telegram'),
-        discord: findSocial('discord'),
-        tiktok: findSocial('tiktok'),
-        website: websites.length > 0 ? websites[0].url : null
-      }
-    };
-  } catch (error) {
-    console.error(`[Curated] DexScreener fetch failed for ${mint}:`, error.message);
-    return null;
-  }
-}
 
 /**
  * Refresh DexScreener data for all curated tokens.
@@ -114,7 +69,9 @@ router.get('/:mint', asyncHandler(async (req, res) => {
   res.json({ token });
 }));
 
-// POST /api/curated - Add a token to the curated list (admin-only)
+// POST /api/curated - Add a token to the curated list (admin-only).
+// The whole add flow lives in services/curatedTokens.js, shared with the /api/admin/curated
+// surface the admin panel posts to - see the comment there for the drift this ended.
 router.post('/', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
   const { mintAddress } = req.body;
 
@@ -122,50 +79,13 @@ router.post('/', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid mint address' });
   }
 
-  // Fetch market cap before adding so we can record it at time of listing
-  let mcapAtAdded = null;
-  let marketData = null;
-  try {
-    marketData = await geckoService.getMarketData(mintAddress);
-    mcapAtAdded = marketData?.marketCap || null;
-  } catch { /* non-critical — token can be added without mcap */ }
-
-  // Add to database
-  const token = await db.addCuratedToken(mintAddress, mcapAtAdded);
-
-  // Invalidate the 'not allowed' cache entry so token is immediately accessible
-  await cache.delete(`curated-allowed:${mintAddress}`).catch(() => {});
-
-  // Fetch DexScreener data and enrich
-  const dexData = await fetchDexScreenerData(mintAddress);
-  if (dexData) {
-    await db.updateCuratedTokenDexScreener(mintAddress, dexData);
-  }
-
-  // Seed the tokens table immediately so the token has a real logo/price/market cap
-  // on the home page right away — otherwise it would sit blank until the
-  // refresh-curated-prices worker's next run (up to 10 minutes later).
-  if (marketData || dexData) {
-    await db.updateTokenMarketData({
-      mintAddress,
-      price: marketData?.price ?? null,
-      marketCap: marketData?.marketCap || marketData?.fdv || null,
-      volume24h: marketData?.volume24h ?? null,
-      priceChange24h: marketData?.priceChange24h ?? null,
-      logoUri: dexData?.logoUri ?? null,
-      name: dexData?.name ?? null,
-      symbol: dexData?.symbol ?? null,
-    }).catch(() => { /* non-critical — worker will backfill on next run */ });
-  }
-
-  // Return the enriched token
-  const enrichedToken = await db.getCuratedToken(mintAddress);
+  const { token, dexScreenerEnriched } = await addCuratedTokenFully(mintAddress);
 
   res.status(201).json({
     success: true,
     message: 'Token added to curated list',
-    token: enrichedToken,
-    dexScreenerEnriched: !!dexData
+    token,
+    dexScreenerEnriched
   });
 }));
 

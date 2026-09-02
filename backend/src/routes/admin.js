@@ -565,55 +565,12 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid mint address' });
   }
 
-  // Fetch market cap at time of listing (non-critical)
-  let mcapAtAdded = null;
-  try {
-    const marketData = await geckoService.getMarketData(mintAddress);
-    mcapAtAdded = marketData?.marketCap || null;
-  } catch { /* non-critical */ }
-
-  await db.addCuratedToken(mintAddress, mcapAtAdded);
-
-  // Set initial ATH to the listing mcap (separate call — safe if column is missing)
-  if (mcapAtAdded) {
-    await db.updateCuratedTokenATH(mintAddress, mcapAtAdded).catch(() => {});
-  }
-
-  // Invalidate any cached 'not allowed' entry so token is immediately accessible
-  await cache.delete(`curated-allowed:${mintAddress}`).catch(() => {});
-
-  // Enrich with DexScreener data
-  try {
-    const axios = require('axios');
-    const response = await axios.get(
-      `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mintAddress)}`,
-      { timeout: 10000 }
-    );
-    const pairs = response.data;
-    if (Array.isArray(pairs) && pairs.length > 0) {
-      const info = pairs[0].info || {};
-      const socials = Array.isArray(info.socials) ? info.socials : [];
-      const websites = Array.isArray(info.websites) ? info.websites : [];
-      const findSocial = (type) => { const e = socials.find(s => s.type === type); return e ? e.url : null; };
-      await db.updateCuratedTokenDexScreener(mintAddress, {
-        bannerUrl: info.header || null,
-        socials: {
-          twitter: findSocial('twitter'),
-          telegram: findSocial('telegram'),
-          discord: findSocial('discord'),
-          website: websites.length > 0 ? websites[0].url : null
-        }
-      });
-    }
-  } catch (_) { /* DexScreener enrichment is non-critical */ }
-
-  // Trigger conviction analysis via job queue so the token appears on the leaderboard
-  try {
-    const jobQueue = require('../services/jobQueue');
-    await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint: mintAddress }, { priority: 10 });
-  } catch (_) { /* non-critical */ }
-
-  const token = await db.getCuratedToken(mintAddress).catch(() => null);
+  // The whole add flow (mcap-at-listing, ATH init, DexScreener enrichment, tokens-table seeding,
+  // conviction job) lives in services/curatedTokens.js, shared with routes/curated.js. This
+  // route used to carry its own hand-copied version that had drifted: no tokens-table seed (so
+  // panel-added tokens sat blank on the home page for up to ten minutes) and no tiktok social.
+  const { addCuratedTokenFully } = require('../services/curatedTokens');
+  const { token } = await addCuratedTokenFully(mintAddress);
   res.status(201).json({ success: true, token });
 }));
 

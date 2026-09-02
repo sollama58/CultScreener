@@ -192,6 +192,16 @@ services:
       - key: WORKER_LIMITER_MAX
         value: "10"
 
+      # HolDEX info bot (backend/src/telegram-bot.js — the /TryConviction bot, NOT
+      # TrenchScanner's alert bot). worker.js starts it only when a token is present, so leaving
+      # this unset simply disables the bot. Both vars must be set together: without API_BASE_URL
+      # the bot falls back to http://localhost:3000, where nothing listens inside the worker
+      # container, and every command answers "Failed to fetch conviction data".
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: API_BASE_URL
+        value: https://cultscreener-api.onrender.com
+
   # =====================================================
   # Redis (BullMQ job queue)
   # =====================================================

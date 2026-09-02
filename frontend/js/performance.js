@@ -274,8 +274,12 @@ const performancePage = {
 
       const hammer  = token.emergingCult ? '<span class="psg-hammer">🔨</span>' : '';
       const techIcon = token.techCoin ? '<span class="psg-hammer">🤖</span>' : '';
-      const name    = (token.name   || '').replace(/</g, '&lt;');
-      const symbol  = (token.symbol || '').replace(/</g, '&lt;');
+      // Full escaping, not just '<': name/symbol are third-party market metadata the token
+      // deployer controls, and this markup lands in the live DOM via innerHTML - a quote in the
+      // symbol would otherwise break out of the img alt attribute below. Same helper the table
+      // renderer above already uses.
+      const name    = utils.escapeHtml(token.name   || '');
+      const symbol  = utils.escapeHtml(token.symbol || '');
       const logoSrc = logoDataUris[i]; // already a data URI — no crossOrigin needed
       const logoHtml = `<img class="psg-token-logo" src="${logoSrc}" alt="${symbol}">`;
 
