@@ -2076,6 +2076,7 @@ const tokenDetail = {
     const container = document.getElementById('token-banner');
     if (!container) return;
     const proxied = utils.proxyImageUrl(url);
+    if (!proxied) return;
     const img = new Image();
     img.onload = () => {
       container.innerHTML = `<img src="${utils.escapeHtml(img.src)}" alt="Token banner" class="token-banner-img" loading="lazy">`;

@@ -433,6 +433,7 @@ const performancePage = {
     // Route through our own backend proxy so CORS is never an issue —
     // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
     const proxied = utils.proxyImageUrl(url);
+    if (!proxied) return avatar;
 
     return new Promise((resolve) => {
       const img = new Image();

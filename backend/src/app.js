@@ -384,6 +384,7 @@ app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
 // image-only content type and this route's rate limiter, that covers open-proxy abuse without
 // pretending we can enumerate the internet's image hosts.
 const { agentsFor, isBlockedHostLiteral } = require('./services/safeFetchAgent');
+const { sniffImageType } = require('./services/tokenImage');
 // Dedicated rate limiter for image proxy. Every table row's logo now routes through
 // this endpoint (not just the old canvas share-image feature), so a single page load
 // can legitimately request dozens of distinct images at once — 20/min was sized for
@@ -563,16 +564,23 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
         ...agentsFor(),
         maxRedirects: 3,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; HolDEX/1.0)',
+          // A browser's UA rather than a bot's: Cloudflare-fronted image hosts (DexScreener's CDN
+          // among them) answer an obvious bot UA with a 403 challenge page, which became a 502 here
+          // and the fallback logo in the browser.
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
           'Accept': 'image/webp,image/png,image/jpeg,image/*',
           'Referer': `https://${parsed.hostname}/`,
         },
       });
-      const sourceType = response.headers['content-type'] || 'image/png';
-      if (!sourceType.startsWith('image/')) throw new Error(`Non-image response: ${sourceType}`);
+      const body = Buffer.from(response.data);
+      // Trust the bytes over the label: IPFS gateways, Arweave/Irys and S3 often serve real images
+      // as application/octet-stream or text/plain, and those used to be refused here.
+      const labelled = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      const sourceType = sniffImageType(body) || (labelled.startsWith('image/') ? labelled : null);
+      if (!sourceType) throw new Error(`Non-image response: ${labelled || 'no content-type'}`);
       // Downscaled BEFORE the cache write, so the expensive part happens once per image rather
       // than once per request, and every cache hit is already small.
-      return downscaleImage(Buffer.from(response.data), sourceType, width);
+      return downscaleImage(body, sourceType, width);
     })();
     // then(fn, fn) rather than .finally(fn): `.finally` returns a NEW promise that rejects
     // whenever the original does, and nothing was awaiting that one. Every failed image fetch -

@@ -731,6 +731,28 @@ const jobProcessors = {
       }
     }
 
+    // Fill in logos that are still missing. GeckoTerminal has no art for many small tokens (it
+    // answers "missing.png", which is now stored as no logo), and DexScreener is only asked once,
+    // when a token is curated - so without this a token could keep the fallback logo forever.
+    // One Helius getAssetBatch covers every missing token, at most once an hour.
+    let logosFilled = 0;
+    try {
+      const missing = await db.getMintsMissingLogo(allMints);
+      if (missing.length > 0 && solanaService.isHeliusConfigured()
+          && !(await cache.get('logo-backfill:recent').catch(() => null))) {
+        await cache.set('logo-backfill:recent', true, 60 * 60 * 1000).catch(() => {});
+        const meta = await solanaService.getTokenMetadataBatch(missing);
+        for (const mint of missing) {
+          if (meta[mint]?.logoUri && await db.setTokenLogoIfMissing(mint, meta[mint].logoUri).catch(() => false)) {
+            logosFilled++;
+          }
+        }
+        console.log(`[Worker] refresh-curated-prices: ${missing.length} tokens missing a logo, filled ${logosFilled} from Helius`);
+      }
+    } catch (logoErr) {
+      console.warn('[Worker] refresh-curated-prices: logo backfill failed:', logoErr.message);
+    }
+
     // Bust conviction leaderboard cache so fresh prices are served immediately
     try {
       await cache.clearPattern('leaderboard:conviction:*');
@@ -739,7 +761,7 @@ const jobProcessors = {
     }
 
     console.log(`[Worker] refresh-curated-prices: updated ${updated} prices, ${athUpdated} ATH records`);
-    return { updated, athUpdated };
+    return { updated, athUpdated, logosFilled };
   },
 
   // ==========================================
