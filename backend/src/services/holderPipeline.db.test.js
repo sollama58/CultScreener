@@ -367,7 +367,46 @@ if (!DB_URL) {
       const { rows } = await db.pool.query('SELECT conviction_meta, conviction_sample_size FROM tokens WHERE mint_address = $1', [MINT]);
       assert.strictEqual(rows[0].conviction_meta.method, 'stratified-v1');
       assert.ok(rows[0].conviction_meta.supplyDistribution);
+
+      // The hourly sweep runs a backfill pass even with nothing left to backfill:
+      // it re-stores diamond hands without anyone opening the token page.
+      await db.pool.query('UPDATE tokens SET conviction_computed_at = NULL WHERE mint_address = $1', [MINT]);
+      const r = await pipeline.runBackfill(MINT);
+      assert.strictEqual(r.remaining, 0);
+      const stored = await db.pool.query('SELECT conviction_computed_at FROM tokens WHERE mint_address = $1', [MINT]);
+      assert.ok(stored.rows[0].conviction_computed_at, 'conviction re-stored by the background pass');
       await db.pool.query('DELETE FROM tokens WHERE mint_address = $1', [MINT]);
+    });
+
+    test('a snapshot that lands during a backfill run sends the backfill round again', async () => {
+      // A whale arrives after a long gap, so the next snapshot leaves it pending
+      now = T0 + 22 * HOUR;
+      setHolder('WHALE2', 900_000_000_000, [{ sig: 'buy_WHALE2', ts: (T0 + 20 * HOUR) / 1000, delta: 900_000_000_000n }]);
+      await pipeline.takeSnapshot(MINT);
+      assert.strictEqual((await position('WHALE2')).acquired_source, 'pending');
+
+      // While this run backfills WHALE2, another whale arrives and a new snapshot lands
+      const realBalance = solana.getTokenAccountBalance;
+      let snapped = false;
+      solana.getTokenAccountBalance = async a => {
+        if (!snapped) {
+          snapped = true;
+          now = T0 + 30 * HOUR;
+          setHolder('WHALE3', 950_000_000_000, [{ sig: 'buy_WHALE3', ts: (T0 + 29 * HOUR) / 1000, delta: 950_000_000_000n }]);
+          await pipeline.takeSnapshot(MINT);
+        }
+        return realBalance(a);
+      };
+      try {
+        const r = await pipeline.runBackfill(MINT);
+        assert.ok(snapped);
+        assert.strictEqual((await position('WHALE3')).acquired_source, 'pending');
+        assert.ok(r.remaining > 0, 'the new snapshot\'s pending wallets keep the backfill going');
+      } finally {
+        solana.getTokenAccountBalance = realBalance;
+      }
+      await drainBackfill();
+      assert.strictEqual((await position('WHALE3')).acquired_source, 'backfill');
     });
   });
 }
