@@ -221,7 +221,10 @@ services:
     name: HolDEX-redis
     region: oregon
     plan: free
-    maxmemoryPolicy: allkeys-lru
+    # volatile-lru: when memory runs out, evict only keys with a TTL (the cache).
+    # allkeys-lru also evicted BullMQ's queue data and job schedules, which
+    # silently stopped background jobs.
+    maxmemoryPolicy: volatile-lru
     ipAllowList: [] # Allow only internal Render services
 
 # =====================================================

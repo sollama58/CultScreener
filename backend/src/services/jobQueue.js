@@ -148,143 +148,46 @@ async function addSearchJob(jobName, data = {}, options = {}) {
 }
 
 /**
- * Schedule conviction warming for top-viewed tokens (every 10 minutes).
- * Replaces the setInterval in app.js — runs in worker process, not API process.
+ * Recurring jobs. The worker runs them; these schedules make them fire.
+ * Each is a BullMQ job scheduler keyed by its id, so upserting one that already
+ * exists keeps its next run time and only re-creates what is missing.
  */
-async function scheduleConvictionWarm() {
-  if (!isInitialized && !initialize()) return null;
-  try {
-    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
-    for (const job of existing) {
-      if (job.name === 'warm-conviction') {
-        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
-      }
-    }
-    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
-      'warm-conviction', {},
-      { repeat: { every: 10 * 60 * 1000 }, jobId: 'warm-conviction-recurring' }
-    );
-    console.log('[JobQueue] Scheduled warm-conviction (every 10 min)');
-    return job;
-  } catch (err) {
-    console.error('[JobQueue] Failed to schedule warm-conviction:', err.message);
-    return null;
-  }
-}
+const RECURRING_JOBS = [
+  // Snapshot freshness for the most-viewed tokens
+  { id: 'warm-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 } },
+  // Curated tokens: holder snapshots (every HOLDER_SNAPSHOT_REFRESH_HOURS) and stored diamond hands
+  { id: 'warm-curated-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 60 * 60 * 1000 } },
+  // Curated market cap and ATH from GeckoTerminal
+  { id: 'refresh-curated-prices', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 } },
+  // Daily holder counts, 00:05 UTC
+  { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' } },
+  // Expired admin sessions, at :00 and :30
+  { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
+];
 
 /**
- * Schedule conviction warming for all curated tokens (every hour).
- * Replaces the setInterval in app.js — runs in worker process, not API process.
+ * Make sure every recurring job is scheduled. Safe to call at any time and from
+ * any process: the worker calls it at startup and then every few minutes, so the
+ * schedules come back on their own if Redis restarts or evicts them (the free
+ * Render Redis keeps no data across restarts). Returns how many are scheduled.
  */
-async function scheduleCuratedConvictionWarm() {
-  if (!isInitialized && !initialize()) return null;
-  try {
-    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
-    for (const job of existing) {
-      if (job.name === 'warm-curated-conviction') {
-        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
-      }
+async function ensureRecurringJobs() {
+  if (!isInitialized && !initialize()) return 0;
+  let scheduled = 0;
+  for (const { id, queue: queueName, repeat } of RECURRING_JOBS) {
+    const queue = queues[queueName];
+    try {
+      // Drop schedules made by the older queue.add({ repeat }) API, which stored
+      // them under a composite key instead of the scheduler id.
+      const legacy = (await queue.getRepeatableJobs()).filter(j => j.name === id && j.key !== id);
+      for (const j of legacy) await queue.removeRepeatableByKey(j.key);
+      await queue.upsertJobScheduler(id, repeat, { name: id, data: {} });
+      scheduled++;
+    } catch (err) {
+      console.error(`[JobQueue] Failed to schedule ${id}:`, err.message);
     }
-    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
-      'warm-curated-conviction', {},
-      { repeat: { every: 60 * 60 * 1000 }, jobId: 'warm-curated-conviction-recurring' }
-    );
-    console.log('[JobQueue] Scheduled warm-curated-conviction (every hour)');
-    return job;
-  } catch (err) {
-    console.error('[JobQueue] Failed to schedule warm-curated-conviction:', err.message);
-    return null;
   }
-}
-
-/**
- * Schedule price refresh for all curated tokens (every 10 minutes).
- * Uses GeckoTerminal batch API to keep market_cap and ATH up-to-date
- * without relying on page visits.
- */
-async function scheduleRefreshCuratedPrices() {
-  if (!isInitialized && !initialize()) return null;
-  try {
-    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
-    for (const job of existing) {
-      if (job.name === 'refresh-curated-prices') {
-        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
-      }
-    }
-    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
-      'refresh-curated-prices', {},
-      { repeat: { every: 10 * 60 * 1000 }, jobId: 'refresh-curated-prices-recurring' }
-    );
-    console.log('[JobQueue] Scheduled refresh-curated-prices (every 10 min)');
-    return job;
-  } catch (err) {
-    console.error('[JobQueue] Failed to schedule refresh-curated-prices:', err.message);
-    return null;
-  }
-}
-
-/**
- * Schedule daily holder count snapshot for all curated tokens.
- * Runs once per day at 00:05 UTC so it fires shortly after midnight.
- */
-async function scheduleRecordHolderCounts() {
-  if (!isInitialized && !initialize()) return null;
-  try {
-    const existing = await queues[QUEUE_NAMES.ANALYTICS].getRepeatableJobs();
-    for (const job of existing) {
-      if (job.name === 'record-holder-counts') {
-        await queues[QUEUE_NAMES.ANALYTICS].removeRepeatableByKey(job.key);
-      }
-    }
-    const job = await queues[QUEUE_NAMES.ANALYTICS].add(
-      'record-holder-counts', {},
-      {
-        repeat: { pattern: '5 0 * * *' }, // 00:05 UTC daily
-        jobId: 'record-holder-counts-recurring',
-      }
-    );
-    console.log('[JobQueue] Scheduled record-holder-counts (daily at 00:05 UTC)');
-    return job;
-  } catch (err) {
-    console.error('[JobQueue] Failed to schedule record-holder-counts:', err.message);
-    return null;
-  }
-}
-
-/**
- * Schedule recurring session cleanup job
- * Runs every 30 minutes to clean up expired admin sessions
- */
-async function scheduleSessionCleanup() {
-  if (!isInitialized && !initialize()) return null;
-
-  try {
-    // Remove any existing scheduled job first
-    const existingJobs = await queues[QUEUE_NAMES.MAINTENANCE].getRepeatableJobs();
-    for (const job of existingJobs) {
-      if (job.name === 'cleanup-sessions') {
-        await queues[QUEUE_NAMES.MAINTENANCE].removeRepeatableByKey(job.key);
-      }
-    }
-
-    // Schedule new recurring job (every 30 minutes for better storage hygiene)
-    const job = await queues[QUEUE_NAMES.MAINTENANCE].add(
-      'cleanup-sessions',
-      {},
-      {
-        repeat: {
-          pattern: '0,30 * * * *' // Every 30 minutes (at :00 and :30)
-        },
-        jobId: 'session-cleanup-recurring'
-      }
-    );
-
-    console.log('[JobQueue] Scheduled recurring session cleanup job (every 30 min)');
-    return job;
-  } catch (err) {
-    console.error('[JobQueue] Failed to schedule session cleanup:', err.message);
-    return null;
-  }
+  return scheduled;
 }
 
 /**
@@ -543,11 +446,8 @@ module.exports = {
   addMaintenanceJob,
   addAnalyticsJob,
   addSearchJob,
-  scheduleSessionCleanup,
-  scheduleConvictionWarm,
-  scheduleCuratedConvictionWarm,
-  scheduleRefreshCuratedPrices,
-  scheduleRecordHolderCounts,
+  ensureRecurringJobs,
+  RECURRING_JOBS,
   incrementViewCount,
   getBufferedViewCounts,
   flushViewCounts,

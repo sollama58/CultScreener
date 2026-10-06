@@ -377,7 +377,14 @@ async function runBackfill(mint) {
     console.log(`[Holders] Backfill ${mint.slice(0, 8)}: ${settled}/${batch.length} settled this run, ${remaining} pending`);
     if (remaining === 0) {
       await cache.delete(keys.result(mint)).catch(() => {});
-      await getDiamondHands(mint, { dispatch: false });
+      const dh = await getDiamondHands(mint, { dispatch: false });
+      // A snapshot taken while this run was going brings its own pending wallets,
+      // and its backfill request was refused because this run held the lock.
+      // Go round again on the new snapshot.
+      if (!dh.computed) {
+        const latest = await store.getLatestSnapshot(mint).catch(() => null);
+        if (latest && latest.id !== snap.id) remaining = dh.sampleSize - dh.analyzed;
+      }
     }
     return { status: 'ok', settled, remaining };
   } finally {

@@ -14,6 +14,9 @@
  * - compute-holder-behavior: Holder behavior analysis (HB) for a token
  * - warm-conviction: Refresh conviction scores for top-viewed tokens (every 10 min)
  * - warm-curated-conviction: Refresh conviction scores for all curated tokens (every hour)
+ *
+ * Recurring schedules are listed in services/jobQueue.js (RECURRING_JOBS); this
+ * process re-checks them every few minutes.
  */
 
 require('dotenv').config();
@@ -54,6 +57,10 @@ function getRedisConfig() {
 
 // Worker instances
 const workers = [];
+
+// How often the worker re-checks that the recurring job schedules exist
+const SCHEDULE_CHECK_MS = 5 * 60 * 1000;
+let scheduleCheckTimer = null;
 
 // Job processors
 const jobProcessors = {
@@ -761,7 +768,7 @@ const jobProcessors = {
       if (!(await db.isTokenAllowed(mint).catch(() => false))) continue;
       const ts = snapshotTimes[mint];
       if (ts && Date.now() - ts < STALE_MS) continue;
-      if (await holderPipeline.ensureSnapshot(mint, { priority: 10 })) triggered++;
+      if (await holderPipeline.ensureSnapshot(mint)) triggered++;
     }
 
     if (triggered > 0) console.log(`[Worker] warm-conviction: triggered ${triggered} snapshots`);
@@ -790,13 +797,23 @@ const jobProcessors = {
     for (const row of dbRows) dbRowMap[row.mint_address] = row;
 
     let triggered = 0;
+    let refreshed = 0;
     for (const mint of allMints) {
       const ts = snapshotTimes[mint];
-      if (ts && Date.now() - ts < STALE_MS) continue;
-      if (await holderPipeline.ensureSnapshot(mint, { priority: 10 })) triggered++;
+      if (ts && Date.now() - ts < STALE_MS) {
+        // Fresh snapshot: run the backfill pass anyway. It finishes any hold-time
+        // backfill that stopped (failed job, Redis restart, a snapshot landing
+        // mid-run) and, with nothing left to backfill, re-stores diamond hands so
+        // the home tables keep up as hold times grow. Database only, no RPC.
+        if (await holderPipeline.ensureBackfill(mint)) refreshed++;
+        continue;
+      }
+      if (await holderPipeline.ensureSnapshot(mint)) triggered++;
     }
 
-    if (triggered > 0) console.log(`[Worker] warm-curated-conviction: triggered ${triggered}/${curatedTokens.length} curated tokens`);
+    if (triggered > 0 || refreshed > 0) {
+      console.log(`[Worker] warm-curated-conviction: ${triggered} snapshots, ${refreshed} diamond hands refreshes, ${curatedTokens.length} curated tokens`);
+    }
 
     // Opportunistically record holder counts for curated tokens where the count is cached.
     // This fills holder_history without requiring a user page visit, ensuring daily snapshots
@@ -946,6 +963,26 @@ async function start() {
 
   console.log(`[Worker] All workers started. Processing jobs...`);
 
+  // The recurring jobs only run while their schedules exist in Redis. Re-check
+  // them now and every few minutes, so a Redis restart or eviction doesn't
+  // stop background updates until the next API deploy.
+  const jobQueue = require('./services/jobQueue');
+  let checking = false; // while Redis is down a check can hang; don't stack them
+  const checkSchedules = async () => {
+    if (checking) return;
+    checking = true;
+    try {
+      const n = await jobQueue.ensureRecurringJobs();
+      if (n < jobQueue.RECURRING_JOBS.length) console.warn(`[Worker] Only ${n}/${jobQueue.RECURRING_JOBS.length} recurring jobs scheduled`);
+    } catch (err) {
+      console.error('[Worker] Recurring job check failed:', err.message);
+    } finally {
+      checking = false;
+    }
+  };
+  await checkSchedules();
+  scheduleCheckTimer = setInterval(checkSchedules, SCHEDULE_CHECK_MS);
+
   // Start Telegram bot if token is configured
   telegramBot.startBot(process.env.TELEGRAM_BOT_TOKEN);
 }
@@ -955,6 +992,7 @@ async function start() {
  */
 async function shutdown(signal) {
   console.log(`\n[Worker] ${signal} received. Shutting down gracefully...`);
+  if (scheduleCheckTimer) clearInterval(scheduleCheckTimer);
 
   // Close all workers
   for (const worker of workers) {

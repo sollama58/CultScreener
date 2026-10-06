@@ -57,12 +57,9 @@ async function initializeJobQueue() {
   const initialized = jobQueue.initialize();
 
   if (initialized) {
-    await jobQueue.scheduleSessionCleanup();
-    // Conviction warming runs in the worker — no setInterval needed in API process
-    await jobQueue.scheduleConvictionWarm();
-    await jobQueue.scheduleCuratedConvictionWarm();
-    await jobQueue.scheduleRefreshCuratedPrices();
-    await jobQueue.scheduleRecordHolderCounts();
+    // Recurring jobs run in the worker, which also re-checks these schedules itself
+    const scheduled = await jobQueue.ensureRecurringJobs();
+    console.log(`[App] ${scheduled}/${jobQueue.RECURRING_JOBS.length} recurring jobs scheduled`);
     console.log('[App] Job queue initialized - background jobs will be handled by worker');
   } else {
     // Fallback: run everything in-process when Redis is unavailable
