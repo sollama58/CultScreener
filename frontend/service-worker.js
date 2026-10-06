@@ -31,7 +31,10 @@
 // v63: logos that are not loadable URLs (GeckoTerminal's "missing.png") fall back at once -
 // api.js v11, performance.js v28, versus.js v16, tokenDetail.js v27.
 // v64: API tab hidden from the nav (HTML only; api-keys.html still reachable directly).
-const CACHE_VERSION = 'holdex-v64';
+// v65: conviction bars replaced by a "held 3mo+" cell with a fixed-scale hold-time bar; old scores
+// fade after a day instead of carrying a STALE label - styles.css v20, tokenTable.js v3,
+// conviction.js v18, versus.js v17.
+const CACHE_VERSION = 'holdex-v65';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -40,17 +43,17 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=19',
+  '/css/styles.css?v=20',
   '/css/token.css?v=1',
   '/js/config.js?v=3',
   '/js/api.js?v=11',
   '/js/deviceLink.js?v=2',
   '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=2',
-  '/js/conviction.js?v=17',
+  '/js/tokenTable.js?v=3',
+  '/js/conviction.js?v=18',
   '/js/tech.js?v=6',
   '/js/emerging.js?v=6',
-  '/js/versus.js?v=16',
+  '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
   '/js/kotp.js?v=3',
   '/js/tokenDetail.js?v=27',

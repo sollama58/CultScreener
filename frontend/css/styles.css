@@ -1945,48 +1945,58 @@ select:focus {
   color: var(--muted);
 }
 
-/* Conviction bars: five buckets, 6h -> 1m. */
-.tt-bars {
+/* Diamond hands cell: % held 3mo+, then one 0-100% bar split by hold time (tokenTable.dhCell). */
+.tt-dh {
   display: inline-flex;
-  align-items: flex-end;
-  gap: 4px;
-  width: 66px;
-  height: 28px;
+  flex-direction: column;
+  gap: 5px;
+  width: 112px;
+  text-align: left;
   vertical-align: middle;
 }
 
-.tt-bar {
-  display: block;
-  flex: 1;
-  min-height: 2px;
-  border-radius: 3px 3px 1px 1px;
-  background: var(--axis);
-}
-
-.tt-bar.hi { background: linear-gradient(to top, var(--brand-b), var(--brand-a)); }
-.tt-bar.mid { background: color-mix(in srgb, var(--brand-b) 55%, var(--surface-3)); }
-
-.tt-bars.stale { opacity: 0.45; }
-
-.tt-dist-head {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-}
-
-.tt-dist-legend {
+.tt-dh-top {
   display: flex;
-  justify-content: space-between;
-  width: 66px;
-  font-size: 9px;
-  letter-spacing: 0.04em;
-  text-transform: none;
-  color: var(--muted);
-  opacity: 0.8;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
 }
 
-.tt-dist-legend i { font-style: normal; }
+.tt-dh-num {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.tt-dh-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tt-dh-new {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.tt-dh-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+
+.tt-dh-seg { display: block; height: 100%; }
+.tt-dh-seg.s5 { background: linear-gradient(90deg, var(--brand-b), var(--brand-a)); }
+.tt-dh-seg.s4 { background: color-mix(in srgb, var(--brand-b) 62%, var(--surface-3)); }
+.tt-dh-seg.s3 { background: color-mix(in srgb, var(--brand-b) 40%, var(--surface-3)); }
+.tt-dh-seg.s2 { background: color-mix(in srgb, var(--brand-b) 22%, var(--surface-3)); }
+
+/* Too young for 3-month holders, or a score more than a day old: drawn back. */
+.tt-dh--new .tt-dh-bar,
+.tt-dh--stale { opacity: 0.45; }
 
 .tt-empty {
   display: flex;

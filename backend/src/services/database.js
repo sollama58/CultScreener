@@ -766,7 +766,7 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
   const baseCte = `
     WITH combined AS (
       SELECT t.mint_address, t.name, t.symbol, t.logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
-             t.conviction_1m, t.conviction_data, t.conviction_sample_size, t.conviction_computed_at,
+             t.conviction_1m, t.conviction_data, t.conviction_sample_size, t.conviction_computed_at, t.pair_created_at,
              c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin
       FROM tokens t
       INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
@@ -777,7 +777,7 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
       SELECT c.mint_address, COALESCE(t.name, NULL) AS name, COALESCE(t.symbol, NULL) AS symbol,
              COALESCE(t.logo_uri, NULL) AS logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
              COALESCE(t.conviction_1m, 0) AS conviction_1m,
-             t.conviction_data, t.conviction_sample_size, t.conviction_computed_at,
+             t.conviction_data, t.conviction_sample_size, t.conviction_computed_at, t.pair_created_at,
              c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin
       FROM curated_tokens c
       LEFT JOIN tokens t ON t.mint_address = c.mint_address

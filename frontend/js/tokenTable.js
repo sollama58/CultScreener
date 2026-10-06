@@ -5,10 +5,9 @@
 // Rows now carry data-mint and one delegated listener per table opens the token page.
 
 const tokenTable = {
-  BUCKETS: ['6h', '24h', '3d', '1w', '1m'],
-
-  // Past this, a score is old enough that the reader should be told before trusting it.
-  STALE_CONVICTION_MS: 7 * 24 * 60 * 60 * 1000,
+  // Past this, a score is old enough that the reader should be told before trusting it. The worker
+  // re-stores every curated token's score hourly, so a day without one means it has fallen behind.
+  STALE_CONVICTION_MS: 24 * 60 * 60 * 1000,
 
   esc(v) {
     return utils.escapeHtml(v == null ? '' : String(v));
@@ -78,55 +77,75 @@ const tokenTable = {
     return token.holders ? `<span class="num">${Number(token.holders).toLocaleString()}</span>` : this.dash();
   },
 
-  // The domain the bars are drawn against, derived from the rows actually on screen.
+  // Diamond hands cell: the share of holders who have held 3 months or more, with the 1 month+
+  // share beside it, over one bar on a fixed 0-100% scale split by how long holders have held.
+  // The buckets are cumulative ("held at least X"), so each segment is the difference between
+  // neighbouring buckets; whatever is left at the right is holders under a day.
   //
-  // Drawn against a fixed 0-100 scale, a table sorted by conviction put every bar in the top 2px.
-  // The floor keeps that fix from overcorrecting: below a 10-point spread the scale stays 10 points
-  // wide and the bars stay close together, which is the truth.
-  scale(tokens) {
-    const MIN_SPAN = 10;
-    let lo = Infinity;
-    let hi = -Infinity;
-    (tokens || []).forEach(t => {
-      const dist = (t && t.conviction) || {};
-      this.BUCKETS.forEach(k => {
-        const v = dist[k];
-        if (typeof v === 'number' && isFinite(v)) {
-          if (v < lo) lo = v;
-          if (v > hi) hi = v;
-        }
-      });
-    });
-    if (!isFinite(lo) || !isFinite(hi)) return { base: 0, span: 100 };
-    const span = Math.max(hi - lo, MIN_SPAN);
-    return { base: Math.max(0, hi - span), span };
+  // A token younger than 3 months cannot have 3-month holders, so it gets "Newer token" instead of
+  // a 0%. Pool creation is the age we have; a migrated token's pool can be younger than the token,
+  // so any 3-month holders at all overrule it.
+  DH_SEGMENTS: [
+    { key: '3m', label: '3mo+', tone: 's5' },
+    { key: '1m', label: '1-3mo', tone: 's4' },
+    { key: '1w', label: '1w-1mo', tone: 's3' },
+    { key: '24h', label: '1d-1w', tone: 's2' },
+  ],
+  NEW_TOKEN_MS: 90 * 24 * 60 * 60 * 1000,
+
+  pctOf(dist, key) {
+    const v = dist[key];
+    return typeof v === 'number' && isFinite(v) ? Math.min(100, Math.max(0, v)) : null;
   },
 
-  // Five bars, one per hold-time bucket (6h -> 1m). Height and tone track the same position on the
-  // page's scale; the exact percentage is in each bar's tooltip and the bucket names are in the
-  // column header, not repeated on every row.
-  distBars(token, scale) {
+  isNewerToken(token, dist) {
+    if (this.pctOf(dist, '3m') > 0) return false;
+    const created = token.pairCreatedAt ? new Date(token.pairCreatedAt).getTime() : NaN;
+    return isFinite(created) && Date.now() - created < this.NEW_TOKEN_MS;
+  },
+
+  dhCell(token) {
     const dist = token.conviction || {};
-    if (Object.keys(dist).length === 0) return this.dash();
-    const s = (scale && scale.span > 0) ? scale : { base: 0, span: 100 };
+    const has = this.DH_SEGMENTS.some(seg => this.pctOf(dist, seg.key) != null);
+    if (!has) return this.dash();
+
     const updatedAt = token.convictionUpdatedAt;
     const ageMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : null;
     const hasAge = ageMs != null && isFinite(ageMs) && ageMs >= 0;
     const stale = hasAge && ageMs > this.STALE_CONVICTION_MS;
-    const title = hasAge ? ` title="Scored ${this.esc(utils.formatAge(updatedAt))} ago${stale ? ' (stale)' : ''}"` : '';
-    const bars = this.BUCKETS.map(k => {
-      const val = typeof dist[k] === 'number' ? dist[k] : 0;
-      const pos = Math.min(1, Math.max(0, (val - s.base) / s.span));
-      const tone = pos >= 0.66 ? 'hi' : pos >= 0.33 ? 'mid' : 'lo';
-      const h = Math.max(8, Math.round(pos * 100));
-      return `<i class="tt-bar ${tone}" style="height:${h}%" title="${k}: ${val.toFixed(1)}%"></i>`;
-    }).join('');
-    return `<div class="tt-bars${stale ? ' stale' : ''}"${title}>${bars}</div>`;
-  },
+    const newer = this.isNewerToken(token, dist);
 
-  // Header label for the distribution column: the first and last bucket names, spanning the bars.
-  distHeader() {
-    return '<span class="tt-dist-head">Conviction<span class="tt-dist-legend"><i>6h</i><i>1m</i></span></span>';
+    let prev = 0;
+    const tips = [];
+    const segs = this.DH_SEGMENTS.map(seg => {
+      const v = this.pctOf(dist, seg.key);
+      if (v == null) return '';
+      const w = Math.max(0, v - prev);
+      prev = Math.max(prev, v);
+      tips.push(`${seg.label}: ${w.toFixed(1)}%`);
+      return w > 0 ? `<i class="tt-dh-seg ${seg.tone}" style="width:${w.toFixed(1)}%"></i>` : '';
+    }).join('');
+    tips.push(`under 1d: ${Math.max(0, 100 - prev).toFixed(1)}%`);
+    if (hasAge) tips.push(`Scored ${utils.formatAge(updatedAt)} ago${stale ? ' (stale)' : ''}`);
+
+    const m3 = this.pctOf(dist, '3m');
+    const m1 = this.pctOf(dist, '1m');
+    let top;
+    if (newer) {
+      const age = utils.formatAge(token.pairCreatedAt);
+      top = `<span class="tt-dh-new">Newer token</span><span class="tt-dh-sub">${this.esc(age)} old</span>`;
+      tips.unshift('Under 3 months old, so nobody can have held 3 months yet');
+    } else {
+      top = `<span class="tt-dh-num">${m3 == null ? '--' : `${Math.round(m3)}%`}</span>`
+        + (m1 != null ? `<span class="tt-dh-sub">${Math.round(m1)}% 1mo+</span>` : '');
+    }
+
+    // Not the bare "stale" class: styles.css section 30 stamps a STALE label on anything carrying it.
+    const cls = `tt-dh${newer ? ' tt-dh--new' : ''}${stale ? ' tt-dh--stale' : ''}`;
+    return `<div class="${cls}" title="${this.esc(tips.join('\n'))}">
+          <div class="tt-dh-top">${top}</div>
+          <div class="tt-dh-bar">${segs}</div>
+        </div>`;
   },
 
   emptyRow(colspan, title, message) {
