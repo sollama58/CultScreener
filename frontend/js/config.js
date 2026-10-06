@@ -18,21 +18,6 @@ const config = {
       return 'https://cultscreener-api.onrender.com';
     })(),
 
-    // TrenchScanner's API - a DIFFERENT service from baseUrl above, with its own database and
-    // its own session cookie. Mobile Connect is the one feature on this site that talks to both,
-    // because a single QR has to pair the phone with both halves of HolDEX at once.
-    // Kept in sync with trenches/.env.production's VITE_API_URL.
-    trenchesUrl: (() => {
-      const hostname = window.location.hostname;
-      if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        // TrenchScanner's API listens on 4000 by default (its .env.example sets API_PORT=4000
-        // and its README's dev flow is `npm run dev:api # http://localhost:4000`) - matches
-        // trenches/.env.development so local Mobile Connect probes the port the API is on.
-        return 'http://localhost:4000';
-      }
-      return 'https://api.holdex.live';
-    })(),
-
     // Request timeout in milliseconds
     timeout: 30000,
 

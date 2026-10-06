@@ -1178,6 +1178,9 @@ const utils = {
       a.href = link.href;
       a.className = 'mobile-nav-link';
       a.textContent = link.textContent.trim();
+      // External tabs (TrenchScanner) open in a new tab on mobile too.
+      if (link.target) a.target = link.target;
+      if (link.rel) a.rel = link.rel;
       if (link.classList.contains('active')) a.classList.add('active');
       dropdown.appendChild(a);
     });

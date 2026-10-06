@@ -1004,11 +1004,10 @@ const wallet = {
         this.provider = provider;
         this.providerName = walletId;
         this.updateUI();
-        // Persist and announce, exactly as connectToWallet does - and in this order, since the
-        // Trenches bridge re-reads sessionStorage when it hears the event. Without both, this
-        // tab's header showed the wallet connected while every walletConnected listener (the
-        // watchlist, the community page, the Trenches bridge) still thought there was none, and
-        // only a manual reload could reconcile them.
+        // Persist and announce, exactly as connectToWallet does. Without both, this tab's header
+        // showed the wallet connected while every walletConnected listener (the watchlist, the
+        // community page) still thought there was none, and only a manual reload could
+        // reconcile them.
         this.saveConnection();
         window.dispatchEvent(new CustomEvent('walletConnected', {
           detail: { address: this.address, wallet: walletId }
@@ -1066,10 +1065,8 @@ const wallet = {
             this.updateUI();
 
             // Always rewrite storage, not only on an address change: saveConnection() refreshes
-            // the stored timestamp, which the Trenches bridge checks against a 12-hour staleness
-            // guard. A long-lived tab that kept silently reconnecting the same address left the
-            // original timestamp in place, so navigating it to /trenches/ after 12h had the
-            // bridge discard a connection the header was actively showing as live.
+            // the stored timestamp, so a long-lived tab that keeps silently reconnecting the same
+            // address never leaves a stale one behind.
             this.saveConnection();
             if (this.address !== savedConnection.address) {
               this.broadcastConnectionChange('connected');
