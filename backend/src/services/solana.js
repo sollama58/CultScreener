@@ -14,13 +14,14 @@ const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 // Note: the api-key query param appears in error logs when the full RPC URL
 // is logged. Use log filtering or the Authorization header form if key
 // exposure in logs is a concern for your threat model.
+// Helius only: never a free or public RPC (project rule). The public mainnet
+// RPC used to be the outage failover; it answers getTransactionsForAddress with
+// -32601, which latched the hold-time backfill onto the 100-credit legacy path.
 const RPC_ENDPOINTS = [
   // Primary: Helius with key in URL (if configured)
   HELIUS_API_KEY && `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
   // Secondary: Custom Helius RPC URL (may already contain the key)
   process.env.HELIUS_RPC_URL,
-  // Tertiary: Public Solana RPC (rate limited but always available)
-  'https://api.mainnet-beta.solana.com'
 ].filter(Boolean);
 
 // Remove duplicates (e.g. if HELIUS_RPC_URL is the same as the primary)
@@ -39,7 +40,7 @@ RPC_ENDPOINTS.push(...deduped);
 
 const RPC_FAILOVER_COOLDOWN_MS = 60000; // 1 minute before trying failed endpoint again
 
-// Every JSON-RPC call goes to Helius; the public RPC is only an outage failover.
+// Every JSON-RPC call goes to Helius.
 const rpcChains = {
   helius: { name: 'helius', endpoints: RPC_ENDPOINTS, index: 0, lastFailure: null },
 };
@@ -56,7 +57,9 @@ function getCurrentRpcUrl(chain = rpcChains.helius) {
       console.log(`[Solana] Attempting to recover to primary ${chain.name} RPC endpoint`);
     }
   }
-  return chain.endpoints[chain.index] || chain.endpoints[0];
+  const url = chain.endpoints[chain.index] || chain.endpoints[0];
+  if (!url) throw new Error('No Helius RPC configured (set HELIUS_API_KEY)');
+  return url;
 }
 
 // Failover to next RPC endpoint
@@ -71,8 +74,10 @@ function failoverToNextRpc(chain = rpcChains.helius) {
 }
 
 // ── Helius credit accounting ─────────────────────────────────────────────────
-// Helius bills per call: 1 credit for standard RPC, 10 for DAS, getProgramAccounts
-// and getTransactionsForAddress, 100 for the legacy Enhanced Transactions API.
+// Helius bills per call: 1 credit for standard RPC, 10 for DAS and
+// getProgramAccounts, 100 for the legacy Enhanced Transactions API.
+// getTransactionsForAddress in "full" mode is 10 credits per 100 transactions
+// returned (rounded up, 10 minimum): 10 here, the rest added per page below.
 // Counted per method, flushed to the cache every few seconds under a per-UTC-day
 // key, and shown on /health/detailed so credit spend can be watched without the
 // Helius dashboard.
@@ -253,12 +258,15 @@ async function rpcCall(method, params = [], retryCount = 0) {
   } catch (error) {
     // Handle connection errors with failover OUTSIDE circuit breaker
     // to prevent double-counting failures on retry
-    const isConnectionError =
+    // A JSON-RPC error body, an open breaker or a full local queue is an answer,
+    // not a dead endpoint: re-sending it elsewhere only doubles the credits.
+    const isAnswered = error.rpcCode != null || error.name === 'CircuitBreakerError' || error.isOverloaded;
+    const isConnectionError = !isAnswered && (
       error.code === 'ECONNABORTED' ||
       error.code === 'ETIMEDOUT' ||
       error.code === 'ECONNRESET' ||
       error.code === 'ECONNREFUSED' ||
-      !error.response;
+      !error.response);
 
     // Rate limited even after withRpcRetry's own retry: try the next endpoint.
     const isRateLimited = error.response?.status === 429;
@@ -939,10 +947,11 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
  *
  * @returns {Promise<{accounts: Array<{owner, address, amount}>, pages: number, complete: boolean}>}
  */
-async function getAllTokenAccounts(mintAddress, { maxPages = 100 } = {}) {
+async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1, accounts: already = [] } = {}) {
   if (!HELIUS_DAS_URL) throw new Error('Helius DAS not configured');
-  const accounts = [];
-  let page = 1;
+  // startPage/accounts continue a read whose earlier pages the caller already has
+  const accounts = already.slice();
+  let page = startPage;
   let complete = false;
   while (page <= maxPages) {
     countCredits('getTokenAccounts', DAS_CREDITS);
@@ -996,11 +1005,19 @@ async function parseTransactions(signatures) {
   return signatures.map(sig => bySig.get(sig)).filter(Boolean);
 }
 
-// Helius' getTransactionsForAddress (10 credits per call, up to 1000 full
-// transactions) replaces getSignaturesForAddress + the 100-credit Enhanced
-// Transactions parse for the hold-time backfill. Latched off for the process
-// when the endpoint doesn't serve it (-32601) so callers use the legacy path.
+// Helius' getTransactionsForAddress (full mode: 10 credits per 100 transactions
+// returned) replaces getSignaturesForAddress + the 100-credit-per-100 Enhanced
+// Transactions parse for the hold-time backfill and holder behavior. Latched off
+// for the process when Helius refuses the method itself (not served, or not on
+// this plan) so callers use the legacy path instead of failing every wallet.
 let gtfaUnavailable = false;
+
+function isMethodRefusal(error) {
+  if (error.rpcCode === -32601) return true;
+  const status = error.response?.status;
+  if (status === 401 || status === 403) return true;
+  return /not (available|supported|allowed)|\bupgrade\b|\bplan\b/i.test(String(error.message || ''));
+}
 
 function isTransactionHistoryAvailable() {
   return !!HELIUS_API_KEY && !gtfaUnavailable;
@@ -1011,11 +1028,14 @@ function isTransactionHistoryAvailable() {
  * balances), newest first, via getTransactionsForAddress.
  * @returns {Promise<{txs: Array, paginationToken: string|null}>}
  */
-async function getAccountTransactionsPage(address, { limit = 1000, paginationToken, sortOrder = 'desc' } = {}) {
+async function getAccountTransactionsPage(address, { limit = 100, paginationToken, sortOrder = 'desc' } = {}) {
   if (!isTransactionHistoryAvailable()) throw new Error('getTransactionsForAddress not available');
   const opts = {
     transactionDetails: 'full',
     sortOrder,
+    // Billing is per 100 returned, so small pages cost nothing extra and let
+    // callers stop as soon as they have their answer. They also keep each
+    // response well inside rpcCall's 15s timeout.
     limit: Math.max(1, Math.min(1000, limit)),
     encoding: 'json',
     maxSupportedTransactionVersion: 0,
@@ -1025,11 +1045,13 @@ async function getAccountTransactionsPage(address, { limit = 1000, paginationTok
   try {
     const result = await rpcCall('getTransactionsForAddress', [address, opts]);
     if (!result || !Array.isArray(result.data)) throw new Error('Unexpected getTransactionsForAddress response');
+    const extra = Math.ceil(result.data.length / 100) - 1;
+    if (extra > 0) countCredits('getTransactionsForAddress', extra * 10);
     return { txs: result.data, paginationToken: result.paginationToken || null };
   } catch (error) {
-    if (error.rpcCode === -32601) {
+    if (isMethodRefusal(error)) {
       gtfaUnavailable = true;
-      console.warn('[Solana] getTransactionsForAddress not served by this endpoint; backfill falls back to signatures + Enhanced API');
+      console.warn(`[Solana] getTransactionsForAddress refused (${error.rpcCode || error.response?.status || ''} ${error.message}); falling back to signatures + Enhanced API`);
     }
     throw error;
   }

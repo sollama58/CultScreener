@@ -218,6 +218,37 @@ if (!DB_URL) {
       assert.strictEqual(await cache.get(`holder-snapshot-verified:${MINT}`), undefined);
     });
 
+    test('no snapshot is written without supply and decimals, and an old one without supply is not served', async () => {
+      now = T0 + 12.75 * HOUR;
+      const before = await store.getLatestSnapshot(MINT);
+      const realSupply = solana.getTokenSupply;
+      solana.getTokenSupply = async () => { throw new Error('HTTP 403'); };
+      try {
+        await assert.rejects(pipeline.takeSnapshot(MINT));
+        solana.getTokenSupply = async () => null;
+        await assert.rejects(pipeline.takeSnapshot(MINT));
+      } finally {
+        solana.getTokenSupply = realSupply;
+      }
+      assert.strictEqual((await store.getLatestSnapshot(MINT)).id, before.id);
+      await cache.delete(`holder-snapshot-pending:${MINT}`);
+
+      // A snapshot left by the old code: decimals defaulted to 0, no supply
+      await db.pool.query('UPDATE holder_snapshots SET supply = NULL, decimals = 0 WHERE id = $1', [before.id]);
+      assert.strictEqual(await pipeline.getSnapshotHolderList(MINT, { maxAgeMs: DAY }), null);
+      await cache.delete(`holder-snapshot-verified:${MINT}`);
+      assert.strictEqual((await pipeline.getFreshnessTimes([MINT]))[MINT], undefined, 'schedulers see it as missing');
+      // and the pre-check never keeps it, even though no holder moved
+      const r = await pipeline.takeSnapshot(MINT);
+      assert.strictEqual(r.status, 'ok');
+      const fixed = await store.getLatestSnapshot(MINT);
+      assert.strictEqual(fixed.decimals, 6);
+      assert.strictEqual(fixed.supply, '1000000000000');
+      const list = await pipeline.getSnapshotHolderList(MINT, { maxAgeMs: DAY });
+      assert.strictEqual(list.decimals, 6);
+      assert.strictEqual(list.totalSupply, 1_000_000);
+    });
+
     test('a capped snapshot deletes nothing, and the snapshot after it trusts no newcomer', async () => {
       now = T0 + 13 * HOUR;
       capped = true;
@@ -310,7 +341,10 @@ if (!DB_URL) {
         return { txs, paginationToken: start + limit < h.length ? `1:${start + limit}` : null };
       };
       const prevPages = pipeline.CONFIG.backfillPagesPerWallet;
+      const prevSize = pipeline.CONFIG.backfillPageSize;
+      assert.strictEqual(prevSize, 100, 'default page: Helius bills per 100 returned');
       pipeline.CONFIG.backfillPagesPerWallet = 1;
+      pipeline.CONFIG.backfillPageSize = 1000;
       try {
         let pos = await position(w);
         assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), false);
@@ -326,6 +360,7 @@ if (!DB_URL) {
         assert.strictEqual(new Date(pos.acquired_at).getTime(), rebuyTs * 1000);
       } finally {
         pipeline.CONFIG.backfillPagesPerWallet = prevPages;
+        pipeline.CONFIG.backfillPageSize = prevSize;
         solana.isTransactionHistoryAvailable = realAvail;
         delete solana.getAccountTransactionsPage;
       }

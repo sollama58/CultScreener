@@ -15,16 +15,17 @@ const { HB_EXCLUDED_MINTS, computeHoldPairs, swapFromRawTransaction } = require(
 
 const HB_MAX_HOLDERS          = 50;
 const HB_MAX_SWAPS_PER_HOLDER = 200;           // newest swaps kept per wallet
-const HB_HISTORY_TXS          = 1000;          // raw transactions read per wallet (one 10-credit call)
+const HB_HISTORY_TXS          = 1000;          // raw transactions read per wallet at most
+const HB_HISTORY_PAGE         = 100;           // per call; Helius bills 10 credits per 100 returned
 const HB_ANALYSIS_CACHE_TTL   = 43200 * 1000; // 12 hours — holder behavior changes slowly
 const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analysis crashes
 
 // ── fetchSwapHistory ─────────────────────────────────────────────────────────
 
 // Fetch up to maxCount of a wallet's most recent swaps, newest first.
-// Preferred source: one getTransactionsForAddress call (10 credits) for the
-// wallet's last HB_HISTORY_TXS full transactions, read into swaps by
-// swapFromRawTransaction. Fallback when Helius doesn't serve that method: the
+// Preferred source: getTransactionsForAddress pages of 100 full transactions
+// (10 credits each), newest first, read into swaps by swapFromRawTransaction until
+// maxCount swaps or HB_HISTORY_TXS transactions. Fallback when Helius doesn't serve that method: the
 // legacy Enhanced Transactions API (100 credits per page of 100 swaps).
 // Results are cached per-wallet for 1 day — the same whale wallets appear as top
 // holders across many different tokens, so the cache hit rate is high after the
@@ -36,14 +37,23 @@ async function fetchSwapHistory(walletAddress, maxCount) {
 
   if (solanaService.isTransactionHistoryAvailable()) {
     try {
-      const { txs } = await solanaService.getAccountTransactionsPage(walletAddress, { limit: HB_HISTORY_TXS });
       const swaps = [];
-      for (const tx of txs || []) {
-        const swap = swapFromRawTransaction(tx, walletAddress);
-        if (swap) swaps.push(swap);
-        if (swaps.length >= maxCount) break;
+      let paginationToken;
+      let read = 0;
+      while (swaps.length < maxCount && read < HB_HISTORY_TXS) {
+        const page = await solanaService.getAccountTransactionsPage(walletAddress, { limit: HB_HISTORY_PAGE, paginationToken });
+        const txs = page.txs || [];
+        read += txs.length;
+        for (const tx of txs) {
+          const swap = swapFromRawTransaction(tx, walletAddress);
+          if (swap) swaps.push(swap);
+          if (swaps.length >= maxCount) break;
+        }
+        if (!page.paginationToken || txs.length < HB_HISTORY_PAGE) break;
+        paginationToken = page.paginationToken;
       }
-      if (swaps.length > 0) await cache.set(swapCacheKey, swaps, TTL.DAY);
+      // Cache empty answers too, or a wallet with no swaps is re-read on every run
+      await cache.set(swapCacheKey, swaps, TTL.DAY);
       return swaps;
     } catch (err) {
       // -32601 latches the legacy path in solana.js; anything else is this wallet's failure

@@ -37,11 +37,12 @@ const CONFIG = {
   // Under 6h, new holders are still dated from consecutive snapshots.
   refreshMs: envInt('HOLDER_SNAPSHOT_REFRESH_HOURS', 4) * 3_600_000,
   backfillWalletsPerRun: envInt('HOLDER_BACKFILL_WALLETS_PER_RUN', 30),
-  backfillPagesPerWallet: 3,                                 // per run; progress is saved between runs
-  // Transactions read per wallet before accepting a lower bound. With
-  // getTransactionsForAddress a page holds up to 1000; the legacy path reads 100.
+  backfillPagesPerWallet: 5,                                 // per run; progress is saved between runs
+  // Transactions read per wallet before accepting a lower bound. Both paths read
+  // 100 per page: getTransactionsForAddress bills per 100 returned, so a small
+  // page costs no more and most wallets settle on their first page.
   backfillMaxTxs: envInt('HOLDER_BACKFILL_MAX_TXS', 2000),
-  backfillPageSize: envInt('HOLDER_BACKFILL_PAGE_SIZE', 1000),
+  backfillPageSize: envInt('HOLDER_BACKFILL_PAGE_SIZE', 100),
   backfillMaxAttempts: 3,
   resultTtl: 15 * 60 * 1000,                                 // hold times grow; recompute often (cheap, DB only)
   snapshotLockTtl: 10 * 60 * 1000,
@@ -131,17 +132,28 @@ async function takeSnapshot(mint) {
   const startedAt = Date.now();
   try {
     const prev = await store.getLatestSnapshot(mint);
-    const supplyRes = await solanaService.getTokenSupply(mint).catch(() => null);
-    const decimals = supplyRes?.value?.decimals ?? prev?.decimals ?? 0;
+    // Supply and decimals are required. Balances are stored raw and every UI amount
+    // and percentage is derived from these two; a snapshot written with decimals
+    // defaulted to 0 and no supply showed raw balances as tokens and holder shares
+    // in the millions of percent.
+    const supplyRes = await solanaService.getTokenSupply(mint);
+    const decimals = supplyRes?.value?.decimals;
     const supply = supplyRes?.value?.amount ?? null;
+    if (!Number.isInteger(decimals) || supply == null) {
+      throw new Error(`getTokenSupply returned no supply/decimals for ${mint.slice(0, 8)}`);
+    }
 
     // Cheap pre-check (one DAS page): if supply and the first page of accounts are
     // exactly as the previous snapshot saw them, nothing among those accounts moved,
-    // so keep that snapshot instead of re-paging the whole holder list.
+    // so keep that snapshot instead of re-paging the whole holder list. With more
+    // than one page that only proves the first page is unchanged, so a multi-page
+    // token still gets a full snapshot at least once a day.
     const prevFingerprint = prev?.sample_meta?.fingerprint;
     const first = await solanaService.getAllTokenAccounts(mint, { maxPages: 1 });
     const fingerprint = holderFingerprint(supply, first.accounts);
-    if (prevFingerprint && fingerprint === prevFingerprint) {
+    const prevUsable = prev && prev.supply != null && prev.decimals === decimals
+      && (first.complete || Date.now() - new Date(prev.taken_at).getTime() < CONFIG.staleSnapshotMs);
+    if (prevUsable && prevFingerprint && fingerprint === prevFingerprint) {
       const now = Date.now();
       await cache.set(keys.snapshotVerified(mint), now, CONFIG.refreshMs * 2).catch(() => {});
       // Keep the exact holder count warm so nothing re-pages for it
@@ -155,7 +167,11 @@ async function takeSnapshot(mint) {
     }
 
     let { accounts, pages, complete } = first;
-    if (!complete) ({ accounts, pages, complete } = await solanaService.getAllTokenAccounts(mint, { maxPages: CONFIG.maxPages }));
+    if (!complete) {
+      ({ accounts, pages, complete } = await solanaService.getAllTokenAccounts(mint, {
+        maxPages: CONFIG.maxPages, startPage: 2, accounts,
+      }));
+    }
     if (!complete) await mergeLargestAccounts(mint, accounts);
     const takenAt = Date.now();
     const holders = aggregateHolders(accounts);
@@ -498,7 +514,9 @@ async function getHoldTimes(mint, wallets) {
  */
 async function getSnapshotHolderList(mint, { maxAgeMs = Math.max(6 * 3_600_000, 2 * CONFIG.refreshMs), limit = CONFIG.listN } = {}) {
   const snap = await store.getLatestSnapshot(mint);
-  if (!snap) return null;
+  // A snapshot without a supply was written before supply/decimals were required;
+  // its decimals can't be trusted, so callers fall back and a new one is taken.
+  if (!snap || snap.supply == null) return null;
   // A snapshot the pre-check recently confirmed unchanged is as good as a new one
   const verified = Number(await cache.get(keys.snapshotVerified(mint)).catch(() => 0)) || 0;
   const freshAt = Math.max(new Date(snap.taken_at).getTime(), verified);
