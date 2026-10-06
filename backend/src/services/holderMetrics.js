@@ -189,9 +189,83 @@ function buildStratifiedDiamondHands(sample, holdTimes, strata) {
   return { distribution, supplyDistribution, resolved };
 }
 
+// ── swapFromRawTransaction ───────────────────────────────────────────────────
+
+const LAMPORTS_PER_SOL = 1e9;
+// Lamport movement a swap leg must exceed after the fee; rent for a fresh token
+// account (~0.002 SOL) and priority tips sit well under it, real SOL legs don't.
+const SOL_LEG_MIN_LAMPORTS = 5_000_000;
+
+/**
+ * Read one wallet's swap out of a standard-RPC-shaped transaction (getTransaction /
+ * getTransactionsForAddress "full"), in the shape computeHoldPairs consumes:
+ *   { signature, timestamp (seconds), tokenTransfers: [{ mint, fromUserAccount,
+ *     toUserAccount, tokenAmount (UI float) }] }
+ * or null when the transaction is not a swap for this wallet.
+ *
+ * A swap is a transaction in which the wallet both received and gave something:
+ * token balances (meta.pre/postTokenBalances by owner) and native SOL (meta.pre/
+ * postBalances for the wallet's own account, fee excluded) count as legs. A plain
+ * transfer in or out has one direction only and is dropped, like the Enhanced
+ * API's type=SWAP filter did. Each non-excluded mint the wallet gained becomes a
+ * buy transfer, each one it lost a sell; cash legs (SOL, stables, LSTs) are
+ * carried through and ignored by computeHoldPairs as before.
+ */
+function swapFromRawTransaction(tx, walletAddress) {
+  const meta = tx?.meta;
+  if (!tx || !meta || meta.err) return null;
+
+  // Per-mint UI delta for this owner
+  const byMint = new Map();
+  const add = (list, sign) => {
+    for (const b of list || []) {
+      if (!b || b.owner !== walletAddress || !b.mint) continue;
+      const ui = b.uiTokenAmount || {};
+      let amount;
+      if (ui.amount != null && ui.decimals != null) amount = Number(ui.amount) / Math.pow(10, ui.decimals);
+      else amount = Number(ui.uiAmount);
+      if (!Number.isFinite(amount)) continue;
+      byMint.set(b.mint, (byMint.get(b.mint) || 0) + sign * amount);
+    }
+  };
+  add(meta.preTokenBalances, -1);
+  add(meta.postTokenBalances, 1);
+
+  // Native SOL leg: the wallet's own lamport change, fee added back when it paid it
+  let solDelta = 0;
+  const keys = (tx.transaction?.message?.accountKeys || []).map(k => (typeof k === 'string' ? k : k?.pubkey || ''));
+  const idx = keys.indexOf(walletAddress);
+  if (idx >= 0 && Array.isArray(meta.preBalances) && Array.isArray(meta.postBalances)) {
+    let lamports = (Number(meta.postBalances[idx]) || 0) - (Number(meta.preBalances[idx]) || 0);
+    if (idx === 0) lamports += Number(meta.fee) || 0;
+    if (Math.abs(lamports) >= SOL_LEG_MIN_LAMPORTS) solDelta = lamports / LAMPORTS_PER_SOL;
+  }
+
+  let gained = solDelta > 0;
+  let gave = solDelta < 0;
+  const transfers = [];
+  for (const [mint, delta] of byMint) {
+    if (Math.abs(delta) <= 0) continue;
+    if (delta > 0) {
+      gained = true;
+      transfers.push({ mint, fromUserAccount: null, toUserAccount: walletAddress, tokenAmount: delta });
+    } else {
+      gave = true;
+      transfers.push({ mint, fromUserAccount: walletAddress, toUserAccount: null, tokenAmount: -delta });
+    }
+  }
+  if (!gained || !gave) return null;
+  if (!transfers.some(t => !HB_EXCLUDED_MINTS.has(t.mint))) return null; // cash-only (e.g. SOL <-> USDC)
+
+  const timestamp = Number(tx.blockTime) || 0;
+  if (!timestamp) return null;
+  return { signature: tx.transaction?.signatures?.[0] || tx.signature || null, timestamp, tokenTransfers: transfers };
+}
+
 module.exports = {
   HB_EXCLUDED_MINTS,
   computeHoldPairs,
+  swapFromRawTransaction,
   buildDiamondHandsResult,
   buildStratifiedDiamondHands
 };

@@ -199,7 +199,7 @@
 
     let html = `
       <div class="hb-section-title">Holder Behavior Analysis</div>
-      <p class="hb-desc">Analyze top 50 holders' avg hold time across all tokens using their last 100 swaps each.</p>
+      <p class="hb-desc">Analyze top 50 holders' avg hold time across all tokens using their last 200 swaps each.</p>
       <div class="hb-cost-row">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="url(#hbGateFlame)">
           <defs><linearGradient id="hbGateFlame" x1="0" y1="1" x2="0" y2="0">
