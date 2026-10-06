@@ -7,7 +7,8 @@ const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase } = require('../middleware/validation');
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
-const { BURN_WALLETS, LP_PROGRAMS, DIAMOND_HANDS_BUCKETS } = require('../constants');
+const { BURN_WALLETS, LP_PROGRAMS } = require('../constants');
+const { buildDiamondHandsResult } = require('../services/holderMetrics');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -2464,27 +2465,6 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
     if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch diamond hands data' });
   }
 }));
-
-/**
- * Build diamond hands distribution from hold time data.
- * Denominator is values.length (wallets with positive hold times only).
- * Wallets with no data are excluded entirely from the calculation.
- */
-function buildDiamondHandsResult(holdTimes, sampleSize, analyzed) {
-  const values = Object.values(holdTimes);
-  const denominator = values.length;
-  if (denominator === 0) {
-    return { distribution: null, sampleSize, analyzed, computed: true };
-  }
-
-  const distribution = {};
-  for (const bucket of DIAMOND_HANDS_BUCKETS) {
-    const count = values.filter(ms => ms >= bucket.ms).length;
-    distribution[bucket.key] = Math.round((count / denominator) * 1000) / 10;
-  }
-
-  return { distribution, sampleSize, analyzed, computed: true };
-}
 
 // GET /api/tokens/:mint/similar - Find tokens with similar names/symbols
 // Anti-spoofing: helps users identify confusing or copycat token names
