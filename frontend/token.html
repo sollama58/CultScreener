@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Token Details - HolDEX</title>
   <meta name="description" content="View token details, holder analytics, and diamond hands conviction data on HolDEX.">
-  <meta name="theme-color" content="#07080a">
+  <meta name="theme-color" content="#07080c">
   <meta name="color-scheme" content="dark">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -34,121 +34,17 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/styles.css?v=17">
+  <link rel="stylesheet" href="css/styles.css?v=18">
   <link rel="dns-prefetch" href="https://api.jup.ag">
   <link rel="dns-prefetch" href="https://api.dexscreener.com">
 
-  <style>
-    /* Token Statistics + Listing Performance — shared fire-accented treatment */
-    .stats-section--accented,
-    .curated-performance-section {
-      background: linear-gradient(135deg, rgba(255, 87, 34, 0.07) 0%, var(--bg-secondary) 55%) !important;
-      border-top: 2px solid var(--fire-primary) !important;
-    }
-
-    .perf-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      margin-bottom: 1rem;
-    }
-
-    .perf-title-group {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-    }
-
-    .perf-flame-icon {
-      color: var(--fire-primary);
-      flex-shrink: 0;
-      opacity: 0.9;
-    }
-
-    .perf-title {
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      color: var(--text-primary);
-    }
-
-    .perf-date-badge {
-      font-size: 0.67rem;
-      color: var(--text-dim);
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-full);
-      padding: 0.15rem 0.65rem;
-      white-space: nowrap;
-    }
-
-    .perf-metrics {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-    }
-
-    .perf-metric {
-      display: flex;
-      flex-direction: column;
-      gap: 0.3rem;
-      padding-right: 1.25rem;
-    }
-
-    .perf-metric + .perf-metric {
-      padding-left: 1.25rem;
-      padding-right: 1.25rem;
-      border-left: 1px solid var(--border-subtle);
-    }
-
-    .perf-metric:last-child {
-      padding-right: 0;
-    }
-
-    .perf-metric-label {
-      font-size: 0.62rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
-    }
-
-    .perf-metric-value {
-      font-family: var(--font-mono);
-      font-size: 1.08rem;
-      font-weight: 700;
-      color: var(--text-primary);
-      line-height: 1.2;
-    }
-
-    .perf-metric-value.positive { color: var(--green); }
-    .perf-metric-value.negative { color: var(--red); }
-
-    .perf-metric-sub {
-      font-size: 0.7rem;
-      font-weight: 600;
-      color: var(--text-dim);
-      line-height: 1;
-    }
-
-    .perf-metric-sub.positive { color: var(--green); }
-    .perf-metric-sub.negative { color: var(--red); }
-
-    @media (max-width: 520px) {
-      .perf-metrics { grid-template-columns: 1fr 1fr; row-gap: 0.85rem; }
-      .perf-metric { padding: 0 0.75rem 0 0 !important; border-left: none !important; }
-      .perf-metric:nth-child(2) { padding-left: 0.75rem !important; border-left: 1px solid var(--border-subtle) !important; }
-      .perf-metric:nth-child(3) { padding-left: 0 !important; }
-    }
-  </style>
+  <link rel="stylesheet" href="css/token.css?v=1">
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=3" as="script">
   <link rel="preload" href="js/api.js?v=9" as="script">
   <link rel="preload" href="js/wallet.js?v=6" as="script">
-  <link rel="preload" href="js/tokenDetail.js?v=24" as="script">
+  <link rel="preload" href="js/tokenDetail.js?v=25" as="script">
 </head>
 <body>
   <header class="header">
@@ -189,109 +85,78 @@
 
   <main class="main token-page">
     <!-- Skeleton Loading State -->
-    <div id="loading-state" class="token-skeleton">
-      <!-- Skeleton Header -->
-      <div class="token-header skel-header">
-        <div class="token-header-top">
-          <div class="token-identity">
-            <div class="skeleton skel-logo"></div>
-            <div>
-              <div class="skeleton skel-name"></div>
-              <div class="skeleton skel-address"></div>
+    <div id="loading-state" class="tp-skeleton" aria-busy="true" aria-label="Loading token">
+      <section class="tp-panel tp-hero">
+        <div class="tp-hero-top">
+          <div class="tp-identity">
+            <span class="skeleton round" style="width:56px;height:56px"></span>
+            <div class="skeleton-group">
+              <span class="skeleton" style="width:220px;height:28px"></span>
+              <span class="skeleton" style="width:300px;height:14px"></span>
             </div>
           </div>
-          <div class="token-header-right">
-            <div class="skeleton skel-price"></div>
-            <div class="skeleton skel-change"></div>
+          <div class="skeleton-group tp-skel-right">
+            <span class="skeleton" style="width:160px;height:30px"></span>
+            <span class="skeleton" style="width:90px;height:16px"></span>
           </div>
         </div>
-        <div class="skel-actions">
-          <div class="skeleton skel-chip"></div>
-          <div class="skeleton skel-chip"></div>
-          <div class="skeleton skel-chip"></div>
+        <div class="tp-actions">
+          <span class="skeleton" style="width:150px;height:36px"></span>
+          <span class="skeleton" style="width:96px;height:36px"></span>
+          <span class="skeleton" style="width:110px;height:36px"></span>
         </div>
+      </section>
+      <div class="tp-kpis">
+        <div class="tp-panel tp-kpi"><span class="skeleton" style="width:60%;height:12px"></span><span class="skeleton" style="width:80%;height:28px"></span></div>
+        <div class="tp-panel tp-kpi"><span class="skeleton" style="width:60%;height:12px"></span><span class="skeleton" style="width:80%;height:28px"></span></div>
+        <div class="tp-panel tp-kpi"><span class="skeleton" style="width:60%;height:12px"></span><span class="skeleton" style="width:80%;height:28px"></span></div>
+        <div class="tp-panel tp-kpi"><span class="skeleton" style="width:60%;height:12px"></span><span class="skeleton" style="width:80%;height:28px"></span></div>
       </div>
-      <!-- Skeleton Content Grid -->
-      <div class="token-content-grid">
-        <div class="token-col-left">
-          <div class="skel-section">
-            <div class="skeleton skel-section-title"></div>
-            <div class="skel-metrics-grid">
-              <div class="skeleton skel-metric"></div>
-              <div class="skeleton skel-metric"></div>
-              <div class="skeleton skel-metric"></div>
-              <div class="skeleton skel-metric"></div>
-              <div class="skeleton skel-metric"></div>
-              <div class="skeleton skel-metric"></div>
-            </div>
-            <div class="skel-table">
-              <div class="skeleton skel-table-row"></div>
-              <div class="skeleton skel-table-row"></div>
-              <div class="skeleton skel-table-row"></div>
-              <div class="skeleton skel-table-row"></div>
-              <div class="skeleton skel-table-row"></div>
-            </div>
-          </div>
-        </div>
-        <div class="token-col-right">
-          <div class="skel-section">
-            <div class="skeleton skel-section-title"></div>
-            <div class="skel-stats-grid">
-              <div class="skeleton skel-stat"></div>
-              <div class="skeleton skel-stat"></div>
-              <div class="skeleton skel-stat"></div>
-              <div class="skeleton skel-stat"></div>
-              <div class="skeleton skel-stat"></div>
-              <div class="skeleton skel-stat"></div>
-              <div class="skeleton skel-stat"></div>
-              <div class="skeleton skel-stat"></div>
-            </div>
-          </div>
-          <div class="skel-section">
-            <div class="skeleton skel-section-title"></div>
-            <div class="skeleton skel-pool"></div>
-            <div class="skeleton skel-pool"></div>
-          </div>
-        </div>
+      <div class="tp-columns">
+        <section class="tp-panel"><div class="skeleton-group"><span class="skeleton" style="width:40%;height:18px"></span><span class="skeleton" style="height:180px"></span><span class="skeleton" style="height:220px"></span></div></section>
+        <section class="tp-panel"><div class="skeleton-group"><span class="skeleton" style="width:50%;height:18px"></span><span class="skeleton" style="height:140px"></span></div></section>
       </div>
     </div>
 
     <!-- Error State -->
-    <div id="error-state" class="error-state" style="display: none;">
-      <div class="error-icon">!</div>
-      <h2 id="error-title">Token Not Found</h2>
-      <p id="error-message">The requested token could not be found.</p>
-      <a href="/" class="btn btn-primary">Back to Diamond Hands</a>
+    <div id="error-state" class="tp-error" style="display: none;">
+      <div class="tp-panel tp-error-card">
+        <div class="tp-error-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <h2 id="error-title">Token Not Found</h2>
+        <p id="error-message" class="muted">The requested token could not be found.</p>
+        <a href="/" class="tp-btn tp-btn-primary">Back to Diamond Hands</a>
+      </div>
     </div>
 
     <!-- Token Content (hidden until loaded) -->
     <div id="token-content" style="display: none;">
 
       <!-- Token Banner (populated by JS) -->
-      <div id="token-banner" class="token-banner-wrap" style="display:none"></div>
+      <div id="token-banner" class="tp-banner" style="display:none"></div>
 
-      <!-- Token Header -->
-      <section class="token-header">
-        <!-- Top row: identity + price -->
-        <div class="token-header-top">
-          <div class="token-identity">
-            <img id="token-logo" class="token-logo-large" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23181b23'/%3E%3Ctext x='16' y='21' text-anchor='middle' fill='%235d6577' font-size='14'%3E?%3C/text%3E%3C/svg%3E" alt="Token Logo" width="48" height="48">
-            <div>
-              <div class="token-name-row">
+      <!-- Hero: identity, price, actions -->
+      <section class="tp-panel tp-hero">
+        <div class="tp-hero-top">
+          <div class="tp-identity">
+            <img id="token-logo" class="tp-logo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23171a23'/%3E%3Ctext x='16' y='21' text-anchor='middle' fill='%236f7789' font-size='14'%3E?%3C/text%3E%3C/svg%3E" alt="Token logo" width="56" height="56">
+            <div class="tp-identity-text">
+              <div class="tp-name-row">
                 <h1 id="token-name">Loading...</h1>
-                <span id="token-symbol" class="token-symbol-badge">---</span>
+                <span id="token-symbol" class="tp-symbol">---</span>
               </div>
-              <div class="token-address-row">
-                <span id="token-address" class="token-address" title="Click to copy">---</span>
-                <button id="copy-address" class="btn-icon" title="Copy address">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <div class="tp-address-row">
+                <span id="token-address" class="tp-address num" title="Click to copy">---</span>
+                <button id="copy-address" class="tp-icon-btn" title="Copy address" aria-label="Copy address">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                 </button>
               </div>
             </div>
           </div>
-          <div class="token-header-right">
-            <div class="token-price-container">
-              <span id="token-price" class="token-price-large">$0.00</span>
+          <div class="tp-price-block">
+            <div class="tp-price-row token-price-container">
+              <span id="token-price" class="tp-price num">$0.00</span>
               <span id="price-change" class="price-change-badge">0%</span>
             </div>
             <div id="price-freshness" class="price-freshness" title="Price refresh status">
@@ -302,312 +167,309 @@
           </div>
         </div>
 
-        <!-- Action bar: links + socials + watchlist -->
-        <div class="token-actions-bar">
-          <div class="token-action-links">
-            <a id="explorer-link" href="#" target="_blank" rel="noopener" class="token-action-chip" title="View on Solscan">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              Solscan
-            </a>
-            <a id="bubblemaps-link" href="#" target="_blank" rel="noopener" class="token-action-chip" title="View on Bubblemaps">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><line x1="7" y1="7" x2="10" y2="10"/><line x1="14" y1="10" x2="17" y2="7"/><line x1="7" y1="17" x2="10" y2="14"/><line x1="14" y1="14" x2="17" y2="17"/></svg>
-              Bubblemaps
-            </a>
-            <button id="share-btn" class="token-action-chip" title="Share this token">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              Share
-            </button>
-          </div>
-          <!-- Token Socials (populated by JS) -->
-          <div id="token-socials" class="token-socials" style="display:none"></div>
-          <button id="watchlist-btn" class="token-action-chip watchlist-btn-header" title="Add to watchlist">
+        <div class="tp-actions">
+          <a id="jupiter-link" href="#" target="_blank" rel="noopener" class="tp-btn tp-btn-primary" title="Swap on Jupiter">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+            Trade on Jupiter
+          </a>
+          <button id="watchlist-btn" class="tp-btn watchlist-btn-header" title="Add to watchlist">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
             Watchlist
           </button>
+          <a id="explorer-link" href="#" target="_blank" rel="noopener" class="tp-btn" title="View on Solscan">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Solscan
+          </a>
+          <a id="bubblemaps-link" href="#" target="_blank" rel="noopener" class="tp-btn" title="View on Bubblemaps">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><line x1="7" y1="7" x2="10" y2="10"/><line x1="14" y1="10" x2="17" y2="7"/><line x1="7" y1="17" x2="10" y2="14"/><line x1="14" y1="14" x2="17" y2="17"/></svg>
+            Bubblemaps
+          </a>
+          <button id="share-btn" class="tp-btn" title="Share this token">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            Share
+          </button>
+          <!-- Token Socials (populated by JS) -->
+          <div id="token-socials" class="tp-socials" style="display:none"></div>
         </div>
       </section>
 
-      <!-- Main Content Grid -->
-      <div class="token-content-grid">
-        <!-- Left Column -->
-        <div class="token-col-left">
-        <!-- Conviction Metrics -->
-        <section class="holders-section" id="holders-section">
-          <div class="holders-header">
-            <h2>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                <circle cx="9" cy="7" r="4"/>
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              </svg>
-              Conviction Metrics
-              <span class="holders-ticker" id="holders-ticker"></span>
-            </h2>
-            <div class="holders-header-actions">
-              <span class="holders-updated" id="holders-updated"></span>
-              <button class="holders-share-btn" id="holders-share" disabled title="Waiting for holder data...">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
-                  <polyline points="16 6 12 2 8 6"/>
-                  <line x1="12" y1="2" x2="12" y2="15"/>
-                </svg>
-              </button>
-              <button class="holders-refresh-btn" id="holders-refresh" title="Refresh holder data">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="23 4 23 10 17 10"/>
-                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <!-- Shareable Graphic Area -->
-          <div class="holders-graphic" id="holders-graphic">
-          <!-- Concentration Metrics -->
-          <div class="holders-metrics" id="holders-metrics">
-            <div class="holder-metric">
-              <span class="holder-metric-label">Total Holders</span>
-              <span class="holder-metric-value" id="holders-total-count">--</span>
-            </div>
-            <div class="holder-metric">
-              <span class="holder-metric-label">Top 5 Holders</span>
-              <span class="holder-metric-value" id="holders-top5">--</span>
-            </div>
-            <div class="holder-metric">
-              <span class="holder-metric-label">Top 10 Holders</span>
-              <span class="holder-metric-value" id="holders-top10">--</span>
-            </div>
-            <div class="holder-metric">
-              <span class="holder-metric-label">Top 20 Holders</span>
-              <span class="holder-metric-value" id="holders-top20">--</span>
-            </div>
-            <div class="holder-metric">
-              <span class="holder-metric-label">Token Age</span>
-              <span class="holder-metric-value" id="holders-token-age">--</span>
-            </div>
-            <div class="holder-metric">
-              <span class="holder-metric-label">Avg Hold Time</span>
-              <span class="holder-metric-value" id="holders-avg-hold-time">...</span>
-            </div>
-            <div class="holder-metric">
-              <span class="holder-metric-label">Locked</span>
-              <span class="holder-metric-value" id="holders-locked">--</span>
-            </div>
-            <div class="holder-metric">
-              <span class="holder-metric-label">Burnt</span>
-              <span class="holder-metric-value" id="holders-burnt">--</span>
-            </div>
-          </div>
-          <!-- Diamond Hands Distribution -->
-          <div class="diamond-hands-section" id="diamond-hands-section">
-            <div class="diamond-hands-header">
-              <span class="diamond-hands-title">Diamond Hands</span>
-              <span class="diamond-hands-sample" id="diamond-hands-sample">Analyzing holders...</span>
-            </div>
-            <div class="diamond-hands-bars" id="diamond-hands-bars">
-              <div class="diamond-bar" data-bucket="24h">
-                <span class="diamond-bar-label">&gt;24h</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-24h"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-24h">...</span>
-              </div>
-              <div class="diamond-bar" data-bucket="3d">
-                <span class="diamond-bar-label">&gt;3d</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-3d"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-3d">...</span>
-              </div>
-              <div class="diamond-bar" data-bucket="1w">
-                <span class="diamond-bar-label">&gt;1w</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-1w"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-1w">...</span>
-              </div>
-              <div class="diamond-bar" data-bucket="1m">
-                <span class="diamond-bar-label">&gt;1M</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-1m"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-1m">...</span>
-              </div>
-              <div class="diamond-bar" data-bucket="3m" id="dh-row-3m" style="display:none;">
-                <span class="diamond-bar-label">&gt;3M</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-3m"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-3m">...</span>
-              </div>
-              <div class="diamond-bar" data-bucket="6m" id="dh-row-6m" style="display:none;">
-                <span class="diamond-bar-label">&gt;6M</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-6m"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-6m">...</span>
-              </div>
-              <div class="diamond-bar" data-bucket="9m" id="dh-row-9m" style="display:none;">
-                <span class="diamond-bar-label">&gt;9M</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-9m"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-9m">...</span>
-              </div>
-              <div class="diamond-bar" data-bucket="1yr" id="dh-row-1yr" style="display:none;">
-                <span class="diamond-bar-label">&gt;1yr</span>
-                <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-1yr"></div></div>
-                <span class="diamond-bar-pct" id="dh-pct-1yr">...</span>
-              </div>
-            </div>
-            <div class="diamond-hands-footer">
-              <span class="diamond-hands-watermark">
-                <svg class="dh-watermark-flame" width="12" height="12" viewBox="0 0 24 24" fill="url(#dhFlameGrad)"><defs><linearGradient id="dhFlameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#e64a19"/><stop offset="100%" stop-color="#ff9100"/></linearGradient></defs><polygon points="12,2 22,12 12,22 2,12"/></svg>
-                <span class="dh-watermark-text">HolDEX</span>
-                <span class="dh-watermark-sep"></span>
-                <span class="dh-watermark-powered">holdex.live</span>
-              </span>
-            </div>
-          </div>
-          </div><!-- /holders-graphic -->
-          <!-- Top Holders Table -->
-          <div class="holders-table-wrap">
-            <table class="holders-table" id="holders-table">
-              <thead>
-                <tr>
-                  <th scope="col">#</th>
-                  <th scope="col">Address</th>
-                  <th scope="col" class="text-right">Balance</th>
-                  <th scope="col" class="text-right">Value</th>
-                  <th scope="col" class="text-right">%</th>
-                  <th scope="col" class="text-right holders-share-col">Hold Time</th>
-                </tr>
-              </thead>
-              <tbody id="holders-tbody">
-                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
-                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
-                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
-                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
-                <tr class="skel-holder-row"><td colspan="6"><div class="skeleton skel-row-bar"></div></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <button class="holders-expand-btn" id="holders-expand" style="display:none;">
-            Show All
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
-          </button>
-        </section>
+      <!-- Market KPIs -->
+      <div class="tp-kpis">
+        <div class="tp-panel tp-kpi">
+          <span class="tp-eyebrow">Market cap</span>
+          <span id="stat-mcap" class="tp-kpi-value num stat-placeholder">--</span>
+        </div>
+        <div class="tp-panel tp-kpi">
+          <span class="tp-eyebrow">24h volume</span>
+          <span id="stat-volume" class="tp-kpi-value num stat-placeholder">--</span>
+        </div>
+        <div class="tp-panel tp-kpi">
+          <span class="tp-eyebrow">Liquidity</span>
+          <span id="stat-liquidity" class="tp-kpi-value num stat-placeholder">--</span>
+        </div>
+        <div class="tp-panel tp-kpi">
+          <span class="tp-eyebrow">Holders</span>
+          <span id="stat-holders" class="tp-kpi-value num stat-placeholder">--</span>
+        </div>
+      </div>
 
-          <!-- Holder Trend Section -->
-          <section class="holder-trend-section" id="holder-trend-section" style="display:none;">
-            <div class="ht-header">
-              <div class="ht-title-group">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="ht-icon" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                <span class="ht-title">Holder Trend</span>
+      <div class="tp-columns">
+        <!-- Left column -->
+        <div class="tp-stack">
+          <!-- Conviction -->
+          <section class="tp-panel holders-section" id="holders-section">
+            <div class="tp-section-head">
+              <div>
+                <span class="tp-eyebrow tp-eyebrow-brand">Holders <span class="holders-ticker" id="holders-ticker"></span></span>
+                <h2>Conviction</h2>
               </div>
-              <div class="ht-range-group">
+              <div class="tp-head-actions">
+                <span class="holders-updated" id="holders-updated"></span>
+                <button class="tp-icon-btn holders-share-btn" id="holders-share" disabled title="Waiting for holder data..." aria-label="Share holder analytics">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                </button>
+                <button class="tp-icon-btn holders-refresh-btn" id="holders-refresh" title="Refresh holder data" aria-label="Refresh holder data">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Shareable graphic area (captured by the share button) -->
+            <div class="holders-graphic" id="holders-graphic">
+              <div class="holders-metrics" id="holders-metrics">
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Total holders</span>
+                  <span class="holder-metric-value" id="holders-total-count">--</span>
+                </div>
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Top 5</span>
+                  <span class="holder-metric-value" id="holders-top5">--</span>
+                </div>
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Top 10</span>
+                  <span class="holder-metric-value" id="holders-top10">--</span>
+                </div>
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Top 20</span>
+                  <span class="holder-metric-value" id="holders-top20">--</span>
+                </div>
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Token age</span>
+                  <span class="holder-metric-value" id="holders-token-age">--</span>
+                </div>
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Avg hold time</span>
+                  <span class="holder-metric-value" id="holders-avg-hold-time">...</span>
+                </div>
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Locked</span>
+                  <span class="holder-metric-value" id="holders-locked">--</span>
+                </div>
+                <div class="holder-metric">
+                  <span class="holder-metric-label">Burnt</span>
+                  <span class="holder-metric-value" id="holders-burnt">--</span>
+                </div>
+              </div>
+
+              <!-- Diamond Hands distribution -->
+              <div class="diamond-hands-section" id="diamond-hands-section">
+                <div class="diamond-hands-header">
+                  <div class="diamond-hands-heading">
+                    <span class="diamond-hands-title">Diamond hands</span>
+                    <span class="diamond-hands-sample" id="diamond-hands-sample">Analyzing holders...</span>
+                  </div>
+                  <div class="tp-seg dh-mode" id="dh-mode" role="tablist" aria-label="Diamond hands measure" style="display:none;">
+                    <button type="button" class="on" data-mode="holders" role="tab" aria-selected="true" title="Share of holders who have held past each mark">Holders</button>
+                    <button type="button" data-mode="supply" role="tab" aria-selected="false" title="Share of supply held by wallets past each mark">Supply</button>
+                  </div>
+                </div>
+                <div class="diamond-hands-bars" id="diamond-hands-bars">
+                  <div class="diamond-bar" data-bucket="6h">
+                    <span class="diamond-bar-label">&gt;6h</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-6h"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-6h">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="24h">
+                    <span class="diamond-bar-label">&gt;24h</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-24h"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-24h">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="3d">
+                    <span class="diamond-bar-label">&gt;3d</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-3d"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-3d">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="1w">
+                    <span class="diamond-bar-label">&gt;1w</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-1w"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-1w">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="1m">
+                    <span class="diamond-bar-label">&gt;1M</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill dh-loading" id="dh-fill-1m"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-1m">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="3m" id="dh-row-3m" style="display:none;">
+                    <span class="diamond-bar-label">&gt;3M</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-3m"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-3m">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="6m" id="dh-row-6m" style="display:none;">
+                    <span class="diamond-bar-label">&gt;6M</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-6m"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-6m">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="9m" id="dh-row-9m" style="display:none;">
+                    <span class="diamond-bar-label">&gt;9M</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-9m"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-9m">...</span>
+                  </div>
+                  <div class="diamond-bar" data-bucket="1yr" id="dh-row-1yr" style="display:none;">
+                    <span class="diamond-bar-label">&gt;1yr</span>
+                    <div class="diamond-bar-track"><div class="diamond-bar-fill" id="dh-fill-1yr"></div></div>
+                    <span class="diamond-bar-pct" id="dh-pct-1yr">...</span>
+                  </div>
+                </div>
+                <div class="diamond-hands-footer">
+                  <span class="diamond-hands-watermark">
+                    <svg class="dh-watermark-mark" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="dhMarkGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs><polygon points="12,2 22,12 12,22 2,12" fill="url(#dhMarkGrad)"/></svg>
+                    <span class="dh-watermark-text">HolDEX</span>
+                    <span class="dh-watermark-sep"></span>
+                    <span class="dh-watermark-powered">holdex.live</span>
+                  </span>
+                </div>
+              </div>
+            </div><!-- /holders-graphic -->
+
+            <!-- Top holders -->
+            <div class="tp-subhead">
+              <h3>Top holders</h3>
+            </div>
+            <div class="holders-table-wrap">
+              <table class="holders-table" id="holders-table">
+                <thead>
+                  <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">Wallet</th>
+                    <th scope="col" class="text-right">Balance</th>
+                    <th scope="col" class="text-right">Value</th>
+                    <th scope="col" class="text-right">Supply</th>
+                    <th scope="col" class="text-right holders-share-col">Held for</th>
+                  </tr>
+                </thead>
+                <tbody id="holders-tbody">
+                  <tr class="skel-holder-row"><td colspan="6"><span class="skeleton" style="height:18px"></span></td></tr>
+                  <tr class="skel-holder-row"><td colspan="6"><span class="skeleton" style="height:18px"></span></td></tr>
+                  <tr class="skel-holder-row"><td colspan="6"><span class="skeleton" style="height:18px"></span></td></tr>
+                  <tr class="skel-holder-row"><td colspan="6"><span class="skeleton" style="height:18px"></span></td></tr>
+                  <tr class="skel-holder-row"><td colspan="6"><span class="skeleton" style="height:18px"></span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <button class="tp-btn tp-btn-block holders-expand-btn" id="holders-expand" style="display:none;">
+              Show all
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </section>
+
+          <!-- Holder trend -->
+          <section class="tp-panel holder-trend-section" id="holder-trend-section" style="display:none;">
+            <div class="tp-section-head">
+              <div>
+                <span class="tp-eyebrow">Daily snapshots</span>
+                <h2>Holder trend</h2>
+              </div>
+              <div class="tp-seg ht-range-group">
                 <button class="ht-range-btn active" data-range="7">7D</button>
                 <button class="ht-range-btn" data-range="30">30D</button>
               </div>
             </div>
             <div class="ht-changes" id="ht-changes"></div>
             <div class="ht-chart-wrap" id="ht-chart-wrap"></div>
-            <div class="ht-empty" id="ht-empty" style="display:none;">No history yet</div>
+            <div class="tp-empty ht-empty" id="ht-empty" style="display:none;">No history yet</div>
+          </section>
+        </div>
+
+        <!-- Right column -->
+        <div class="tp-stack">
+          <!-- Listing performance (curated tokens only) -->
+          <section class="tp-panel curated-performance-section" id="curated-performance-section" style="display:none;">
+            <div class="tp-section-head">
+              <div>
+                <span class="tp-eyebrow tp-eyebrow-brand">Since listing</span>
+                <h2>Listing performance</h2>
+              </div>
+              <span class="tp-pill" id="curated-added-date"></span>
+            </div>
+            <div class="perf-metrics">
+              <div class="perf-metric">
+                <span class="perf-metric-label">MCap at listing</span>
+                <span id="stat-mcap-at-added" class="perf-metric-value num stat-placeholder">--</span>
+              </div>
+              <div class="perf-metric">
+                <span class="perf-metric-label">ATH since listing</span>
+                <span id="stat-mcap-ath" class="perf-metric-value num stat-placeholder">--</span>
+                <span id="stat-mcap-ath-pct" class="perf-metric-sub num"></span>
+              </div>
+              <div class="perf-metric">
+                <span class="perf-metric-label">Now vs listing</span>
+                <span id="stat-mcap-current-pct" class="perf-metric-value num stat-placeholder">--</span>
+              </div>
+            </div>
           </section>
 
-        </div>
-        <div class="token-col-right">
-          <!-- Holder Behavior Analysis Card -->
-          <section class="hb-card" id="hb-card">
-            <div class="hb-card-header">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-              </svg>
-              <h2>Holder Behavior</h2>
+          <!-- Holder Behavior -->
+          <section class="tp-panel hb-card" id="hb-card">
+            <div class="tp-section-head">
+              <div>
+                <span class="tp-eyebrow tp-eyebrow-brand">Deep scan</span>
+                <h2>Holder behavior</h2>
+              </div>
+              <span class="tp-pill hb-card-cost" title="Burned from your wallet to run the scan">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
+                <span class="num">10,000</span>&nbsp;ASDFASDFA
+              </span>
             </div>
-            <p class="hb-card-desc">Analyze top 50 holders' avg hold time across all tokens using their last 250 swaps each.</p>
-            <div class="hb-card-cost">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="url(#hbFlameGrad)"><defs><linearGradient id="hbFlameGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#e64a19"/><stop offset="100%" stop-color="#ff9100"/></linearGradient></defs><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
-              <span>10,000 ASDFASDFA</span>
-            </div>
-            <button class="btn hb-analyze-btn" id="hb-analyze-btn">Analyze Holders</button>
+            <p class="muted hb-card-desc">Average hold time of the top 50 holders across every token they trade, from their last 100 swaps each.</p>
+            <button class="tp-btn tp-btn-primary tp-btn-block hb-analyze-btn" id="hb-analyze-btn">Analyze holders</button>
             <div class="hb-cached-notice" id="hb-cached-notice" style="display:none">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
               Results cached &middot; <button class="hb-view-btn" id="hb-view-btn">View</button>
             </div>
           </section>
 
-          <!-- Stats Section -->
-          <section class="stats-section stats-section--accented">
-            <div class="perf-header">
-              <div class="perf-title-group">
-                <svg class="perf-flame-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
-                <span class="perf-title">Token Statistics</span>
+          <!-- Token facts -->
+          <section class="tp-panel stats-section">
+            <div class="tp-section-head">
+              <div>
+                <span class="tp-eyebrow">On-chain</span>
+                <h2>Token facts</h2>
               </div>
             </div>
-            <div class="stats-grid">
-              <div class="stat-card">
-                <span class="stat-label">Market Cap</span>
-                <span id="stat-mcap" class="stat-value stat-placeholder">--</span>
-              </div>
-              <div class="stat-card">
-                <span class="stat-label">24h Volume</span>
-                <span id="stat-volume" class="stat-value stat-placeholder">--</span>
-              </div>
-              <div class="stat-card">
-                <span class="stat-label">Total Liquidity</span>
-                <span id="stat-liquidity" class="stat-value stat-placeholder">--</span>
-              </div>
-              <div class="stat-card">
-                <span class="stat-label">Holders</span>
-                <span id="stat-holders" class="stat-value stat-placeholder">--</span>
-              </div>
-              <div class="stat-card">
-                <span class="stat-label">Total Supply</span>
-                <span id="stat-supply" class="stat-value stat-placeholder">--</span>
-              </div>
-              <div class="stat-card">
-                <span class="stat-label">Circulating</span>
-                <span id="stat-circulating" class="stat-value stat-placeholder">--</span>
-              </div>
-              <div class="stat-card">
-                <span class="stat-label">Token Age</span>
-                <span id="stat-age" class="stat-value stat-placeholder">--</span>
-              </div>
-              <div class="stat-card">
-                <span class="stat-label">Page Views</span>
-                <span id="stat-views" class="stat-value stat-placeholder">--</span>
-              </div>
-            </div>
+            <dl class="tp-facts">
+              <div><dt>Total supply</dt><dd id="stat-supply" class="num stat-placeholder">--</dd></div>
+              <div><dt>Circulating</dt><dd id="stat-circulating" class="num stat-placeholder">--</dd></div>
+              <div><dt>Token age</dt><dd id="stat-age" class="num stat-placeholder">--</dd></div>
+              <div><dt>Page views</dt><dd id="stat-views" class="num stat-placeholder">--</dd></div>
+            </dl>
           </section>
 
-          <!-- Curated Performance Section -->
-          <section class="curated-performance-section" id="curated-performance-section" style="display:none;">
-            <div class="perf-header">
-              <div class="perf-title-group">
-                <svg class="perf-flame-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/></svg>
-                <span class="perf-title">Listing Performance</span>
-              </div>
-              <span class="perf-date-badge" id="curated-added-date"></span>
-            </div>
-            <div class="perf-metrics">
-              <div class="perf-metric">
-                <span class="perf-metric-label">MCap at Listing</span>
-                <span id="stat-mcap-at-added" class="perf-metric-value stat-placeholder">--</span>
-              </div>
-              <div class="perf-metric">
-                <span class="perf-metric-label">ATH since Listing</span>
-                <span id="stat-mcap-ath" class="perf-metric-value stat-placeholder">--</span>
-                <span id="stat-mcap-ath-pct" class="perf-metric-sub"></span>
-              </div>
-              <div class="perf-metric">
-                <span class="perf-metric-label">Current vs Listing</span>
-                <span id="stat-mcap-current-pct" class="perf-metric-value stat-placeholder">--</span>
+          <!-- Liquidity pools -->
+          <section class="tp-panel pools-section">
+            <div class="tp-section-head">
+              <div>
+                <span class="tp-eyebrow">Markets</span>
+                <h2>Liquidity pools</h2>
               </div>
             </div>
-          </section>
-
-        </div>
-
-          <!-- Pools Section — direct grid child so it can be reordered on mobile -->
-          <section class="pools-section">
-            <h2>Liquidity Pools</h2>
-            <div id="pools-loading" class="pools-loading">
-              <div class="skeleton skel-pool-card"></div>
-              <div class="skeleton skel-pool-card"></div>
+            <div id="pools-loading" class="skeleton-group">
+              <span class="skeleton" style="height:64px"></span>
+              <span class="skeleton" style="height:64px"></span>
             </div>
             <div id="pools-list" class="pools-list" style="display: none;"></div>
-            <p id="pools-empty" class="pools-empty" style="display: none;">No liquidity pools found for this token.</p>
+            <p id="pools-empty" class="tp-empty" style="display: none;">No liquidity pools found for this token.</p>
           </section>
-
+        </div>
       </div>
     </div>
 
@@ -628,9 +490,10 @@
   <script src="js/deviceLink.js?v=2"></script>
   <script src="js/wallet.js?v=6"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/sentiment.js?v=2"></script>
-  <script src="js/tokenDetail.js?v=24"></script>
-  <script src="js/holderBehavior.js?v=5"></script>
+  <script src="js/tokenDetail.js?v=25"></script>
+  <!-- Solana web3 for the Holder Behavior burn (holderBehavior.js builds the transaction with solanaWeb3) -->
+  <script src="https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js" integrity="sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ" crossorigin="anonymous" defer></script>
+  <script src="js/holderBehavior.js?v=6"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>

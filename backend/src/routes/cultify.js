@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
-const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
+const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache } = require('../middleware/validation');
 const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
 const jobQueue = require('../services/jobQueue');
 const { checkBurnTransaction } = require('../services/burnTxPolicy');
@@ -211,8 +211,10 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
   // Use the SAME cache key as the main holders endpoint — data is shared
   const cacheKey = `holder-analytics:${mint}`;
   try {
-    // Return enriched data if the worker has already processed this token
-    if (req.query.fresh !== 'true') {
+    // Return enriched data if the worker has already processed this token.
+    // ?fresh=true bypasses the cache only for admin sessions and API-key callers;
+    // anyone with a burn token could otherwise force RPC calls on every request.
+    if (req.query.fresh !== 'true' || !(await canBypassCache(req))) {
       const cached = await cache.get(cacheKey);
       if (cached) return res.json(cached);
     }
@@ -267,14 +269,8 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
         if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
         } else if (solanaService.isHeliusConfigured()) {
-          // Fire-and-forget: fetch real holder count in background
-          solanaService.getTokenHolderCount(mint).then(count => {
-            if (count && count > 0) {
-              cache.set(`holder-total:${mint}`, count, TTL.HOLDER_COUNT);
-            }
-          }).catch(err => {
-            console.warn(`[Cultify] Background holder count failed for ${mint.slice(0, 8)}:`, err.message);
-          });
+          // Count in the worker (deduped there), not inside the API process
+          require('../services/jobQueue').addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }, { priority: 5 }).catch(() => {});
         }
       } catch (_) {}
     }

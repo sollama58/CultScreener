@@ -529,7 +529,7 @@ const jobProcessors = {
     const holderPipeline = require('./services/holderPipeline');
     const result = await holderPipeline.takeSnapshot(mint);
 
-    if (result.status === 'ok' && !(await cache.get(`holder-classify-pending:${mint}`))) {
+    if ((result.status === 'ok' || result.status === 'unchanged') && !(await cache.get(`holder-classify-pending:${mint}`))) {
       const list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
       if (list) {
         await cache.set(`holder-classify-pending:${mint}`, Date.now(), 120000);
@@ -607,14 +607,14 @@ const jobProcessors = {
         if (snap && snap.complete && Date.now() - new Date(snap.taken_at).getTime() < 26 * 3600000) {
           count = snap.account_count;
         }
-        // Otherwise bypass cache — skipCache ensures we re-paginate rather than
-        // returning a stale or capped value. maxPages:500 covers up to 500k holders.
-        if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
-          count = await solanaService.getTokenHolderCount(mint, { skipCache: true, maxPages: 500 }).catch(() => null);
-        }
-        // Fall back to cached analytics when Helius is unavailable or not configured
+        // Otherwise the cached count (26h TTL; capped snapshots don't fill it), and
+        // only then a paginated DAS count. No skipCache: re-paging a token the cache
+        // already covers cost up to 500 DAS calls per token per day for nothing.
         if (!count || count <= 0) {
           count = await cache.get(`holder-total:${mint}`);
+        }
+        if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
+          count = await solanaService.getTokenHolderCount(mint, { maxPages: 500 }).catch(() => null);
         }
         if (!count || count <= 0) {
           const analytics = await cache.get(`holder-analytics:${mint}`);
@@ -751,8 +751,8 @@ const jobProcessors = {
     if (!topTokens || topTokens.length === 0) return { triggered: 0 };
 
     const allMints = topTokens.map(t => t.token_mint);
-    const snapshotTimes = await require('./services/holderStore').getLatestSnapshotTimes(allMints).catch(() => ({}));
     const holderPipeline = require('./services/holderPipeline');
+    const snapshotTimes = await holderPipeline.getFreshnessTimes(allMints).catch(() => ({}));
 
     let triggered = 0;
     for (const mint of allMints) {
@@ -773,16 +773,21 @@ const jobProcessors = {
    * Runs every hour via BullMQ repeating job — replaces setInterval in app.js.
    */
   'warm-curated-conviction': async (job) => {
-    // Hourly: consecutive snapshots this close let new holders' hold times come
-    // straight from the snapshots instead of a transfer-history backfill.
-    const STALE_MS = 55 * 60 * 1000;
+    // Holder distributions move slowly, so curated tokens are re-snapshotted every
+    // HOLDER_SNAPSHOT_REFRESH_HOURS (default 4h; the job itself ticks hourly). Under
+    // 6h, new holders' hold times still come straight from consecutive snapshots.
+    // A snapshot whose cheap pre-check found nothing changed counts as fresh too.
+    const holderPipeline = require('./services/holderPipeline');
+    const STALE_MS = holderPipeline.CONFIG.refreshMs - 5 * 60 * 1000;
 
     const curatedTokens = await db.getCuratedTokens().catch(() => []);
     if (!curatedTokens || curatedTokens.length === 0) return { triggered: 0 };
 
     const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
-    const snapshotTimes = await require('./services/holderStore').getLatestSnapshotTimes(allMints).catch(() => ({}));
-    const holderPipeline = require('./services/holderPipeline');
+    const snapshotTimes = await holderPipeline.getFreshnessTimes(allMints).catch(() => ({}));
+    const dbRows   = await db.getTokensBatch(allMints).catch(() => []);
+    const dbRowMap = {};
+    for (const row of dbRows) dbRowMap[row.mint_address] = row;
 
     let triggered = 0;
     for (const mint of allMints) {

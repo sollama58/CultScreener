@@ -201,6 +201,23 @@ if (!DB_URL) {
       assert.strictEqual((await position('LATE')).acquired_source, 'pending');
     });
 
+    test('a snapshot whose pre-check finds nothing changed is kept, and counts as fresh', async () => {
+      now = T0 + 12.5 * HOUR;
+      const before = await store.getLatestSnapshot(MINT);
+      const r = await pipeline.takeSnapshot(MINT);
+      assert.strictEqual(r.status, 'unchanged');
+      assert.strictEqual(r.snapshotId, before.id);
+      assert.strictEqual((await store.getLatestSnapshot(MINT)).id, before.id);
+      const fresh = await pipeline.getFreshnessTimes([MINT]);
+      assert.strictEqual(fresh[MINT], now);
+      assert.ok(await pipeline.getSnapshotHolderList(MINT, { maxAgeMs: HOUR }), 'served as recent');
+      assert.ok(await cache.get(`holder-snapshot-verified:${MINT}`));
+
+      setHolder('CHANGED', 1_000_000, [{ sig: 'buy_CHANGED', ts: now / 1000, delta: 1_000_000n }]);
+      assert.strictEqual((await pipeline.takeSnapshot(MINT)).status, 'ok');
+      assert.strictEqual(await cache.get(`holder-snapshot-verified:${MINT}`), undefined);
+    });
+
     test('a capped snapshot deletes nothing, and the snapshot after it trusts no newcomer', async () => {
       now = T0 + 13 * HOUR;
       capped = true;
@@ -254,6 +271,63 @@ if (!DB_URL) {
         assert.strictEqual(pos.backfill_pages, 3);
       } finally {
         pipeline.CONFIG.backfillPagesPerWallet = prev;
+      }
+    });
+
+    test('backfill reads full transactions through getTransactionsForAddress when Helius serves it', async () => {
+      // Same shape as the BUSY wallet above, served as getTransactionsForAddress pages
+      const w = 'GTFA';
+      const hist = [];
+      let ts = (T0 + 14 * HOUR) / 1000;
+      for (let i = 0; i < 1200; i++) hist.push({ sig: `gtfa_${i}`, ts: ts - i * 60, delta: 1000n });
+      const rebuyTs = ts - 1300 * 60;
+      hist.push({ sig: 'gtfa_rebuy', ts: rebuyTs, delta: 10_000_000n });
+      hist.push({ sig: 'gtfa_sellall', ts: rebuyTs - 3600, delta: -50_000_000n });
+      hist.push({ sig: 'gtfa_firstbuy', ts: rebuyTs - 7200, delta: 50_000_000n });
+      setHolder(w, 10_000_000n + 1_200_000n, hist);
+      now = T0 + 14.5 * HOUR;
+      await pipeline.takeSnapshot(MINT);
+      // a legacy-format cursor left by the old path must be ignored, not resumed
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = 'oldSignatureBase58', backfill_balance = 1 WHERE mint_address = $1 AND wallet = $2`, [MINT, w]);
+
+      const calls = [];
+      const realAvail = solana.isTransactionHistoryAvailable;
+      solana.isTransactionHistoryAvailable = () => true;
+      solana.getAccountTransactionsPage = async (account, { limit, paginationToken }) => {
+        calls.push({ account, limit, paginationToken });
+        const h = chain[walletOfAta(account)].history;
+        const start = paginationToken ? Number(paginationToken.split(':')[1]) : 0;
+        const slice = h.slice(start, start + limit);
+        const txs = slice.map(t => ({
+          blockTime: t.ts,
+          transaction: { message: { accountKeys: ['payer', account] } },
+          meta: {
+            err: null,
+            preTokenBalances: [{ accountIndex: 1, mint: MINT, uiTokenAmount: { amount: '1' } }],
+            postTokenBalances: [{ accountIndex: 1, mint: MINT, uiTokenAmount: { amount: (1n + t.delta).toString() } }],
+          },
+        }));
+        return { txs, paginationToken: start + limit < h.length ? `1:${start + limit}` : null };
+      };
+      const prevPages = pipeline.CONFIG.backfillPagesPerWallet;
+      pipeline.CONFIG.backfillPagesPerWallet = 1;
+      try {
+        let pos = await position(w);
+        assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), false);
+        assert.strictEqual(calls.length, 1);
+        assert.strictEqual(calls[0].paginationToken, undefined, 'legacy cursor discarded');
+        assert.strictEqual(calls[0].limit, 1000);
+        pos = await position(w);
+        assert.strictEqual(pos.backfill_cursor, '1:1000');
+        assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), true);
+        assert.strictEqual(calls[1].paginationToken, '1:1000', 'resumed from the saved token');
+        pos = await position(w);
+        assert.strictEqual(pos.acquired_source, 'backfill');
+        assert.strictEqual(new Date(pos.acquired_at).getTime(), rebuyTs * 1000);
+      } finally {
+        pipeline.CONFIG.backfillPagesPerWallet = prevPages;
+        solana.isTransactionHistoryAvailable = realAvail;
+        delete solana.getAccountTransactionsPage;
       }
     });
 
