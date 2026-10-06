@@ -941,11 +941,35 @@ const utils = {
       const fallback = img.dataset.fallback;
       img.removeAttribute('data-fallback');
       if (!fallback) return;
-      img.addEventListener('error', () => { img.src = fallback; }, { once: true });
+      img.addEventListener('error', () => this.handleImageError(img, fallback));
       // An image that already finished and decoded nothing failed before this ran, and its error
       // event is long gone - the listener above would never hear it.
-      if (img.complete && img.naturalWidth === 0) img.src = fallback;
+      if (img.complete && img.naturalWidth === 0) this.handleImageError(img, fallback);
     });
+  },
+
+  // What to do when a token logo fails to load: retry a proxied image once, then fall back.
+  //
+  // A proxied logo usually fails for a passing reason - a 429 while a page loads a hundred logos
+  // at once, or the proxy's upstream gateway timing out on a cold cache - and swapping straight to
+  // the default left those tokens on the "?" logo until the next full page load. One delayed retry
+  // (jittered, so a whole table does not retry in the same instant) recovers them; the default is
+  // shown while it waits. The retry adds a throwaway query parameter so the browser does not hand
+  // back the failed response it just got. A second failure is final.
+  handleImageError(img, fallback) {
+    fallback = fallback || img.dataset.fallback;
+    if (!fallback) return;
+    const src = img.getAttribute('src') || '';
+    if (src === fallback) return;
+    if (!img.dataset.logoRetried && src.includes('/api/image-proxy')) {
+      img.dataset.logoRetried = '1';
+      img.src = fallback;
+      setTimeout(() => {
+        if (img.isConnected) img.src = `${src}&retry=1`;
+      }, 1500 + Math.random() * 2500);
+      return;
+    }
+    img.src = fallback;
   },
 
   // Mark a horizontally scrolling element so its edges can show there is more to reach.

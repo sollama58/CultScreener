@@ -142,7 +142,7 @@ const tokenTable = {
   },
 
   // One listener per table body: open the token page for the clicked row, with Enter for keyboard
-  // users, and swap broken logos for the default (error does not bubble, so it is caught on the way
+  // users, and retry or swap broken logos (error does not bubble, so it is caught on the way
   // down). Safe to call on every render.
   bind(tbody) {
     if (!tbody || tbody._ttBound) return;
@@ -163,9 +163,7 @@ const tokenTable = {
     tbody.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(e); });
     tbody.addEventListener('error', (e) => {
       const img = e.target;
-      if (img && img.tagName === 'IMG' && img.dataset.fallback && img.src !== img.dataset.fallback) {
-        img.src = img.dataset.fallback;
-      }
+      if (img && img.tagName === 'IMG') utils.handleImageError(img);
     }, true);
   },
 

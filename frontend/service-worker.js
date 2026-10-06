@@ -26,7 +26,8 @@
 // cultify.js v16, new app icons.
 // v61: home token tables redesign - new js/tokenTable.js, styles.css v19, conviction.js v17,
 // tech.js v6, emerging.js v6, performance.js v26, versus.js v14, mainViewTabs.js v2.
-const CACHE_VERSION = 'holdex-v61';
+// v62: token logos retry once before falling back - api.js v10, tokenTable.js v2.
+const CACHE_VERSION = 'holdex-v62';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -38,10 +39,10 @@ const APP_SHELL = [
   '/css/styles.css?v=19',
   '/css/token.css?v=1',
   '/js/config.js?v=3',
-  '/js/api.js?v=9',
+  '/js/api.js?v=10',
   '/js/deviceLink.js?v=2',
   '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=1',
+  '/js/tokenTable.js?v=2',
   '/js/conviction.js?v=17',
   '/js/tech.js?v=6',
   '/js/emerging.js?v=6',

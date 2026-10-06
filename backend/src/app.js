@@ -293,8 +293,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting for API routes
-app.use('/api/', defaultLimiter);
+// Rate limiting for API routes. The image proxy is left to its own imageProxyLimiter below: one
+// home page load requests a logo per table row (up to 100 per table), and counting those against
+// this 100/min budget rejected logos with 429s - the tokens showed the default "?" logo instead -
+// and starved the page's own data requests of the same budget.
+app.use('/api/', (req, res, next) => (req.path === '/image-proxy' ? next() : defaultLimiter(req, res, next)));
 
 // Prevent browser HTTP caching of API responses — caching is managed at the app layer via Redis.
 // Without this, browsers apply heuristic caching and serve stale responses to fetch() calls.
@@ -387,10 +390,12 @@ const { agentsFor, isBlockedHostLiteral } = require('./services/safeFetchAgent')
 // Dedicated rate limiter for image proxy. Every table row's logo now routes through
 // this endpoint (not just the old canvas share-image feature), so a single page load
 // can legitimately request dozens of distinct images at once — 20/min was sized for
-// the old usage and was rejecting normal page loads with 429s.
+// the old usage and was rejecting normal page loads with 429s. 150 was still short: the five
+// home tables each render up to 100 rows, and opening a few tabs plus a token page passes it.
+// Most requests are Redis cache hits, so a generous per-IP ceiling costs little.
 const imageProxyLimiter = require('express-rate-limit')({
   windowMs: 60000,
-  max: 150,
+  max: 600,
   message: { error: 'Too many image proxy requests.' },
   standardHeaders: true,
   legacyHeaders: false
@@ -533,7 +538,11 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const cacheKey = `image-proxy:v3:${width}:${url}`;
 
   const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
-  if (cached) {
+  // A remembered transient failure (not a 404/410) is skipped for the browser's one retry
+  // (?retry=1, see utils.handleImageError): that retry lands seconds after the failure, inside
+  // the 45s window, and would otherwise be answered with the same cached 502 every time.
+  const isRetry = req.query.retry === '1';
+  if (cached && !(cached.notFound && !cached.gone && isRetry)) {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -593,7 +602,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     const gone = upstreamStatus === 404 || upstreamStatus === 410;
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
     cache
-      .set(cacheKey, { notFound: true }, gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
+      .set(cacheKey, { notFound: true, gone }, gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
       .catch(() => {});
     res.status(502).send('Bad Gateway');
   }
