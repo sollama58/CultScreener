@@ -30,7 +30,8 @@
 // tokenDetail.js v26, performance.js v27, versus.js v15.
 // v63: logos that are not loadable URLs (GeckoTerminal's "missing.png") fall back at once -
 // api.js v11, performance.js v28, versus.js v16, tokenDetail.js v27.
-const CACHE_VERSION = 'holdex-v63';
+// v64: API tab hidden from the nav (HTML only; api-keys.html still reachable directly).
+const CACHE_VERSION = 'holdex-v64';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
