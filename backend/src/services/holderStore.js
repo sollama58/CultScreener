@@ -26,17 +26,21 @@ async function getLatestSnapshot(mint) {
   return rows[0] || null;
 }
 
-/** mint → latest taken_at (ms) for a batch of mints. */
+/**
+ * mint → latest taken_at (ms) for a batch of mints. Snapshots without a supply
+ * (written before supply/decimals were required) don't count, so the schedulers
+ * replace them on their next run.
+ */
 async function getLatestSnapshotTimes(mints) {
   if (!mints || mints.length === 0) return {};
   const { rows } = await pool().query(
-    `SELECT mint_address, MAX(taken_at) AS taken_at
+    `SELECT DISTINCT ON (mint_address) mint_address, taken_at, supply
        FROM holder_snapshots WHERE mint_address = ANY($1)
-      GROUP BY mint_address`,
+      ORDER BY mint_address, taken_at DESC`,
     [mints]
   );
   const out = {};
-  for (const r of rows) out[r.mint_address] = new Date(r.taken_at).getTime();
+  for (const r of rows) if (r.supply != null) out[r.mint_address] = new Date(r.taken_at).getTime();
   return out;
 }
 
