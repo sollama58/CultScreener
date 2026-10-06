@@ -206,11 +206,21 @@ const tokenDetail = {
       this._applyHoldTimesToDOM();
       if (holdersExpandBtn) {
         holdersExpandBtn.innerHTML = this._holdersExpanded
-          ? 'Show Top 10 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>'
-          : `Show All ${total} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+          ? 'Show top 10 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>'
+          : `Show all ${total} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
       }
     };
     bindHandler(holdersExpandBtn, 'click', holdersExpandHandler);
+
+    // Diamond hands: share of holders vs share of supply past each mark
+    const dhModeEl = document.getElementById('dh-mode');
+    const dhModeHandler = (e) => {
+      const btn = e.target.closest('button[data-mode]');
+      if (!btn || btn.dataset.mode === this._dhMode) return;
+      this._dhMode = btn.dataset.mode;
+      if (this._diamondHandsData) this._renderDiamondHands(this._diamondHandsData);
+    };
+    bindHandler(dhModeEl, 'click', dhModeHandler);
 
     // Visibility change handler for pausing/resuming intervals
     this.visibilityHandler = () => {
@@ -779,7 +789,21 @@ const tokenDetail = {
     const wrap = document.getElementById('ht-chart-wrap');
     if (!wrap) return;
 
+    // The chart is drawn in pixels, so redraw it when its box changes size (window resize,
+    // or a first render that happened while the page content was still hidden).
+    this._htRows = rows;
+    if (!this._htResizeObserver && typeof ResizeObserver !== 'undefined') {
+      this._htLastWidth = 0;
+      this._htResizeObserver = new ResizeObserver(entries => {
+        const w = Math.round(entries[0].contentRect.width);
+        if (!w || w === this._htLastWidth || !this._htRows) return;
+        this._renderHolderBarChart(this._htRows);
+      });
+      this._htResizeObserver.observe(wrap);
+    }
+
     const totalW = wrap.getBoundingClientRect().width || wrap.clientWidth || 340;
+    this._htLastWidth = Math.round(totalW);
     const H      = 160;
     const PAD_L  = 46;   // space for y-axis labels
     const PAD_R  = 6;
@@ -817,11 +841,11 @@ const tokenDetail = {
     });
 
     const gridLines = ticks.map(({ y }) =>
-      `<line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${(totalW - PAD_R).toFixed(1)}" y2="${y.toFixed(1)}" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>`
+      `<line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${(totalW - PAD_R).toFixed(1)}" y2="${y.toFixed(1)}" class="ht-grid" stroke-width="1"/>`
     ).join('');
 
     const yLabels = ticks.map(({ val, y }) =>
-      `<text x="${(PAD_L - 6).toFixed(1)}" y="${y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="#6b7280" font-size="9.5" font-family="monospace">${fmtCount(Math.round(val))}</text>`
+      `<text x="${(PAD_L - 6).toFixed(1)}" y="${y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" class="ht-ylabel">${fmtCount(Math.round(val))}</text>`
     ).join('');
 
     const bars = rows.map((r, i) => {
@@ -836,8 +860,8 @@ const tokenDetail = {
       <svg class="ht-svg" width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" aria-hidden="true">
         <defs>
           <linearGradient id="ht-bar-grad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#ff9100" stop-opacity="0.95"/>
-            <stop offset="100%" stop-color="#e64a19" stop-opacity="0.75"/>
+            <stop offset="0%" class="ht-stop-a"/>
+            <stop offset="100%" class="ht-stop-b"/>
           </linearGradient>
         </defs>
         ${gridLines}
@@ -870,7 +894,7 @@ const tokenDetail = {
       }
 
       if (listEl) {
-        listEl.style.display = 'block';
+        listEl.style.display = '';
         listEl.innerHTML = this.pools.slice(0, 5).map(pool => {
           const tvl = pool.tvl != null ? utils.formatNumber(pool.tvl) : '--';
           const vol = pool.volume24h != null ? utils.formatNumber(pool.volume24h) : '--';
@@ -951,8 +975,8 @@ const tokenDetail = {
         const tbody = document.getElementById('holders-tbody');
         if (tbody) {
           tbody.innerHTML = data.error === 'rpc_unavailable'
-            ? '<tr><td colspan="7" style="text-align:center;padding:1.5rem;color:var(--text-muted);">Holder data temporarily unavailable. Click refresh to retry.</td></tr>'
-            : '<tr><td colspan="7" style="text-align:center;padding:1.5rem;color:var(--text-muted);">No holder data available for this token.</td></tr>';
+            ? '<tr><td colspan="6" class="holders-empty">Holder data temporarily unavailable. Click refresh to retry.</td></tr>'
+            : '<tr><td colspan="6" class="holders-empty">No holder data available for this token.</td></tr>';
         }
         // Don't cache RPC failures in frontend
         if (data.error === 'rpc_unavailable') {
@@ -1086,7 +1110,7 @@ const tokenDetail = {
         const expandBtn = document.getElementById('holders-expand');
         if (expandBtn && holders.length > 10) {
           expandBtn.style.display = '';
-          expandBtn.innerHTML = `Show All ${holders.length} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+          expandBtn.innerHTML = `Show all ${holders.length} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
         }
       }
 
@@ -1239,7 +1263,7 @@ const tokenDetail = {
     const tbody = document.getElementById('holders-tbody');
     if (!tbody) return;
     if (!holders || holders.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text-muted);">No holder data available.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="holders-empty">No holder data available.</td></tr>';
       return;
     }
     const price = this.token && this.token.price ? this.token.price : 0;
@@ -1532,7 +1556,7 @@ const tokenDetail = {
       const tokenPrice = this.token?.price ? utils.formatPrice(this.token.price, 6) : '';
       const priceChange = this.token?.priceChange24h;
       const priceChangeStr = typeof priceChange === 'number' ? `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%` : '';
-      const priceColor = priceChange >= 0 ? '#10b981' : '#ef4444';
+      const priceColor = priceChange >= 0 ? '#22c55e' : '#ef4444';
 
       // Pre-load logo as a data URL to avoid CORS issues with html2canvas
       let logoDataUrl = '';
@@ -1587,19 +1611,32 @@ const tokenDetail = {
       // Add padding to the graphic container for the screenshot
       graphic.style.padding = '1.25rem';
 
+      // Colors for the injected parts come from the page's theme tokens, so the image
+      // matches whichever theme (dark or light) the visitor is looking at.
+      const rootCs = getComputedStyle(document.documentElement);
+      const tok = (name, fallback) => (rootCs.getPropertyValue(name) || '').trim() || fallback;
+      const C = {
+        ink: tok('--ink', '#f3f5fa'),
+        muted: tok('--muted', '#6f7789'),
+        border: tok('--border', 'rgba(255,255,255,0.07)'),
+        tile: tok('--surface-2', '#171a23'),
+        page: tok('--surface-solid', '#11131a'),
+        brand: tok('--brand-ink', '#b9a6ff'),
+      };
+
       // 1. Header bar: logo + name + price
       const header = document.createElement('div');
-      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:0.85rem;margin-bottom:0.85rem;border-bottom:1px solid rgba(255,255,255,0.06);';
+      header.style.cssText = `display:flex;align-items:center;justify-content:space-between;padding-bottom:0.85rem;margin-bottom:0.85rem;border-bottom:1px solid ${C.border};`;
       header.innerHTML = `
         <div style="display:flex;align-items:center;gap:0.6rem;">
-          ${logoDataUrl ? `<img src="${logoDataUrl}" style="width:32px;height:32px;border-radius:50%;background:#161719;">` : ''}
+          ${logoDataUrl ? `<img src="${logoDataUrl}" style="width:32px;height:32px;border-radius:50%;background:${C.tile};">` : ''}
           <div>
-            <div style="font-size:1rem;font-weight:800;color:#f0f0f2;letter-spacing:-0.02em;line-height:1.2;">${esc(tokenName)}</div>
-            <div style="font-size:0.7rem;font-family:'JetBrains Mono',monospace;color:#6b6b74;text-transform:uppercase;letter-spacing:0.04em;">${esc(tokenSymbol)}</div>
+            <div style="font-size:1rem;font-weight:800;color:${C.ink};letter-spacing:-0.02em;line-height:1.2;">${esc(tokenName)}</div>
+            <div style="font-size:0.7rem;font-family:'JetBrains Mono',monospace;color:${C.muted};text-transform:uppercase;letter-spacing:0.04em;">${esc(tokenSymbol)}</div>
           </div>
         </div>
         <div style="text-align:right;">
-          ${tokenPrice ? `<div style="font-size:1.1rem;font-weight:700;color:#f0f0f2;font-family:'JetBrains Mono',monospace;letter-spacing:-0.02em;">${esc(tokenPrice)}</div>` : ''}
+          ${tokenPrice ? `<div style="font-size:1.1rem;font-weight:700;color:${C.ink};font-family:'JetBrains Mono',monospace;letter-spacing:-0.02em;">${esc(tokenPrice)}</div>` : ''}
           ${priceChangeStr ? `<div style="font-size:0.75rem;font-weight:600;color:${priceColor};font-family:'JetBrains Mono',monospace;">${esc(priceChangeStr)}</div>` : ''}
         </div>`;
       graphic.insertBefore(header, graphic.firstChild);
@@ -1607,8 +1644,8 @@ const tokenDetail = {
 
       // 2. Section title
       const sectionTitle = document.createElement('div');
-      sectionTitle.style.cssText = 'font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#6b6b74;margin-bottom:0.6rem;';
-      sectionTitle.textContent = 'CONVICTION METRICS';
+      sectionTitle.style.cssText = `font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${C.muted};margin-bottom:0.6rem;`;
+      sectionTitle.textContent = this._dhMode === 'supply' ? 'CONVICTION · DIAMOND HANDS BY SUPPLY' : 'CONVICTION METRICS';
       graphic.insertBefore(sectionTitle, header.nextSibling);
       injected.push(sectionTitle);
 
@@ -1622,13 +1659,13 @@ const tokenDetail = {
           return `${m}m`;
         };
         const avgHold = hbData.overallAvgHoldTimeMs ? fmt(hbData.overallAvgHoldTimeMs) : '—';
-        const statStyle = 'background:#1c1c21;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:0.65rem 0.75rem;';
-        const valStyle  = 'font-size:1rem;font-weight:700;color:#f0f0f2;font-family:\'JetBrains Mono\',monospace;line-height:1.2;';
-        const lblStyle  = 'font-size:0.68rem;color:#6b6b74;margin-top:0.2rem;';
+        const statStyle = `background:${C.tile};border:1px solid ${C.border};border-radius:10px;padding:0.65rem 0.75rem;`;
+        const valStyle  = `font-size:1rem;font-weight:700;color:${C.ink};font-family:'JetBrains Mono',monospace;line-height:1.2;`;
+        const lblStyle  = `font-size:0.68rem;color:${C.muted};margin-top:0.2rem;`;
         const hbSection = document.createElement('div');
-        hbSection.style.cssText = 'margin-top:0.85rem;padding-top:0.85rem;border-top:1px solid rgba(255,255,255,0.06);';
+        hbSection.style.cssText = `margin-top:0.85rem;padding-top:0.85rem;border-top:1px solid ${C.border};`;
         hbSection.innerHTML = `
-          <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#6b6b74;margin-bottom:0.6rem;">HOLDER BEHAVIOR</div>
+          <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${C.muted};margin-bottom:0.6rem;">HOLDER BEHAVIOR</div>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;">
             <div style="${statStyle}">
               <div style="${valStyle}">${hbData.analyzedCount}/${hbData.holderCount}</div>
@@ -1639,7 +1676,7 @@ const tokenDetail = {
               <div style="${lblStyle}">Swaps analyzed</div>
             </div>
             <div style="${statStyle}">
-              <div style="${valStyle};color:#ff5722;">${avgHold}</div>
+              <div style="${valStyle};color:${C.brand};">${avgHold}</div>
               <div style="${lblStyle}">Average Hold Time (all tokens)</div>
             </div>
           </div>`;
@@ -1663,7 +1700,7 @@ const tokenDetail = {
       }
 
       const canvas = await html2canvas(graphic, {
-        backgroundColor: '#060607',
+        backgroundColor: C.page,
         scale: 2,
         allowTaint: true,
         logging: false,
@@ -1891,10 +1928,27 @@ const tokenDetail = {
       '1yr': 365 * 86400000,
     };
 
+    // Holders (default) or Supply: the supply view needs the snapshot pipeline's
+    // supplyDistribution, so the toggle only appears once a computed result carries it.
+    const hasSupply = !!(data.computed && data.supplyDistribution);
+    if (!hasSupply) this._dhMode = 'holders';
+    const mode = this._dhMode === 'supply' ? 'supply' : 'holders';
+    const dist = mode === 'supply' ? data.supplyDistribution : data.distribution;
+    const modeEl = document.getElementById('dh-mode');
+    if (modeEl) {
+      modeEl.style.display = hasSupply ? '' : 'none';
+      modeEl.querySelectorAll('button[data-mode]').forEach(btn => {
+        const on = btn.dataset.mode === mode;
+        btn.classList.toggle('on', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+    section.dataset.mode = mode;
+
     // Update each bar
     const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m', '1yr'];
     for (const key of buckets) {
-      const pct = data.distribution[key] ?? 0;
+      const pct = dist[key] ?? 0;
       const fillEl = document.getElementById(`dh-fill-${key}`);
       const pctEl = document.getElementById(`dh-pct-${key}`);
 
@@ -1934,6 +1988,8 @@ const tokenDetail = {
     section.style.display = '';
     const sampleEl = document.getElementById('diamond-hands-sample');
     if (sampleEl) sampleEl.textContent = 'Analyzing holders...';
+    const modeEl = document.getElementById('dh-mode');
+    if (modeEl) modeEl.style.display = 'none';
     const buckets = ['6h', '24h', '3d', '1w', '1m', '3m', '6m', '9m', '1yr'];
     for (const key of buckets) {
       const fillEl = document.getElementById(`dh-fill-${key}`);
@@ -2133,6 +2189,10 @@ const tokenDetail = {
 
   // Cleanup on page unload
   destroy() {
+    if (this._htResizeObserver) {
+      this._htResizeObserver.disconnect();
+      this._htResizeObserver = null;
+    }
     // Clear all intervals
     if (this.priceRefreshInterval) {
       clearInterval(this.priceRefreshInterval);

@@ -126,8 +126,8 @@
       if (btn) {
         const orig = btn.innerHTML;
         btn.textContent = 'Copied!';
-        btn.style.color = '#22c55e';
-        setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 2000);
+        btn.classList.add('is-good');
+        setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('is-good'); }, 2000);
       }
     } catch {}
   }
@@ -185,7 +185,7 @@
   function errorHtml(msg) {
     return `<div class="hb-error-state">
       <p class="cultify-error">${escHtml(msg)}</p>
-      <button class="cultify-burn-btn" style="margin-top:1rem;" id="hb-err-close">Close</button>
+      <button class="cultify-burn-btn" id="hb-err-close">Close</button>
     </div>`;
   }
 
@@ -199,11 +199,11 @@
 
     let html = `
       <div class="hb-section-title">Holder Behavior Analysis</div>
-      <p class="hb-desc">Analyze top 50 holders' avg hold time across all tokens using their last 150 swaps each.</p>
+      <p class="hb-desc">Analyze top 50 holders' avg hold time across all tokens using their last 100 swaps each.</p>
       <div class="hb-cost-row">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="url(#hbGateFlame)">
           <defs><linearGradient id="hbGateFlame" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stop-color="#e64a19"/><stop offset="100%" stop-color="#ff5722"/>
+            <stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#3b82f6"/>
           </linearGradient></defs>
           <path d="M12 23c-4.97 0-8-3.03-8-7 0-2.22.98-4.12 2.5-5.5C5.5 8 5 5.5 7 3c1 2 3 3.5 5 4 0-2 1-4 3-6 .5 2 1 4 1 6 2-1 3.5-2.5 4-4 0 3-1 5.5-2.5 7.5C19.02 11.88 20 13.78 20 16c0 3.97-3.03 7-8 7z"/>
         </svg>
@@ -242,17 +242,17 @@
     const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
     if (balData.balance <= 0 || !balData.tokenAccount) {
       balEl.textContent = 'ASDFASDFA balance: 0';
-      balEl.style.color = '#ef4444';
+      balEl.classList.add('is-bad');
       const errEl = document.getElementById('hb-burn-error');
       if (errEl) errEl.innerHTML = '<p class="cultify-error">You don\'t hold any ASDFASDFA. Buy some first.</p>';
     } else if (balData.balance < required) {
       balEl.textContent = `ASDFASDFA balance: ${balData.uiBalance.toLocaleString()}`;
-      balEl.style.color = '#ef4444';
+      balEl.classList.add('is-bad');
       const errEl = document.getElementById('hb-burn-error');
       if (errEl) errEl.innerHTML = `<p class="cultify-error">Need ${BURN_AMOUNT.toLocaleString()} ASDFASDFA. You have ${balData.uiBalance.toLocaleString()}.</p>`;
     } else {
       balEl.textContent = `ASDFASDFA balance: ${balData.uiBalance.toLocaleString()}`;
-      balEl.style.color = '#22c55e';
+      balEl.classList.add('is-good');
       burnBtn.disabled = false;
     }
 
@@ -569,7 +569,7 @@
     setBody(`
       <div class="hb-results-header">
         <div class="hb-results-header-left">
-          <span class="hb-section-title" style="margin-bottom:0">Holder Behavior</span>
+          <span class="hb-section-title">Holder Behavior</span>
           ${tickerHtml}
         </div>
         <button class="hb-share-btn" id="hb-share-btn" title="Share results">
