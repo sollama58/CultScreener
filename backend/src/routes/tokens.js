@@ -1105,6 +1105,8 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       sampleSize: row.conviction_sample_size || 0,
       analyzed: row.conviction_sample_size || 0,
       convictionUpdatedAt: row.conviction_computed_at || null,
+      // Token age for the home tables: under 3 months there are no 3-month holders to count
+      pairCreatedAt: row.pair_created_at || null,
       mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
       mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
       emergingCult: row.is_emerging_cult || false,

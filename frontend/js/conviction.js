@@ -442,8 +442,6 @@ const convictionPage = {
 
     const offset = (this.currentPage - 1) * this.pageSize;
 
-    // One scale for the whole page, so bars are comparable down the column.
-    const convScale = tokenTable.scale(this.tokens);
 
     tbody.innerHTML = this.tokens.map((token, index) => {
       if (!tokenTable.mintOf(token)) return '';
@@ -455,7 +453,7 @@ const convictionPage = {
           <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}</td>
           <td class="cell-ath-pct">${tokenTable.athCell(token)}</td>
           <td class="cell-updated">${tokenTable.holders(token)}</td>
-          <td class="cell-dist">${tokenTable.distBars(token, convScale)}</td>
+          <td class="cell-dist">${tokenTable.dhCell(token)}</td>
         </tr>`;
     }).join('');
   },

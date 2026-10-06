@@ -289,8 +289,6 @@ const versusPage = {
     const btcPct = this.benchmarks.btc?.priceChange24h ?? null;
     const noData = '<span class="tt-na">no data</span>';
 
-    // One scale for the whole page, so bars are comparable down the column.
-    const convScale = tokenTable.scale(sorted);
 
     tbody.innerHTML = sorted.map((token, index) => {
       if (!tokenTable.mintOf(token)) return '';
@@ -305,7 +303,7 @@ const versusPage = {
           <td class="cell-vs-btc">${vsBtc}</td>
           <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}</td>
           <td class="cell-updated">${tokenTable.holders(token)}</td>
-          <td class="cell-dist">${tokenTable.distBars(token, convScale)}</td>
+          <td class="cell-dist">${tokenTable.dhCell(token)}</td>
         </tr>`;
     }).join('');
   },
