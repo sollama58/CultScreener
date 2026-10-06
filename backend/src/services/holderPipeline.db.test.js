@@ -342,22 +342,26 @@ if (!DB_URL) {
       };
       const prevPages = pipeline.CONFIG.backfillPagesPerWallet;
       const prevSize = pipeline.CONFIG.backfillPageSize;
-      assert.strictEqual(prevSize, 100, 'default page: Helius bills per 100 returned');
+      assert.strictEqual(pipeline.CONFIG.backfillFirstPageSize, 100, 'small first page: most accounts settle on it');
+      assert.strictEqual(prevSize, 1000, 'then large pages: Helius bills per 100 returned, so size only sets round trips');
       pipeline.CONFIG.backfillPagesPerWallet = 1;
-      pipeline.CONFIG.backfillPageSize = 1000;
       try {
         let pos = await position(w);
         assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), false);
         assert.strictEqual(calls.length, 1);
         assert.strictEqual(calls[0].paginationToken, undefined, 'legacy cursor discarded');
-        assert.strictEqual(calls[0].limit, 1000);
+        assert.strictEqual(calls[0].limit, 100);
         pos = await position(w);
-        assert.strictEqual(pos.backfill_cursor, '1:1000');
+        assert.strictEqual(pos.backfill_cursor, '1:100');
+        assert.strictEqual(pos.backfill_pages, 1);
+        pipeline.CONFIG.backfillPagesPerWallet = prevPages;
         assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), true);
-        assert.strictEqual(calls[1].paginationToken, '1:1000', 'resumed from the saved token');
+        assert.deepStrictEqual(calls.slice(1).map(c => [c.limit, c.paginationToken]), [[1000, '1:100'], [1000, '1:1100']],
+          'resumed from the saved token in large pages');
         pos = await position(w);
         assert.strictEqual(pos.acquired_source, 'backfill');
         assert.strictEqual(new Date(pos.acquired_at).getTime(), rebuyTs * 1000);
+        assert.strictEqual(pos.backfill_pages, 13, 'pages counted in units of 100 transactions');
       } finally {
         pipeline.CONFIG.backfillPagesPerWallet = prevPages;
         pipeline.CONFIG.backfillPageSize = prevSize;
