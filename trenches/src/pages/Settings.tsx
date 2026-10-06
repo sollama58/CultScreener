@@ -15,6 +15,7 @@ import { usePreferences, type AlertSoundName,
 } from "../context/PreferencesContext";
 import { playAlertSound, unlockAudio } from "../utils/alertSound";
 import { useSubscription } from "../context/SubscriptionContext";
+import { TELEGRAM_ENABLED } from "../features";
 
 const ALERT_MODE_LABELS: Record<AlertMode, string> = {
   REALTIME: "Real-time only",
@@ -29,7 +30,7 @@ export function Settings() {
       <h2>Settings</h2>
       <AccessCard />
       <DevicesCard />
-      <TelegramCard />
+      {TELEGRAM_ENABLED && <TelegramCard />}
       <LiveFeedCard />
       <PumpTokSettingsCard />
       <DisplayCard />

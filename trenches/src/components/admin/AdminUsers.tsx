@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getAdminUsers, unlinkUserTelegram } from "../../api/client";
 import type { AdminUser } from "../../api/types";
+import { TELEGRAM_ENABLED } from "../../features";
 
 export function AdminUsers() {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -41,8 +42,8 @@ export function AdminUsers() {
             <th>Joined</th>
             <th>Filters</th>
             <th>Matches</th>
-            <th>Telegram</th>
-            <th></th>
+            {TELEGRAM_ENABLED && <th>Telegram</th>}
+            {TELEGRAM_ENABLED && <th></th>}
           </tr>
         </thead>
         <tbody>
@@ -52,24 +53,28 @@ export function AdminUsers() {
               <td>{new Date(user.createdAt).toLocaleDateString()}</td>
               <td>{user.filterCount}</td>
               <td>{user.matchCount}</td>
-              <td>
-                {user.telegramLinked ? (
-                  <span className="badge badge--on">Linked · {user.alertMode}</span>
-                ) : (
-                  <span className="badge badge--off">Not linked</span>
-                )}
-              </td>
-              <td>
-                {user.telegramLinked && (
-                  <button
-                    className="btn btn--danger"
-                    disabled={busyId === user.id}
-                    onClick={() => void handleUnlink(user)}
-                  >
-                    Unlink Telegram
-                  </button>
-                )}
-              </td>
+              {TELEGRAM_ENABLED && (
+                <>
+                  <td>
+                    {user.telegramLinked ? (
+                      <span className="badge badge--on">Linked · {user.alertMode}</span>
+                    ) : (
+                      <span className="badge badge--off">Not linked</span>
+                    )}
+                  </td>
+                  <td>
+                    {user.telegramLinked && (
+                      <button
+                        className="btn btn--danger"
+                        disabled={busyId === user.id}
+                        onClick={() => void handleUnlink(user)}
+                      >
+                        Unlink Telegram
+                      </button>
+                    )}
+                  </td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>

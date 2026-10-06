@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getAdminStats } from "../../api/client";
 import type { AdminStats } from "../../api/types";
+import { TELEGRAM_ENABLED } from "../../features";
 
 const STAT_LABELS: { key: keyof AdminStats; label: string }[] = [
   { key: "totalUsers", label: "Users" },
@@ -8,7 +9,9 @@ const STAT_LABELS: { key: keyof AdminStats; label: string }[] = [
   { key: "totalTrackedTokens", label: "Tracked tokens" },
   { key: "totalMatches", label: "Matches (all time)" },
   { key: "matches24h", label: "Matches (24h)" },
-  { key: "telegramLinkedUsers", label: "Telegram-linked users" },
+  // The API doesn't return this count yet; reading it unguarded threw on undefined and blanked
+  // the whole overview.
+  ...(TELEGRAM_ENABLED ? [{ key: "telegramLinkedUsers" as const, label: "Telegram-linked users" }] : []),
 ];
 
 export function AdminOverview() {
