@@ -36,7 +36,9 @@
 // conviction.js v18, versus.js v17.
 // v66: token page chart modal - new js/tokenChart.js (loads js/vendor/lightweight-charts-5.2.1.js
 // on first open, not precached), token.css v2.
-const CACHE_VERSION = 'holdex-v66';
+// v67: chart modal gets trendline + Fibonacci tools (new js/chartDrawings.js), phone layout and
+// a chart preview card on the token page - tokenChart.js v2, token.css v3.
+const CACHE_VERSION = 'holdex-v67';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -46,7 +48,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=20',
-  '/css/token.css?v=2',
+  '/css/token.css?v=3',
   '/js/config.js?v=3',
   '/js/api.js?v=11',
   '/js/deviceLink.js?v=2',
@@ -59,7 +61,8 @@ const APP_SHELL = [
   '/js/mainViewTabs.js?v=2',
   '/js/kotp.js?v=3',
   '/js/tokenDetail.js?v=27',
-  '/js/tokenChart.js?v=1',
+  '/js/chartDrawings.js?v=1',
+  '/js/tokenChart.js?v=2',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=6',
   '/js/holderBehavior.js?v=7',
