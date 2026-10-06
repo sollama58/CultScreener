@@ -1,92 +1,141 @@
-﻿/* =============================================
-   HolDEX - Fire / Ember Trading Terminal
-   Professional dark trading terminal with fire accents
+/* =============================================
+   HolDEX design system
+   Shares TrenchScanner's look (apps/web/src/styles.css in sollama58/TrenchScanner): a near-black
+   page, quiet layered surfaces, hairline borders, Inter for text and JetBrains Mono for numbers,
+   and one violet -> blue brand gradient kept for identity and primary actions.
+   Status colors are for verdicts (up/down, pass/fail), not decoration.
+
+   Convention for new code: use the tokens in the first block (--page, --surface*, --ink*,
+   --border*, --brand-*, --good/--bad/--warn) and the primitives in section 4b (.panel, .eyebrow,
+   .grad-text, .num, .pill, .section-head ...). The older names in the second block are aliases
+   kept so existing rules keep working; don't add new uses of them.
    ============================================= */
 
 /* =============================================
-   1. CSS Custom Properties
+   1. Design Tokens
    ============================================= */
 
 :root {
-  /* Backgrounds — refined dark palette with more depth */
-  --bg-primary: #09090b;
-  --bg-secondary: #0f1012;
-  --bg-tertiary: #161719;
-  --bg-hover: #1c1d20;
-  --bg-base: #060607;
-  --bg-elevated: #1a1b1e;
+  color-scheme: dark;
 
-  /* HolDEX accent palette — electric blue / cyan */
-  --fire-primary: #ff5722;
-  --fire-secondary: #ff9100;
-  --fire-dim: #ff3d00;
-  --fire-glow: rgba(255, 87, 34, 0.14);
-  --ember: #ff9100;
-  --ember-dim: rgba(255, 87, 34, 0.08);
-  --hot: #ff3d00;
+  /* Surfaces, darkest to lightest */
+  --page: #07080c;
+  --surface: rgba(17, 19, 26, 0.82);
+  --surface-solid: #11131a;
+  --surface-2: #171a23;
+  --surface-3: #1f2330;
 
-  /* Text — better contrast hierarchy */
-  --text-primary: #f0f0f2;
-  --text-secondary: #a0a0a8;
-  /* Lifted to clear WCAG AA (4.5:1) on every surface these sit on, the lightest being the
-     #16181d card. Before: dim 1.87:1 and muted 3.37:1 against that card, which put every table
-     column header - Token, Price, MCap, Holders - below the threshold at 10.9px. The three tiers
-     are closer together than they were; three distinct steps that all clear 4.5:1 on this ground
-     is not available without brightening the whole palette. */
-  --text-muted: #9a9aa4;
-  --text-dim: #8b8b95;
+  /* Text */
+  --ink: #f3f5fa;
+  --ink-2: #aab1c2;
+  /* TrenchScanner's --muted (#6f7789) is ~3.9:1 on --surface-2; lifted so small labels on cards
+     still clear WCAG AA (4.5:1). */
+  --muted: #868da0;
 
-  /* Borders — subtle, layered */
-  --border-color: #1e1f22;
-  --border-subtle: #17181b;
-  --border-default: #2a2b2f;
-  --border-fire: rgba(255, 87, 34, 0.22);
+  /* Lines */
+  --grid: #232735;
+  --axis: #343a4b;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --highlight: rgba(255, 255, 255, 0.05);
 
-  /* Status colors — vibrant, accessible */
-  --green: #10b981;
-  --green-light: rgba(16, 185, 129, 0.1);
-  --green-glow: rgba(16, 185, 129, 0.25);
-  --red: #ef4444;
-  --red-light: rgba(239, 68, 68, 0.1);
+  /* Brand: identity and primary actions only. Swap these two to rebrand. */
+  --brand-a: #8b5cf6;
+  --brand-b: #3b82f6;
+  --brand-ink: #b9a6ff;
+  --brand-wash: rgba(139, 92, 246, 0.12);
+  --brand-gradient: linear-gradient(135deg, var(--brand-a), var(--brand-b));
+
+  /* Chart series */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+
+  /* Status */
+  --good: #0ca30c;
+  --good-ink: #4ade80;
+  --good-wash: rgba(34, 197, 94, 0.1);
+  --warn: #fab219;
+  --warn-wash: rgba(250, 178, 25, 0.1);
+  --bad: #d03b3b;
+  --bad-ink: #ff8080;
+  --bad-wash: rgba(239, 68, 68, 0.1);
+  --info-wash: rgba(57, 135, 229, 0.12);
+
+  /* Shape */
+  --shadow: 0 1px 0 var(--highlight) inset, 0 12px 32px -18px rgba(0, 0, 0, 0.7);
+  --radius: 16px;
+  --radius-s: 10px;
+
+  /* Type */
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ---- Legacy aliases (pre-redesign names). Kept so existing rules pick up the new look. ---- */
+  --bg-base: var(--page);
+  --bg-primary: #0b0d12;
+  --bg-secondary: var(--surface-solid);
+  --bg-tertiary: var(--surface-2);
+  --bg-hover: var(--surface-3);
+  --bg-elevated: var(--surface-2);
+
+  /* Accent used as text and small fills: a lighter violet than --brand-a so it reads on dark. */
+  --fire-primary: #9d7bff;
+  --fire-secondary: var(--brand-b);
+  --fire-dim: #7c3aed;
+  --fire-glow: var(--brand-wash);
+  --ember: var(--brand-b);
+  --ember-dim: rgba(139, 92, 246, 0.08);
+  --hot: #7c3aed;
+
+  --text-primary: var(--ink);
+  --text-secondary: var(--ink-2);
+  --text-muted: #949bad;
+  --text-dim: var(--muted);
+
+  --border-color: var(--border);
+  --border-subtle: rgba(255, 255, 255, 0.045);
+  --border-default: var(--border-strong);
+  --border-fire: rgba(139, 92, 246, 0.28);
+
+  --green: var(--good-ink);
+  --green-light: var(--good-wash);
+  --green-glow: rgba(34, 197, 94, 0.25);
+  --red: var(--bad-ink);
+  --red-light: var(--bad-wash);
   --red-glow: rgba(239, 68, 68, 0.25);
-  --yellow: #f59e0b;
-  --yellow-light: rgba(245, 158, 11, 0.1);
-  --blue: #3b82f6;
-  --blue-light: rgba(59, 130, 246, 0.1);
-  --accent: #ff5722;
-  --accent-primary: #ff5722;
-  --accent-hover: #ff9100;
-  --accent-muted: rgba(255, 87, 34, 0.12);
-  --accent-glow: rgba(255, 87, 34, 0.35);
+  --yellow: var(--warn);
+  --yellow-light: var(--warn-wash);
+  --blue: var(--series-1);
+  --blue-light: var(--info-wash);
+  --accent: var(--brand-a);
+  --accent-primary: #9d7bff;
+  --accent-hover: #d2c6ff;
+  --accent-muted: var(--brand-wash);
+  --accent-glow: rgba(139, 92, 246, 0.35);
 
-  /* UI — more generous radii for modern feel */
   --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 8px;
+  --radius-md: var(--radius-s);
+  --radius-lg: var(--radius);
   --radius-xl: 22px;
   --radius-full: 9999px;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.15);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0, 0, 0, 0.25);
-  --shadow-fire: 0 0 24px rgba(255, 87, 34, 0.08);
-  --shadow-glow: 0 0 48px var(--accent-glow);
+  --shadow-md: 0 1px 0 var(--highlight) inset, 0 16px 36px -18px rgba(0, 0, 0, 0.75);
+  --shadow-lg: 0 1px 0 var(--highlight) inset, 0 24px 56px -20px rgba(0, 0, 0, 0.8);
+  --shadow-fire: none;
+  --shadow-glow: 0 8px 24px -10px rgba(110, 90, 255, 0.7);
 
-  /* Transitions — snappier */
-  --transition-fast: 0.12s ease;
+  --transition-fast: 0.15s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.35s ease;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Glass — refined frosted effect */
-  --glass-bg: rgba(9, 9, 11, 0.65);
-  --glass-border: rgba(255, 87, 34, 0.06);
+  --glass-bg: color-mix(in srgb, var(--page) 72%, transparent);
+  --glass-border: var(--border);
 
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', Monaco, 'Fira Code', monospace;
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
 }
 
 
@@ -137,34 +186,43 @@ html {
 }
 
 body {
-  font-family: var(--font-sans);
-  background: var(--bg-base);
-  color: var(--text-primary);
-  line-height: 1.6;
+  font-family: var(--font);
+  background: var(--page);
+  color: var(--ink);
+  line-height: 1.5;
   min-height: 100vh;
+  isolation: isolate;
 }
 
-/* Subtle ambient glow — adds depth without distraction */
+/* Page backdrop: two soft brand glows at the top and a faint dot grid, fading out down the page.
+   Fixed and behind everything; no backdrop-filter on panels over it (scroll jank on phones). */
 body::before {
   content: '';
   position: fixed;
-  top: 0; right: 0; bottom: 0; left: 0;
-  background:
-    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(255, 87, 34, 0.05), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(255, 145, 0, 0.025), transparent 70%),
-    radial-gradient(ellipse 30% 25% at 0% 100%, rgba(255, 87, 34, 0.015), transparent 60%);
-  pointer-events: none;
+  inset: 0;
   z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 500px at 8% -10%, color-mix(in srgb, var(--brand-a) 16%, transparent), transparent 60%),
+    radial-gradient(800px 480px at 100% 0%, color-mix(in srgb, var(--brand-b) 12%, transparent), transparent 60%),
+    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 28px 28px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
 }
 
 a {
-  color: var(--accent-primary);
+  color: var(--series-1);
   text-decoration: none;
   transition: color var(--transition-fast);
 }
 
 a:hover {
-  color: var(--accent-hover);
+  color: color-mix(in srgb, var(--series-1) 75%, #fff);
+}
+
+h1, h2, h3, h4 {
+  line-height: 1.2;
+  letter-spacing: -0.015em;
 }
 
 img {
@@ -173,14 +231,14 @@ img {
 }
 
 ::selection {
-  background: rgba(255, 87, 34, 0.28);
+  background: color-mix(in srgb, var(--brand-a) 40%, transparent);
   color: #fff;
 }
 
 /* Custom scrollbar — minimal, barely visible until hovered */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -194,7 +252,7 @@ img {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 87, 34, 0.35);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 * {
@@ -210,10 +268,10 @@ img {
 .header {
   position: sticky;
   top: 0;
-  background: rgba(9, 9, 11, 0.82);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  backdrop-filter: blur(24px) saturate(1.4);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--page) 72%, transparent);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--border);
   z-index: 1200;
 }
 
@@ -289,19 +347,19 @@ img {
 .powered-badge:hover {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(255, 87, 34, 0.04);
+  background: rgba(139, 92, 246, 0.04);
 }
 
 .flame-icon {
   flex-shrink: 0;
-  filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.3));
+  filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.3));
   animation: flameFlicker 3s ease-in-out infinite alternate;
 }
 
 @keyframes flameFlicker {
-  0% { filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.2)); }
-  50% { filter: drop-shadow(0 0 4px rgba(255, 145, 0, 0.4)); }
-  100% { filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.3)); }
+  0% { filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.2)); }
+  50% { filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.4)); }
+  100% { filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.3)); }
 }
 
 /* Navigation */
@@ -344,7 +402,7 @@ img {
   height: 2px;
   background: var(--fire-primary);
   border-radius: var(--radius-full);
-  box-shadow: 0 0 6px rgba(255, 87, 34, 0.4);
+  box-shadow: 0 0 6px rgba(139, 92, 246, 0.4);
 }
 
 .header-actions {
@@ -466,92 +524,101 @@ img {
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1.15rem;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  font-size: 0.84rem;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.85rem;
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast),
+    filter var(--transition-fast);
   white-space: nowrap;
-  font-family: var(--font-sans);
-  line-height: 1.5;
-  letter-spacing: -0.01em;
+  font-family: var(--font);
+  line-height: 1.4;
+  text-decoration: none;
 }
 
 .btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-default);
-  color: var(--text-primary);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03);
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .btn:active {
-  transform: scale(0.97);
-  transition-duration: 0.06s;
+  transform: translateY(1px);
 }
 
 .btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
+  opacity: 0.45;
+  cursor: default;
   pointer-events: none;
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--fire-primary), var(--fire-dim));
+  background: var(--brand-gradient);
   border-color: transparent;
   color: #fff;
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 24px -10px rgba(110, 90, 255, 0.7);
 }
 
 .btn-primary:hover {
-  background: linear-gradient(135deg, var(--fire-secondary), var(--fire-primary));
+  background: var(--brand-gradient);
   border-color: transparent;
   color: #fff;
-  box-shadow: 0 2px 12px rgba(255, 87, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  filter: brightness(1.1);
 }
 
 .btn-secondary {
-  background: var(--bg-tertiary);
-  border-color: var(--border-color);
-  color: var(--text-secondary);
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--ink-2);
 }
 
 .btn-secondary:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--border-default);
+  background: var(--surface-3);
+  color: var(--ink);
+  border-color: var(--border-strong);
 }
 
 .btn-danger {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: var(--red);
+  background: var(--bad-wash);
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+  color: var(--bad-ink);
 }
 
 .btn-danger:hover {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: var(--red);
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+  border-color: var(--bad);
+  color: var(--bad-ink);
 }
 
 .btn-ghost {
   background: transparent;
   border-color: transparent;
-  color: var(--text-secondary);
+  color: var(--ink-2);
 }
 
 .btn-ghost:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--ink);
 }
 
 .btn-sm {
-  padding: 0.35rem 0.75rem;
+  padding: 0.32rem 0.65rem;
   font-size: 0.78rem;
+}
+
+.btn-lg {
+  padding: 0.7rem 1.2rem;
+  font-size: 0.95rem;
 }
 
 .btn-icon {
@@ -564,50 +631,253 @@ img {
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--ink-2);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .btn-icon:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--border-color);
-  color: var(--text-primary);
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--ink);
 }
 
-/* Wallet connect button */
+/* Wallet connect button: a pill like TrenchScanner's wallet chip. #connect-wallet is also what the
+   /trenches wallet bridge looks for, so keep the id. */
 .btn-wallet,
 #connect-wallet {
-  border-color: var(--border-default);
-  background: var(--bg-tertiary);
-  transition: all var(--transition-fast);
-  font-weight: 600;
-  font-size: 0.78rem;
-  letter-spacing: 0.01em;
-  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--ink);
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  font-weight: 500;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.85rem;
   border-radius: var(--radius-full);
-  gap: 0.4rem;
+  gap: 0.45rem;
 }
 
 .btn-wallet:hover,
 #connect-wallet:hover {
-  border-color: var(--text-muted);
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+  color: var(--ink);
 }
 
 #connect-wallet.connected,
 .btn-wallet.connected {
-  border-color: rgba(16, 185, 129, 0.3);
-  color: var(--green);
-  background: rgba(16, 185, 129, 0.06);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  border-color: var(--border);
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+#connect-wallet.connected::before,
+.btn-wallet.connected::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand-gradient);
+  flex: none;
 }
 
 #connect-wallet.connected:hover,
 .btn-wallet.connected:hover {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: var(--green);
+  background: var(--surface-3);
+  border-color: var(--border-strong);
 }
+
+
+/* =============================================
+   4b. Primitives (shared with TrenchScanner)
+   Prefer these in new markup over page-specific one-offs.
+   ============================================= */
+
+/* A raised block of content. .panel-tight for dense lists, .panel-flush when the child (a table)
+   brings its own padding. */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+}
+.panel-tight { padding: 14px; }
+.panel-flush { padding: 0; overflow: hidden; }
+
+/* Heading row inside a panel: title (+ .muted subtitle) on the left, actions on the right. */
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.section-head h2,
+.section-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 2px;
+  color: var(--ink);
+}
+
+/* Small uppercase label above a heading or a stat. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.eyebrow.brand { color: var(--brand-ink); }
+
+/* Page hero title: big, tight, with an optional gradient word. */
+.page-title {
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+.page-lede {
+  color: var(--ink-2);
+  font-size: 1rem;
+  max-width: 62ch;
+}
+.grad-text {
+  background: linear-gradient(100deg, var(--brand-a), var(--brand-b) 60%, #22d3ee);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Numbers: mono, tabular. */
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Text tiers */
+.ink { color: var(--ink); }
+.muted { color: var(--ink-2); }
+.faint { color: var(--muted); }
+.small { font-size: 0.8rem; }
+.good { color: var(--good-ink); }
+.bad { color: var(--bad-ink); }
+.warn { color: var(--warn); }
+
+/* Rounded status chip. Add .good / .bad / .warn / .brand for tone; .dot puts a status dot first. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.pill.good { color: var(--good-ink); background: var(--good-wash); border-color: color-mix(in srgb, var(--good) 35%, transparent); }
+.pill.bad { color: var(--bad-ink); background: var(--bad-wash); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.pill.warn { color: var(--warn); background: var(--warn-wash); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.pill.brand { color: var(--brand-ink); background: var(--brand-wash); border-color: color-mix(in srgb, var(--brand-a) 35%, transparent); }
+.pill.dot::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill.live::before { animation: pulse 2s infinite; }
+
+/* Segmented control (TrenchScanner's top tabs). Buttons or links inside; mark the current one
+   with .on or aria-selected="true". */
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.seg > button,
+.seg > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-2);
+  border-radius: 9px;
+  padding: 6px 13px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.seg > button:hover,
+.seg > a:hover { color: var(--ink); }
+.seg > .on,
+.seg > [aria-selected="true"] {
+  background: var(--surface-solid);
+  color: var(--ink);
+  border-color: var(--border-strong);
+  box-shadow: 0 2px 10px -4px rgba(0, 0, 0, 0.5);
+}
+
+/* Stat tile: label, big value, optional sub line. Use inside a grid of .panel tiles. */
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.kpi-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+/* Informational callout. */
+.notice {
+  background: var(--info-wash);
+  border: 1px solid color-mix(in srgb, var(--series-1) 30%, transparent);
+  border-radius: var(--radius-s);
+  padding: 9px 12px;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+/* Layout helpers */
+.stack { display: flex; flex-direction: column; gap: 18px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row.between { justify-content: space-between; }
+.row.wrap { flex-wrap: wrap; }
 
 
 /* =============================================
@@ -664,7 +934,7 @@ img {
 .terminal-diamond {
   color: var(--fire-primary);
   font-size: 1rem;
-  text-shadow: 0 0 10px rgba(255, 87, 34, 0.5);
+  text-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
 }
 
 .terminal-name {
@@ -736,7 +1006,7 @@ img {
 
 .terminal-stat-value.stat-high {
   color: var(--fire-primary);
-  text-shadow: 0 0 8px rgba(255, 87, 34, 0.3);
+  text-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
 }
 
 .terminal-stat-value.stat-mid {
@@ -790,7 +1060,7 @@ img {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
   background: var(--fire-glow);
-  box-shadow: 0 0 8px rgba(255, 87, 34, 0.1);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.1);
 }
 
 .terminal-pill.pill-watchlist {
@@ -902,7 +1172,7 @@ img {
 .terminal-filters-toggle.active {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(255, 87, 34, 0.06);
+  background: rgba(139, 92, 246, 0.06);
 }
 
 .terminal-filters-toggle.active svg {
@@ -995,7 +1265,7 @@ img {
 
 .terminal-search:focus {
   border-color: var(--fire-primary);
-  box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.1);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.1);
 }
 
 /* Icon highlights when search input is focused or has text */
@@ -1040,10 +1310,10 @@ img {
   color: var(--fire-primary);
   min-width: 2.2rem;
   text-align: center;
-  background: rgba(255, 87, 34, 0.06);
+  background: rgba(139, 92, 246, 0.06);
   padding: 0.15rem 0.35rem;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(255, 87, 34, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.12);
 }
 
 /* Range slider */
@@ -1066,14 +1336,14 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--fire-primary);
   border-radius: 50%;
   border: 2px solid var(--bg-primary);
-  box-shadow: 0 0 8px rgba(255, 87, 34, 0.3);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
   cursor: pointer;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.15);
-  box-shadow: 0 0 12px rgba(255, 87, 34, 0.5);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.5);
 }
 
 input[type="range"]::-moz-range-thumb {
@@ -1082,7 +1352,7 @@ input[type="range"]::-moz-range-thumb {
   background: var(--fire-primary);
   border-radius: 50%;
   border: 2px solid var(--bg-primary);
-  box-shadow: 0 0 8px rgba(255, 87, 34, 0.3);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
   cursor: pointer;
 }
 
@@ -1121,7 +1391,7 @@ select {
 .terminal-select:focus,
 select:focus {
   border-color: var(--fire-primary);
-  box-shadow: 0 0 0 3px rgba(255, 87, 34, 0.1);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
 }
 
 .terminal-clear-btn {
@@ -1429,13 +1699,13 @@ select:focus {
 .tier-elite {
   background: linear-gradient(135deg, var(--fire-primary), var(--ember));
   color: #fff;
-  box-shadow: 0 1px 6px rgba(255, 87, 34, 0.25);
+  box-shadow: 0 1px 6px rgba(139, 92, 246, 0.25);
 }
 
 .tier-high {
-  background: rgba(255, 145, 0, 0.12);
+  background: rgba(59, 130, 246, 0.12);
   color: var(--ember);
-  border: 1px solid rgba(255, 145, 0, 0.25);
+  border: 1px solid rgba(59, 130, 246, 0.25);
 }
 
 .tier-mid {
@@ -1482,7 +1752,7 @@ select:focus {
 
 .conviction-mini-fill.bar-high {
   background: linear-gradient(to top, var(--fire-dim), var(--fire-primary));
-  box-shadow: 0 0 4px rgba(255, 87, 34, 0.3);
+  box-shadow: 0 0 4px rgba(139, 92, 246, 0.3);
 }
 
 .conviction-mini-fill.bar-mid {
@@ -1642,7 +1912,7 @@ select:focus {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
   font-weight: 700;
-  box-shadow: 0 0 6px rgba(255, 87, 34, 0.15);
+  box-shadow: 0 0 6px rgba(139, 92, 246, 0.15);
 }
 
 .page-ellipsis {
@@ -1832,8 +2102,8 @@ select:focus {
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--fire-primary);
-  background: rgba(255, 87, 34, 0.08);
-  border: 1px solid rgba(255, 87, 34, 0.12);
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.12);
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-xs);
   text-transform: uppercase;
@@ -1894,7 +2164,7 @@ select:focus {
 .token-action-chip.watchlist-btn-header.active {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(255, 87, 34, 0.06);
+  background: rgba(139, 92, 246, 0.06);
 }
 
 .token-action-chip.watchlist-btn-header.active svg {
@@ -2639,7 +2909,7 @@ select:focus {
 .holders-expand-btn:hover {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(255, 87, 34, 0.04);
+  background: rgba(139, 92, 246, 0.04);
 }
 
 .holders-expand-btn svg {
@@ -2672,8 +2942,8 @@ select:focus {
 .diamond-hands-section {
   margin-top: 0.75rem;
   padding: 1rem;
-  background: rgba(255, 87, 34, 0.02);
-  border: 1px solid rgba(255, 87, 34, 0.08);
+  background: rgba(139, 92, 246, 0.02);
+  border: 1px solid rgba(139, 92, 246, 0.08);
   border-radius: var(--radius-md);
 }
 
@@ -2744,7 +3014,7 @@ select:focus {
 }
 
 .diamond-bar-fill.dh-mid {
-  background: linear-gradient(90deg, rgba(255, 145, 0, 0.3), rgba(255, 145, 0, 0.6));
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.3), rgba(59, 130, 246, 0.6));
 }
 
 .diamond-bar-fill.dh-low {
@@ -2820,7 +3090,7 @@ select:focus {
   justify-content: center;
   margin-top: 0.85rem;
   padding-top: 0.7rem;
-  border-top: 1px solid rgba(255, 87, 34, 0.06);
+  border-top: 1px solid rgba(139, 92, 246, 0.06);
 }
 
 .diamond-hands-watermark {
@@ -2828,15 +3098,15 @@ select:focus {
   align-items: center;
   gap: 0.35rem;
   padding: 0.28rem 0.75rem;
-  border: 1px solid rgba(255, 87, 34, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.12);
   border-radius: var(--radius-full);
-  background: rgba(255, 87, 34, 0.03);
+  background: rgba(139, 92, 246, 0.03);
 
 }
 
 .dh-watermark-flame {
   flex-shrink: 0;
-  filter: drop-shadow(0 0 2px rgba(255, 87, 34, 0.3));
+  filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.3));
   animation: flameFlicker 3s ease-in-out infinite alternate;
 }
 
@@ -3326,7 +3596,7 @@ select:focus {
 }
 
 .ht-range-btn.active {
-  background: rgba(255, 87, 34, 0.12);
+  background: rgba(139, 92, 246, 0.12);
   border-color: var(--fire-primary);
   color: var(--fire-primary);
 }
@@ -4147,7 +4417,7 @@ select:focus {
 .social-chip:hover {
   border-color: var(--fire-primary);
   color: var(--fire-primary);
-  background: rgba(255, 87, 34, 0.06);
+  background: rgba(139, 92, 246, 0.06);
 }
 
 .social-chip svg {
@@ -4642,12 +4912,12 @@ select:focus {
 
 @keyframes fireGlow {
   0%, 100% {
-    box-shadow: 0 0 8px rgba(255, 87, 34, 0.06),
-                0 0 16px rgba(255, 87, 34, 0.03);
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.06),
+                0 0 16px rgba(139, 92, 246, 0.03);
   }
   50% {
-    box-shadow: 0 0 12px rgba(255, 87, 34, 0.1),
-                0 0 24px rgba(255, 87, 34, 0.05);
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.1),
+                0 0 24px rgba(139, 92, 246, 0.05);
   }
 }
 
@@ -4666,10 +4936,6 @@ select:focus {
   100% { background-position: 200px 0; }
 }
 
-/* Apply subtle fire glow to key elements */
-.terminal-header {
-  animation: fireGlow 4s ease-in-out infinite;
-}
 
 
 /* =============================================
@@ -4717,7 +4983,7 @@ select:focus {
 }
 
 .toast.info {
-  border-color: rgba(255, 87, 34, 0.3);
+  border-color: rgba(139, 92, 246, 0.3);
   border-left: 3px solid var(--fire-primary);
 }
 
@@ -5136,7 +5402,7 @@ select:focus {
    ============================================= */
 
 :focus-visible {
-  outline: 2px solid var(--fire-primary);
+  outline: 2px solid var(--brand-b);
   outline-offset: 2px;
 }
 
@@ -5175,8 +5441,8 @@ input[type="url"]:focus,
 input[type="email"]:focus,
 input[type="search"]:focus,
 textarea:focus {
-  border-color: var(--fire-primary);
-  box-shadow: 0 0 0 3px rgba(255, 87, 34, 0.1);
+  border-color: var(--brand-b);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-b) 25%, transparent);
 }
 
 input::placeholder,
@@ -5642,7 +5908,7 @@ strong {
   font-weight: 600;
   color: var(--fire-primary);
   border: none;
-  background: rgba(255, 87, 34, 0.06);
+  background: rgba(139, 92, 246, 0.06);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
@@ -5662,7 +5928,7 @@ strong {
 }
 
 .nav-install-item:hover {
-  background: rgba(255, 87, 34, 0.12);
+  background: rgba(139, 92, 246, 0.12);
   color: var(--ember);
 }
 
@@ -5704,7 +5970,7 @@ strong {
   justify-content: center;
   gap: 1rem;
   padding: 0.75rem 1.25rem;
-  background: linear-gradient(135deg, rgba(255, 87, 34, 0.12), rgba(255, 145, 0, 0.08));
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(59, 130, 246, 0.08));
   border-bottom: 1px solid var(--border-fire);
   font-size: 0.82rem;
   color: var(--text-secondary);
@@ -5807,7 +6073,7 @@ strong {
 }
 
 .hb-analyze-btn:hover {
-  background: rgba(255, 87, 34, 0.16);
+  background: rgba(139, 92, 246, 0.16);
   border-color: var(--fire-secondary);
 }
 

@@ -20,7 +20,7 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v57';
+const CACHE_VERSION = 'holdex-v58';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -29,7 +29,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=16',
+  '/css/styles.css?v=17',
   '/js/config.js?v=3',
   '/js/api.js?v=9',
   '/js/deviceLink.js?v=2',
