@@ -11,6 +11,7 @@ const { normalizeLogoUri } = require('./tokenImage');
 const db = require('./database');
 const geckoService = require('./geckoTerminal');
 const { cache } = require('./cache');
+const { pickDexScreenerPair } = require('./poolPricing');
 
 /**
  * Fetch banner image and social links from DexScreener for a given mint.
@@ -28,7 +29,10 @@ async function fetchDexScreenerData(mint) {
       return null;
     }
 
-    const info = pairs[0].info || {};
+    // A pair's info (logo, banner, socials) belongs to its base token. Read it only from a
+    // pair where this mint is the base; a ZEC / TOKEN pair's info is ZEC's.
+    const picked = pickDexScreenerPair(pairs, mint);
+    const info = (picked.side === 'base' && picked.pair.info) || {};
     const socials = Array.isArray(info.socials) ? info.socials : [];
     const websites = Array.isArray(info.websites) ? info.websites : [];
 
@@ -38,8 +42,8 @@ async function fetchDexScreenerData(mint) {
     };
 
     return {
-      name: pairs[0].baseToken?.name || null,
-      symbol: pairs[0].baseToken?.symbol || null,
+      name: picked.token?.name || null,
+      symbol: picked.token?.symbol || null,
       logoUri: normalizeLogoUri(info.imageUrl),
       bannerUrl: info.header || null,
       socials: {

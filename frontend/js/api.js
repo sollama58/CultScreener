@@ -908,6 +908,37 @@ const utils = {
     return 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2216%22%20fill%3D%22%231c1c21%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2221%22%20text-anchor%3D%22middle%22%20fill%3D%22%236b6b73%22%20font-size%3D%2214%22%3E%3F%3C%2Ftext%3E%3C%2Fsvg%3E';
   },
 
+  // Pick the DexScreener pair that describes a token. /tokens/v1 returns every pair the token
+  // is in, on either side, and a pair's priceUsd and info (logo, banner, socials) belong to its
+  // base token. Prefers the deepest pair where the mint is the base; otherwise the deepest pair
+  // at all, with side 'quote' so callers skip the base-only fields. Returns
+  // { pair, side, token, priceUsd } or null; token is the pair's record for the mint itself.
+  // Mirrors pickDexScreenerPair in backend/src/services/poolPricing.js.
+  pickDexScreenerPair(pairs, mint) {
+    if (!Array.isArray(pairs) || pairs.length === 0) return null;
+    const liq = (p) => parseFloat(p?.liquidity?.usd) || 0;
+    let bestBase = null;
+    let bestAny = null;
+    for (const pair of pairs) {
+      const side = pair?.baseToken?.address === mint ? 'base'
+        : pair?.quoteToken?.address === mint ? 'quote' : null;
+      if (!side) continue;
+      if (side === 'base' && (!bestBase || liq(pair) > liq(bestBase))) bestBase = pair;
+      if (!bestAny || liq(pair) > liq(bestAny)) bestAny = pair;
+    }
+    let pair = pairs[0];
+    let side = 'base';
+    if (bestBase) pair = bestBase;
+    else if (bestAny) { pair = bestAny; side = 'quote'; }
+    // priceUsd is the base's; the quote's USD price is priceUsd / priceNative
+    const usd = parseFloat(pair.priceUsd);
+    const native = parseFloat(pair.priceNative);
+    const priceUsd = !Number.isFinite(usd) ? null
+      : side === 'base' ? usd
+      : (native > 0 ? usd / native : null);
+    return { pair, side, token: side === 'quote' ? pair.quoteToken : pair.baseToken, priceUsd };
+  },
+
   // Route a token image (logo/banner) URL through our backend image proxy instead of
   // hotlinking the third-party host directly. The server fetches + caches the bytes once
   // and re-serves them from our own domain, so a rate-limited or hotlink-blocking gateway

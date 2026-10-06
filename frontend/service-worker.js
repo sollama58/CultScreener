@@ -38,7 +38,7 @@
 // on first open, not precached), token.css v2.
 // v67: chart modal gets trendline + Fibonacci tools (new js/chartDrawings.js), phone layout and
 // a chart preview card on the token page - tokenChart.js v2, token.css v3.
-const CACHE_VERSION = 'holdex-v67';
+const CACHE_VERSION = 'holdex-v68';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -50,7 +50,7 @@ const APP_SHELL = [
   '/css/styles.css?v=20',
   '/css/token.css?v=3',
   '/js/config.js?v=3',
-  '/js/api.js?v=11',
+  '/js/api.js?v=12',
   '/js/deviceLink.js?v=2',
   '/js/wallet.js?v=6',
   '/js/tokenTable.js?v=3',
@@ -60,7 +60,7 @@ const APP_SHELL = [
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
   '/js/kotp.js?v=3',
-  '/js/tokenDetail.js?v=27',
+  '/js/tokenDetail.js?v=28',
   '/js/chartDrawings.js?v=1',
   '/js/tokenChart.js?v=2',
   '/js/watchlist.js?v=2',
@@ -69,7 +69,7 @@ const APP_SHELL = [
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
-  '/js/cultify.js?v=16',
+  '/js/cultify.js?v=17',
   '/js/admin.js?v=16',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',

@@ -2050,7 +2050,9 @@ const tokenDetail = {
       const pairs = await resp.json();
       if (!Array.isArray(pairs) || pairs.length === 0) return;
 
-      const info = pairs[0].info || {};
+      // info is the pair's base token's profile; a ZEC / TOKEN pair's would be ZEC's banner
+      const picked = utils.pickDexScreenerPair(pairs, this.mint);
+      const info = (picked && picked.side === 'base' && picked.pair.info) || {};
       const socials = Array.isArray(info.socials) ? info.socials : [];
       const websites = Array.isArray(info.websites) ? info.websites : [];
 
