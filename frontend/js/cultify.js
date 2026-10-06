@@ -716,8 +716,8 @@
         <svg class="dh-watermark-flame" width="12" height="12" viewBox="0 0 24 24" fill="url(#dhFlameGradCultify)">
           <defs>
             <linearGradient id="dhFlameGradCultify" x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stop-color="#e64a19"/>
-              <stop offset="100%" stop-color="#ff5722"/>
+              <stop offset="0%" stop-color="#3b82f6"/>
+              <stop offset="100%" stop-color="#8b5cf6"/>
             </linearGradient>
           </defs>
           <polygon points="12,2 22,12 12,22 2,12"/>

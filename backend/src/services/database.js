@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { normalizeLogoUri } = require('./tokenImage');
 const crypto = require('crypto');
 
 // Database state
@@ -522,6 +523,14 @@ async function initializeDatabase() {
       -- How the stored conviction numbers were sampled (method, strata, snapshot id)
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_meta JSONB;
 
+      -- Logos that no browser can load: GeckoTerminal's "missing.png" placeholder (stored as a
+      -- relative path), ipfs:// and other non-http values. Every logo write COALESCEs with the
+      -- stored value, so these blocked real logos forever; cleared here so the curated price
+      -- refresh can fill them (see normalizeLogoUri in services/tokenImage.js). Idempotent.
+      UPDATE tokens SET logo_uri = NULL
+        WHERE logo_uri IS NOT NULL
+          AND (logo_uri !~* '^https?://' OR logo_uri ~* '/missing(_[a-z]+)?[.]png$');
+
       -- Generic key-value store for admin-configurable settings
       CREATE TABLE IF NOT EXISTS app_settings (
         key VARCHAR(100) PRIMARY KEY,
@@ -568,7 +577,8 @@ async function upsertToken(token) {
     console.warn('Database not available - skipping token upsert');
     return null;
   }
-  const { mintAddress, name, symbol, decimals, logoUri, pairCreatedAt, price, marketCap, volume24h, priceChange24h } = token;
+  const { mintAddress, name, symbol, decimals, pairCreatedAt, price, marketCap, volume24h, priceChange24h } = token;
+  const logoUri = normalizeLogoUri(token.logoUri);
 
   // Never persist placeholder names — they poison search results
   const isPlaceholder = !name || PLACEHOLDER_NAMES.has(name.toLowerCase());
@@ -659,7 +669,7 @@ async function updateTokenMarketData({ mintAddress, price, marketCap, volume24h,
       name        || null,
       symbol      || null,
       decimals    != null ? decimals    : null,
-      logoUri     != null ? logoUri     : null,
+      normalizeLogoUri(logoUri),
       price       != null ? price       : null,
       marketCap   != null ? marketCap   : null,
       volume24h   != null ? volume24h   : null,
@@ -3069,8 +3079,37 @@ async function updateTokenMetadata(mintAddress, name, symbol, logoUri) {
   await pool.query(
     `UPDATE tokens SET name = $2, symbol = $3, logo_uri = COALESCE($4, logo_uri), updated_at = NOW()
      WHERE mint_address = $1`,
-    [mintAddress, name, symbol, logoUri || null]
+    [mintAddress, name, symbol, normalizeLogoUri(logoUri)]
   );
+}
+
+/**
+ * Of the given mints, the ones whose token row has no logo (or no row at all).
+ */
+async function getMintsMissingLogo(mints) {
+  if (!pool || !mints || mints.length === 0) return [];
+  const result = await pool.query(
+    `SELECT m.mint FROM unnest($1::text[]) AS m(mint)
+     LEFT JOIN tokens t ON t.mint_address = m.mint
+     WHERE t.logo_uri IS NULL`,
+    [mints]
+  );
+  return result.rows.map(r => r.mint);
+}
+
+/**
+ * Fill a token's logo only where it has none, so a logo from a better source is never replaced.
+ * Returns true when a row was updated.
+ */
+async function setTokenLogoIfMissing(mintAddress, logoUri) {
+  const logo = normalizeLogoUri(logoUri);
+  if (!pool || !mintAddress || !logo) return false;
+  const result = await pool.query(
+    `UPDATE tokens SET logo_uri = $2, updated_at = NOW()
+     WHERE mint_address = $1 AND logo_uri IS NULL`,
+    [mintAddress, logo]
+  );
+  return result.rowCount > 0;
 }
 
 /**
@@ -3656,6 +3695,8 @@ module.exports = {
   // Conviction / Diamond Hands
   upsertConviction,
   getTopConvictionTokens,
+  getMintsMissingLogo,
+  setTokenLogoIfMissing,
   getTokenConvictionRank,
   // Community leaderboards
   getMostWatchlistedTokens,

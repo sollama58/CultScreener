@@ -7,6 +7,7 @@
 // disagreed on which socials to capture. Both routes now call this, which does the union.
 
 const axios = require('axios');
+const { normalizeLogoUri } = require('./tokenImage');
 const db = require('./database');
 const geckoService = require('./geckoTerminal');
 const { cache } = require('./cache');
@@ -39,7 +40,7 @@ async function fetchDexScreenerData(mint) {
     return {
       name: pairs[0].baseToken?.name || null,
       symbol: pairs[0].baseToken?.symbol || null,
-      logoUri: info.imageUrl || null,
+      logoUri: normalizeLogoUri(info.imageUrl),
       bannerUrl: info.header || null,
       socials: {
         twitter: findSocial('twitter'),

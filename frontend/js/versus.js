@@ -1,4 +1,4 @@
-﻿/* global api, apiCache, utils */
+/* global api, apiCache, utils, tokenTable */
 
 const versusPage = {
   tokens: [],
@@ -272,94 +272,42 @@ const versusPage = {
   render() {
     const tbody = document.getElementById('versus-table-body');
     if (!tbody) return;
+    tokenTable.bind(tbody);
 
     const search = document.getElementById('versus-search');
     const query = search ? search.value.trim() : '';
     const sorted = this._getSorted(query);
 
     if (sorted.length === 0) {
-      tbody.innerHTML = `
-        <tr class="empty-row">
-          <td colspan="8">
-            <div class="empty-state">
-              <span style="font-size:1.5rem;margin-bottom:0.5rem;opacity:0.4;">NO DATA</span>
-              <span>${query ? 'No tokens match your search.' : 'No tokens with price data yet.'}</span>
-            </div>
-          </td>
-        </tr>
-      `;
+      tbody.innerHTML = query
+        ? tokenTable.emptyRow(8, 'No matches', 'No tokens match your search.')
+        : tokenTable.emptyRow(8, 'No data yet', 'No tokens with price data yet.');
       return;
     }
 
-    const defaultLogo = utils.getDefaultLogo();
     const solPct = this.benchmarks.sol?.priceChange24h ?? null;
     const btcPct = this.benchmarks.btc?.priceChange24h ?? null;
+    const noData = '<span class="tt-na">no data</span>';
 
     // One scale for the whole page, so bars are comparable down the column.
-    const convScale = this.convictionScale(sorted);
+    const convScale = tokenTable.scale(sorted);
 
     tbody.innerHTML = sorted.map((token, index) => {
-      const address = token.mintAddress || token.address || '';
-      if (!address) return '';
-
-      const safeAddress = utils.escapeHtml(address);
-      const safeLogo    = utils.escapeHtml(utils.proxyImageUrl(token.logoUri || token.logoURI) || defaultLogo);
-      const safeName    = utils.escapeHtml(token.name || `${address.slice(0, 4)}...${address.slice(-4)}`);
-      const safeSymbol  = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
-
-      // 24h % change
-      const raw = token.priceChange24h;
-      const rawHtml = raw != null
-        ? `<span class="mono-num ${raw >= 0 ? 'vs-pos' : 'vs-neg'}">${raw >= 0 ? '+' : ''}${raw.toFixed(2)}%</span>`
-        : '<span class="vs-na">--</span>';
-
-      // vs SOL
-      const vsSol = token._vsSol;
-      const vsSolHtml = vsSol != null
-        ? `<span class="mono-num ${vsSol >= 0 ? 'vs-pos' : 'vs-neg'} vs-badge">${vsSol >= 0 ? '+' : ''}${vsSol.toFixed(2)}%</span>`
-        : (solPct == null ? '<span class="vs-na">--</span>' : '<span class="vs-na">no data</span>');
-
-      // vs BTC
-      const vsBtc = token._vsBtc;
-      const vsBtcHtml = vsBtc != null
-        ? `<span class="mono-num ${vsBtc >= 0 ? 'vs-pos' : 'vs-neg'}">${vsBtc >= 0 ? '+' : ''}${vsBtc.toFixed(2)}%</span>`
-        : (btcPct == null ? '<span class="vs-na">--</span>' : '<span class="vs-na">no data</span>');
-
-      const mcapStr    = utils.formatNumber(token.marketCap, '$');
-      const holdersHtml = token.holders
-        ? `<span class="mono-num">${token.holders.toLocaleString()}</span>`
-        : '<span class="vs-na">--</span>';
-
-      const dist = token.conviction || {};
-      const distHtml = Object.keys(dist).length > 0
-        ? this.renderMiniBars(dist, convScale, token.convictionUpdatedAt)
-        : '<span class="vs-na">--</span>';
-
+      if (!tokenTable.mintOf(token)) return '';
+      const vsSol = token._vsSol != null ? tokenTable.pct(token._vsSol, { pill: true }) : (solPct == null ? tokenTable.dash() : noData);
+      const vsBtc = token._vsBtc != null ? tokenTable.pct(token._vsBtc) : (btcPct == null ? tokenTable.dash() : noData);
       return `
-        <tr class="token-row terminal-row" data-mint="${safeAddress}">
-          <td class="cell-rank">${index + 1}</td>
-          <td class="cell-token cell-token-clickable" data-navigate="${safeAddress}">
-            <div class="token-cell">
-              <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy"
-                   data-fallback="${utils.escapeHtml(defaultLogo)}">
-              <div class="token-info">
-                <span class="token-name">${safeName}</span>
-                <span class="token-symbol-cell">${safeSymbol}</span>
-              </div>
-            </div>
-          </td>
-          <td class="cell-change" data-navigate="${safeAddress}">${rawHtml}</td>
-          <td class="cell-vs-sol" data-navigate="${safeAddress}">${vsSolHtml}</td>
-          <td class="cell-vs-btc" data-navigate="${safeAddress}">${vsBtcHtml}</td>
-          <td class="cell-mcap mono-num" data-navigate="${safeAddress}">${mcapStr}</td>
-          <td class="cell-updated" data-navigate="${safeAddress}">${holdersHtml}</td>
-          <td class="cell-dist" data-navigate="${safeAddress}">${distHtml}</td>
-        </tr>
-      `;
+        <tr ${tokenTable.rowAttrs(token)}>
+          ${tokenTable.rankCell(index + 1)}
+          ${tokenTable.tokenCell(token)}
+          <td class="cell-change">${tokenTable.pct(token.priceChange24h)}</td>
+          <td class="cell-vs-sol">${vsSol}</td>
+          <td class="cell-vs-btc">${vsBtc}</td>
+          <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}</td>
+          <td class="cell-updated">${tokenTable.holders(token)}</td>
+          <td class="cell-dist">${tokenTable.distBars(token, convScale)}</td>
+        </tr>`;
     }).join('');
-
-    this.bindNavigation(tbody);
-    utils.bindImageFallbacks(tbody);
   },
 
   // Click-to-open for anything carrying data-navigate. The podium cards used to do this with an
@@ -375,74 +323,6 @@ const versusPage = {
     });
   },
 
-  // The domain the bars are drawn against, derived from the rows actually on screen.
-  //
-  // These were drawn against a fixed 0-100 scale, on a table sorted by conviction descending, so
-  // every value on a page sat between about 88 and 100 - measured over 25 rows, all 125 bars fell
-  // in the top colour band and 94 per cent were within 2px of the 28px maximum. The chart could
-  // not show the thing it exists to show.
-  //
-  // The floor keeps that fix from overcorrecting: when a page genuinely is uniform, a spread of a
-  // fraction of a point should not be stretched into a full-height swing. Below a 10-point spread
-  // the scale stays 10 points wide and the bars stay close together, which is the truth.
-  // Past this, a score is old enough that the reader should be told before trusting it.
-  STALE_CONVICTION_MS: 7 * 24 * 60 * 60 * 1000,
-
-  convictionScale(tokens) {
-    const keys = ['6h', '24h', '3d', '1w', '1m'];
-    const MIN_SPAN = 10;
-    let lo = Infinity;
-    let hi = -Infinity;
-    (tokens || []).forEach(t => {
-      const dist = (t && t.conviction) || {};
-      keys.forEach(k => {
-        const v = dist[k];
-        if (typeof v === 'number' && isFinite(v)) {
-          if (v < lo) lo = v;
-          if (v > hi) hi = v;
-        }
-      });
-    });
-    if (!isFinite(lo) || !isFinite(hi)) return { base: 0, span: 100 };
-    const span = Math.max(hi - lo, MIN_SPAN);
-    return { base: Math.max(0, hi - span), span };
-  },
-
-  // Age is shown because a conviction score is only as good as when it was computed. The API has
-  // always returned convictionUpdatedAt; nothing rendered it, so a score from an hour ago and one
-  // from two months ago looked identical. On a live leaderboard that spread reached 64 days.
-  renderMiniBars(dist, scale, updatedAt) {
-    const buckets = [
-      { key: '6h', label: '6h' },
-      { key: '24h', label: '24h' },
-      { key: '3d', label: '3d' },
-      { key: '1w', label: '1w' },
-      { key: '1m', label: '1m' }
-    ];
-    const maxH = 28;
-    const s = (scale && scale.span > 0) ? scale : { base: 0, span: 100 };
-
-    const ageMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : null;
-    const ageText = (updatedAt && isFinite(ageMs) && ageMs >= 0 && typeof utils !== 'undefined')
-      ? utils.formatAge(updatedAt)
-      : null;
-    const stale = ageMs != null && isFinite(ageMs) && ageMs > this.STALE_CONVICTION_MS;
-    const groupTitle = ageText ? ` title="Scored ${ageText} ago"` : '';
-    const staleCls = stale ? ' conviction-mini-bars--stale' : '';
-
-    return `<div class="conviction-mini-bars terminal-bars${staleCls}"${groupTitle}>${buckets.map(b => {
-      const val = dist[b.key] || 0;
-      const pos = Math.min(1, Math.max(0, (val - s.base) / s.span));
-      const h = Math.max(2, Math.round(pos * maxH));
-      // Colour tracks the same position as height, so the two channels agree instead of one of
-      // them sitting permanently saturated. The tooltip still carries the real percentage.
-      const colorClass = pos >= 0.66 ? 'bar-high' : pos >= 0.33 ? 'bar-mid' : 'bar-low';
-      return `<div class="conviction-mini-bar" title="${b.label}: ${val.toFixed(1)}%">
-        <div class="conviction-mini-fill ${colorClass}" style="height:${h}px"></div>
-        <span class="conviction-mini-label">${b.label}</span>
-      </div>`;
-    }).join('')}</div>`;
-  },
 
   async share() {
     const btn = document.getElementById('versus-share-btn');
@@ -612,6 +492,7 @@ const versusPage = {
     if (!url) return avatar;
 
     const proxied = utils.proxyImageUrl(url);
+    if (!proxied) return avatar;
 
     return new Promise((resolve) => {
       const img = new Image();
@@ -638,7 +519,18 @@ const versusPage = {
         }
       };
 
-      img.onerror = () => { clearTimeout(timer); resolve(avatar); };
+      // One quick retry inside the timeout above, for a passing proxy failure (a 429 or a cold
+      // cache timing out upstream); see utils.handleImageError.
+      let retried = false;
+      img.onerror = () => {
+        if (!retried && proxied && proxied.includes('/api/image-proxy')) {
+          retried = true;
+          setTimeout(() => { img.src = `${proxied}&retry=1`; }, 1000);
+          return;
+        }
+        clearTimeout(timer);
+        resolve(avatar);
+      };
       img.src = proxied;
     });
   },
@@ -652,7 +544,7 @@ const versusPage = {
     ctx.arc(18, 18, 18, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1c22';
     ctx.fill();
-    ctx.fillStyle = '#ff5722';
+    ctx.fillStyle = '#9d7bff';
     ctx.font = 'bold 16px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

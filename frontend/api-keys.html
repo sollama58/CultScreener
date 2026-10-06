@@ -13,26 +13,29 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=17">
+  <link rel="stylesheet" href="css/styles.css?v=19">
   <style>
     .api-page {
       display: grid;
-      gap: 1.5rem;
-      margin-top: 2rem;
+      gap: 18px;
       max-width: 860px;
+      margin: 0 auto;
     }
+    .api-page .page-hero { margin-bottom: 0.25rem; }
 
     .api-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      padding: 1.75rem 2rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px 28px;
     }
 
     .api-card h2 {
-      font-size: 1.1rem;
-      font-weight: 600;
-      color: var(--text-primary);
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      color: var(--ink);
       margin-bottom: 1.25rem;
     }
 
@@ -161,7 +164,7 @@
     .key-reveal-value {
       font-family: var(--font-mono);
       font-size: 0.9rem;
-      color: var(--fire-primary);
+      color: var(--brand-ink);
       word-break: break-all;
       line-height: 1.5;
       margin-bottom: 0.875rem;
@@ -221,8 +224,8 @@
     }
 
     .tester-key-input-wrap input:focus {
-      border-color: var(--fire-primary);
-      box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.1);
+      border-color: var(--brand-b);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-b) 25%, transparent);
     }
 
     .tester-tabs {
@@ -245,7 +248,7 @@
     }
 
     .tester-tab:hover { color: var(--text-primary); }
-    .tester-tab.active { color: var(--fire-primary); border-bottom-color: var(--fire-primary); }
+    .tester-tab.active { color: var(--ink); border-bottom-color: var(--brand-a); }
 
     .tester-content { display: none; }
     .tester-content.active { display: block; }
@@ -284,8 +287,8 @@
     }
 
     .field-group input:focus {
-      border-color: var(--fire-primary);
-      box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.1);
+      border-color: var(--brand-b);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-b) 25%, transparent);
     }
 
     .tester-run-row {
@@ -416,7 +419,7 @@
 
     .param-table td:first-child {
       font-family: var(--font-mono);
-      color: var(--fire-secondary);
+      color: var(--brand-ink);
       white-space: nowrap;
     }
 
@@ -500,7 +503,8 @@
       <nav class="nav">
         <a href="/" class="nav-link">Diamond Hands</a>
         <a href="community.html" class="nav-link">Watchlist</a>
-        <a href="api-keys.html" class="nav-link active">API</a>
+        <!-- API tab hidden for now; uncomment to restore. Page still works at /api-keys.html -->
+        <!-- <a href="api-keys.html" class="nav-link active">API</a> -->
         <a href="about.html" class="nav-link">About</a>
         <a href="cultify.html" class="nav-link">Analyze</a>
         <a href="/trenches/" class="nav-link">Trenches</a>
@@ -513,6 +517,11 @@
 
   <main class="main terminal-page">
     <div class="api-page">
+      <div class="page-hero">
+        <span class="eyebrow brand">Developers</span>
+        <h1 class="page-title">HolDEX API</h1>
+        <p class="page-lede">Pull the conviction leaderboard and per-token conviction scores into your own tools. Sign in with your wallet to get a key.</p>
+      </div>
 
       <!-- ── API Key Management ─────────────────────────────────── -->
       <div class="api-card">
@@ -781,7 +790,7 @@
   </main>
 
   <script src="js/config.js?v=3"></script>
-  <script src="js/api.js?v=9"></script>
+  <script src="js/api.js?v=11"></script>
   <script src="js/deviceLink.js?v=2"></script>
   <script src="js/wallet.js?v=6"></script>
   <script src="js/apiKeys.js?v=2"></script>

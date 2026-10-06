@@ -492,10 +492,9 @@ const tokenDetail = {
     // Header info - handle different property names from various API responses
     const logoEl = document.getElementById('token-logo');
     if (logoEl) {
-      logoEl.onerror = function() {
-        this.onerror = null;
-        this.src = utils.getDefaultLogo();
-      };
+      // Retries a failed proxied logo once before swapping to the default; see utils.handleImageError.
+      delete logoEl.dataset.logoRetried;
+      logoEl.onerror = () => utils.handleImageError(logoEl, utils.getDefaultLogo());
       logoEl.src = utils.proxyImageUrl(token.logoUri || token.logoURI || token.logo) || utils.getDefaultLogo();
     }
 
@@ -2077,12 +2076,23 @@ const tokenDetail = {
     const container = document.getElementById('token-banner');
     if (!container) return;
     const proxied = utils.proxyImageUrl(url);
+    if (!proxied) return;
     const img = new Image();
     img.onload = () => {
-      container.innerHTML = `<img src="${utils.escapeHtml(proxied)}" alt="Token banner" class="token-banner-img" loading="lazy">`;
+      container.innerHTML = `<img src="${utils.escapeHtml(img.src)}" alt="Token banner" class="token-banner-img" loading="lazy">`;
       container.style.display = '';
     };
-    img.onerror = () => { container.style.display = 'none'; };
+    // One delayed retry before giving up, for the same passing failures as the logos
+    // (see utils.handleImageError). The retry URL is what the banner then renders.
+    let retried = false;
+    img.onerror = () => {
+      if (!retried && proxied.includes('/api/image-proxy')) {
+        retried = true;
+        setTimeout(() => { img.src = `${proxied}&retry=1`; }, 1500 + Math.random() * 2500);
+        return;
+      }
+      container.style.display = 'none';
+    };
     img.src = proxied;
   },
 

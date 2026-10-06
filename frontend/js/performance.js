@@ -101,67 +101,23 @@ const performancePage = {
 
     const sorted = this._getSortedTokens();
 
+    tokenTable.bind(tbody);
+    const pill = (pct, active) => (pct === null ? tokenTable.dash()
+      : `<span class="tt-pct ${pct >= 0 ? 'up' : 'down'}${active ? ' tt-pill' : ''}">${this._formatPct(pct)}</span>`);
+
     tbody.innerHTML = sorted.map((token, index) => {
-      const rank = index + 1;
-
-      // Percentages
-      const athPct     = this._athPct(token);
+      if (!tokenTable.mintOf(token)) return '';
+      const athPct = this._athPct(token);
       const currentPct = this._currentPct(token);
-
-      const athPctHtml     = this._pctHtml(athPct, true);
-      const currentPctHtml = this._pctHtml(currentPct, false);
-
-      // Logo
-      const logo     = utils.escapeHtml(utils.proxyImageUrl(token.logoUri) || '');
-      const fallback = utils.escapeHtml(utils.getDefaultLogo ? utils.getDefaultLogo() : '');
-      const name     = utils.escapeHtml(token.name   || '—');
-      const symbol   = utils.escapeHtml(token.symbol || '');
-      const mint     = utils.escapeHtml(token.mintAddress || token.address || '');
-      const emergingBadge = token.emergingCult
-        ? '<span class="cult-hammer" title="Emerging Cult">🔨</span>'
-        : '';
-      const techBadge = token.techCoin
-        ? '<span class="cult-hammer" title="Tech Coin">🤖</span>'
-        : '';
-
-      // MCap values
-      const currentMcap = token.marketCap ? utils.formatNumber(token.marketCap) : '—';
-
       return `
-        <tr class="perf-row" data-mint="${mint}" style="cursor:pointer;">
-          <td class="perf-rank">${rank}</td>
-          <td class="perf-token-cell">
-            <img
-              class="perf-logo"
-              src="${logo}"
-              alt="${symbol}"
-              data-fallback="${fallback}"
-            />
-            <div class="perf-token-info">
-              <div class="table-name-line">
-                <span class="perf-token-name">${name}</span>${emergingBadge}${techBadge}
-              </div>
-              <span class="perf-token-symbol">${symbol}</span>
-            </div>
-          </td>
-          <td class="perf-ath-pct">${athPctHtml}</td>
-          <td class="perf-current-pct">${currentPctHtml}</td>
-          <td class="perf-mcap">${currentMcap}</td>
-        </tr>
-      `;
+        <tr ${tokenTable.rowAttrs(token)}>
+          ${tokenTable.rankCell(index + 1).replace('class="cell-rank"', 'class="cell-rank perf-rank"')}
+          ${tokenTable.tokenCell(token)}
+          <td class="perf-ath-pct">${pill(athPct, this.sortField === 'ath')}</td>
+          <td class="perf-current-pct">${pill(currentPct, this.sortField === 'current')}</td>
+          <td class="perf-mcap num">${token.marketCap ? utils.formatNumber(token.marketCap, '$') : tokenTable.dash()}</td>
+        </tr>`;
     }).join('');
-
-    utils.bindImageFallbacks(tbody);
-
-    // Row click â†' token page
-    tbody.querySelectorAll('.perf-row').forEach(row => {
-      row.addEventListener('click', () => {
-        const mint = row.dataset.mint;
-        if (mint) {
-          window.location.href = 'token.html?mint=' + encodeURIComponent(mint);
-        }
-      });
-    });
   },
 
   // ---------------------------------------------------------------------------
@@ -413,20 +369,6 @@ const performancePage = {
   },
 
   /**
-   * Return an HTML string for a percentage cell, colored green/red/grey.
-   * @param {number|null} pct
-   * @param {boolean}     isAth  — if true, grey out when null (no ATH data)
-   * @returns {string}
-   */
-  _pctHtml(pct, isAth) {
-    if (pct === null) {
-      return `<span class="pct-na">—</span>`;
-    }
-    const cls = pct >= 0 ? 'pct-positive' : 'pct-negative';
-    return `<span class="${cls}">${this._formatPct(pct)}</span>`;
-  },
-
-  /**
    * Toggle the active class on sort buttons.
    */
   _updateSortButtons() {
@@ -491,6 +433,7 @@ const performancePage = {
     // Route through our own backend proxy so CORS is never an issue —
     // the server fetches the image and re-serves it with Access-Control-Allow-Origin: *.
     const proxied = utils.proxyImageUrl(url);
+    if (!proxied) return avatar;
 
     return new Promise((resolve) => {
       const img = new Image();
@@ -517,7 +460,18 @@ const performancePage = {
         }
       };
 
-      img.onerror = () => { clearTimeout(timer); resolve(avatar); };
+      // One quick retry inside the timeout above, for a passing proxy failure (a 429 or a cold
+      // cache timing out upstream); see utils.handleImageError.
+      let retried = false;
+      img.onerror = () => {
+        if (!retried && proxied && proxied.includes('/api/image-proxy')) {
+          retried = true;
+          setTimeout(() => { img.src = `${proxied}&retry=1`; }, 1000);
+          return;
+        }
+        clearTimeout(timer);
+        resolve(avatar);
+      };
       img.src = proxied;
     });
   },
@@ -533,7 +487,7 @@ const performancePage = {
     ctx.arc(15, 15, 15, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1c22';
     ctx.fill();
-    ctx.fillStyle = '#ff5722';
+    ctx.fillStyle = '#9d7bff';
     ctx.font = 'bold 14px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

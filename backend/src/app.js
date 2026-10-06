@@ -57,12 +57,9 @@ async function initializeJobQueue() {
   const initialized = jobQueue.initialize();
 
   if (initialized) {
-    await jobQueue.scheduleSessionCleanup();
-    // Conviction warming runs in the worker — no setInterval needed in API process
-    await jobQueue.scheduleConvictionWarm();
-    await jobQueue.scheduleCuratedConvictionWarm();
-    await jobQueue.scheduleRefreshCuratedPrices();
-    await jobQueue.scheduleRecordHolderCounts();
+    // Recurring jobs run in the worker, which also re-checks these schedules itself
+    const scheduled = await jobQueue.ensureRecurringJobs();
+    console.log(`[App] ${scheduled}/${jobQueue.RECURRING_JOBS.length} recurring jobs scheduled`);
     console.log('[App] Job queue initialized - background jobs will be handled by worker');
   } else {
     // Fallback: run everything in-process when Redis is unavailable
@@ -293,8 +290,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting for API routes
-app.use('/api/', defaultLimiter);
+// Rate limiting for API routes. The image proxy is left to its own imageProxyLimiter below: one
+// home page load requests a logo per table row (up to 100 per table), and counting those against
+// this 100/min budget rejected logos with 429s - the tokens showed the default "?" logo instead -
+// and starved the page's own data requests of the same budget.
+app.use('/api/', (req, res, next) => (req.path === '/image-proxy' ? next() : defaultLimiter(req, res, next)));
 
 // Prevent browser HTTP caching of API responses — caching is managed at the app layer via Redis.
 // Without this, browsers apply heuristic caching and serve stale responses to fetch() calls.
@@ -384,13 +384,16 @@ app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
 // image-only content type and this route's rate limiter, that covers open-proxy abuse without
 // pretending we can enumerate the internet's image hosts.
 const { agentsFor, isBlockedHostLiteral } = require('./services/safeFetchAgent');
+const { sniffImageType, imageSourceFallbacks, ipfsContentPath } = require('./services/tokenImage');
 // Dedicated rate limiter for image proxy. Every table row's logo now routes through
 // this endpoint (not just the old canvas share-image feature), so a single page load
 // can legitimately request dozens of distinct images at once — 20/min was sized for
-// the old usage and was rejecting normal page loads with 429s.
+// the old usage and was rejecting normal page loads with 429s. 150 was still short: the five
+// home tables each render up to 100 rows, and opening a few tabs plus a token page passes it.
+// Most requests are Redis cache hits, so a generous per-IP ceiling costs little.
 const imageProxyLimiter = require('express-rate-limit')({
   windowMs: 60000,
-  max: 150,
+  max: 600,
   message: { error: 'Too many image proxy requests.' },
   standardHeaders: true,
   legacyHeaders: false
@@ -499,6 +502,37 @@ function withTimeout(promise, ms, fallback) {
 // one upstream request instead of stampeding the origin (and each other, via Redis).
 const imageProxyInFlight = new Map();
 
+// One upstream fetch for the image proxy: bytes plus a content type judged from the bytes.
+async function fetchImageBytes(target, signal) {
+  const axios = require('axios');
+  const response = await axios.get(target, {
+    responseType: 'arraybuffer',
+    timeout: 8000,
+    signal,
+    maxContentLength: IMAGE_PROXY_MAX_BYTES,
+    maxBodyLength: IMAGE_PROXY_MAX_BYTES,
+    // The address guard lives in these. Every hop of a redirect chain opens a new connection
+    // through them, so a public URL that bounces to 169.254.169.254 is refused at the hop.
+    // Empty where an egress proxy is configured, which axios must be left to handle itself.
+    ...agentsFor(),
+    maxRedirects: 3,
+    headers: {
+      // A browser's UA rather than a bot's: Cloudflare-fronted image hosts (DexScreener's CDN
+      // among them) answer an obvious bot UA with a 403 challenge page, which became a 502 here
+      // and the fallback logo in the browser.
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+      'Accept': 'image/webp,image/png,image/jpeg,image/*',
+    },
+  });
+  const body = Buffer.from(response.data);
+  // Trust the bytes over the label: IPFS gateways, Arweave/Irys and S3 often serve real images
+  // as application/octet-stream or text/plain, and those used to be refused here.
+  const labelled = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const contentType = sniffImageType(body) || (labelled.startsWith('image/') ? labelled : null);
+  if (!contentType) throw new Error(`Non-image response: ${labelled || 'no content-type'}`);
+  return { buffer: body, contentType };
+}
+
 app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // Set on every response from this route — including the validation/error paths below —
   // not just the successful-image ones. Helmet's default Cross-Origin-Resource-Policy:
@@ -533,7 +567,11 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const cacheKey = `image-proxy:v3:${width}:${url}`;
 
   const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
-  if (cached) {
+  // A remembered transient failure (not a 404/410) is skipped for the browser's one retry
+  // (?retry=1, see utils.handleImageError): that retry lands seconds after the failure, inside
+  // the 45s window, and would otherwise be answered with the same cached 502 every time.
+  const isRetry = req.query.retry === '1';
+  if (cached && !(cached.notFound && !cached.gone && isRetry)) {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -545,28 +583,35 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   let fetchPromise = imageProxyInFlight.get(cacheKey);
   if (!fetchPromise) {
     fetchPromise = (async () => {
-      const axios = require('axios');
-      const response = await axios.get(url, {
-        responseType: 'arraybuffer',
-        timeout: 8000,
-        maxContentLength: IMAGE_PROXY_MAX_BYTES,
-        maxBodyLength: IMAGE_PROXY_MAX_BYTES,
-        // The address guard lives in these. Every hop of a redirect chain opens a new connection
-        // through them, so a public URL that bounces to 169.254.169.254 is refused at the hop.
-        // Empty where an egress proxy is configured, which axios must be left to handle itself.
-        ...agentsFor(),
-        maxRedirects: 3,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; HolDEX/1.0)',
-          'Accept': 'image/webp,image/png,image/jpeg,image/*',
-          'Referer': `https://${parsed.hostname}/`,
-        },
-      });
-      const sourceType = response.headers['content-type'] || 'image/png';
-      if (!sourceType.startsWith('image/')) throw new Error(`Non-image response: ${sourceType}`);
+      // An IPFS image races its original URL against the other gateways and Helius's image CDN
+      // (see imageSourceFallbacks): ipfs.io refuses or stalls on requests from cloud servers often
+      // enough that waiting for it first made those logos slow at best. Anything else tries its
+      // own host first and the CDN only if that fails. The losers are aborted once one succeeds.
+      const fallbacks = imageSourceFallbacks(url);
+      const controller = new AbortController();
+      let image;
+      try {
+        if (ipfsContentPath(url)) {
+          image = await Promise.any([url, ...fallbacks].map((target) => fetchImageBytes(target, controller.signal)));
+        } else {
+          try {
+            image = await fetchImageBytes(url, controller.signal);
+          } catch (firstErr) {
+            if (fallbacks.length === 0) throw firstErr;
+            image = await Promise.any(fallbacks.map((target) => fetchImageBytes(target, controller.signal)))
+              .catch(() => { throw firstErr; });
+          }
+        }
+      } catch (err) {
+        // Promise.any rejects with an AggregateError; report the original URL's own failure so
+        // the 404/410 "gone" handling below still sees its status.
+        throw err instanceof AggregateError ? err.errors[0] : err;
+      } finally {
+        controller.abort();
+      }
       // Downscaled BEFORE the cache write, so the expensive part happens once per image rather
       // than once per request, and every cache hit is already small.
-      return downscaleImage(Buffer.from(response.data), sourceType, width);
+      return downscaleImage(image.buffer, image.contentType, width);
     })();
     // then(fn, fn) rather than .finally(fn): `.finally` returns a NEW promise that rejects
     // whenever the original does, and nothing was awaiting that one. Every failed image fetch -
@@ -593,7 +638,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     const gone = upstreamStatus === 404 || upstreamStatus === 410;
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
     cache
-      .set(cacheKey, { notFound: true }, gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
+      .set(cacheKey, { notFound: true, gone }, gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
       .catch(() => {});
     res.status(502).send('Bad Gateway');
   }

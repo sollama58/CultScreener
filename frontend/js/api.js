@@ -914,15 +914,27 @@ const utils = {
   // (ipfs.io, Irys, ...) doesn't leave the image blank for every visitor — only the first
   // request after the cache expires ever touches the original host.
   // Leaves data: URIs and already-proxied/non-https URLs untouched.
+  //
+  // Returns null for anything a browser cannot load as an image, so the caller's default logo
+  // applies: GeckoTerminal's "missing.png" placeholder (a relative path, which used to request
+  // /missing.png from this site and 404), and other non-URLs. ipfs:// and ar:// go through a
+  // gateway, and http is tried as https, since the page is https and the proxy fetches https only.
   proxyImageUrl(url) {
-    if (!url) return url;
-    if (url.startsWith('data:') || url.includes('/api/image-proxy')) return url;
+    if (!url || typeof url !== 'string') return null;
+    url = url.trim();
+    if (url.startsWith('data:image/') || url.includes('/api/image-proxy')) return url;
+    if (/^ipfs:\/\//i.test(url)) url = 'https://ipfs.io/ipfs/' + url.replace(/^ipfs:\/\/(ipfs\/)?/i, '');
+    else if (/^ar:\/\//i.test(url)) url = 'https://arweave.net/' + url.replace(/^ar:\/\//i, '');
+    let parsed;
     try {
-      if (new URL(url).protocol !== 'https:') return url; // proxy only handles https sources
+      parsed = new URL(url);
     } catch {
-      return url;
+      return null;
     }
-    return `${API_BASE_URL}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    if (parsed.protocol === 'http:') parsed.protocol = 'https:';
+    if (parsed.protocol !== 'https:') return null;
+    if (/\/missing(_[a-z]+)?\.png$/i.test(parsed.pathname)) return null;
+    return `${API_BASE_URL}/api/image-proxy?url=${encodeURIComponent(parsed.href)}`;
   },
 
   // Attach the logo fallback that used to be written as an onerror="" attribute on each <img>.
@@ -941,11 +953,42 @@ const utils = {
       const fallback = img.dataset.fallback;
       img.removeAttribute('data-fallback');
       if (!fallback) return;
-      img.addEventListener('error', () => { img.src = fallback; }, { once: true });
+      img.addEventListener('error', () => this.handleImageError(img, fallback));
       // An image that already finished and decoded nothing failed before this ran, and its error
       // event is long gone - the listener above would never hear it.
-      if (img.complete && img.naturalWidth === 0) img.src = fallback;
+      if (img.complete && img.naturalWidth === 0) this.handleImageError(img, fallback);
     });
+  },
+
+  // What to do when a token logo fails to load: retry a proxied image once, then fall back.
+  //
+  // A proxied logo usually fails for a passing reason - a 429 while a page loads a hundred logos
+  // at once, or the proxy's upstream gateway timing out on a cold cache - and swapping straight to
+  // the default left those tokens on the "?" logo until the next full page load. One delayed retry
+  // (jittered, so a whole table does not retry in the same instant) recovers them; the default is
+  // shown while it waits. The retry adds a throwaway query parameter so the browser does not hand
+  // back the failed response it just got. A second failure is final.
+  handleImageError(img, fallback) {
+    fallback = fallback || img.dataset.fallback;
+    if (!fallback) return;
+    if ((img.getAttribute('src') || '') === fallback) return;
+    if (this.retryProxiedImage(img, fallback)) return;
+    img.src = fallback;
+  },
+
+  // The retry half of handleImageError, for images whose final failure is handled differently
+  // (hidden rather than swapped). Schedules one jittered retry of a proxied image, showing
+  // `placeholder` meanwhile if given, and returns true; returns false when the image is not
+  // proxied or has already had its retry, so the caller applies its own fallback.
+  retryProxiedImage(img, placeholder) {
+    const src = img.getAttribute('src') || '';
+    if (img.dataset.logoRetried || !src.includes('/api/image-proxy')) return false;
+    img.dataset.logoRetried = '1';
+    if (placeholder) img.src = placeholder;
+    setTimeout(() => {
+      if (img.isConnected) img.src = `${src}&retry=1`;
+    }, 1500 + Math.random() * 2500);
+    return true;
   },
 
   // Mark a horizontally scrolling element so its edges can show there is more to reach.

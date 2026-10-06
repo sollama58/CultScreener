@@ -28,7 +28,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=17">
+  <link rel="stylesheet" href="css/styles.css?v=19">
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js" as="script">
@@ -51,7 +51,8 @@
       <nav class="nav" id="main-nav">
         <a href="/" class="nav-link">Diamond Hands</a>
         <a href="community.html" class="nav-link active">Watchlist</a>
-        <a href="api-keys.html" class="nav-link">API</a>
+        <!-- API tab hidden for now; uncomment to restore. Page still works at /api-keys.html -->
+        <!-- <a href="api-keys.html" class="nav-link">API</a> -->
         <a href="about.html" class="nav-link">About</a>
         <a href="cultify.html" class="nav-link">Analyze</a>
         <a href="/trenches/" class="nav-link">Trenches</a>
@@ -66,17 +67,27 @@
   <div id="announcement-banner"></div>
 
   <main class="main community-page">
-    <h1 class="sr-only">HolDEX - Community Watchlist</h1>
+    <div class="page-hero">
+      <span class="eyebrow brand">Community</span>
+      <h1 class="page-title">Watchlist</h1>
+      <p class="page-lede">Your saved tokens, and the ones the HolDEX community watches most.</p>
+    </div>
+
     <!-- My Watchlist Section -->
-    <section class="community-section terminal-section" id="my-watchlist-section">
-      <h2 style="font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:1rem;">My Watchlist</h2>
-      <div id="my-watchlist-connect" style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.88rem;">
-        <p>Connect your wallet to see your watchlisted tokens.</p>
-        <button class="btn btn-primary btn-sm" style="margin-top:0.75rem;" id="watchlist-connect-btn">Connect Wallet</button>
+    <section class="panel community-panel" id="my-watchlist-section">
+      <div class="section-head">
+        <div>
+          <h2>My watchlist</h2>
+          <p class="muted small">Tokens you starred, synced to your wallet.</p>
+        </div>
       </div>
-      <div id="my-watchlist-content" style="display:none;">
+      <div id="my-watchlist-connect" class="empty-panel">
+        <p>Connect your wallet to see your watchlisted tokens.</p>
+        <button class="btn btn-primary" id="watchlist-connect-btn">Connect Wallet</button>
+      </div>
+      <div id="my-watchlist-content" class="terminal-table-container" style="display:none;">
         <table class="terminal-table">
-          <thead><tr><th scope="col">#</th><th scope="col">Token</th><th scope="col">Price</th><th scope="col">MCap</th><th scope="col">Actions</th></tr></thead>
+          <thead><tr><th scope="col">#</th><th scope="col">Token</th><th scope="col" class="text-right">Price</th><th scope="col" class="text-right">MCap</th><th scope="col" class="text-right">Actions</th></tr></thead>
           <tbody id="my-watchlist-body">
             <tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
           </tbody>
@@ -85,16 +96,22 @@
     </section>
 
     <!-- Global Leaderboards -->
-    <h2 style="font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:1rem;">Most Watchlisted</h2>
-
-    <div class="leaderboard-table-wrap">
-      <table class="terminal-table">
-        <thead><tr><th scope="col">#</th><th scope="col">Token</th><th scope="col">Price</th><th scope="col">MCap</th><th scope="col">Watchlists</th></tr></thead>
-        <tbody id="watchlist-leaderboard-body">
-          <tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
-        </tbody>
-      </table>
-    </div>
+    <section class="panel community-panel">
+      <div class="section-head">
+        <div>
+          <h2>Most watchlisted</h2>
+          <p class="muted small">Ranked by how many wallets have the token on their watchlist.</p>
+        </div>
+      </div>
+      <div class="terminal-table-container leaderboard-table-wrap">
+        <table class="terminal-table">
+          <thead><tr><th scope="col">#</th><th scope="col">Token</th><th scope="col" class="text-right">Price</th><th scope="col" class="text-right">MCap</th><th scope="col" class="text-right">Watchlists</th></tr></thead>
+          <tbody id="watchlist-leaderboard-body">
+            <tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading...</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <footer class="footer">
@@ -107,12 +124,12 @@
   </footer>
 
   <script src="js/config.js?v=3"></script>
-  <script src="js/api.js?v=9"></script>
+  <script src="js/api.js?v=11"></script>
   <script src="js/announcements.js?v=2"></script>
   <script src="js/deviceLink.js?v=2"></script>
   <script src="js/wallet.js?v=6"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/communityPage.js?v=5"></script>
+  <script src="js/communityPage.js?v=6"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>

@@ -79,7 +79,7 @@ const communityPage = {
             </td>
             <td class="cell-price mono-num">${price}</td>
             <td class="cell-mcap mono-num">${mcap}</td>
-            <td><button class="action-btn danger" data-remove-wl="${utils.escapeHtml(mint)}">Remove</button></td>
+            <td class="text-right"><button class="action-btn danger" data-remove-wl="${utils.escapeHtml(mint)}">Remove</button></td>
           </tr>`;
       }).join('');
 
@@ -143,7 +143,7 @@ const communityPage = {
             </td>
             <td class="cell-price mono-num">${price}</td>
             <td class="cell-mcap mono-num">${mcap}</td>
-            <td class="mono-num">${count}</td>
+            <td class="mono-num text-right">${count}</td>
           </tr>`;
       }).join('');
 
