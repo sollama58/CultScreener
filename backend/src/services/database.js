@@ -226,6 +226,24 @@ async function initializeDatabase() {
         UNIQUE(wallet_address, token_mint)
       );
 
+      -- Older production watchlist tables predate id/added_at; add them in place.
+      -- Rows that already exist get added_at from created_at when that column
+      -- exists, otherwise the migration time.
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = current_schema() AND table_name = 'watchlist' AND column_name = 'id') THEN
+          ALTER TABLE watchlist ADD COLUMN id SERIAL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = current_schema() AND table_name = 'watchlist' AND column_name = 'added_at') THEN
+          ALTER TABLE watchlist ADD COLUMN added_at TIMESTAMP DEFAULT NOW();
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_schema = current_schema() AND table_name = 'watchlist' AND column_name = 'created_at') THEN
+            EXECUTE 'UPDATE watchlist SET added_at = created_at WHERE created_at IS NOT NULL';
+          END IF;
+        END IF;
+      END $$;
+
       -- API keys table for external API access
       CREATE TABLE IF NOT EXISTS api_keys (
         id SERIAL PRIMARY KEY,
