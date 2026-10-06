@@ -97,14 +97,18 @@
       const pairs = await resp.json();
       if (!Array.isArray(pairs) || pairs.length === 0) throw new Error('not found');
 
-      const pair = pairs[0];
-      const name = pair.baseToken?.name || 'Unknown';
-      const symbol = pair.baseToken?.symbol || '???';
-      const logo = (typeof utils !== 'undefined' ? utils.proxyImageUrl(pair.info?.imageUrl) : pair.info?.imageUrl) || defaultLogo;
+      // The pair's priceUsd, priceChange and info belong to its base token, which is not
+      // this mint when it trades as the quote (e.g. ZEC / TOKEN)
+      const picked = utils.pickDexScreenerPair(pairs, mint);
+      const pair = picked.pair;
+      const isBase = picked.side === 'base';
+      const name = picked.token?.name || 'Unknown';
+      const symbol = picked.token?.symbol || '???';
+      const logo = (isBase ? utils.proxyImageUrl(pair.info?.imageUrl) : null) || defaultLogo;
 
       const pairCreatedAt = pair.pairCreatedAt || null;
-      const price = pair.priceUsd ? parseFloat(pair.priceUsd) : null;
-      const priceChange24h = pair.priceChange?.h24 != null ? parseFloat(pair.priceChange.h24) : null;
+      const price = picked.priceUsd;
+      const priceChange24h = isBase && pair.priceChange?.h24 != null ? parseFloat(pair.priceChange.h24) : null;
       previewData = { name, symbol, logo, pairCreatedAt, price, priceChange24h };
 
       showPreview(`<div class="cultify-preview-card">
@@ -163,11 +167,12 @@
             { signal: AbortSignal.timeout(5000) });
           if (r.ok) {
             const pairs = await r.json();
-            if (Array.isArray(pairs) && pairs.length > 0) {
+            const picked = utils.pickDexScreenerPair(pairs, t.mint);
+            if (picked) {
               metaMap[t.mint] = {
-                name: pairs[0].baseToken?.name || null,
-                symbol: pairs[0].baseToken?.symbol || null,
-                logo: utils.proxyImageUrl(pairs[0].info?.imageUrl) || null,
+                name: picked.token?.name || null,
+                symbol: picked.token?.symbol || null,
+                logo: picked.side === 'base' ? (utils.proxyImageUrl(picked.pair.info?.imageUrl) || null) : null,
               };
             }
           }

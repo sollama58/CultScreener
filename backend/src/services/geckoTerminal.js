@@ -4,6 +4,9 @@ const { rateLimitedRequest, sleep } = require('./rateLimiter');
 const { circuitBreakers } = require('./circuitBreaker');
 const { httpsAgent } = require('./httpAgent');
 const { cache: redisCache, TTL } = require('./cache');
+const {
+  geckoPoolSide, geckoPoolView, pickGeckoPool, geckoBaseSideChange, geckoListedToken, geckoPoolTokens, poolNameSymbol
+} = require('./poolPricing');
 
 // GeckoTerminal / CoinGecko Onchain API
 // Free tier: https://api.geckoterminal.com/api/v2 (30 req/min, no key)
@@ -305,15 +308,12 @@ async function getMultiTokenInfo(addresses) {
     const tokens = responseData.data || [];
     const included = responseData.included || [];
 
-    // Build a lookup: pool JSON:API id → price_change_percentage.h24.
-    // Pool records are returned via `include=top_pools`; pools reliably expose
-    // price_change_percentage while the token endpoint does not.
-    const poolPriceChange = {};
+    // Pool records come back via `include=top_pools`; pools reliably expose
+    // price_change_percentage while the token endpoint does not. That change belongs to the
+    // pool's base token, so it is only used for a token that is the base of the pool.
+    const includedPools = {};
     for (const item of included) {
-      if (item.type === 'pool') {
-        const pc = safeFloat(item.attributes?.price_change_percentage?.h24);
-        if (pc != null) poolPriceChange[item.id] = pc;
-      }
+      if (item.type === 'pool') includedPools[item.id] = item;
     }
 
     const result = {};
@@ -322,15 +322,18 @@ async function getMultiTokenInfo(addresses) {
       const address = attrs.address;
       if (!address) continue;
 
-      // Prefer token-level price change if present; fall back to top pool's value.
+      // Prefer token-level price change if present; fall back to the first top pool
+      // where this token is the base.
       let priceChange24h = attrs.price_change_percentage?.h24 != null
         ? safeFloat(attrs.price_change_percentage.h24)
         : null;
 
       if (priceChange24h == null) {
-        const topPoolId = token.relationships?.top_pools?.data?.[0]?.id;
-        if (topPoolId && poolPriceChange[topPoolId] != null) {
-          priceChange24h = poolPriceChange[topPoolId];
+        for (const ref of token.relationships?.top_pools?.data || []) {
+          const pool = includedPools[ref.id];
+          if (!pool || geckoPoolSide(pool, address) !== 'base') continue;
+          const pc = safeFloat(pool.attributes?.price_change_percentage?.h24);
+          if (pc != null) { priceChange24h = pc; break; }
         }
       }
 
@@ -418,20 +421,19 @@ async function getMultiPoolInfo(poolAddresses) {
       const poolAddr = attrs.address;
       if (!poolAddr) continue;
 
-      // Extract the base token address from relationships
-      const baseTokenId = pool.relationships?.base_token?.data?.id || '';
-      const tokenAddress = baseTokenId.replace('solana_', '');
-      if (!tokenAddress) continue;
+      // The pool's memecoin side (the quote when the base is SOL/USDC/USDT)
+      const listed = geckoListedToken(pool);
+      if (!listed) continue;
 
       result[poolAddr] = {
-        tokenAddress,
+        tokenAddress: listed.address,
         poolCreatedAt: attrs.pool_created_at || null,
-        price: safeFloat(attrs.base_token_price_usd),
-        priceChange24h: safeFloat(attrs.price_change_percentage?.h24),
-        volume24h: safeFloat(attrs.volume_usd?.h24),
-        liquidity: safeFloat(attrs.reserve_in_usd),
-        fdv: safeFloat(attrs.fdv_usd),
-        marketCap: safeFloat(attrs.market_cap_usd)
+        price: listed.price,
+        priceChange24h: listed.priceChange24h,
+        volume24h: listed.volume24h,
+        liquidity: listed.liquidity,
+        fdv: listed.fdv,
+        marketCap: listed.marketCap
       };
     }
 
@@ -484,22 +486,46 @@ async function getTokenOverview(mintAddress) {
       return tokenInfo;
     }
 
-    // Extract data from the top pool (most liquid)
-    const topPool = pools[0].attributes || {};
-    const priceChange24h = parseFloat(topPool.price_change_percentage?.h24) || 0;
-    const liquidity = parseFloat(topPool.reserve_in_usd) || 0;
-    const volume24h = parseFloat(topPool.volume_usd?.h24) || 0;
-    const price = parseFloat(topPool.base_token_price_usd) || 0;
-    const fdv = parseFloat(topPool.fdv_usd) || 0;
-    const marketCap = parseFloat(topPool.market_cap_usd) || fdv;
+    // Read the token's figures from its deepest pool, on whichever side of the pair the
+    // token sits. pools[0] is GeckoTerminal's volume-weighted pick and can be a pool where
+    // the token is the quote (e.g. ZEC / TOKEN), whose headline fields describe ZEC.
+    const picked = pickGeckoPool(pools, mintAddress);
+    if (!picked) {
+      console.log(`[GeckoTerminal] No pool on page 1 names ${mintAddress.slice(0, 8)}..., trying token endpoint`);
+      return await getTokenInfo(mintAddress);
+    }
+    const view = geckoPoolView(picked.pool, picked.side);
+    const ownPools = pools.filter(p => geckoPoolSide(p, mintAddress));
 
-    // Extract token info from pool relationships
-    const baseTokenId = pools[0].relationships?.base_token?.data?.id || '';
-    const tokenAddress = baseTokenId.replace('solana_', '') || mintAddress;
+    let price = view.price || 0;
+    let fdv = view.fdv || 0;
+    let marketCap = view.marketCap || fdv;
+    // The provider only publishes 24h change for a pool's base token
+    const priceChange24h = view.priceChange24h ?? geckoBaseSideChange(ownPools, mintAddress) ?? 0;
+    const liquidity = view.liquidity || 0;
+    // Token volume is every pool it trades in, not just the one we priced from
+    const volume24h = ownPools.reduce((sum, p) => sum + (parseFloat(p.attributes?.volume_usd?.h24) || 0), 0);
 
-    // Parse pool name for symbol (format: "TOKEN / SOL")
-    const poolName = topPool.name || '';
-    const symbol = poolName.split(' / ')[0] || null;
+    if (picked.side === 'quote') {
+      // Pools publish FDV / market cap for their base only. Use the token-level USD figures.
+      const info = await getTokenInfo(mintAddress).catch(() => null);
+      if (info) {
+        fdv = info.fdv || 0;
+        marketCap = info.marketCap || fdv;
+        if (!price && info.price) price = info.price;
+      } else {
+        fdv = 0;
+        marketCap = 0;
+      }
+    }
+
+    const tokenAddress = mintAddress;
+    const symbol = view.symbol;
+
+    // Token age: the oldest pool it trades in
+    const createdTimes = ownPools.map(p => p.attributes?.pool_created_at).filter(Boolean)
+      .sort((a, b) => new Date(a) - new Date(b));
+    const pairCreatedAt = createdTimes[0] || null;
 
     // Collect DEX IDs from all pools for filtering
     const dexIds = [...new Set(pools.map(p =>
@@ -522,7 +548,9 @@ async function getTokenOverview(mintAddress) {
       liquidity,
       totalSupply: null, // Helius provides supply
       holder: null,
-      pairCreatedAt: topPool.pool_created_at || null,
+      pairCreatedAt,
+      poolAddress: view.poolAddress,
+      poolSide: picked.side,
       dexIds
     };
     // Cache for 2 minutes (price data needs reasonable freshness)
@@ -608,39 +636,25 @@ async function getTrendingTokens(options = {}) {
       if (tokens.length >= limit) break;
 
       const attrs = pool.attributes || {};
-      const baseTokenId = pool.relationships?.base_token?.data?.id;
-
-      // Extract address from ID (format: "solana_ADDRESS")
-      const baseAddress = baseTokenId ? baseTokenId.replace('solana_', '') : null;
-
-      if (!baseAddress || seenAddresses.has(baseAddress)) continue;
-
-      // Skip if base token is SOL or USDC (we want the other token in the pair)
-      if (baseAddress === 'So11111111111111111111111111111111111111112' ||
-          baseAddress === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v') {
-        continue;
-      }
-
-      seenAddresses.add(baseAddress);
-
-      // Parse pool name to get token info (format: "TOKEN / SOL")
-      const poolName = attrs.name || '';
-      const tokenSymbol = poolName.split(' / ')[0] || null;
+      // The pool's memecoin side, priced from that side: a SOL / TOKEN pool lists TOKEN
+      const listed = geckoListedToken(pool);
+      if (!listed || seenAddresses.has(listed.address)) continue;
+      seenAddresses.add(listed.address);
 
       tokens.push({
-        mintAddress: baseAddress,
-        address: baseAddress,
-        name: tokenSymbol, // Will be enriched by caller via Helius
-        symbol: tokenSymbol,
+        mintAddress: listed.address,
+        address: listed.address,
+        name: listed.symbol, // Will be enriched by caller via Helius
+        symbol: listed.symbol,
         decimals: 9,
         logoUri: null, // Will be enriched by caller via Helius
         logoURI: null,
-        price: parseFloat(attrs.base_token_price_usd) || 0,
-        priceChange24h: parseFloat(attrs.price_change_percentage?.h24) || 0,
-        volume24h: parseFloat(attrs.volume_usd?.h24) || 0,
-        liquidity: parseFloat(attrs.reserve_in_usd) || 0,
-        marketCap: parseFloat(attrs.market_cap_usd) || parseFloat(attrs.fdv_usd) || 0,
-        fdv: parseFloat(attrs.fdv_usd) || 0,
+        price: listed.price || 0,
+        priceChange24h: listed.priceChange24h || 0,
+        volume24h: listed.volume24h || 0,
+        liquidity: listed.liquidity || 0,
+        marketCap: listed.marketCap || listed.fdv || 0,
+        fdv: listed.fdv || 0,
         poolAddress: attrs.address,
         transactions24h: (attrs.transactions?.h24?.buys || 0) + (attrs.transactions?.h24?.sells || 0)
       });
@@ -660,8 +674,9 @@ async function getTrendingTokens(options = {}) {
           token.decimals = info.decimals || token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
-          // Use token-level market cap if available
+          // Use token-level market cap if available (a quote-side pool publishes none)
           if (info.marketCap) token.marketCap = info.marketCap;
+          else if (!token.marketCap && info.fdv) { token.marketCap = info.fdv; token.fdv = token.fdv || info.fdv; }
         }
       }
     }
@@ -714,36 +729,24 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
       if (tokens.length >= limit) break;
 
       const attrs = pool.attributes || {};
-      const baseTokenId = pool.relationships?.base_token?.data?.id;
-      const baseAddress = baseTokenId ? baseTokenId.replace('solana_', '') : null;
-
-      if (!baseAddress || seenAddresses.has(baseAddress)) continue;
-
-      // Skip SOL and USDC
-      if (baseAddress === 'So11111111111111111111111111111111111111112' ||
-          baseAddress === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v') {
-        continue;
-      }
-
-      seenAddresses.add(baseAddress);
-
-      const poolName = attrs.name || '';
-      const tokenSymbol = poolName.split(' / ')[0] || null;
+      const listed = geckoListedToken(pool);
+      if (!listed || seenAddresses.has(listed.address)) continue;
+      seenAddresses.add(listed.address);
 
       tokens.push({
-        mintAddress: baseAddress,
-        address: baseAddress,
-        name: tokenSymbol,
-        symbol: tokenSymbol,
+        mintAddress: listed.address,
+        address: listed.address,
+        name: listed.symbol,
+        symbol: listed.symbol,
         decimals: 9,
         logoUri: null,
         logoURI: null,
-        price: parseFloat(attrs.base_token_price_usd) || 0,
-        priceChange24h: parseFloat(attrs.price_change_percentage?.h24) || 0,
-        volume24h: parseFloat(attrs.volume_usd?.h24) || 0,
-        liquidity: parseFloat(attrs.reserve_in_usd) || 0,
-        marketCap: parseFloat(attrs.market_cap_usd) || parseFloat(attrs.fdv_usd) || 0,
-        fdv: parseFloat(attrs.fdv_usd) || 0,
+        price: listed.price || 0,
+        priceChange24h: listed.priceChange24h || 0,
+        volume24h: listed.volume24h || 0,
+        liquidity: listed.liquidity || 0,
+        marketCap: listed.marketCap || listed.fdv || 0,
+        fdv: listed.fdv || 0,
         createdAt: attrs.pool_created_at,
         poolAddress: attrs.address
       });
@@ -764,6 +767,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           if (info.marketCap) token.marketCap = info.marketCap;
+          else if (!token.marketCap && info.fdv) { token.marketCap = info.fdv; token.fdv = token.fdv || info.fdv; }
         }
       }
     }
@@ -810,10 +814,9 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
       if (tokens.length >= limit) break;
 
       const attrs = pool.attributes || {};
-      const baseTokenId = pool.relationships?.base_token?.data?.id;
-      const baseAddress = baseTokenId ? baseTokenId.replace('solana_', '') : null;
-
-      if (!baseAddress || seenAddresses.has(baseAddress)) continue;
+      // The side of the pool the query is about (or its memecoin side)
+      const listed = geckoListedToken(pool, query);
+      if (!listed || seenAddresses.has(listed.address)) continue;
 
       // Filter by DEX if allowedDexPrefixes is provided
       if (allowedDexPrefixes) {
@@ -822,24 +825,21 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
         if (!matchesDex) continue;
       }
 
-      seenAddresses.add(baseAddress);
-
-      const poolName = attrs.name || '';
-      const tokenSymbol = poolName.split(' / ')[0] || null;
+      seenAddresses.add(listed.address);
 
       tokens.push({
-        mintAddress: baseAddress,
-        address: baseAddress,
-        name: tokenSymbol,
-        symbol: tokenSymbol,
+        mintAddress: listed.address,
+        address: listed.address,
+        name: listed.symbol,
+        symbol: listed.symbol,
         decimals: 9,
         logoUri: null,
         logoURI: null,
-        price: parseFloat(attrs.base_token_price_usd) || 0,
-        priceChange24h: parseFloat(attrs.price_change_percentage?.h24) || 0,
-        volume24h: parseFloat(attrs.volume_usd?.h24) || 0,
-        liquidity: parseFloat(attrs.reserve_in_usd) || 0,
-        marketCap: parseFloat(attrs.market_cap_usd) || parseFloat(attrs.fdv_usd) || 0,
+        price: listed.price || 0,
+        priceChange24h: listed.priceChange24h || 0,
+        volume24h: listed.volume24h || 0,
+        liquidity: listed.liquidity || 0,
+        marketCap: listed.marketCap || listed.fdv || 0,
         pairCreatedAt: attrs.pool_created_at || null
       });
     }
@@ -947,12 +947,13 @@ async function getOHLCV(mintAddress, options = {}) {
         return { mintAddress, interval, data: [] };
       }
 
-      // Use the first (most liquid) pool
-      poolAddress = pools[0].attributes?.address;
+      // Chart the deepest pool the token trades in, from the token's side of it
+      const picked = pickGeckoPool(pools, mintAddress);
+      poolAddress = picked?.pool.attributes?.address;
       if (!poolAddress) {
         return { mintAddress, interval, data: [] };
       }
-      side = poolSideForMint(pools[0], mintAddress);
+      side = picked.side;
 
       // Cache the pool address — evict oldest entry if at capacity
       if (poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
@@ -1070,15 +1071,21 @@ async function getTokenPools(mintAddress, options = {}) {
     const pools = response.data.data || [];
     console.log(`[GeckoTerminal] Found ${pools.length} pools for token`);
 
-    return pools.slice(0, limit).map(pool => {
+    // Deepest pools first, each priced from the token's own side of the pair
+    const ownPools = pools
+      .map(pool => ({ pool, side: geckoPoolSide(pool, mintAddress) }))
+      .filter(p => p.side)
+      .sort((a, b) => (parseFloat(b.pool.attributes?.reserve_in_usd) || 0) - (parseFloat(a.pool.attributes?.reserve_in_usd) || 0));
+
+    return ownPools.slice(0, limit).map(({ pool, side }) => {
       const attrs = pool.attributes || {};
-      const baseTokenId = pool.relationships?.base_token?.data?.id || '';
-      const quoteTokenId = pool.relationships?.quote_token?.data?.id || '';
+      const { base, quote } = geckoPoolTokens(pool);
+      const view = geckoPoolView(pool, side);
       const dexId = pool.relationships?.dex?.data?.id || '';
 
-      // Parse pool name to get symbols (format: "TOKEN_A / TOKEN_B")
-      const poolName = attrs.name || '';
-      const [symbolA, symbolB] = poolName.split(' / ').map(s => s.trim());
+      // Pool name is "BASE / QUOTE", sometimes with a fee tier ("A / B 0.25%")
+      const symbolA = poolNameSymbol(attrs.name, 'base');
+      const symbolB = poolNameSymbol(attrs.name, 'quote');
 
       // Format DEX name nicely
       const dexName = dexId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -1090,16 +1097,17 @@ async function getTokenPools(mintAddress, options = {}) {
         symbolA: symbolA || '?',
         symbolB: symbolB || '?',
         type: dexName || 'AMM',
-        tvl: parseFloat(attrs.reserve_in_usd) || 0,
+        tvl: view.liquidity || 0,
         apr24h: null, // GeckoTerminal doesn't provide APR
         // Additional data
         dex: dexId,
-        baseToken: baseTokenId.replace('solana_', ''),
-        quoteToken: quoteTokenId.replace('solana_', ''),
-        priceUsd: parseFloat(attrs.base_token_price_usd) || 0,
-        priceChange24h: parseFloat(attrs.price_change_percentage?.h24) || 0,
-        volume24h: parseFloat(attrs.volume_usd?.h24) || 0,
-        liquidity: parseFloat(attrs.reserve_in_usd) || 0,
+        baseToken: base || '',
+        quoteToken: quote || '',
+        side,
+        priceUsd: view.price || 0,
+        priceChange24h: view.priceChange24h ?? null,
+        volume24h: view.volume24h || 0,
+        liquidity: view.liquidity || 0,
         txns24h: {
           buys: attrs.transactions?.h24?.buys || 0,
           sells: attrs.transactions?.h24?.sells || 0
@@ -1137,19 +1145,20 @@ async function getDexPools(dexId, page = 1) {
     const pools = response.data.data || [];
     return pools.map(pool => {
       const attrs = pool.attributes || {};
-      const baseTokenId = pool.relationships?.base_token?.data?.id;
+      // The pool's memecoin side (the quote when the base is SOL/USDC/USDT)
+      const listed = geckoListedToken(pool) || {};
 
       return {
-        baseAddress: baseTokenId ? baseTokenId.replace('solana_', '') : null,
+        baseAddress: listed.address || null,
         poolAddress: attrs.address || null,
         name: attrs.name || '',
         createdAt: attrs.pool_created_at || null,
-        price: parseFloat(attrs.base_token_price_usd) || 0,
-        priceChange24h: parseFloat(attrs.price_change_percentage?.h24) || 0,
-        volume24h: parseFloat(attrs.volume_usd?.h24) || 0,
-        liquidity: parseFloat(attrs.reserve_in_usd) || 0,
-        marketCap: parseFloat(attrs.market_cap_usd) || parseFloat(attrs.fdv_usd) || 0,
-        fdv: parseFloat(attrs.fdv_usd) || 0
+        price: listed.price || 0,
+        priceChange24h: listed.priceChange24h || 0,
+        volume24h: listed.volume24h || 0,
+        liquidity: listed.liquidity || 0,
+        marketCap: listed.marketCap || listed.fdv || 0,
+        fdv: listed.fdv || 0
       };
     });
   } catch (error) {
@@ -1193,19 +1202,20 @@ async function getNewPoolsByDex(dexId, page = 1) {
       const poolDexId = pool.relationships?.dex?.data?.id || '';
       if (poolDexId !== dexId && poolDexId !== `${NETWORK}_${dexId}`) continue;
 
-      const baseTokenId = pool.relationships?.base_token?.data?.id;
+      // The pool's memecoin side (the quote when the base is SOL/USDC/USDT)
+      const listed = geckoListedToken(pool) || {};
 
       filtered.push({
-        baseAddress: baseTokenId ? baseTokenId.replace('solana_', '') : null,
+        baseAddress: listed.address || null,
         poolAddress: attrs.address || null,
         name: attrs.name || '',
         createdAt: poolCreatedAt || null,
-        price: parseFloat(attrs.base_token_price_usd) || 0,
-        priceChange24h: parseFloat(attrs.price_change_percentage?.h24) || 0,
-        volume24h: parseFloat(attrs.volume_usd?.h24) || 0,
-        liquidity: parseFloat(attrs.reserve_in_usd) || 0,
-        marketCap: parseFloat(attrs.market_cap_usd) || parseFloat(attrs.fdv_usd) || 0,
-        fdv: parseFloat(attrs.fdv_usd) || 0
+        price: listed.price || 0,
+        priceChange24h: listed.priceChange24h || 0,
+        volume24h: listed.volume24h || 0,
+        liquidity: listed.liquidity || 0,
+        marketCap: listed.marketCap || listed.fdv || 0,
+        fdv: listed.fdv || 0
       });
     }
 

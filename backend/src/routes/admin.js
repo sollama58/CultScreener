@@ -800,25 +800,15 @@ router.post('/curated/refresh', strictLimiter, (req, res, next) => {
 }, asyncHandler(async (req, res) => {
   const tokens = await db.getCuratedTokens();
   const results = { updated: 0, failed: 0, total: tokens.length };
-  const axios = require('axios');
+  const { fetchDexScreenerData } = require('../services/curatedTokens');
 
   for (let i = 0; i < tokens.length; i++) {
     const mint = tokens[i].mintAddress || tokens[i].mint_address;
     try {
-      const response = await axios.get(
-        `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
-        { timeout: 10000 }
-      );
-      const pairs = response.data;
-      if (Array.isArray(pairs) && pairs.length > 0) {
-        const info = pairs[0].info || {};
-        const socials = Array.isArray(info.socials) ? info.socials : [];
-        const websites = Array.isArray(info.websites) ? info.websites : [];
-        const findSocial = (type) => { const e = socials.find(s => s.type === type); return e ? e.url : null; };
-        await db.updateCuratedTokenDexScreener(mint, {
-          bannerUrl: info.header || null,
-          socials: { twitter: findSocial('twitter'), telegram: findSocial('telegram'), discord: findSocial('discord'), website: websites.length > 0 ? websites[0].url : null }
-        });
+      // Shared reader: takes banner/socials only from a pair where this mint is the base
+      const data = await fetchDexScreenerData(mint);
+      if (data) {
+        await db.updateCuratedTokenDexScreener(mint, data);
         results.updated++;
       } else {
         results.failed++;

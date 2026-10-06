@@ -1495,6 +1495,9 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         circulatingSupply = supply;
       }
 
+      const usdPrice = gecko.price || helius.price || 0;
+      const impliedFdv = usdPrice > 0 && supply > 0 ? usdPrice * supply : null;
+
       // Jupiter name fallback (only when Helius and GeckoTerminal both lack name)
       const jupiterMeta = (!helius.name && !gecko.name)
         ? await jupiterService.getTokenInfo(mint).catch(err => {
@@ -1515,13 +1518,14 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         logoUri: helius.logoUri || gecko.logoUri || null,
         logoURI: helius.logoUri || gecko.logoURI || null,
         // Price: prefer GeckoTerminal (more accurate), fallback to Helius
-        price: gecko.price || helius.price || 0,
+        price: usdPrice,
         // Market data: GeckoTerminal only (Helius doesn't provide these)
         priceChange24h: gecko.priceChange24h ?? jup.priceChange24h ?? 0,
         volume24h: gecko.volume24h || 0,
         liquidity: gecko.liquidity || 0,
-        marketCap: gecko.marketCap || gecko.fdv || null,
-        fdv: gecko.fdv || 0,
+        // A quote-side pool publishes no FDV for the token; fall back to price x supply
+        marketCap: gecko.marketCap || gecko.fdv || impliedFdv || null,
+        fdv: gecko.fdv || impliedFdv || 0,
         // Supply data - prefer Helius
         supply: supply,
         circulatingSupply: circulatingSupply,
