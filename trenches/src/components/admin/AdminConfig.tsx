@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getAdminConfig } from "../../api/client";
 import type { AdminConfig as AdminConfigData } from "../../api/types";
+import { TELEGRAM_ENABLED } from "../../features";
 
 /** Read-only snapshot of the non-secret half of the shared env schema - what's actually running,
  *  without needing to open the Render dashboard. */
@@ -29,7 +30,6 @@ export function AdminConfig() {
         every {config.livePriceIntervalMinutes} min, up to {config.livePriceMaxTracked.toLocaleString()} tokens
       </Row>
       <Row label="Active view window">{config.activeViewWindowMinutes} min</Row>
-      <Row label="Daily digest">{config.digestHourUtc}:00 UTC</Row>
       <Row label="Watchlist TTL">{config.watchlistTtlHours}h</Row>
       <Row label="Watchlist cap">{config.watchlistMaxTracked.toLocaleString()} tokens</Row>
       <Row label="Daily cleanup">{config.cleanupHourUtc}:00 UTC</Row>
@@ -37,11 +37,16 @@ export function AdminConfig() {
       <Row label="Stale token retention">{config.staleTokenRetentionDays}d</Row>
       <Row label="Outcome tracking">{config.outcomeTrackingHourUtc}:00 UTC</Row>
       <Row label="App domain">{config.publicAppDomain}</Row>
-      <Row label="Telegram">
-        <span className={`badge ${config.telegramConfigured ? "badge--on" : "badge--off"}`}>
-          {config.telegramConfigured ? "Configured" : "Not configured"}
-        </span>
-      </Row>
+      {TELEGRAM_ENABLED && (
+        <Row label="Daily digest">{config.digestHourUtc}:00 UTC</Row>
+      )}
+      {TELEGRAM_ENABLED && (
+        <Row label="Telegram">
+          <span className={`badge ${config.telegramConfigured ? "badge--on" : "badge--off"}`}>
+            {config.telegramConfigured ? "Configured" : "Not configured"}
+          </span>
+        </Row>
+      )}
     </dl>
   );
 }
