@@ -7,8 +7,9 @@
 const tokenTable = {
   BUCKETS: ['6h', '24h', '3d', '1w', '1m'],
 
-  // Past this, a score is old enough that the reader should be told before trusting it.
-  STALE_CONVICTION_MS: 7 * 24 * 60 * 60 * 1000,
+  // Past this, a score is old enough that the reader should be told before trusting it. The worker
+  // re-stores every curated token's score hourly, so a day without one means it has fallen behind.
+  STALE_CONVICTION_MS: 24 * 60 * 60 * 1000,
 
   esc(v) {
     return utils.escapeHtml(v == null ? '' : String(v));
@@ -121,7 +122,8 @@ const tokenTable = {
       const h = Math.max(8, Math.round(pos * 100));
       return `<i class="tt-bar ${tone}" style="height:${h}%" title="${k}: ${val.toFixed(1)}%"></i>`;
     }).join('');
-    return `<div class="tt-bars${stale ? ' stale' : ''}"${title}>${bars}</div>`;
+    // Not the bare "stale" class: styles.css section 30 stamps a STALE label on anything carrying it.
+    return `<div class="tt-bars${stale ? ' tt-bars--stale' : ''}"${title}>${bars}</div>`;
   },
 
   // Header label for the distribution column: the first and last bucket names, spanning the bars.

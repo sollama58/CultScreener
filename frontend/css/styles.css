@@ -1966,7 +1966,7 @@ select:focus {
 .tt-bar.hi { background: linear-gradient(to top, var(--brand-b), var(--brand-a)); }
 .tt-bar.mid { background: color-mix(in srgb, var(--brand-b) 55%, var(--surface-3)); }
 
-.tt-bars.stale { opacity: 0.45; }
+.tt-bars--stale { opacity: 0.45; }
 
 .tt-dist-head {
   display: inline-flex;
