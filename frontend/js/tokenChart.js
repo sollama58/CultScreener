@@ -1,0 +1,613 @@
+// Token page chart modal: candlestick chart drawn with TradingView Lightweight Charts
+// (vendored in js/vendor, loaded the first time the modal opens). Candles come from our own
+// /api/tokens/:mint/ohlcv endpoint, which caches GeckoTerminal's OHLCV for the token's top pool.
+const tokenChart = (() => {
+  const LIB_SRC = 'js/vendor/lightweight-charts-5.2.1.js';
+  const PREFS_KEY = 'holdex.tokenChart.v1';
+  const REFRESH_MS = 60 * 1000;
+  const TIMEFRAMES = [
+    { id: '1m', label: '1m', seconds: 60 },
+    { id: '5m', label: '5m', seconds: 300 },
+    { id: '15m', label: '15m', seconds: 900 },
+    { id: '1h', label: '1h', seconds: 3600 },
+    { id: '4h', label: '4h', seconds: 14400 },
+    { id: '1d', label: '1D', seconds: 86400 }
+  ];
+  const INDICATORS = [
+    { id: 'vol', label: 'Volume', title: 'Volume bars' },
+    { id: 'ma20', label: 'MA 20', title: '20-period simple moving average' },
+    { id: 'ema50', label: 'EMA 50', title: '50-period exponential moving average' },
+    { id: 'bb', label: 'BB 20', title: 'Bollinger Bands (20, 2)' },
+    { id: 'rsi', label: 'RSI 14', title: 'Relative Strength Index (14)' }
+  ];
+  const DEFAULT_PREFS = { tf: '15m', unit: 'price', style: 'candles', log: false, ind: { vol: true, ma20: false, ema50: false, bb: false, rsi: false } };
+
+  let libPromise = null;
+  let state = null; // live modal state; null while closed
+
+  // ── Prefs (per-viewer convenience only) ────────────────────────────────
+  function loadPrefs() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+      if (saved && typeof saved === 'object') {
+        return { ...DEFAULT_PREFS, ...saved, ind: { ...DEFAULT_PREFS.ind, ...(saved.ind || {}) } };
+      }
+    } catch { /* storage blocked or bad JSON */ }
+    return { ...DEFAULT_PREFS, ind: { ...DEFAULT_PREFS.ind } };
+  }
+  function savePrefs(prefs) {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
+  }
+
+  // ── Library loader ─────────────────────────────────────────────────────
+  function loadLib() {
+    if (window.LightweightCharts) return Promise.resolve(window.LightweightCharts);
+    if (libPromise) return libPromise;
+    libPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = LIB_SRC;
+      s.async = true;
+      s.onload = () => window.LightweightCharts ? resolve(window.LightweightCharts) : reject(new Error('Chart library failed to load'));
+      s.onerror = () => { libPromise = null; s.remove(); reject(new Error('Chart library failed to load')); };
+      document.head.appendChild(s);
+    });
+    return libPromise;
+  }
+
+  // ── Formatting ─────────────────────────────────────────────────────────
+  const SUBSCRIPT = '₀₁₂₃₄₅₆₇₈₉';
+  function toSubscript(n) { return String(n).split('').map(d => SUBSCRIPT[+d] || d).join(''); }
+
+  // Memecoin prices run to 10+ decimals; collapse long zero runs as 0.0₅1234 like DEX screeners do
+  function fmtValue(v) {
+    if (v == null || !isFinite(v)) return '--';
+    const sign = v < 0 ? '-' : '';
+    const a = Math.abs(v);
+    if (a === 0) return '0';
+    if (a >= 1e9) return `${sign}${(a / 1e9).toFixed(2)}B`;
+    if (a >= 1e6) return `${sign}${(a / 1e6).toFixed(2)}M`;
+    if (a >= 1e4) return `${sign}${(a / 1e3).toFixed(2)}K`;
+    if (a >= 1) return sign + a.toLocaleString(undefined, { maximumFractionDigits: a >= 10 ? 2 : 4 });
+    const zeros = Math.max(0, -Math.floor(Math.log10(a)) - 1);
+    if (zeros >= 4) {
+      const digits = Math.round(a * Math.pow(10, zeros + 4)).toString().slice(0, 4).replace(/0+$/, '') || '0';
+      return `${sign}0.0${toSubscript(zeros)}${digits}`;
+    }
+    return sign + a.toPrecision(4).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  }
+  function fmtVolume(v) {
+    if (v == null || !isFinite(v)) return '--';
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
+    return v.toFixed(0);
+  }
+  function fmtPct(p) {
+    if (p == null || !isFinite(p)) return '';
+    return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`;
+  }
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Lightweight Charts draws times in UTC; format them in the viewer's own time zone
+  function fmtTimeFull(t) {
+    const d = new Date(t * 1000);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  function fmtTick(t, tickType) {
+    const d = new Date(t * 1000);
+    // TickMarkType: 0 Year, 1 Month, 2 DayOfMonth, 3 Time, 4 TimeWithSeconds
+    if (tickType === 0) return String(d.getFullYear());
+    if (tickType === 1) return d.toLocaleString(undefined, { month: 'short' });
+    if (tickType === 2) return d.toLocaleString(undefined, { month: 'short', day: 'numeric' });
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function cssVar(name, fallback) {
+    try {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return v || fallback;
+    } catch { return fallback; }
+  }
+
+  // ── Indicator math ─────────────────────────────────────────────────────
+  function sma(candles, n) {
+    const out = [];
+    let sum = 0;
+    for (let i = 0; i < candles.length; i++) {
+      sum += candles[i].close;
+      if (i >= n) sum -= candles[i - n].close;
+      if (i >= n - 1) out.push({ time: candles[i].time, value: sum / n });
+    }
+    return out;
+  }
+  function ema(candles, n) {
+    const out = [];
+    if (candles.length < n) return out;
+    const k = 2 / (n + 1);
+    let prev = 0;
+    for (let i = 0; i < n; i++) prev += candles[i].close;
+    prev /= n;
+    out.push({ time: candles[n - 1].time, value: prev });
+    for (let i = n; i < candles.length; i++) {
+      prev = candles[i].close * k + prev * (1 - k);
+      out.push({ time: candles[i].time, value: prev });
+    }
+    return out;
+  }
+  function bollinger(candles, n = 20, mult = 2) {
+    const upper = [], lower = [], mid = [];
+    for (let i = n - 1; i < candles.length; i++) {
+      let sum = 0;
+      for (let j = i - n + 1; j <= i; j++) sum += candles[j].close;
+      const mean = sum / n;
+      let sq = 0;
+      for (let j = i - n + 1; j <= i; j++) sq += (candles[j].close - mean) ** 2;
+      const sd = Math.sqrt(sq / n);
+      const time = candles[i].time;
+      mid.push({ time, value: mean });
+      upper.push({ time, value: mean + mult * sd });
+      lower.push({ time, value: Math.max(0, mean - mult * sd) });
+    }
+    return { upper, mid, lower };
+  }
+  // Wilder's RSI
+  function rsi(candles, n = 14) {
+    const out = [];
+    if (candles.length <= n) return out;
+    let gain = 0, loss = 0;
+    for (let i = 1; i <= n; i++) {
+      const d = candles[i].close - candles[i - 1].close;
+      if (d >= 0) gain += d; else loss -= d;
+    }
+    gain /= n; loss /= n;
+    const val = () => (loss === 0 ? (gain === 0 ? 50 : 100) : 100 - 100 / (1 + gain / loss));
+    out.push({ time: candles[n].time, value: val() });
+    for (let i = n + 1; i < candles.length; i++) {
+      const d = candles[i].close - candles[i - 1].close;
+      gain = (gain * (n - 1) + Math.max(d, 0)) / n;
+      loss = (loss * (n - 1) + Math.max(-d, 0)) / n;
+      out.push({ time: candles[i].time, value: val() });
+    }
+    return out;
+  }
+
+  // GeckoTerminal sends newest first and can repeat a bucket; sort ascending and keep the last copy
+  function normalizeCandles(raw, factor) {
+    const byTime = new Map();
+    for (const c of raw || []) {
+      const time = Math.floor(Number(c.timestamp) / 1000);
+      const o = Number(c.open), h = Number(c.high), l = Number(c.low), cl = Number(c.close);
+      if (!time || ![o, h, l, cl].every(v => isFinite(v) && v > 0)) continue;
+      byTime.set(time, {
+        time,
+        open: o * factor,
+        high: h * factor,
+        low: l * factor,
+        close: cl * factor,
+        volume: Number(c.volume) || 0
+      });
+    }
+    return [...byTime.values()].sort((a, b) => a.time - b.time);
+  }
+
+  // Price scale step: about four significant digits below the smallest visible value
+  function minMoveFor(candles) {
+    let min = Infinity;
+    for (const c of candles) if (c.low > 0 && c.low < min) min = c.low;
+    if (!isFinite(min)) return 0.01;
+    return Math.min(0.01, Math.pow(10, Math.floor(Math.log10(min)) - 3));
+  }
+
+  // ── Modal shell ────────────────────────────────────────────────────────
+  function seg(name, items, current, label) {
+    return `<div class="tp-seg" role="group" aria-label="${esc(label)}" data-seg="${name}">${items.map(it =>
+      `<button type="button" data-val="${esc(it.id)}" class="${it.id === current ? 'on' : ''}" aria-pressed="${it.id === current}"${it.disabled ? ' disabled' : ''}${it.title ? ` title="${esc(it.title)}"` : ''}>${esc(it.label)}</button>`
+    ).join('')}</div>`;
+  }
+
+  function shellHtml(info, prefs, canMcap) {
+    const logo = info.logo ? `<img class="tc-logo" src="${esc(info.logo)}" alt="" width="28" height="28" onerror="this.remove()">` : '';
+    return `
+      <div class="tc-modal" role="dialog" aria-modal="true" aria-labelledby="tc-title">
+        <div class="tc-head">
+          <div class="tc-title-wrap">
+            ${logo}
+            <div>
+              <div class="tc-title" id="tc-title">${esc(info.symbol ? '$' + info.symbol : info.name || 'Token')} <span class="tc-title-sub">${esc(info.name && info.symbol && info.name.toLowerCase() !== info.symbol.toLowerCase() ? info.name : '')}</span></div>
+              <div class="tc-last"><span class="tc-last-value num" id="tc-last">--</span> <span class="tc-last-change num" id="tc-change"></span></div>
+            </div>
+          </div>
+          <button type="button" class="tc-close" id="tc-close" aria-label="Close chart">&times;</button>
+        </div>
+        <div class="tc-toolbar">
+          ${seg('tf', TIMEFRAMES, prefs.tf, 'Timeframe')}
+          ${seg('unit', [{ id: 'price', label: 'Price' }, { id: 'mcap', label: 'MCap', disabled: !canMcap, title: canMcap ? 'Market cap (price × supply)' : 'Market cap needs supply data' }], prefs.unit, 'Value')}
+          ${seg('style', [{ id: 'candles', label: 'Candles' }, { id: 'line', label: 'Line' }], prefs.style, 'Chart style')}
+          <div class="tc-toggles" role="group" aria-label="Indicators">
+            ${INDICATORS.map(ind => `<button type="button" class="tc-chip${prefs.ind[ind.id] ? ' on' : ''}" data-ind="${ind.id}" aria-pressed="${!!prefs.ind[ind.id]}" title="${esc(ind.title)}">${esc(ind.label)}</button>`).join('')}
+            <button type="button" class="tc-chip${prefs.log ? ' on' : ''}" data-log aria-pressed="${!!prefs.log}" title="Logarithmic price scale">Log</button>
+            <button type="button" class="tc-chip" data-fit title="Show all candles">Reset</button>
+          </div>
+        </div>
+        <div class="tc-legend num" id="tc-legend" aria-live="off"></div>
+        <div class="tc-chart-wrap">
+          <div class="tc-chart" id="tc-chart"></div>
+          <div class="tc-overlay-msg" id="tc-msg"><div class="tc-spinner" aria-hidden="true"></div><span>Loading chart...</span></div>
+        </div>
+        <div class="tc-foot">
+          <span>Candles from the token's top pool via GeckoTerminal. Times in your local time zone.</span>
+          <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">Charting by TradingView</a>
+        </div>
+      </div>`;
+  }
+
+  function tokenInfo() {
+    const t = (typeof tokenDetail !== 'undefined' && tokenDetail.token) || {};
+    const mint = (typeof tokenDetail !== 'undefined' && tokenDetail.mint) || utils.getUrlParam('mint');
+    const price = Number(t.price);
+    const mcap = Number(t.marketCap || t.mcap);
+    // Implied circulating supply, so the chart can switch to market cap like the KPI card
+    const supplyFactor = price > 0 && mcap > 0 ? mcap / price : null;
+    return {
+      mint,
+      name: t.name || '',
+      symbol: t.symbol || '',
+      // Reuse the hero logo, which already went through the image proxy and fallbacks
+      logo: document.getElementById('token-logo')?.getAttribute('src') || '',
+      supplyFactor
+    };
+  }
+
+  function setMsg(text, { loading = false, retry = false } = {}) {
+    const el = state?.root.querySelector('#tc-msg');
+    if (!el) return;
+    if (!text) { el.hidden = true; return; }
+    el.hidden = false;
+    el.innerHTML = `${loading ? '<div class="tc-spinner" aria-hidden="true"></div>' : ''}<span>${esc(text)}</span>${retry ? '<button type="button" class="tp-btn" data-retry>Try again</button>' : ''}`;
+  }
+
+  // ── Chart building ─────────────────────────────────────────────────────
+  function buildChart(LWC) {
+    const el = state.root.querySelector('#tc-chart');
+    const ink2 = cssVar('--ink-2', '#aab1c2');
+    const grid = cssVar('--grid', '#232735');
+    const axis = cssVar('--axis', '#343a4b');
+    const chart = LWC.createChart(el, {
+      autoSize: true,
+      layout: {
+        background: { type: 'solid', color: 'transparent' },
+        textColor: ink2,
+        fontFamily: cssVar('--mono', 'JetBrains Mono, monospace'),
+        fontSize: 11,
+        attributionLogo: true,
+        panes: { separatorColor: axis, separatorHoverColor: 'rgba(255,255,255,0.08)' }
+      },
+      grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+      rightPriceScale: { borderColor: axis },
+      timeScale: { borderColor: axis, timeVisible: true, secondsVisible: false, rightOffset: 4, tickMarkFormatter: fmtTick },
+      crosshair: { mode: 0 },
+      localization: { priceFormatter: fmtValue, timeFormatter: fmtTimeFull }
+    });
+    state.chart = chart;
+    state.LWC = LWC;
+    state.series = {};
+    chart.subscribeCrosshairMove(param => renderLegend(param));
+  }
+
+  function clearSeries() {
+    const { chart, series } = state;
+    for (const key of Object.keys(series)) {
+      try { chart.removeSeries(series[key]); } catch { /* already gone */ }
+    }
+    state.series = {};
+    // Drop the RSI pane (removing its series leaves an empty pane behind)
+    try { while (chart.panes().length > 1) chart.removePane(chart.panes().length - 1); } catch { /* older API */ }
+  }
+
+  function render(fit) {
+    if (!state?.chart) return;
+    const { chart, LWC, prefs, raw } = state;
+    const factor = prefs.unit === 'mcap' && state.info.supplyFactor ? state.info.supplyFactor : 1;
+    const prevLen = state.candles.length;
+    const candles = normalizeCandles(raw, factor);
+    state.candles = candles;
+    let prevRange = fit ? null : chart.timeScale().getVisibleLogicalRange();
+    // A refresh that adds candles keeps the view pinned to the newest one, as long as it was in view
+    if (prevRange && prevLen && candles.length > prevLen && prevRange.to >= prevLen - 1) {
+      const added = candles.length - prevLen;
+      prevRange = { from: prevRange.from + added, to: prevRange.to + added };
+    }
+
+    clearSeries();
+    if (candles.length === 0) {
+      setMsg('No trades in this timeframe yet.');
+      renderHeader();
+      return;
+    }
+    setMsg(null);
+
+    const up = cssVar('--good-ink', '#4ade80');
+    const down = cssVar('--bad-ink', '#ff8080');
+    const priceFormat = { type: 'custom', formatter: fmtValue, minMove: factor === 1 ? minMoveFor(candles) : 0.01 };
+    chart.priceScale('right').applyOptions({ mode: prefs.log ? 1 : 0, scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
+
+    if (prefs.style === 'line') {
+      const s = chart.addSeries(LWC.AreaSeries, {
+        lineColor: cssVar('--brand-b', '#3b82f6'),
+        topColor: 'rgba(59,130,246,0.28)',
+        bottomColor: 'rgba(59,130,246,0)',
+        lineWidth: 2,
+        priceFormat
+      });
+      s.setData(candles.map(c => ({ time: c.time, value: c.close })));
+      state.series.main = s;
+    } else {
+      const s = chart.addSeries(LWC.CandlestickSeries, {
+        upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
+        priceFormat
+      });
+      s.setData(candles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+      state.series.main = s;
+    }
+
+    if (prefs.ind.vol) {
+      const v = chart.addSeries(LWC.HistogramSeries, {
+        priceScaleId: 'vol',
+        priceFormat: { type: 'custom', formatter: fmtVolume, minMove: 1 },
+        lastValueVisible: false,
+        priceLineVisible: false
+      });
+      v.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      v.setData(candles.map(c => ({ time: c.time, value: c.volume, color: c.close >= c.open ? 'rgba(74,222,128,0.35)' : 'rgba(255,128,128,0.35)' })));
+      state.series.vol = v;
+    }
+
+    const line = (color, data, extra = {}) => {
+      const s = chart.addSeries(LWC.LineSeries, { color, lineWidth: 1.5, priceFormat, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, ...extra });
+      s.setData(data);
+      return s;
+    };
+    if (prefs.ind.ma20) state.series.ma20 = line('#fab219', sma(candles, 20));
+    if (prefs.ind.ema50) state.series.ema50 = line('#c084fc', ema(candles, 50));
+    if (prefs.ind.bb) {
+      const bb = bollinger(candles, 20, 2);
+      state.series.bbU = line('rgba(57,135,229,0.8)', bb.upper);
+      state.series.bbM = line('rgba(57,135,229,0.45)', bb.mid, { lineStyle: 2 });
+      state.series.bbL = line('rgba(57,135,229,0.8)', bb.lower);
+    }
+    if (prefs.ind.rsi) {
+      const r = chart.addSeries(LWC.LineSeries, {
+        color: '#b9a6ff', lineWidth: 1.5, priceLineVisible: false,
+        priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } })
+      }, 1);
+      r.setData(rsi(candles, 14));
+      r.createPriceLine({ price: 70, color: 'rgba(255,128,128,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+      r.createPriceLine({ price: 30, color: 'rgba(74,222,128,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+      state.series.rsi = r;
+      try { chart.panes()[1].setStretchFactor(0.28); chart.panes()[0].setStretchFactor(1); } catch { /* ignore */ }
+    }
+
+    if (prevRange) chart.timeScale().setVisibleLogicalRange(prevRange);
+    else showRecent();
+    renderHeader();
+    renderLegend(null);
+  }
+
+  // Open on the most recent ~150 candles; Reset zooms out to everything we have
+  function showRecent() {
+    const n = state.candles.length;
+    if (n > 150) state.chart.timeScale().setVisibleLogicalRange({ from: n - 150, to: n + 4 });
+    else state.chart.timeScale().fitContent();
+  }
+
+  function renderHeader() {
+    const lastEl = state.root.querySelector('#tc-last');
+    const chEl = state.root.querySelector('#tc-change');
+    const c = state.candles;
+    if (!c || c.length === 0) { lastEl.textContent = '--'; chEl.textContent = ''; return; }
+    const last = c[c.length - 1].close;
+    const first = c[0].open;
+    lastEl.textContent = `$${fmtValue(last)}`;
+    const pct = first > 0 ? ((last - first) / first) * 100 : null;
+    const tf = TIMEFRAMES.find(t => t.id === state.prefs.tf);
+    const spanLabel = tf ? spanText(c.length * tf.seconds) : '';
+    chEl.textContent = pct == null ? '' : `${fmtPct(pct)} ${spanLabel}`;
+    chEl.className = `tc-last-change num ${pct >= 0 ? 'is-good' : 'is-bad'}`;
+  }
+  function spanText(sec) {
+    if (sec >= 86400 * 2) return `over ${Math.round(sec / 86400)}d`;
+    if (sec >= 3600 * 2) return `over ${Math.round(sec / 3600)}h`;
+    return `over ${Math.round(sec / 60)}m`;
+  }
+
+  function renderLegend(param) {
+    const el = state?.root.querySelector('#tc-legend');
+    if (!el || !state.candles?.length) { if (el) el.innerHTML = ''; return; }
+    let c = null;
+    if (param && param.time != null) c = state.candles.find(x => x.time === param.time);
+    if (!c) c = state.candles[state.candles.length - 1];
+    const cls = c.close >= c.open ? 'is-good' : 'is-bad';
+    const chg = c.open > 0 ? ((c.close - c.open) / c.open) * 100 : null;
+    // Each part is its own span: the legend is a flex row, which would drop the space after "O"
+    const parts = [
+      `<span class="tc-lg-time">${esc(fmtTimeFull(c.time))}</span>`,
+      `<span>O&nbsp;<b class="${cls}">${fmtValue(c.open)}</b></span>`,
+      `<span>H&nbsp;<b class="${cls}">${fmtValue(c.high)}</b></span>`,
+      `<span>L&nbsp;<b class="${cls}">${fmtValue(c.low)}</b></span>`,
+      `<span>C&nbsp;<b class="${cls}">${fmtValue(c.close)}</b></span>`,
+      chg != null ? `<span><b class="${cls}">${fmtPct(chg)}</b></span>` : '',
+      `<span>Vol&nbsp;<b>$${fmtVolume(c.volume)}</b></span>`
+    ];
+    const p = state.prefs.ind;
+    const pick = key => {
+      const s = state.series[key];
+      if (!s || !param?.seriesData) return null;
+      const d = param.seriesData.get(s);
+      return d && d.value != null ? d.value : null;
+    };
+    if (param?.seriesData) {
+      if (p.ma20 && pick('ma20') != null) parts.push(`<span class="tc-lg-ma">MA20&nbsp;${fmtValue(pick('ma20'))}</span>`);
+      if (p.ema50 && pick('ema50') != null) parts.push(`<span class="tc-lg-ema">EMA50&nbsp;${fmtValue(pick('ema50'))}</span>`);
+      if (p.rsi && pick('rsi') != null) parts.push(`<span class="tc-lg-rsi">RSI&nbsp;${pick('rsi').toFixed(1)}</span>`);
+    }
+    el.innerHTML = parts.filter(Boolean).join('<span class="tc-lg-gap"></span>');
+  }
+
+  // ── Data ───────────────────────────────────────────────────────────────
+  async function fetchCandles({ quiet = false } = {}) {
+    if (!state) return;
+    const owner = state;
+    const tf = state.prefs.tf;
+    const seq = ++state.fetchSeq;
+    // Closed, reopened, or a newer timeframe was picked while this request was in flight
+    const stale = () => state !== owner || seq !== owner.fetchSeq;
+    if (!quiet) setMsg('Loading chart...', { loading: true });
+    try {
+      const res = await api.request(`/api/tokens/${encodeURIComponent(state.info.mint)}/ohlcv?interval=${tf}&limit=1000`, { retries: 2, timeout: 20000 });
+      if (stale()) return;
+      state.raw = Array.isArray(res?.data) ? res.data : [];
+      const fit = state.lastTf !== tf;
+      state.lastTf = tf;
+      render(fit);
+    } catch (err) {
+      if (stale()) return;
+      if (quiet && state.candles?.length) return; // keep the chart we have on a failed background refresh
+      const msg = err?.code === 'NOT_CURATED'
+        ? 'Charts are available for listed tokens only.'
+        : 'Could not load chart data right now.';
+      setMsg(msg, { retry: err?.code !== 'NOT_CURATED' });
+    }
+  }
+
+  function scheduleRefresh() {
+    clearInterval(state.refreshTimer);
+    state.refreshTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') fetchCandles({ quiet: true });
+    }, REFRESH_MS);
+  }
+
+  // ── Open / close ───────────────────────────────────────────────────────
+  async function open() {
+    if (state) return;
+    const info = tokenInfo();
+    if (!info.mint) return;
+    const prefs = loadPrefs();
+    if (!TIMEFRAMES.some(t => t.id === prefs.tf)) prefs.tf = DEFAULT_PREFS.tf;
+    if (prefs.unit === 'mcap' && !info.supplyFactor) prefs.unit = 'price';
+
+    const root = document.createElement('div');
+    root.className = 'tc-overlay';
+    root.id = 'tc-overlay';
+    root.innerHTML = shellHtml(info, prefs, !!info.supplyFactor);
+    document.body.appendChild(root);
+    document.body.classList.add('tc-open');
+    state = { root, info, prefs, raw: [], candles: [], fetchSeq: 0, lastTf: null, chart: null, series: {}, opener: document.activeElement };
+    requestAnimationFrame(() => root.classList.add('tc-overlay--visible'));
+
+    root.addEventListener('click', onClick);
+    document.addEventListener('keydown', onKey);
+    root.querySelector('#tc-close').focus();
+
+    try {
+      const LWC = await loadLib();
+      if (!state || state.root !== root) return;
+      buildChart(LWC);
+      await fetchCandles();
+      if (state && state.root === root) scheduleRefresh();
+    } catch (err) {
+      if (state && state.root === root) setMsg('Could not load the chart. Check your connection and try again.', { retry: true });
+    }
+  }
+
+  function close() {
+    if (!state) return;
+    const { root, chart, refreshTimer, opener } = state;
+    clearInterval(refreshTimer);
+    document.removeEventListener('keydown', onKey);
+    try { chart?.remove(); } catch { /* ignore */ }
+    root.remove();
+    document.body.classList.remove('tc-open');
+    state = null;
+    if (opener && typeof opener.focus === 'function') opener.focus();
+  }
+
+  function onKey(e) {
+    if (!state) return;
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    // Keep Tab inside the dialog
+    if (e.key === 'Tab') {
+      const f = [...state.root.querySelectorAll('button:not([disabled]), a[href]')];
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
+
+  function setSegOn(name, val) {
+    state.root.querySelectorAll(`[data-seg="${name}"] button`).forEach(b => {
+      const on = b.dataset.val === val;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+
+  function onClick(e) {
+    if (!state) return;
+    if (e.target === state.root) { close(); return; }
+    const t = e.target.closest('button');
+    if (!t || t.disabled) return;
+    if (t.id === 'tc-close') { close(); return; }
+    if (t.hasAttribute('data-retry')) {
+      if (state.chart) fetchCandles();
+      else { const s = state; close(); if (s) open(); }
+      return;
+    }
+    if (!state.chart) return;
+    const segEl = t.closest('[data-seg]');
+    if (segEl) {
+      const name = segEl.dataset.seg;
+      const val = t.dataset.val;
+      if (state.prefs[name] === val) return;
+      state.prefs[name] = val;
+      setSegOn(name, val);
+      savePrefs(state.prefs);
+      if (name === 'tf') fetchCandles();
+      else render(name === 'unit');
+      return;
+    }
+    if (t.dataset.ind) {
+      const id = t.dataset.ind;
+      state.prefs.ind[id] = !state.prefs.ind[id];
+      t.classList.toggle('on', state.prefs.ind[id]);
+      t.setAttribute('aria-pressed', String(state.prefs.ind[id]));
+      savePrefs(state.prefs);
+      render(false);
+      return;
+    }
+    if (t.hasAttribute('data-log')) {
+      state.prefs.log = !state.prefs.log;
+      t.classList.toggle('on', state.prefs.log);
+      t.setAttribute('aria-pressed', String(state.prefs.log));
+      savePrefs(state.prefs);
+      state.chart.priceScale('right').applyOptions({ mode: state.prefs.log ? 1 : 0 });
+      return;
+    }
+    if (t.hasAttribute('data-fit')) {
+      state.chart.timeScale().fitContent();
+    }
+  }
+
+  function init() {
+    const btn = document.getElementById('chart-btn');
+    if (btn) btn.addEventListener('click', open);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+
+  return { open, close, _test: { fmtValue, sma, ema, rsi, bollinger, normalizeCandles } };
+})();
