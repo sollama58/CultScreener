@@ -168,6 +168,7 @@ const _cacheCleanupTimer = setInterval(() => {
     errorCache.clear();
   }
 }, 5 * 60 * 1000);
+if (_cacheCleanupTimer.unref) _cacheCleanupTimer.unref();
 
 /**
  * Execute a deduplicated request - if the same key is already in flight,
@@ -874,24 +875,62 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
   }
 }
 
+// GeckoTerminal only serves these candle sizes:
+// minute (1, 5, 15), hour (1, 4, 12) and day (1). Anything else returns an error.
+const OHLCV_TIMEFRAMES = {
+  '1m': { timeframe: 'minute', aggregate: 1 },
+  '5m': { timeframe: 'minute', aggregate: 5 },
+  '15m': { timeframe: 'minute', aggregate: 15 },
+  '1h': { timeframe: 'hour', aggregate: 1 },
+  '4h': { timeframe: 'hour', aggregate: 4 },
+  '12h': { timeframe: 'hour', aggregate: 12 },
+  '1d': { timeframe: 'day', aggregate: 1 }
+};
+const OHLCV_MAX_LIMIT = 1000; // GeckoTerminal's per-request cap
+
+/**
+ * Map an interval like '15m' or '4h' to GeckoTerminal's timeframe + aggregate.
+ * Unsupported sizes fall back to the nearest supported one at or below them
+ * ('30m' -> 15m, '1w' -> 1d) so older callers keep working.
+ */
+function ohlcvTimeframe(interval) {
+  const key = String(interval || '1h').toLowerCase();
+  if (OHLCV_TIMEFRAMES[key]) return OHLCV_TIMEFRAMES[key];
+  if (key.endsWith('m')) return OHLCV_TIMEFRAMES['15m'];
+  if (key.endsWith('h')) return OHLCV_TIMEFRAMES['12h'];
+  return OHLCV_TIMEFRAMES['1d'];
+}
+
+/**
+ * Which side of a GeckoTerminal pool the token sits on. OHLCV must be asked for
+ * that side, or a pool listed as SOL / TOKEN would chart SOL's price instead.
+ */
+function poolSideForMint(pool, mintAddress) {
+  const quoteId = pool?.relationships?.quote_token?.data?.id || '';
+  return quoteId === `${NETWORK}_${mintAddress}` ? 'quote' : 'base';
+}
+
 /**
  * Get OHLCV data for a token
  * First finds the top pool for the token, then fetches OHLCV
  * Endpoint: /networks/{network}/pools/{pool}/ohlcv/{timeframe}
  * Optimized: caches pool address to avoid repeated pool lookups
+ * @param {Object} options - { interval = '1h', limit = 100 (max 1000) }
  */
 async function getOHLCV(mintAddress, options = {}) {
   const { interval = '1h' } = options;
+  const limit = Math.min(Math.max(1, parseInt(options.limit) || 100), OHLCV_MAX_LIMIT);
 
-  console.log(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}`);
+  console.log(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}`);
 
   try {
     // Check pool address cache first
     let poolAddress = null;
+    let side = 'base';
     const cached = poolAddressCache.get(mintAddress);
     if (cached && Date.now() < cached.expiry) {
       poolAddress = cached.address;
-      console.log(`[GeckoTerminal] Using cached pool address for ${mintAddress}`);
+      side = cached.side || 'base';
     }
 
     // If not cached, fetch pools
@@ -913,6 +952,7 @@ async function getOHLCV(mintAddress, options = {}) {
       if (!poolAddress) {
         return { mintAddress, interval, data: [] };
       }
+      side = poolSideForMint(pools[0], mintAddress);
 
       // Cache the pool address — evict oldest entry if at capacity
       if (poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
@@ -920,36 +960,20 @@ async function getOHLCV(mintAddress, options = {}) {
       }
       poolAddressCache.set(mintAddress, {
         address: poolAddress,
+        side,
         expiry: Date.now() + POOL_CACHE_TTL
       });
     }
 
-    // Map interval to GeckoTerminal timeframe
-    // GeckoTerminal supports: minute, hour, day
-    let timeframe = 'hour';
-    let aggregate = 1;
-
-    if (interval.includes('m')) {
-      timeframe = 'minute';
-      aggregate = parseInt(interval) || 1;
-    } else if (interval.includes('h')) {
-      timeframe = 'hour';
-      aggregate = parseInt(interval) || 1;
-    } else if (interval.includes('d') || interval.includes('D')) {
-      timeframe = 'day';
-      aggregate = parseInt(interval) || 1;
-    } else if (interval.includes('w') || interval.includes('W')) {
-      timeframe = 'day';
-      aggregate = 7;
-    }
+    const { timeframe, aggregate } = ohlcvTimeframe(interval);
 
     const ohlcvResponse = await geckoRequest(() =>
       geckoAxios.get(`/networks/${NETWORK}/pools/${poolAddress}/ohlcv/${timeframe}`, {
         params: {
-          aggregate: aggregate,
-          limit: 100,
+          aggregate,
+          limit,
           currency: 'usd',
-          token: 'base'
+          token: side
         }
       }),
       'getOHLCV'
@@ -958,7 +982,7 @@ async function getOHLCV(mintAddress, options = {}) {
     const ohlcvList = ohlcvResponse.data.data?.attributes?.ohlcv_list || [];
 
     // Transform to standard format
-    // GeckoTerminal format: [timestamp, open, high, low, close, volume]
+    // GeckoTerminal format: [timestamp, open, high, low, close, volume], newest first
     const data = ohlcvList.map(candle => ({
       timestamp: candle[0] * 1000, // Convert to milliseconds
       open: candle[1],
@@ -1322,6 +1346,9 @@ module.exports = {
   getNewPoolsByDex,
   searchTokens,
   getOHLCV,
+  ohlcvTimeframe,
+  poolSideForMint,
+  OHLCV_TIMEFRAMES,
   getPriceHistory,
   getTokenPools,
   getCoinSocialLinks,

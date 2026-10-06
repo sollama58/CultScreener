@@ -1690,31 +1690,41 @@ router.get('/:mint/chart', validateMint, requireAllowedToken, asyncHandler(async
 }));
 
 // GET /api/tokens/:mint/ohlcv - Get OHLCV data for candlestick charts
+// Feeds the token page's chart modal. ?interval=1m|5m|15m|1h|4h|12h|1d, ?limit=1..1000.
 // Uses getOrSet for automatic caching with stampede prevention
 router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const { interval = '1h' } = req.query;
 
   // Validate interval to prevent cache key pollution
-  const validIntervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
-  const normalizedInterval = interval.toLowerCase();
+  const validIntervals = Object.keys(geckoService.OHLCV_TIMEFRAMES);
+  const normalizedInterval = String(interval).toLowerCase();
   if (!validIntervals.includes(normalizedInterval)) {
     return res.status(400).json({ error: 'Invalid interval', validIntervals });
   }
+  // Only two sizes are cached so callers can't fan the cache out with arbitrary limits
+  const limit = parseInt(req.query.limit) > 100 ? 1000 : 100;
 
-  const cacheKey = `ohlcv:${mint}:${normalizedInterval}`;
+  const cacheKey = `ohlcv:${mint}:${normalizedInterval}:${limit}`;
+  // Minute candles go stale quickly; hour/day candles can sit for the full OHLCV TTL
+  const cacheTTL = normalizedInterval.endsWith('m') ? TTL.MEDIUM : TTL.OHLCV;
 
   try {
-    // Use getOrSet for caching with stampede prevention
-    // OHLCV data cached for 2 minutes to reduce GeckoTerminal API load
     const ohlcvData = await cache.getOrSet(cacheKey, async () => {
-      return geckoService.getOHLCV(mint, { interval: normalizedInterval });
-    }, TTL.OHLCV);
+      const result = await geckoService.getOHLCV(mint, { interval: normalizedInterval, limit });
+      // Don't cache a failed upstream call as an empty chart for the whole TTL
+      if (result.error) {
+        const err = new Error(result.error);
+        err.upstream = true;
+        throw err;
+      }
+      return result;
+    }, cacheTTL);
 
     if (!res.headersSent) res.json(ohlcvData);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch OHLCV data' });
+    if (!res.headersSent) res.status(502).json({ error: 'Failed to fetch OHLCV data' });
   }
 }));
 
