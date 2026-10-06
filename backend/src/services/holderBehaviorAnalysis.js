@@ -9,18 +9,23 @@
 const solanaService = require('./solana');
 const { cache, TTL } = require('./cache');
 const { DIAMOND_HANDS_BUCKETS, BURN_WALLETS } = require('../constants');
-const { HB_EXCLUDED_MINTS, computeHoldPairs } = require('./holderMetrics');
+const { HB_EXCLUDED_MINTS, computeHoldPairs, swapFromRawTransaction } = require('./holderMetrics');
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const HB_MAX_HOLDERS          = 50;
-const HB_MAX_SWAPS_PER_HOLDER = 100;           // 1 page max (100 swaps) — halves Enhanced TX API calls
+const HB_MAX_SWAPS_PER_HOLDER = 200;           // newest swaps kept per wallet
+const HB_HISTORY_TXS          = 1000;          // raw transactions read per wallet (one 10-credit call)
 const HB_ANALYSIS_CACHE_TTL   = 43200 * 1000; // 12 hours — holder behavior changes slowly
 const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analysis crashes
 
 // ── fetchSwapHistory ─────────────────────────────────────────────────────────
 
-// Fetch up to maxCount SWAP transactions for a wallet using paginated Helius calls.
+// Fetch up to maxCount of a wallet's most recent swaps, newest first.
+// Preferred source: one getTransactionsForAddress call (10 credits) for the
+// wallet's last HB_HISTORY_TXS full transactions, read into swaps by
+// swapFromRawTransaction. Fallback when Helius doesn't serve that method: the
+// legacy Enhanced Transactions API (100 credits per page of 100 swaps).
 // Results are cached per-wallet for 1 day — the same whale wallets appear as top
 // holders across many different tokens, so the cache hit rate is high after the
 // first analysis of any given token.
@@ -28,6 +33,23 @@ async function fetchSwapHistory(walletAddress, maxCount) {
   const swapCacheKey = `hb-swaps:${walletAddress}`;
   const cached = await cache.get(swapCacheKey);
   if (cached) return cached;
+
+  if (solanaService.isTransactionHistoryAvailable()) {
+    try {
+      const { txs } = await solanaService.getAccountTransactionsPage(walletAddress, { limit: HB_HISTORY_TXS });
+      const swaps = [];
+      for (const tx of txs || []) {
+        const swap = swapFromRawTransaction(tx, walletAddress);
+        if (swap) swaps.push(swap);
+        if (swaps.length >= maxCount) break;
+      }
+      if (swaps.length > 0) await cache.set(swapCacheKey, swaps, TTL.DAY);
+      return swaps;
+    } catch (err) {
+      // -32601 latches the legacy path in solana.js; anything else is this wallet's failure
+      if (solanaService.isTransactionHistoryAvailable()) throw err;
+    }
+  }
 
   const results = [];
   let before = null;
@@ -161,7 +183,7 @@ async function runHolderBehaviorAnalysis(mint) {
       accumulateResult(await processHolder(holder));
     }
 
-    // BATCH=2: 2 wallets × ≤2 pages each = ≤4 queue inserts per batch.
+    // BATCH=2: 2 wallets, one history call each (the legacy path may page twice).
     // At 40 req/sec that drains in ~100ms; 600ms inter-batch delay gives 6× headroom.
     const BATCH = 2;
     const BATCH_DELAY_MS = 600;

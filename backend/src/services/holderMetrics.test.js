@@ -5,7 +5,7 @@
  */
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { computeHoldPairs, buildDiamondHandsResult, buildStratifiedDiamondHands, HB_EXCLUDED_MINTS } = require('./holderMetrics');
+const { computeHoldPairs, buildDiamondHandsResult, buildStratifiedDiamondHands, swapFromRawTransaction, HB_EXCLUDED_MINTS } = require('./holderMetrics');
 const { DIAMOND_HANDS_BUCKETS } = require('../constants');
 
 const WALLET = 'Wa11et1111111111111111111111111111111111111';
@@ -282,5 +282,67 @@ describe('buildStratifiedDiamondHands', () => {
       const vals = DIAMOND_HANDS_BUCKETS.map(b => d[b.key]);
       for (let i = 1; i < vals.length; i++) assert.ok(vals[i] <= vals[i - 1], `${vals}`);
     }
+  });
+});
+
+describe('swapFromRawTransaction', () => {
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const bal = (owner, mint, amount, decimals = 6) => ({ accountIndex: 3, owner, mint, uiTokenAmount: { amount: String(amount), decimals } });
+  const raw = ({ pre = [], post = [], keys = [WALLET, OTHER], preBal = [0, 0], postBal = [0, 0], fee = 5000, err = null, blockTime = 1_700_000_000 } = {}) => ({
+    blockTime,
+    transaction: { signatures: ['sig1'], message: { accountKeys: keys } },
+    meta: { err, fee, preBalances: preBal, postBalances: postBal, preTokenBalances: pre, postTokenBalances: post },
+  });
+
+  test('buying a token with SOL is a swap with one buy transfer', () => {
+    const tx = raw({ pre: [bal(WALLET, MINT, 0)], post: [bal(WALLET, MINT, 2_500_000)], preBal: [10e9, 0], postBal: [9e9 - 5000, 0] });
+    const swap = swapFromRawTransaction(tx, WALLET);
+    assert.deepStrictEqual(swap, {
+      signature: 'sig1', timestamp: 1_700_000_000,
+      tokenTransfers: [{ mint: MINT, fromUserAccount: null, toUserAccount: WALLET, tokenAmount: 2.5 }],
+    });
+    const pairs = computeHoldPairs(WALLET, [swap], NOW);
+    assert.strictEqual(pairs[MINT].length, 1);
+    assert.strictEqual(pairs[MINT][0].type, 'holding');
+  });
+
+  test('selling a token for USDC is a swap with one sell transfer, the cash leg carried through', () => {
+    const tx = raw({
+      pre: [bal(WALLET, MINT, 5_000_000), bal(WALLET, USDC, 0)],
+      post: [bal(WALLET, MINT, 0), bal(WALLET, USDC, 12_000_000)],
+    });
+    const swap = swapFromRawTransaction(tx, WALLET);
+    assert.strictEqual(swap.tokenTransfers.length, 2);
+    const sell = swap.tokenTransfers.find(t => t.mint === MINT);
+    assert.deepStrictEqual(sell, { mint: MINT, fromUserAccount: WALLET, toUserAccount: null, tokenAmount: 5 });
+    assert.ok(swap.tokenTransfers.some(t => t.mint === USDC && t.toUserAccount === WALLET));
+  });
+
+  test('token-to-token swaps give a sell and a buy', () => {
+    const tx = raw({ pre: [bal(WALLET, MINT, 100), bal(WALLET, MINT_B, 0)], post: [bal(WALLET, MINT, 0), bal(WALLET, MINT_B, 300)] });
+    const swap = swapFromRawTransaction(tx, WALLET);
+    assert.strictEqual(swap.tokenTransfers.filter(t => t.fromUserAccount === WALLET).length, 1);
+    assert.strictEqual(swap.tokenTransfers.filter(t => t.toUserAccount === WALLET).length, 1);
+  });
+
+  test('plain transfers, cash-only swaps, failed transactions and other owners are not swaps', () => {
+    // received a token, gave nothing (airdrop / transfer in)
+    assert.strictEqual(swapFromRawTransaction(raw({ pre: [], post: [bal(WALLET, MINT, 10)] }), WALLET), null);
+    // sent a token, only paid the fee and a little rent
+    assert.strictEqual(swapFromRawTransaction(raw({ pre: [bal(WALLET, MINT, 10)], post: [bal(WALLET, MINT, 0)], preBal: [1e9, 0], postBal: [1e9 - 5000 - 2_039_280, 0] }), WALLET), null);
+    // SOL -> USDC is cash for cash
+    assert.strictEqual(swapFromRawTransaction(raw({ pre: [bal(WALLET, USDC, 0)], post: [bal(WALLET, USDC, 50e6)], preBal: [10e9, 0], postBal: [9e9, 0] }), WALLET), null);
+    // wSOL in, token out, but the transaction failed
+    assert.strictEqual(swapFromRawTransaction(raw({ err: { x: 1 }, pre: [bal(WALLET, MINT, 10), bal(WALLET, WSOL, 0)], post: [bal(WALLET, MINT, 0), bal(WALLET, WSOL, 1e9, 9)] }), WALLET), null);
+    // somebody else's swap in which the wallet only appears
+    assert.strictEqual(swapFromRawTransaction(raw({ pre: [bal(OTHER, MINT, 0)], post: [bal(OTHER, MINT, 10)], preBal: [0, 10e9], postBal: [0, 9e9] }), WALLET), null);
+    assert.strictEqual(swapFromRawTransaction(null, WALLET), null);
+  });
+
+  test('the fee is not a SOL leg; a wallet that is not the payer still gets its lamport delta', () => {
+    const paidFeeOnly = raw({ pre: [bal(WALLET, MINT, 0)], post: [bal(WALLET, MINT, 10)], preBal: [1e9, 0], postBal: [1e9 - 5000, 0] });
+    assert.strictEqual(swapFromRawTransaction(paidFeeOnly, WALLET), null);
+    const notPayer = raw({ keys: [OTHER, WALLET], pre: [bal(WALLET, MINT, 0)], post: [bal(WALLET, MINT, 10)], preBal: [1e9, 5e9], postBal: [1e9 - 5000, 4e9] });
+    assert.ok(swapFromRawTransaction(notPayer, WALLET));
   });
 });
