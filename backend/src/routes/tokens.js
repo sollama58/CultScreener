@@ -5,7 +5,7 @@ const geckoService = require('../services/geckoTerminal');
 const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
-const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey } = require('../middleware/validation');
+const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey, canBypassCache } = require('../middleware/validation');
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
 const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
@@ -1950,19 +1950,6 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
 }));
 
 // True when the caller holds a valid admin session or an active API key.
-async function canBypassCache(req) {
-  const adminToken = req.cookies?.admin_session || req.header('X-Admin-Session');
-  if (adminToken && /^[a-f0-9]{64}$/i.test(adminToken)) {
-    if (await db.getAdminSession(adminToken).catch(() => null)) return true;
-  }
-  const apiKey = req.header('X-API-Key');
-  if (apiKey && /^[a-f0-9]{64}$/i.test(apiKey)) {
-    const keyInfo = await db.getApiKeyByHash(hashApiKey(apiKey)).catch(() => null);
-    if (keyInfo?.is_active) return true;
-  }
-  return false;
-}
-
 // GET /api/tokens/:mint/holders - Top holder analytics
 // Phase 1 (inline): Fetch largest accounts + supply (2 fast RPC calls)
 // Phase 2 (worker): Classify LP/burn/lock, resolve wallets (6+ slow RPC calls)

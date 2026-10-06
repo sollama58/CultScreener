@@ -6,7 +6,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const {
   aggregateHolders, newWalletAcquisition, selectSample, sampleKey, uiToRaw, tokenAccountDelta,
-  rewindToStreakStart, toBigInt, MAX_SNAPSHOT_GAP_MS,
+  metaTokenAccountDelta, holderFingerprint, rewindToStreakStart, toBigInt, MAX_SNAPSHOT_GAP_MS,
 } = require('./holderSnapshot');
 
 const MINT = 'Mint111111111111111111111111111111111111111';
@@ -222,6 +222,58 @@ describe('tokenAccountDelta', () => {
     assert.strictEqual(tokenAccountDelta({ transactionError: { x: 1 }, tokenTransfers: [{ mint: MINT, toTokenAccount: ATA, tokenAmount: 5 }] }, ATA, MINT, 0), 0n);
     assert.strictEqual(tokenAccountDelta({ tokenTransfers: [] }, ATA, MINT, 0), 0n);
     assert.strictEqual(tokenAccountDelta(null, ATA, MINT, 0), 0n);
+  });
+});
+
+describe('metaTokenAccountDelta', () => {
+  const ATA = 'Ata1';
+  const bal = (accountIndex, amount, mint = MINT) => ({ accountIndex, mint, owner: 'w', uiTokenAmount: { amount } });
+
+  test('reads pre/post token balances for the account in a "json" transaction', () => {
+    const tx = {
+      blockTime: 1000,
+      transaction: { message: { accountKeys: ['payer', ATA, 'other'] } },
+      meta: { err: null, preTokenBalances: [bal(1, '100'), bal(2, '5')], postTokenBalances: [bal(1, '160'), bal(2, '0')] },
+    };
+    assert.strictEqual(metaTokenAccountDelta(tx, ATA, MINT), 60n);
+    assert.strictEqual(metaTokenAccountDelta(tx, 'other', MINT), -5n);
+  });
+
+  test('handles jsonParsed keys, lookup-table addresses, and accounts created or closed in the tx', () => {
+    const parsed = {
+      transaction: { message: { accountKeys: [{ pubkey: 'payer' }, { pubkey: ATA }] } },
+      meta: { preTokenBalances: [], postTokenBalances: [bal(1, '42')] },
+    };
+    assert.strictEqual(metaTokenAccountDelta(parsed, ATA, MINT), 42n, 'account created: no pre balance');
+    const loaded = {
+      transaction: { message: { accountKeys: ['payer'] } },
+      meta: { loadedAddresses: { writable: ['w1'], readonly: [ATA] }, preTokenBalances: [bal(2, '7')], postTokenBalances: [] },
+    };
+    assert.strictEqual(metaTokenAccountDelta(loaded, ATA, MINT), -7n, 'account closed: no post balance');
+  });
+
+  test('failed transactions, other mints and unknown accounts move nothing', () => {
+    const tx = {
+      transaction: { message: { accountKeys: [ATA] } },
+      meta: { err: { x: 1 }, preTokenBalances: [bal(0, '1')], postTokenBalances: [bal(0, '9')] },
+    };
+    assert.strictEqual(metaTokenAccountDelta(tx, ATA, MINT), 0n);
+    const other = { transaction: { message: { accountKeys: [ATA] } }, meta: { preTokenBalances: [bal(0, '1', 'X')], postTokenBalances: [bal(0, '9', 'X')] } };
+    assert.strictEqual(metaTokenAccountDelta(other, ATA, MINT), 0n);
+    assert.strictEqual(metaTokenAccountDelta(other, 'nobody', MINT), 0n);
+    assert.strictEqual(metaTokenAccountDelta(null, ATA, MINT), 0n);
+  });
+});
+
+describe('holderFingerprint', () => {
+  const accounts = [{ address: 'a', amount: '10' }, { address: 'b', amount: 20 }];
+  test('is order-independent and changes with any balance, account or supply change', () => {
+    const fp = holderFingerprint('1000', accounts);
+    assert.strictEqual(holderFingerprint('1000', [...accounts].reverse()), fp);
+    assert.notStrictEqual(holderFingerprint('1001', accounts), fp);
+    assert.notStrictEqual(holderFingerprint('1000', [{ address: 'a', amount: '11' }, accounts[1]]), fp);
+    assert.notStrictEqual(holderFingerprint('1000', [...accounts, { address: 'c', amount: '1' }]), fp);
+    assert.ok(fp.startsWith('2:'));
   });
 });
 

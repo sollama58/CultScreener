@@ -1793,7 +1793,26 @@ function catchUnlessOverloaded(fallback) {
   };
 }
 
+/**
+ * Whether a request may bypass response caches with ?fresh=true: admin sessions
+ * and active API keys only, so the public can't force RPC work on every request.
+ */
+async function canBypassCache(req) {
+  const db = require('../services/database');
+  const adminToken = req.cookies?.admin_session || req.header('X-Admin-Session');
+  if (adminToken && /^[a-f0-9]{64}$/i.test(adminToken)) {
+    if (await db.getAdminSession(adminToken).catch(() => null)) return true;
+  }
+  const apiKey = req.header('X-API-Key');
+  if (apiKey && /^[a-f0-9]{64}$/i.test(apiKey)) {
+    const keyInfo = await db.getApiKeyByHash(hashApiKey(apiKey)).catch(() => null);
+    if (keyInfo?.is_active) return true;
+  }
+  return false;
+}
+
 module.exports = {
+  canBypassCache,
   createDeviceLinkSignatureMessage,
   validateDeviceLinkSignature,
   hashDeviceToken,

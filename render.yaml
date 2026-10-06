@@ -39,6 +39,9 @@ services:
       # API Keys (set these manually in Render dashboard)
       - key: HELIUS_API_KEY
         sync: false
+      # Free endpoint for plain Solana RPC; Helius is kept for DAS (see services/solana.js)
+      - key: STANDARD_RPC_URL
+        value: https://solana-rpc.publicnode.com
       - key: COINGECKO_API_KEY
         sync: false
       # Admin password (required for curated token management)
@@ -191,6 +194,15 @@ services:
         value: "10"
       - key: WORKER_LIMITER_MAX
         value: "10"
+
+      # Helius credit controls (see services/holderPipeline.js). Curated tokens are
+      # re-snapshotted every HOLDER_SNAPSHOT_REFRESH_HOURS, and only after a one-page
+      # pre-check finds a change. Plain RPC goes to STANDARD_RPC_URL (free) first;
+      # set it to "off" to send everything to Helius.
+      - key: HOLDER_SNAPSHOT_REFRESH_HOURS
+        value: "4"
+      - key: STANDARD_RPC_URL
+        value: https://solana-rpc.publicnode.com
 
       # HolDEX info bot (backend/src/telegram-bot.js — the /TryConviction bot, NOT
       # TrenchScanner's alert bot). worker.js starts it only when a token is present, so leaving

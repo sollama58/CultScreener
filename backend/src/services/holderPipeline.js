@@ -18,7 +18,8 @@ const store = require('./holderStore');
 const { cache, TTL } = require('./cache');
 const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
 const {
-  aggregateHolders, newWalletAcquisition, selectSample, tokenAccountDelta, rewindToStreakStart, toBigInt,
+  aggregateHolders, newWalletAcquisition, selectSample, tokenAccountDelta, metaTokenAccountDelta,
+  holderFingerprint, rewindToStreakStart, toBigInt,
 } = require('./holderSnapshot');
 const { buildStratifiedDiamondHands } = require('./holderMetrics');
 
@@ -28,13 +29,19 @@ const envInt = (name, fallback) => {
 };
 
 const CONFIG = {
-  maxPages: envInt('HOLDER_SNAPSHOT_MAX_PAGES', 100),       // 100 pages = 100k token accounts
+  maxPages: envInt('HOLDER_SNAPSHOT_MAX_PAGES', 250),       // 250 pages = 250k token accounts (10 credits each)
   topN: envInt('HOLDER_SNAPSHOT_TOP_N', 1000),               // ranked entries kept per snapshot
   listN: 100,                                                // holders served by /holders
   lpCheckN: 200,                                             // largest wallets checked for LP ownership
+  // Curated tokens are re-snapshotted this often (the hourly job checks staleness).
+  // Under 6h, new holders are still dated from consecutive snapshots.
+  refreshMs: envInt('HOLDER_SNAPSHOT_REFRESH_HOURS', 4) * 3_600_000,
   backfillWalletsPerRun: envInt('HOLDER_BACKFILL_WALLETS_PER_RUN', 30),
   backfillPagesPerWallet: 3,                                 // per run; progress is saved between runs
-  backfillMaxPages: envInt('HOLDER_BACKFILL_MAX_PAGES', 20), // 2000 txs, then accept a lower bound
+  // Transactions read per wallet before accepting a lower bound. With
+  // getTransactionsForAddress a page holds up to 1000; the legacy path reads 100.
+  backfillMaxTxs: envInt('HOLDER_BACKFILL_MAX_TXS', 2000),
+  backfillPageSize: envInt('HOLDER_BACKFILL_PAGE_SIZE', 1000),
   backfillMaxAttempts: 3,
   resultTtl: 15 * 60 * 1000,                                 // hold times grow; recompute often (cheap, DB only)
   snapshotLockTtl: 10 * 60 * 1000,
@@ -47,7 +54,23 @@ const keys = {
   result: mint => `diamond-hands:${mint}`,
   snapshotPending: mint => `holder-snapshot-pending:${mint}`,
   backfillPending: mint => `holder-backfill-pending:${mint}`,
+  // when a cheap pre-check last found the previous snapshot still accurate
+  snapshotVerified: mint => `holder-snapshot-verified:${mint}`,
 };
+
+/**
+ * When each mint's holder data was last known to be current: the latest
+ * snapshot, or a later pre-check that found nothing changed. The schedulers
+ * compare this against CONFIG.refreshMs.
+ */
+async function getFreshnessTimes(mints) {
+  const times = await store.getLatestSnapshotTimes(mints);
+  for (const mint of mints) {
+    const verified = Number(await cache.get(keys.snapshotVerified(mint)).catch(() => 0)) || 0;
+    if (verified > (times[mint] || 0)) times[mint] = verified;
+  }
+  return times;
+}
 
 // ── Job dispatch (deduped with short-lived locks) ────────────────────────────
 
@@ -112,7 +135,27 @@ async function takeSnapshot(mint) {
     const decimals = supplyRes?.value?.decimals ?? prev?.decimals ?? 0;
     const supply = supplyRes?.value?.amount ?? null;
 
-    const { accounts, pages, complete } = await solanaService.getAllTokenAccounts(mint, { maxPages: CONFIG.maxPages });
+    // Cheap pre-check (one DAS page): if supply and the first page of accounts are
+    // exactly as the previous snapshot saw them, nothing among those accounts moved,
+    // so keep that snapshot instead of re-paging the whole holder list.
+    const prevFingerprint = prev?.sample_meta?.fingerprint;
+    const first = await solanaService.getAllTokenAccounts(mint, { maxPages: 1 });
+    const fingerprint = holderFingerprint(supply, first.accounts);
+    if (prevFingerprint && fingerprint === prevFingerprint) {
+      const now = Date.now();
+      await cache.set(keys.snapshotVerified(mint), now, CONFIG.refreshMs * 2).catch(() => {});
+      // Keep the exact holder count warm so nothing re-pages for it
+      if (prev.complete && prev.account_count > 0) {
+        await cache.set(`holder-total:${mint}`, prev.account_count, TTL.HOLDER_COUNT).catch(() => {});
+      }
+      await cache.delete(keys.snapshotPending(mint)).catch(() => {});
+      console.log(`[Holders] Snapshot ${prev.id} for ${mint.slice(0, 8)} unchanged (${first.accounts.length} accounts checked); kept`);
+      await ensureBackfill(mint);
+      return { status: 'unchanged', snapshotId: prev.id };
+    }
+
+    let { accounts, pages, complete } = first;
+    if (!complete) ({ accounts, pages, complete } = await solanaService.getAllTokenAccounts(mint, { maxPages: CONFIG.maxPages }));
     if (!complete) await mergeLargestAccounts(mint, accounts);
     const takenAt = Date.now();
     const holders = aggregateHolders(accounts);
@@ -126,6 +169,7 @@ async function takeSnapshot(mint) {
     const { sample, meta } = selectSample(mint, holders, { exclude });
     meta.lpWallets = [...lpWallets];
     meta.complete = complete;
+    meta.fingerprint = fingerprint;
 
     const newAcquisition = newWalletAcquisition(
       prev ? { takenAt: new Date(prev.taken_at).getTime(), complete: prev.complete } : null,
@@ -145,6 +189,7 @@ async function takeSnapshot(mint) {
       require('./database').recordHolderCount(mint, accounts.length).catch(() => {});
     }
     await cache.delete(keys.result(mint)).catch(() => {});
+    await cache.delete(keys.snapshotVerified(mint)).catch(() => {});
 
     console.log(`[Holders] Snapshot ${snapshotId} for ${mint.slice(0, 8)}: ${holders.length} wallets from ${accounts.length} accounts, ` +
       `${pages} page(s)${complete ? '' : ' (capped)'}, sample ${sample.length} (${meta.method}), new wallets: ${newAcquisition.source}, ${Date.now() - startedAt}ms`);
@@ -173,6 +218,40 @@ function walletsOfInterest(snap, entries) {
   return ordered;
 }
 
+// One page of a token account's history as {timestamp, delta} newest first, via
+// getTransactionsForAddress. nextCursor is the pagination token for the next page.
+async function readHistoryPage(tokenAccount, mint, cursor, pageSize) {
+  const { txs, paginationToken } = await solanaService.getAccountTransactionsPage(tokenAccount, {
+    limit: pageSize, paginationToken: cursor || undefined,
+  });
+  const list = Array.isArray(txs) ? txs : [];
+  return {
+    txs: list.map(tx => ({ timestamp: tx?.blockTime || 0, delta: metaTokenAccountDelta(tx, tokenAccount, mint) })),
+    count: list.length,
+    exhausted: list.length < pageSize || !paginationToken,
+    nextCursor: paginationToken || null,
+  };
+}
+
+// The same page via getSignaturesForAddress + the Enhanced Transactions API
+// (legacy, 100 credits per parse call). nextCursor is the oldest signature read.
+async function readLegacyPage(tokenAccount, mint, decimals, cursor) {
+  const sigs = await solanaService.getSignaturesPage(tokenAccount, { limit: 100, before: cursor || undefined });
+  const list = Array.isArray(sigs) ? sigs : [];
+  const ok = list.filter(s => !s.err);
+  const parsed = ok.length > 0 ? await solanaService.parseTransactions(ok.map(s => s.signature)) : [];
+  const bySig = new Map(parsed.map(t => [t.signature, t]));
+  return {
+    txs: ok.map(s => {
+      const tx = bySig.get(s.signature);
+      return { timestamp: tx?.timestamp || s.blockTime, delta: tx ? tokenAccountDelta(tx, tokenAccount, mint, decimals) : 0n };
+    }),
+    count: list.length,
+    exhausted: list.length < 100,
+    nextCursor: list.length > 0 ? list[list.length - 1].signature : null,
+  };
+}
+
 /**
  * Find one wallet's streak start from its token account's history. Resumes from
  * the saved cursor. Returns true when the wallet is settled (resolved or given up).
@@ -198,27 +277,38 @@ async function backfillWallet(mint, pos, decimals) {
     }
   }
 
-  let cursor = pos.backfill_cursor || null;
+  // The history source: getTransactionsForAddress (10 credits per up-to-1000 full
+  // transactions) when Helius serves it, else signatures + the Enhanced API
+  // (101 credits per 100). A saved cursor only resumes the path that wrote it:
+  // getTransactionsForAddress tokens are "slot:position", signatures are base58.
+  const useHistory = solanaService.isTransactionHistoryAvailable();
+  const savedCursor = pos.backfill_cursor || null;
+  const cursorMatches = savedCursor ? (savedCursor.includes(':') === useHistory) : true;
+  let cursor = cursorMatches ? savedCursor : null;
+  if (!cursorMatches) {
+    const bal = await solanaService.getTokenAccountBalance(tokenAccount).catch(() => null);
+    balance = toBigInt(bal?.value?.amount);
+    if (balance <= 0n) {
+      await store.saveBackfill(mint, pos.wallet, { source: 'failed', attempted: true });
+      return true;
+    }
+  }
   let pagesUsed = 0;
+  let txsRead = 0;
   // Oldest transaction read so far, across runs: the fallback answer when the
   // history runs out exactly on a page boundary.
-  let oldestAt = pos.backfill_cursor && pos.backfill_oldest_at ? new Date(pos.backfill_oldest_at).getTime() : null;
-  const totalPagesBefore = pos.backfill_pages || 0;
+  let oldestAt = cursor && pos.backfill_oldest_at ? new Date(pos.backfill_oldest_at).getTime() : null;
+  const pageSize = useHistory ? CONFIG.backfillPageSize : 100;
+  const txsBefore = cursorMatches ? (pos.backfill_pages || 0) * pageSize : 0;
 
   while (pagesUsed < CONFIG.backfillPagesPerWallet) {
-    const sigs = await solanaService.getSignaturesPage(tokenAccount, { limit: 100, before: cursor || undefined });
+    const page = useHistory
+      ? await readHistoryPage(tokenAccount, mint, cursor, pageSize)
+      : await readLegacyPage(tokenAccount, mint, decimals, cursor);
     pagesUsed++;
-    const list = Array.isArray(sigs) ? sigs : [];
-    const exhausted = list.length < 100;
-    const ok = list.filter(s => !s.err);
-    const parsed = ok.length > 0 ? await solanaService.parseTransactions(ok.map(s => s.signature)) : [];
-    const bySig = new Map(parsed.map(t => [t.signature, t]));
-    const txs = ok.map(s => {
-      const tx = bySig.get(s.signature);
-      return { timestamp: tx?.timestamp || s.blockTime, delta: tx ? tokenAccountDelta(tx, tokenAccount, mint, decimals) : 0n };
-    });
+    txsRead += page.count;
 
-    const r = rewindToStreakStart(balance, txs, { exhausted });
+    const r = rewindToStreakStart(balance, page.txs, { exhausted: page.exhausted });
     if (r.oldestAt) oldestAt = r.oldestAt;
     if (r.done) {
       if (r.acquiredAt == null && oldestAt != null) r.acquiredAt = oldestAt;
@@ -230,9 +320,9 @@ async function backfillWallet(mint, pos, decimals) {
       return true;
     }
     balance = r.balance;
-    cursor = list[list.length - 1].signature;
+    cursor = page.nextCursor;
 
-    if (totalPagesBefore + pagesUsed >= CONFIG.backfillMaxPages) {
+    if (txsBefore + txsRead >= CONFIG.backfillMaxTxs) {
       // Very active account. The streak began before the oldest transaction we read,
       // so this is a lower bound on the hold time; good enough for the buckets.
       await store.saveBackfill(mint, pos.wallet, {
@@ -360,7 +450,11 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
     await require('./database').upsertConviction(mint, distribution, sample.length, result.analyzed, convictionMeta)
       .catch(err => console.error(`[Holders] Conviction persist failed for ${mint.slice(0, 8)}:`, err.message));
   }
-  if (dispatch && now - snapshotAt > CONFIG.staleSnapshotMs) await ensureSnapshot(mint);
+  if (dispatch && now - snapshotAt > CONFIG.staleSnapshotMs) {
+    // A snapshot the pre-check recently confirmed is not stale, however old its rows
+    const verified = Number(await cache.get(keys.snapshotVerified(mint)).catch(() => 0)) || 0;
+    if (now - Math.max(snapshotAt, verified) > CONFIG.staleSnapshotMs) await ensureSnapshot(mint);
+  }
   return result;
 }
 
@@ -395,9 +489,13 @@ async function getHoldTimes(mint, wallets) {
  * Top holders from the latest snapshot, shaped like the rawAccounts the
  * compute-holder-analytics job takes. Null when there is no recent snapshot.
  */
-async function getSnapshotHolderList(mint, { maxAgeMs = 6 * 3_600_000, limit = CONFIG.listN } = {}) {
+async function getSnapshotHolderList(mint, { maxAgeMs = Math.max(6 * 3_600_000, 2 * CONFIG.refreshMs), limit = CONFIG.listN } = {}) {
   const snap = await store.getLatestSnapshot(mint);
-  if (!snap || Date.now() - new Date(snap.taken_at).getTime() > maxAgeMs) return null;
+  if (!snap) return null;
+  // A snapshot the pre-check recently confirmed unchanged is as good as a new one
+  const verified = Number(await cache.get(keys.snapshotVerified(mint)).catch(() => 0)) || 0;
+  const freshAt = Math.max(new Date(snap.taken_at).getTime(), verified);
+  if (Date.now() - freshAt > maxAgeMs) return null;
   const entries = await store.getSnapshotEntries(snap.id, limit);
   if (entries.length === 0) return null;
   const div = Math.pow(10, snap.decimals || 0);
@@ -413,6 +511,7 @@ module.exports = {
   CONFIG,
   ensureSnapshot,
   ensureBackfill,
+  getFreshnessTimes,
   takeSnapshot,
   runBackfill,
   getDiamondHands,

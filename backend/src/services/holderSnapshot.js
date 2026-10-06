@@ -215,6 +215,47 @@ function tokenAccountDelta(tx, tokenAccount, mint, decimals) {
   return delta;
 }
 
+/**
+ * Net change in raw units to one token account in a standard-RPC-shaped
+ * transaction (getTransaction / getTransactionsForAddress "full"): the
+ * difference between meta.postTokenBalances and meta.preTokenBalances for the
+ * account's index. Failed transactions move nothing. Works for "json" (string
+ * keys plus meta.loadedAddresses) and "jsonParsed" ({pubkey} keys) encodings.
+ */
+function metaTokenAccountDelta(tx, tokenAccount, mint) {
+  const meta = tx?.meta;
+  if (!tx || !meta || meta.err) return 0n;
+  const keys = (tx.transaction?.message?.accountKeys || []).map(k => (typeof k === 'string' ? k : k?.pubkey || ''));
+  const loaded = meta.loadedAddresses;
+  if (loaded) keys.push(...(loaded.writable || []), ...(loaded.readonly || []));
+  const idx = keys.indexOf(tokenAccount);
+  if (idx < 0) return 0n;
+  const pick = list => {
+    for (const b of list || []) {
+      if (b && b.accountIndex === idx && (!b.mint || !mint || b.mint === mint)) return toBigIntSigned(b.uiTokenAmount?.amount);
+    }
+    return null;
+  };
+  const pre = pick(meta.preTokenBalances);
+  const post = pick(meta.postTokenBalances);
+  if (pre == null && post == null) return 0n;
+  // A missing side means the account was created (pre) or closed (post) in this transaction.
+  return (post ?? 0n) - (pre ?? 0n);
+}
+
+/**
+ * A cheap fingerprint of a holder list: supply plus every (account, amount)
+ * pair, order-independent. Two snapshots with the same fingerprint over the
+ * same accounts saw no balance change among them.
+ */
+function holderFingerprint(supply, accounts) {
+  const h = crypto.createHash('sha256');
+  h.update(String(supply ?? ''));
+  const pairs = (accounts || []).map(a => `${a.address || a.owner}:${toBigInt(a.amount)}`).sort();
+  for (const p of pairs) h.update(p).update('\n');
+  return `${pairs.length}:${h.digest('hex').slice(0, 32)}`;
+}
+
 function toBigIntSigned(v) {
   if (v == null) return 0n;
   try { return BigInt(String(v).split('.')[0]); } catch { return 0n; }
@@ -261,5 +302,7 @@ module.exports = {
   selectSample,
   uiToRaw,
   tokenAccountDelta,
+  metaTokenAccountDelta,
+  holderFingerprint,
   rewindToStreakStart,
 };

@@ -30,12 +30,16 @@ router.get('/detailed', require('../middleware/validation').validateAdminSession
   };
 
   // Run independent health checks in parallel (was sequential — could take 10-30s under load)
-  const [dbResult, rpcResult, cacheResult, jupiterResult] = await Promise.allSettled([
+  const [dbResult, rpcResult, cacheResult, jupiterResult, creditResult] = await Promise.allSettled([
     db.checkHealth(),
     solanaService.checkHealth(),
     cache.checkHealth(),
-    jupiterService.checkHealth()
+    jupiterService.checkHealth(),
+    solanaService.getCreditUsage()
   ]);
+
+  // Helius credit spend (today / yesterday, by method), counted at each call site
+  if (creditResult.status === 'fulfilled') health.checks.helius_credits = creditResult.value;
 
   // Database
   if (dbResult.status === 'fulfilled') {

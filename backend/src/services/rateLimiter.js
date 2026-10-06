@@ -84,6 +84,18 @@ const RATE_LIMITS = {
     maxQueueSize: 300,
     queueTimeout: 30000
   },
+  // Free standard RPC (STANDARD_RPC_URL, default publicnode) that plain JSON-RPC
+  // goes to first. Its own queue so it neither eats Helius' budget nor the
+  // tight public-mainnet one below.
+  standardRpc: {
+    minInterval: 50,
+    maxJitter: 10,
+    burstLimit: 15,
+    burstWindow: 1000,
+    useQueue: true,
+    maxQueueSize: 300,
+    queueTimeout: 30000
+  },
   solana: {
     // NOTE: When using Helius as RPC, callers should use 'helius' key instead
     // to share the rate limiter. This config is only for public Solana RPC fallback.
