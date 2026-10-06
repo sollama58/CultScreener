@@ -30,7 +30,6 @@ export function AdminConfig() {
         every {config.livePriceIntervalMinutes} min, up to {config.livePriceMaxTracked.toLocaleString()} tokens
       </Row>
       <Row label="Active view window">{config.activeViewWindowMinutes} min</Row>
-      <Row label="Daily digest">{config.digestHourUtc}:00 UTC</Row>
       <Row label="Watchlist TTL">{config.watchlistTtlHours}h</Row>
       <Row label="Watchlist cap">{config.watchlistMaxTracked.toLocaleString()} tokens</Row>
       <Row label="Daily cleanup">{config.cleanupHourUtc}:00 UTC</Row>
@@ -38,6 +37,9 @@ export function AdminConfig() {
       <Row label="Stale token retention">{config.staleTokenRetentionDays}d</Row>
       <Row label="Outcome tracking">{config.outcomeTrackingHourUtc}:00 UTC</Row>
       <Row label="App domain">{config.publicAppDomain}</Row>
+      {TELEGRAM_ENABLED && (
+        <Row label="Daily digest">{config.digestHourUtc}:00 UTC</Row>
+      )}
       {TELEGRAM_ENABLED && (
         <Row label="Telegram">
           <span className={`badge ${config.telegramConfigured ? "badge--on" : "badge--off"}`}>
