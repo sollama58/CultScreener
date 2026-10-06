@@ -533,7 +533,7 @@ const performancePage = {
     ctx.arc(15, 15, 15, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1c22';
     ctx.fill();
-    ctx.fillStyle = '#ff5722';
+    ctx.fillStyle = '#9d7bff';
     ctx.font = 'bold 14px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
