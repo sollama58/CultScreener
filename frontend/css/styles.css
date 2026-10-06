@@ -674,16 +674,6 @@ img {
   background: var(--surface-2);
 }
 
-#connect-wallet.connected::before,
-.btn-wallet.connected::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--brand-gradient);
-  flex: none;
-}
-
 #connect-wallet.connected:hover,
 .btn-wallet.connected:hover {
   background: var(--surface-3);
