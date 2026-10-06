@@ -20,7 +20,7 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v56';
+const CACHE_VERSION = 'holdex-v57';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -37,18 +37,18 @@ const APP_SHELL = [
   '/js/conviction.js?v=16',
   '/js/tech.js?v=5',
   '/js/emerging.js?v=5',
-  '/js/versus.js?v=11',
+  '/js/versus.js?v=12',
   '/js/mainViewTabs.js?v=1',
   '/js/kotp.js?v=2',
-  '/js/tokenDetail.js?v=22',
+  '/js/tokenDetail.js?v=23',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=5',
   '/js/sentiment.js?v=2',
   '/js/holderBehavior.js?v=5',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=23',
-  '/js/cultify.js?v=14',
+  '/js/performance.js?v=24',
+  '/js/cultify.js?v=15',
   '/js/admin.js?v=16',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',

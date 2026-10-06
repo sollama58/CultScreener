@@ -454,6 +454,7 @@ const versusPage = {
           new Promise((resolve, reject) => {
             const s = document.createElement('script');
             s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+            s.integrity = 'sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H';
             s.crossOrigin = 'anonymous';
             s.onload = resolve;
             s.onerror = () => reject(new Error('Failed to load screenshot library'));
