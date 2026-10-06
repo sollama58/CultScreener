@@ -7,8 +7,8 @@ const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey } = require('../middleware/validation');
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
-const { BURN_WALLETS, LP_PROGRAMS } = require('../constants');
-const { buildDiamondHandsResult } = require('../services/holderMetrics');
+const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
+const holderPipeline = require('../services/holderPipeline');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -1979,6 +1979,14 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
       if (cached) return res.json(cached);
     }
 
+    // Phase 1, preferred: the top holders of a recent full snapshot (no RPC).
+    const snapList = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
+    if (snapList) {
+      return res.json(await _serveSnapshotHolders(mint, snapList, cacheKey));
+    }
+    // No recent snapshot: ask for one, and serve the 20-account RPC view meanwhile.
+    if (solanaService.isHeliusConfigured()) holderPipeline.ensureSnapshot(mint).catch(() => {});
+
     // Phase 1: Fast inline — only the 2 cheapest RPC calls
     const [rpcAccounts, supplyResult] = await Promise.all([
       solanaService.getTokenLargestAccounts(mint),
@@ -2084,6 +2092,35 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
   }
 }));
 
+// Holder list from a snapshot: unflagged top holders now, LP/burn/percentages from the
+// compute-holder-analytics job (which the snapshot job normally queues already).
+async function _serveSnapshotHolders(mint, snapList, cacheKey) {
+  const { rawAccounts, totalSupply, decimals } = snapList;
+  const holders = rawAccounts.map((a, i) => ({
+    rank: i + 1, address: a.wallet, balance: a.uiAmount, percentage: null, isLP: false, isBurnt: false
+  })).filter(h => h.balance > 0);
+  const holderCount = await cache.get(`holder-total:${mint}`).catch(() => null);
+  const metrics = {
+    top5Pct: null, top10Pct: null, top20Pct: null, herfindahl: null, top1Pct: null,
+    dominance: null, avgBalance: null, avgPct: null, holderCount: holderCount || null
+  };
+  const fastResult = { holders, totalSupply, metrics, supply: null, fetchedAt: Date.now() };
+
+  const pendingKey = `holder-classify-pending:${mint}`;
+  if (!(await cache.get(pendingKey))) {
+    await cache.set(cacheKey, fastResult, 120000);
+    await cache.set(pendingKey, Date.now(), 120000);
+    const job = await jobQueue.addAnalyticsJob('compute-holder-analytics', {
+      mint, rawAccounts, totalSupply, usedDAS: true, supplyDecimals: decimals
+    });
+    if (!job) {
+      await cache.delete(pendingKey);
+      await _classifyHoldersInline(mint, rawAccounts, totalSupply, true, { value: { decimals } }, cacheKey);
+    }
+  }
+  return fastResult;
+}
+
 // Concurrency guard — only 1 inline classification runs at a time in the API process.
 // Without this, a worker outage + burst of requests creates a storm of concurrent RPC calls.
 let _inlineClassifyActive = 0;
@@ -2145,7 +2182,7 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
           const walletAccounts = await solanaService.getMultipleAccounts(wallets);
           if (walletAccounts?.value) {
             walletAccounts.value.forEach((acct, wi) => {
-              if (acct && LP_PROGRAMS.has(acct.owner)) {
+              if ((acct && LP_PROGRAMS.has(acct.owner)) || LP_AUTHORITIES.has(wallets[wi])) {
                 const indices = walletToIndices.get(wallets[wi]);
                 if (indices) for (const idx of indices) lpIndices.add(idx);
               }
@@ -2268,119 +2305,31 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: false });
     }
 
-    // Start with top 20 holders (skip LP and burn wallets)
-    const top20Wallets = holdersCache.holders
+    // Listed holders (skip LP and burn wallets). Hold times come from holder
+    // snapshots in Postgres (services/holderPipeline.js); no RPC on this path.
+    const wallets = holdersCache.holders
       .filter(h => !h.isLP && !h.isBurnt && h.address)
       .map(h => h.address);
-
-    // Use shared sample cache (wallet + ATA pairs) for efficient hold-time lookups.
-    // The sample is pre-fetched by the compute-holder-analytics worker job.
-    // If it's not cached yet, return computed: false so the frontend keeps polling.
-    let wallets = top20Wallets;
-    let ataMap = {};
-    const sampleCacheKey = `diamond-hands-wallets:${mint}`;
-    const sample = await cache.get(sampleCacheKey);
-    if (Array.isArray(sample)) {
-      for (const entry of sample) {
-        if (typeof entry === 'object' && entry.wallet) {
-          ataMap[entry.wallet] = entry.ata;
-        }
-      }
-      const sampleWallets = sample.map(e => typeof e === 'object' ? e.wallet : e);
-      if (sampleWallets.length > top20Wallets.length) {
-        const top20Set = new Set(top20Wallets);
-        const extra = sampleWallets.filter(w => !top20Set.has(w));
-        wallets = [...top20Wallets, ...extra];
-      }
-    }
 
     if (wallets.length === 0) {
       return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: true });
     }
 
-    // Check per-wallet caches, collect stale/missing wallets.
-    // Cached values are either positive numbers or -1 sentinels (no data).
-    const holdTimes = {};
-    const tokenHoldTimes = {};
-    const staleWallets = [];
-    let freshWalletCount = 0;
-    let walletAgeChecked = 0;
-    const HOLD_CACHE_MS = 172800000; // 48h — hold times don't change fast
-
-    await Promise.all(wallets.map(async (wallet) => {
-      const [avgCached, tokenCached, ageCached] = await Promise.all([
-        cache.get(`wallet-hold-time:${wallet}`),
-        cache.get(`wallet-token-hold:${wallet}:${mint}`),
-        cache.get(`wallet-age:${wallet}`)
-      ]);
-
-      if (avgCached != null) {
-        if (avgCached > 0) holdTimes[wallet] = avgCached;
-      }
-      if (tokenCached != null) {
-        if (tokenCached > 0) tokenHoldTimes[wallet] = tokenCached;
-      }
-
-      // Count fresh wallets (age < 24h). ageCached: positive ms = known age, -1 = unknown
-      if (ageCached != null && ageCached > 0) {
-        walletAgeChecked++;
-        if (ageCached < 86400000) freshWalletCount++; // < 24h = fresh wallet
-      } else if (ageCached === -1) {
-        walletAgeChecked++; // age unknown (100+ txs) — not fresh
-      }
-
-      // Stale if either cache is missing
-      if (avgCached == null || tokenCached == null) {
-        staleWallets.push(wallet);
-      }
-    }));
-
-    // Dispatch computation for stale wallets to the worker.
-    // Uses a unified pending key shared with diamond-hands so only ONE computation
-    // runs per token, even when both endpoints are called simultaneously.
-    let computed = true;
-    if (staleWallets.length > 0) {
-      const pendingKey = `holder-metrics-pending:${mint}`;
-      const pending = await cache.get(pendingKey);
-
-      // Treat any non-numeric pending value as expired so a stuck job can be re-dispatched
-      const pendingTs = typeof pending === 'number' ? pending : 0;
-      const stillPending = pendingTs > 0 && (Date.now() - pendingTs) < 360000;
-      if (pending && !stillPending) {
-        console.log(`[HoldTimes] Stale pending flag cleared for ${mint} — allowing re-dispatch`);
-        await cache.delete(pendingKey);
-      }
-
-      if (!stillPending) {
-        await cache.set(pendingKey, Date.now(), 360000); // 6 min dedup — covers worst-case worker runtime (250 wallets × batched API calls)
-        const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
-          mint,
-          wallets: staleWallets,
-          ataMap // pass pre-resolved ATAs to avoid extra RPC calls
-        }); // No jobId: pending flag is the dedup mechanism; static jobId blocks re-dispatch when a job gets stuck in waiting/active state
-        if (!job) {
-          // Queue unavailable — clear pending so next poll retries
-          await cache.delete(pendingKey);
-        }
-      }
-
-      computed = false;
-    }
-
-    console.log(`[HoldTimes] Response for ${mint}: ${Object.keys(holdTimes).length} avg, ${Object.keys(tokenHoldTimes).length} token, computed=${computed}, stale=${staleWallets.length}, fresh=${freshWalletCount}/${walletAgeChecked}`);
-    if (!res.headersSent) res.json({ holdTimes, tokenHoldTimes, computed, freshWallets: { count: freshWalletCount, checked: walletAgeChecked, total: wallets.length } });
+    const { holdTimes, computed } = await holderPipeline.getHoldTimes(mint, wallets);
+    // holdTimes and tokenHoldTimes are the same thing (time holding this token);
+    // both keys are kept for the frontend.
+    if (!res.headersSent) res.json({ holdTimes, tokenHoldTimes: holdTimes, computed });
   } catch (error) {
     console.error('[Tokens] Hold times error:', error.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch hold times' });
   }
 }));
 
-// GET /api/tokens/:mint/holders/diamond-hands - Hold time distribution across top 250 holders
-// Returns % of holders that have held the token for >6h, >24h, >3d, >1w, >1m.
-// Uses Helius DAS to sample up to 250 holders, then getWalletHoldMetrics for each.
-// Background computation with polling pattern (same as hold-times).
-// DIAMOND_HANDS_BUCKETS imported from ../constants (shared with cultify.js and worker.js)
-
+// GET /api/tokens/:mint/holders/diamond-hands - Hold time distribution
+// Share of holders (and of held supply) that have held for >6h ... >1yr, measured on
+// a stratified sample of the full holder snapshot (services/holderPipeline.js).
+// Returns computed: false while the snapshot or hold-time backfill is still running;
+// the frontend polls.
 router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -2388,93 +2337,8 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
     if (!solanaService.isHeliusConfigured()) {
       return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
     }
-
-    // Check for cached final result (24 hour TTL, set after full computation)
-    const resultCacheKey = `diamond-hands:${mint}`;
-    const cached = await cache.get(resultCacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
-
-    // Get holder sample from cache — pre-fetched by the compute-holder-analytics worker.
-    // If not cached yet, return computed: false so the frontend keeps polling.
-    const walletsCacheKey = `diamond-hands-wallets:${mint}`;
-    const wallets = await cache.get(walletsCacheKey);
-    if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
-      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
-    }
-
-    // Extract wallet addresses (new format: [{wallet, ata}], backwards-compat with old [string])
-    const walletList = wallets.map(e => typeof e === 'object' ? e.wallet : e);
-    const ataMap = {};
-    if (Array.isArray(wallets)) {
-      for (const e of wallets) {
-        if (typeof e === 'object' && e.wallet && e.ata) ataMap[e.wallet] = e.ata;
-      }
-    }
-
-    // Check per-wallet token hold time caches
-    const holdTimes = {};
-    const uncached = [];
-    let analyzedCount = 0;
-
-    await Promise.all(walletList.map(async (wallet) => {
-      const val = await cache.get(`wallet-token-hold:${wallet}:${mint}`);
-      if (val != null) {
-        analyzedCount++;
-        if (val > 0) holdTimes[wallet] = val;
-      } else {
-        uncached.push(wallet);
-      }
-    }));
-
-    // If all wallets are cached, compute final distribution and cache it
-    if (uncached.length === 0) {
-      const result = buildDiamondHandsResult(holdTimes, walletList.length, analyzedCount);
-      await cache.set(resultCacheKey, result, TTL.DAY);
-      // Persist to DB for the conviction leaderboard
-      db.upsertConviction(mint, result.distribution, result.sampleSize, result.analyzed).catch(err => {
-        console.error(`[DiamondHands] DB persist failed for ${mint.slice(0, 8)}:`, err.message);
-      });
-      return res.json(result);
-    }
-
-    // Background computation for uncached wallets.
-    // Uses the same unified pending key as hold-times — if hold-times is already
-    // computing these wallets, we piggyback on that instead of duplicating work.
-    const pendingKey = `holder-metrics-pending:${mint}`;
-    const pending = await cache.get(pendingKey);
-
-    // Only clear a stale pending flag if it's been stuck for >6 minutes (matching TTL).
-    // Treat any non-numeric pending value (e.g. boolean, string from stale Redis key) as expired
-    // so the job can be re-dispatched rather than staying stuck forever.
-    const pendingTimestamp = typeof pending === 'number' ? pending : 0;
-    const isStillPending = pendingTimestamp > 0 && (Date.now() - pendingTimestamp) < 360000;
-    if (pending && !isStillPending) {
-      const elapsed = pendingTimestamp > 0 ? Math.round((Date.now() - pendingTimestamp) / 1000) : '?';
-      console.log(`[DiamondHands] Pending expired after ${elapsed}s — allowing re-dispatch`);
-      await cache.delete(pendingKey);
-    }
-
-    if (!isStillPending) {
-      await cache.set(pendingKey, Date.now(), 360000); // 6 min dedup — covers worst-case worker runtime (250 wallets × batched API calls)
-      const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
-        mint,
-        wallets: uncached,
-        ataMap // pass pre-resolved ATAs to avoid extra RPC calls
-      }); // No jobId: pending flag is the dedup mechanism; static jobId blocks re-dispatch when a job gets stuck in waiting/active state
-      if (!job) {
-        // Queue unavailable — clear pending so next poll retries
-        await cache.delete(pendingKey);
-      }
-    }
-
-    // Return partial distribution from cached data so far
-    const partial = buildDiamondHandsResult(holdTimes, wallets.length, analyzedCount);
-    partial.computed = false;
-    partial.totalCount = wallets.length;
-    console.log(`[DiamondHands] Partial: ${partial.analyzed}/${partial.totalCount} analyzed for ${mint.slice(0, 8)}...`);
-    if (!res.headersSent) res.json(partial);
+    const result = await holderPipeline.getDiamondHands(mint);
+    if (!res.headersSent) res.json(result);
   } catch (error) {
     console.error('[DiamondHands] Error:', error.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch diamond hands data' });

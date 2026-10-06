@@ -11,9 +11,9 @@ const { checkBurnTransaction } = require('../services/burnTxPolicy');
 const {
   HB_ANALYSIS_CACHE_TTL,
   HB_PENDING_TTL,
-  DIAMOND_HANDS_BUCKETS,
   runHolderBehaviorAnalysis
 } = require('../services/holderBehaviorAnalysis');
+const holderPipeline = require('../services/holderPipeline');
 
 const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
 const BURN_AMOUNT = 5_000;
@@ -282,7 +282,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     const fastResult = { holders, totalSupply, metrics, supply: null, fetchedAt: Date.now() };
 
     // Phase 2: Queue the same worker job as the main endpoint for enrichment
-    // (LP/burn detection, real holder count, 250-wallet sample pre-fetch)
+    // (LP/burn detection, real holder count)
     const pendingKey = `holder-classify-pending:${mint}`;
     const alreadyPending = await cache.get(pendingKey);
     if (!alreadyPending) {
@@ -312,61 +312,6 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     res.status(500).json({ error: 'Analysis failed. Try again later.' });
   }
 }));
-
-// DIAMOND_HANDS_BUCKETS imported from holderBehaviorAnalysis (shared with tokens.js and worker.js)
-
-// Same distribution calculation as the main tokens endpoint (buildDiamondHandsResult)
-function buildDistribution(holdTimes, sampleSize, analyzed) {
-  const values = Object.values(holdTimes).filter(t => t > 0);
-  if (values.length === 0) {
-    return { distribution: null, sampleSize, analyzed: 0, computed: true };
-  }
-  const distribution = {};
-  for (const b of DIAMOND_HANDS_BUCKETS) {
-    const count = values.filter(ms => ms >= b.ms).length;
-    distribution[b.key] = Math.round((count / values.length) * 1000) / 10;
-  }
-  return { distribution, sampleSize, analyzed, computed: true };
-}
-
-// ── Cultify analysis queue ───────────────────────────────────────────
-// Lightweight FIFO queue so concurrent users see their position.
-// Entries are { mint, enqueuedAt }. Completed/stale entries are pruned on read.
-// This is display-only — actual job ordering is handled by BullMQ.
-const CULTIFY_QUEUE_KEY = 'cultify:analysis-queue';
-const CULTIFY_QUEUE_STALE_MS = 600000; // 10 min — prune entries older than this
-
-// Read queue, prune stale entries, save back if anything was pruned.
-async function getCleanQueue() {
-  const raw = (await cache.get(CULTIFY_QUEUE_KEY)) || [];
-  const now = Date.now();
-  const live = raw.filter(e => now - e.enqueuedAt < CULTIFY_QUEUE_STALE_MS);
-  if (live.length !== raw.length) {
-    await cache.set(CULTIFY_QUEUE_KEY, live, CULTIFY_QUEUE_STALE_MS);
-  }
-  return live;
-}
-
-// Ensure mint is in queue (idempotent). Returns { position, total }.
-async function ensureEnqueued(mint) {
-  const queue = await getCleanQueue();
-  const idx = queue.findIndex(e => e.mint === mint);
-  if (idx >= 0) {
-    return { position: idx + 1, total: queue.length };
-  }
-  queue.push({ mint, enqueuedAt: Date.now() });
-  await cache.set(CULTIFY_QUEUE_KEY, queue, CULTIFY_QUEUE_STALE_MS);
-  return { position: queue.length, total: queue.length };
-}
-
-// Remove mint from queue (called when computation is complete).
-async function dequeueMint(mint) {
-  const queue = await getCleanQueue();
-  const filtered = queue.filter(e => e.mint !== mint);
-  if (filtered.length !== queue.length) {
-    await cache.set(CULTIFY_QUEUE_KEY, filtered, CULTIFY_QUEUE_STALE_MS);
-  }
-}
 
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
 // Uses the SAME cache keys and worker flow as the main tokens endpoint.
@@ -410,96 +355,13 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     // ensureEnqueued is idempotent — safe to call on every poll.
     const queueInfo = await ensureEnqueued(mint);
 
-    // ── Sample fetch: get 250-wallet DAS sample ──
-    const walletsCacheKey = `diamond-hands-wallets:${mint}`;
-    let wallets = await cache.get(walletsCacheKey);
-
-    if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
-      // No sample yet — trigger DAS sample fetch if not already pending.
-      // setNX is atomic: only one concurrent request will get true and trigger the fetch.
-      const samplePendingKey = `cultify:sample-pending:${mint}`;
-      const acquired = await cache.setNX(samplePendingKey, Date.now(), 60000);
-      if (acquired) {
-        const sampleFetch = Promise.race([
-          solanaService.getTokenHolderSample(mint, 250),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('sample fetch timeout')), 15000))
-        ]);
-        sampleFetch.then(async (sampleResult) => {
-          if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
-            await cache.set(walletsCacheKey, sampleResult.holders, TTL.DAY);
-            // Only cache when totalHolders is an exact count (< 1000 means all holders fit one page).
-            // totalHolders === 1000 is a lower-bound placeholder — don't cache it as the true count.
-            if (sampleResult.totalHolders && sampleResult.totalHolders < 1000) {
-              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.HOLDER_COUNT);
-            }
-            console.log(`[Cultify] Fetched ${sampleResult.holders.length} holder sample for ${mint.slice(0, 8)}...`);
-          }
-          await cache.delete(samplePendingKey);
-        }).catch(async (err) => {
-          console.warn(`[Cultify] Holder sample fetch failed for ${mint.slice(0, 8)}:`, err.message);
-          await cache.delete(samplePendingKey);
-        });
-      }
-      return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false, queue: queueInfo });
-    }
-
-    // ── Check per-wallet caches ──
-    const walletList = wallets.map(e => typeof e === 'object' ? e.wallet : e);
-    const ataMap = {};
-    for (const e of wallets) {
-      if (typeof e === 'object' && e.wallet && e.ata) ataMap[e.wallet] = e.ata;
-    }
-
-    const holdTimes = {};
-    const uncached = [];
-    let analyzedCount = 0;
-
-    await Promise.all(walletList.map(async (wallet) => {
-      const val = await cache.get(`wallet-token-hold:${wallet}:${mint}`);
-      if (val != null) {
-        analyzedCount++;
-        if (val > 0) holdTimes[wallet] = val;
-      } else {
-        uncached.push(wallet);
-      }
-    }));
-
-    // ── Complete: all wallets cached ──
-    if (uncached.length === 0) {
-      const result = buildDistribution(holdTimes, walletList.length, analyzedCount);
-      await cache.set(resultCacheKey, result, TTL.DAY);
-      db.upsertConviction(mint, result.distribution, result.sampleSize, result.analyzed).catch(err => {
-        console.error(`[Cultify] DB persist failed for ${mint.slice(0, 8)}:`, err.message);
-      });
+    // ── Snapshot → sample → hold times, same pipeline as the tokens endpoint ──
+    const result = await holderPipeline.getDiamondHands(mint);
+    if (result.computed) {
       dequeueMint(mint).catch(() => {});
       return res.json(result);
     }
-
-    // ── Dispatch worker job for uncached wallets ──
-    const pendingKey = `holder-metrics-pending:${mint}`;
-    const pending = await cache.get(pendingKey);
-    const isStillPending = pending && (typeof pending !== 'number' || (Date.now() - pending) < 360000);
-
-    if (!isStillPending) {
-      if (pending) await cache.delete(pendingKey);
-      await cache.set(pendingKey, Date.now(), 360000); // 6 min dedup — covers worst-case worker runtime (250 wallets × batched API calls)
-      const jobQueue = require('../services/jobQueue');
-      const job = await jobQueue.addAnalyticsJob('compute-holder-metrics', {
-        mint,
-        wallets: uncached,
-        ataMap
-      }); // No jobId: pending flag is the dedup mechanism; static jobId blocks re-dispatch when a job gets stuck in waiting/active state
-      if (!job) {
-        await cache.delete(pendingKey);
-      }
-    }
-
-    // ── Return partial result with queue info ──
-    const partial = buildDistribution(holdTimes, walletList.length, analyzedCount);
-    partial.computed = false;
-    partial.totalCount = walletList.length;
-    partial.queue = queueInfo;
-    res.json(partial);
+    res.json({ ...result, queue: queueInfo });
   } catch (err) {
     console.error('[Cultify] Diamond hands error:', err.message);
     res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });

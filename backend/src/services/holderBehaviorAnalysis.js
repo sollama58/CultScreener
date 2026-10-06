@@ -8,7 +8,7 @@
 
 const solanaService = require('./solana');
 const { cache, TTL } = require('./cache');
-const { DIAMOND_HANDS_BUCKETS } = require('../constants');
+const { DIAMOND_HANDS_BUCKETS, BURN_WALLETS } = require('../constants');
 const { HB_EXCLUDED_MINTS, computeHoldPairs } = require('./holderMetrics');
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -55,17 +55,33 @@ async function fetchSwapHistory(walletAddress, maxCount) {
 
 // Run the full holder behavior analysis.
 // Called by the BullMQ worker via the compute-holder-behavior job.
-// Fetches top 50 holders, analyzes each wallet's last 150 swaps, then caches result.
+// Takes the top 50 holders, analyzes each wallet's last 100 swaps, then caches result.
 async function runHolderBehaviorAnalysis(mint) {
   const pendingKey = `hb-pending:${mint}`;
   const resultKey  = `hb-analysis:${mint}`;
 
   try {
-    const sampleResult = await solanaService.getTokenHolderSample(mint, HB_MAX_HOLDERS);
-    if (!sampleResult || !sampleResult.holders || sampleResult.holders.length === 0) {
+    // Largest holders from the latest full snapshot (LP and burn wallets dropped);
+    // before the first snapshot exists, fall back to one DAS page.
+    let topWallets = null;
+    const snapList = await require('./holderPipeline')
+      .getSnapshotHolderList(mint, { maxAgeMs: 24 * 3_600_000, limit: HB_MAX_HOLDERS * 2 })
+      .catch(() => null);
+    if (snapList) {
+      const lp = new Set(snapList.snapshot.sample_meta?.lpWallets || []);
+      topWallets = snapList.rawAccounts
+        .filter(a => a.wallet && !lp.has(a.wallet) && !BURN_WALLETS.has(a.wallet))
+        .slice(0, HB_MAX_HOLDERS)
+        .map(a => ({ wallet: a.wallet }));
+    }
+    if (!topWallets || topWallets.length === 0) {
+      const sampleResult = await solanaService.getTokenHolderSample(mint, HB_MAX_HOLDERS);
+      topWallets = sampleResult?.holders || [];
+    }
+    if (topWallets.length === 0) {
       throw new Error('No holders found');
     }
-    let holderList = sampleResult.holders.map((h, i) => ({
+    let holderList = topWallets.map((h, i) => ({
       rank: i + 1,
       address: h.wallet,
       percentage: null,

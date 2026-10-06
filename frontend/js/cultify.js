@@ -990,7 +990,11 @@
       // Terminal: fully computed
       if (data.computed && data.distribution) {
         updateDiamondBars(data.distribution);
-        if (sampleEl) sampleEl.textContent = `${data.analyzed} of ${data.sampleSize} holders analyzed`;
+        if (sampleEl) {
+          sampleEl.textContent = data.holderCount
+            ? `Sample of ${data.sampleSize} across all ${data.holderCount.toLocaleString()} holders`
+            : `${data.analyzed} of ${data.sampleSize} holders analyzed`;
+        }
         finalizeDiamondBars();
         return;
       }

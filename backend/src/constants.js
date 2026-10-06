@@ -28,9 +28,18 @@ const LP_PROGRAMS = new Set([
   'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',  // PumpSwap AMM
 ]);
 
+// Pool authorities that hold LP vaults directly. These are PDAs with no account
+// data, so the owner-program check above can't see them.
+const LP_AUTHORITIES = new Set([
+  '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1',  // Raydium AMM v4 authority
+  'GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL',  // Raydium CPMM authority
+]);
+
 // ── Diamond hands distribution buckets ──────────────────────────────────────
 // Time thresholds used to categorise holders by how long they have held.
-// Percentages are computed as: (wallets with holdTime >= bucket.ms) / total wallets.
+// A wallet counts towards a bucket when holdTime >= bucket.ms, so the ">6h" label
+// reads as "held 6h or more". At millisecond resolution the boundary is immaterial;
+// it is inclusive on purpose and pinned by holderMetrics.test.js.
 // Shared between the API routes, the BullMQ worker, and the cultify routes so
 // all three always agree on bucket boundaries and keys.
 const DIAMOND_HANDS_BUCKETS = [
@@ -45,4 +54,4 @@ const DIAMOND_HANDS_BUCKETS = [
   { key: '1yr', label: '>1yr', ms: 365 * 86_400_000 },
 ];
 
-module.exports = { BURN_WALLETS, LP_PROGRAMS, DIAMOND_HANDS_BUCKETS };
+module.exports = { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, DIAMOND_HANDS_BUCKETS };

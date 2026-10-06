@@ -104,6 +104,9 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
     await Promise.all(pendingKeys.map(k => cache.delete(k).catch(() => {})));
     flushed += pendingKeys.length;
 
+    // Holder snapshots: give wallets whose hold-time backfill gave up another try
+    flushed += await require('../services/holderStore').resetFailedBackfills().catch(() => 0);
+
     console.log(`[Admin] Flushed ${flushed} failed wallet caches (scanned ${scanned} keys)`);
     res.json({ success: true, flushed, scanned });
   } catch (err) {
