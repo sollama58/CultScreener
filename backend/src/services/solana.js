@@ -852,39 +852,66 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
 }
 
 /**
- * Get how long a wallet has held a token. Uses the ATA address directly
- * (skips getTokenAccountsByOwner) when provided. Only 1 RPC call.
+ * Page through every token account of a mint (Helius DAS getTokenAccounts, 1000
+ * per page). Used by the holder snapshot job. Throws on any page error so a
+ * half-read holder list is never mistaken for a full one; hitting maxPages is
+ * the only way to get complete=false.
+ *
+ * @returns {Promise<{accounts: Array<{owner, address, amount}>, pages: number, complete: boolean}>}
  */
-async function getTokenHoldTime(walletAddress, tokenMint, ataAddress = null) {
-  try {
-    // If we don't have the ATA, look it up (1 extra RPC call)
-    let ata = ataAddress;
-    if (!ata) {
-      const accounts = await rpcCall('getTokenAccountsByOwner', [
-        walletAddress,
-        { mint: tokenMint },
-        { encoding: 'jsonParsed' }
-      ]);
-      if (!accounts?.value || accounts.value.length === 0) return null;
-      ata = accounts.value[0].pubkey;
+async function getAllTokenAccounts(mintAddress, { maxPages = 100 } = {}) {
+  if (!HELIUS_DAS_URL) throw new Error('Helius DAS not configured');
+  const accounts = [];
+  let page = 1;
+  let complete = false;
+  while (page <= maxPages) {
+    const response = await circuitBreakers.heliusDas.execute(() =>
+      withRpcRetry(() => rateLimitedRequest('helius', () =>
+        axios.post(HELIUS_DAS_URL, {
+          jsonrpc: '2.0',
+          id: `snapshot-p${page}`,
+          method: 'getTokenAccounts',
+          params: { mint: mintAddress, page, limit: 1000, options: { showZeroBalance: false } }
+        }, { timeout: 20000, headers: HELIUS_HEADERS, httpsAgent })
+      ), 'getAllTokenAccounts')
+    );
+    if (response.data.error) {
+      throw new Error(`DAS page ${page}: ${response.data.error.message || response.data.error.code}`);
     }
-
-    // Get oldest signature on this token account (1 RPC call).
-    // Cap at 1 page — most ATAs have < 100 txs. For the rare accounts with
-    // 1000+ txs, we get a lower-bound hold time from the oldest tx in the
-    // first page, which is accurate enough for distribution buckets.
-    const sigs = await rpcCall('getSignaturesForAddress', [ata, { limit: 1000 }]);
-    let oldestTimestamp = null;
-    if (sigs && sigs.length > 0) {
-      const oldest = sigs[sigs.length - 1];
-      if (oldest.blockTime) oldestTimestamp = oldest.blockTime * 1000;
-    }
-
-    if (!oldestTimestamp) return null;
-    return Date.now() - oldestTimestamp;
-  } catch {
-    return null;
+    const batch = response.data.result?.token_accounts || [];
+    for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
+    if (batch.length < 1000) { complete = true; break; }
+    page++;
   }
+  return { accounts, pages: Math.min(page, maxPages), complete };
+}
+
+/**
+ * One page of signatures for an address, newest first, optionally before a signature.
+ */
+async function getSignaturesPage(address, { limit = 100, before } = {}) {
+  const opts = { limit };
+  if (before) opts.before = before;
+  return rpcCall('getSignaturesForAddress', [address, opts]);
+}
+
+/**
+ * Parse up to 100 transactions by signature with the Helius Enhanced API.
+ * Returns them in the order given; signatures Helius couldn't parse are skipped.
+ */
+async function parseTransactions(signatures) {
+  if (!HELIUS_API_KEY) throw new Error('Helius not configured');
+  if (!signatures || signatures.length === 0) return [];
+  const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
+    axios.post(
+      'https://api.helius.xyz/v0/transactions',
+      { transactions: signatures.slice(0, 100) },
+      { params: { 'api-key': HELIUS_API_KEY }, timeout: 30000, httpsAgent }
+    )
+  ), 'parseTransactions');
+  if (!Array.isArray(response.data)) throw new Error('Unexpected parseTransactions response');
+  const bySig = new Map(response.data.filter(Boolean).map(t => [t.signature, t]));
+  return signatures.map(sig => bySig.get(sig)).filter(Boolean);
 }
 
 /**
@@ -969,28 +996,6 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
 }
 
 /**
- * Get hold metrics for a wallet: average hold time across all tokens AND
- * how long the wallet has held a specific token. Uses a single Helius API call
- * (unfiltered) and extracts both metrics from the same transaction data.
- *
- * @param {string} walletAddress - Solana wallet address
- * @param {string} tokenMint - The specific token mint to measure hold duration for
- * @returns {Promise<{avgHoldTime: number|null, tokenHoldTime: number|null}>}
- */
-/**
- * Get hold metrics for a wallet. Uses the ATA-based approach exclusively:
- * 1 RPC call if ATA address is provided, 2 if not.
- * No Helius enhanced API calls — only standard Solana RPC.
- *
- * avgHoldTime is no longer computed (required expensive Helius enhanced API).
- * tokenHoldTime uses getSignaturesForAddress on the ATA.
- */
-async function getWalletHoldMetrics(walletAddress, tokenMint, ataAddress = null) {
-  const tokenHoldTime = await getTokenHoldTime(walletAddress, tokenMint, ataAddress).catch(() => null);
-  return { avgHoldTime: tokenHoldTime, tokenHoldTime, walletAge: null };
-}
-
-/**
  * Get total locked token amount from Streamflow vesting contracts.
  * Queries on-chain Streamflow program accounts filtered by token mint,
  * then sums (deposited - withdrawn) for all active (non-closed) streams.
@@ -1072,14 +1077,15 @@ module.exports = {
   getTokenLargestAccounts,
   getTokenLargestAccountsDAS,
   getTokenHolderSample,
+  getAllTokenAccounts,
+  getSignaturesPage,
+  parseTransactions,
   getTokenMetadata,
   fetchOffchainLinks,
   getTokenMetadataBatch,
   getStreamflowLockedAmount,
   getTokenAuthorities,
   getTransactionsForAddress,
-  getWalletHoldMetrics,
-  getTokenHoldTime,
   isHeliusConfigured,
   checkHealth
 };

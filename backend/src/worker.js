@@ -25,7 +25,7 @@ const db = require('./services/database');
 const geckoService = require('./services/geckoTerminal');
 const solanaService = require('./services/solana');
 const { cache, TTL, keys } = require('./services/cache');
-const { BURN_WALLETS, LP_PROGRAMS, DIAMOND_HANDS_BUCKETS } = require('./constants');
+const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('./constants');
 
 // Allowed DEXes for similar-tokens anti-spoofing filter
 const SIMILAR_TOKEN_DEX_PREFIXES = ['raydium', 'pump', 'bonk'];
@@ -428,7 +428,7 @@ const jobProcessors = {
         const walletAccounts = await solanaService.getMultipleAccounts(wallets);
         if (walletAccounts?.value) {
           walletAccounts.value.forEach((acct, wi) => {
-            if (acct && LP_PROGRAMS.has(acct.owner)) {
+            if ((acct && LP_PROGRAMS.has(acct.owner)) || LP_AUTHORITIES.has(wallets[wi])) {
               const indices = walletToIndices.get(wallets[wi]);
               if (indices) for (const idx of indices) lpIndices.add(idx);
             }
@@ -510,27 +510,6 @@ const jobProcessors = {
       await cache.set(`holder-analytics:${mint}`, result, 3 * TTL.HOUR);
       await cache.delete(`holder-classify-pending:${mint}`);
 
-      // Pre-fetch 250-holder sample for hold-times and diamond-hands endpoints.
-      // This avoids a blocking getTokenHolderSample call in the API process.
-      try {
-        const sampleCacheKey = `diamond-hands-wallets:${mint}`;
-        const existingSample = await cache.get(sampleCacheKey);
-        if (!existingSample && solanaService.isHeliusConfigured()) {
-          const sampleResult = await solanaService.getTokenHolderSample(mint, 250, new Set([...BURN_WALLETS, ...LP_PROGRAMS]));
-          if (sampleResult && sampleResult.holders && sampleResult.holders.length > 0) {
-            await cache.set(sampleCacheKey, sampleResult.holders, TTL.DAY);
-            // Cache exact holder count when sample is the complete set (< 1000 = all holders fit one page).
-            // When totalHolders === 1000 it is only a lower bound — don't cache it as the true count.
-            if (sampleResult.totalHolders && sampleResult.totalHolders < 1000) {
-              await cache.set(`holder-total:${mint}`, sampleResult.totalHolders, TTL.HOLDER_COUNT).catch(() => {});
-            }
-            console.log(`[Worker] Pre-fetched ${sampleResult.holders.length} holder sample for ${mint}`);
-          }
-        }
-      } catch (sampleErr) {
-        console.warn(`[Worker] Holder sample pre-fetch failed for ${mint}:`, sampleErr.message);
-      }
-
       console.log(`[Worker] Holder analytics done for ${mint}: ${holders.length} holders, ${lpIndices.size} LP, ${burntIndices.size} burnt`);
       return { holders: holders.length, lp: lpIndices.size, burnt: burntIndices.size };
     } catch (err) {
@@ -540,156 +519,47 @@ const jobProcessors = {
   },
 
   /**
-   * Unified holder metrics computation — used by both hold-times and diamond-hands.
-   * Previously these were two separate jobs that duplicated API calls when both
-   * endpoints were hit simultaneously. Now a single job computes per-wallet metrics
-   * and clears the shared pending flag.
+   * Full holder snapshot (services/holderPipeline.js): every token account, stored
+   * in Postgres with the conviction sample, then the hold-time backfill is queued.
+   * Also refreshes the holder list from the snapshot's top holders.
+   */
+  'snapshot-holders': async (job) => {
+    const { mint } = job.data;
+    if (!mint) return { error: 'No mint provided' };
+    const holderPipeline = require('./services/holderPipeline');
+    const result = await holderPipeline.takeSnapshot(mint);
+
+    if (result.status === 'ok' && !(await cache.get(`holder-classify-pending:${mint}`))) {
+      const list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
+      if (list) {
+        await cache.set(`holder-classify-pending:${mint}`, Date.now(), 120000);
+        await require('./services/jobQueue').addAnalyticsJob('compute-holder-analytics', {
+          mint, rawAccounts: list.rawAccounts, totalSupply: list.totalSupply, usedDAS: true, supplyDecimals: list.decimals,
+        }).catch(() => cache.delete(`holder-classify-pending:${mint}`));
+      }
+    }
+    return result;
+  },
+
+  /**
+   * Hold-time backfill for sampled and listed wallets whose streak start is unknown.
+   * Bounded per run; re-queues itself until done, then stores diamond hands.
+   */
+  'backfill-holder-acquisitions': async (job) => {
+    const { mint } = job.data;
+    if (!mint) return { error: 'No mint provided' };
+    return require('./services/holderPipeline').runBackfill(mint);
+  },
+
+  /**
+   * Retired: per-wallet signature scans, replaced by snapshot-holders. Jobs queued by
+   * an older API process during a deploy are turned into a snapshot request.
    */
   'compute-holder-metrics': async (job) => {
-    const { mint, wallets, ataMap: jobAtaMap } = job.data;
-    if (!wallets || wallets.length === 0) return { computed: 0 };
-
-    console.log(`[Worker] Computing holder metrics for ${wallets.length} wallets (token ${mint})`);
-
-    // Build ATA lookup from job data or fall back to diamond-hands-wallets cache
-    let ataMap = jobAtaMap || {};
-    if (!jobAtaMap || Object.keys(ataMap).length === 0) {
-      try {
-        const sample = await cache.get(`diamond-hands-wallets:${mint}`);
-        if (Array.isArray(sample)) {
-          for (const e of sample) {
-            if (typeof e === 'object' && e.wallet && e.ata) ataMap[e.wallet] = e.ata;
-          }
-        }
-      } catch (_) {}
-    }
-
-    const BATCH_SIZE = 3; // Reduced from 5 to limit concurrent Helius load
-    const BATCH_DELAY_MS = 500; // Breathing room between batches
-    let computed = 0;
-    let skipped = 0;
-
-    // Hoisted so the persist-to-DB block after try/finally can access them
-    let totalWallets = 0;
-    const liveHoldTimes = {};
-    let liveAnalyzedCount = 0;
-
-    try {
-    // Pre-load full wallet sample and any already-cached hold times
-    const allSample = await cache.get(`diamond-hands-wallets:${mint}`) || [];
-    const allWallets = allSample.map(e => typeof e === 'object' ? e.wallet : e);
-    totalWallets = allWallets.length;
-    if (totalWallets > 0) {
-      const existingVals = await Promise.all(allWallets.map(w => cache.get(`wallet-token-hold:${w}:${mint}`)));
-      allWallets.forEach((w, i) => {
-        const val = existingVals[i];
-        if (val != null) {
-          liveAnalyzedCount++;
-          if (val > 0) liveHoldTimes[w] = val;
-        }
-      });
-    }
-
-    const PARTIAL_WRITE_EVERY = 3; // Write partial results every N batches
-    // DIAMOND_HANDS_BUCKETS imported from ./constants at module level
-
-    let batchIndex = 0;
-    for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
-      const batch = wallets.slice(i, i + BATCH_SIZE);
-
-      // Add inter-batch delay to prevent queue flooding
-      if (i > 0) {
-        await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
-      }
-
-      const batchResults = await Promise.all(
-        batch.map(async (wallet) => {
-          try {
-            // Pass pre-resolved ATA to skip the extra getTokenAccountsByOwner call
-            const ata = ataMap[wallet] || null;
-            const holdTime = await solanaService.getTokenHoldTime(wallet, mint, ata);
-            return [wallet, holdTime];
-          } catch (err) {
-            console.warn(`[Worker] Hold time failed for ${wallet}:`, err.message);
-            return [wallet, null];
-          }
-        })
-      );
-
-      for (const [wallet, holdTime] of batchResults) {
-        const val = holdTime ?? -1;
-        await cache.set(`wallet-hold-time:${wallet}`, val, 2 * TTL.DAY);
-        await cache.set(`wallet-token-hold:${wallet}:${mint}`, val, 2 * TTL.DAY);
-        liveAnalyzedCount++;
-        if (val > 0) { liveHoldTimes[wallet] = val; computed++; } else { skipped++; }
-      }
-
-      batchIndex++;
-
-      // Write partial distribution after every N batches so the API returns live progress
-      if (batchIndex % PARTIAL_WRITE_EVERY === 0 && totalWallets > 0) {
-        try {
-          const partialValues = Object.values(liveHoldTimes);
-          const partialDistribution = partialValues.length > 0 ? (() => {
-            const dist = {};
-            for (const b of DIAMOND_HANDS_BUCKETS) {
-              dist[b.key] = Math.round((partialValues.filter(ms => ms >= b.ms).length / partialValues.length) * 1000) / 10;
-            }
-            return dist;
-          })() : null;
-          // Write partial cache only if no complete result exists yet (prevents overwriting long-TTL final result)
-          const existingResult = await cache.get(`diamond-hands:${mint}`);
-          if (!existingResult || !existingResult.computed) {
-            const partialResult = { distribution: partialDistribution, sampleSize: totalWallets, analyzed: liveAnalyzedCount, computed: false };
-            await cache.set(`diamond-hands:${mint}`, partialResult, 120000); // 120s — refreshed on next partial write or final
-          }
-        } catch (_) {}
-      }
-    }
-
-    } finally {
-    // Always clear the pending flag — even if the job threw mid-flight — so the next
-    // poll can re-dispatch rather than waiting for the 6-minute TTL to expire.
+    const { mint } = job.data;
     await cache.delete(`holder-metrics-pending:${mint}`).catch(() => {});
-    }
-
-    // Rebuild diamond hands distribution and persist to DB
-    try {
-      if (totalWallets > 0) {
-        // liveHoldTimes is already fully populated: seeded with pre-existing cached values
-        // at job start (lines above), then updated with each batch result. No cache round-trip needed.
-        const holdTimes = liveHoldTimes;
-        const analyzedCount = liveAnalyzedCount;
-        // Compute distribution even with partial data (some wallets may not have resolved yet).
-        // Full completion (analyzedCount >= totalWallets) persists to DB;
-        // partial results are cached with a shorter TTL so they can be refined.
-        const values = Object.values(holdTimes);
-        const isComplete = totalWallets > 0 && analyzedCount >= totalWallets;
-        const distribution = values.length > 0 ? (() => {
-          const dist = {};
-          for (const b of DIAMOND_HANDS_BUCKETS) {
-            dist[b.key] = Math.round((values.filter(ms => ms >= b.ms).length / values.length) * 1000) / 10;
-          }
-          return dist;
-        })() : null;
-        // Always write final cache — even when no positive hold times — so next API poll
-        // sees all wallets as analyzed and doesn't re-dispatch a new job.
-        const finalResult = { distribution, sampleSize: totalWallets, analyzed: Math.min(analyzedCount, totalWallets), computed: isComplete };
-        const cacheTTL = isComplete ? TTL.DAY : 3 * TTL.HOUR;
-        await cache.set(`diamond-hands:${mint}`, finalResult, cacheTTL);
-        if (isComplete) {
-          await db.upsertConviction(mint, distribution, totalWallets, Math.min(analyzedCount, totalWallets));
-          console.log(`[Worker] Diamond hands persisted for ${mint}: ${distribution ? distribution['1m'] : 0}% >1M`);
-        } else {
-          console.warn(`[Worker] Diamond hands partial for ${mint}: ${analyzedCount}/${totalWallets} analyzed, cached with short TTL`);
-        }
-      }
-    } catch (persistErr) {
-      console.warn(`[Worker] Diamond hands persist failed for ${mint}:`, persistErr.message);
-    }
-
-    console.log(`[Worker] Holder metrics for ${mint}: ${computed} computed, ${skipped} no data`);
-    return { computed, skipped };
+    if (mint) await require('./services/holderPipeline').ensureSnapshot(mint);
+    return { redirected: true };
   },
 
   // ==========================================
@@ -732,9 +602,14 @@ const jobProcessors = {
 
       try {
         let count = null;
-        // Always bypass cache for the daily job — skipCache ensures we re-paginate
-        // rather than returning a stale or capped value. maxPages:500 covers up to 500k holders.
-        if (solanaService.isHeliusConfigured()) {
+        // A complete holder snapshot from the last day is already an exact count
+        const snap = await require('./services/holderStore').getLatestSnapshot(mint).catch(() => null);
+        if (snap && snap.complete && Date.now() - new Date(snap.taken_at).getTime() < 26 * 3600000) {
+          count = snap.account_count;
+        }
+        // Otherwise bypass cache — skipCache ensures we re-paginate rather than
+        // returning a stale or capped value. maxPages:500 covers up to 500k holders.
+        if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
           count = await solanaService.getTokenHolderCount(mint, { skipCache: true, maxPages: 500 }).catch(() => null);
         }
         // Fall back to cached analytics when Helius is unavailable or not configured
@@ -768,7 +643,13 @@ const jobProcessors = {
       }
     }
 
-    console.log(`[Worker] record-holder-counts: ${recorded} recorded, ${skipped} skipped`);
+    // Daily housekeeping: drop holder snapshots/positions of mints no longer snapshotted
+    const pruned = await require('./services/holderStore').pruneAbandonedMints().catch(err => {
+      console.warn('[Worker] Holder snapshot prune failed:', err.message);
+      return 0;
+    });
+
+    console.log(`[Worker] record-holder-counts: ${recorded} recorded, ${skipped} skipped, ${pruned} stale positions pruned`);
     return { recorded, skipped };
   },
 
@@ -870,32 +751,20 @@ const jobProcessors = {
     if (!topTokens || topTokens.length === 0) return { triggered: 0 };
 
     const allMints = topTokens.map(t => t.token_mint);
-    const dbRows   = await db.getTokensBatch(allMints).catch(() => []);
-    const dbRowMap = {};
-    for (const row of dbRows) dbRowMap[row.mint_address] = row;
+    const snapshotTimes = await require('./services/holderStore').getLatestSnapshotTimes(allMints).catch(() => ({}));
+    const holderPipeline = require('./services/holderPipeline');
 
     let triggered = 0;
-    for (const token of topTokens) {
+    for (const mint of allMints) {
       if (triggered >= MAX_PER_CYCLE) break;
-      const mint = token.token_mint;
-
-      if (await cache.get(`diamond-hands:${mint}`)) continue;
-      if (await cache.get(`holder-metrics-pending:${mint}`)) continue;
-
-      const dbRow = dbRowMap[mint];
-      if (dbRow && dbRow.conviction_computed_at) {
-        const ts = new Date(dbRow.conviction_computed_at).getTime();
-        if (!isNaN(ts) && Date.now() - ts < STALE_MS) continue;
-      }
-
-      // Trigger via compute-holder-analytics which will chain into compute-holder-metrics
-      await require('./services/jobQueue').addAnalyticsJob(
-        'compute-holder-analytics', { mint }, { priority: 10 }
-      ).catch(() => {});
-      triggered++;
+      // /api/tokens/:mint/* only serves curated tokens; don't snapshot anything else
+      if (!(await db.isTokenAllowed(mint).catch(() => false))) continue;
+      const ts = snapshotTimes[mint];
+      if (ts && Date.now() - ts < STALE_MS) continue;
+      if (await holderPipeline.ensureSnapshot(mint, { priority: 10 })) triggered++;
     }
 
-    if (triggered > 0) console.log(`[Worker] warm-conviction: triggered ${triggered} tokens`);
+    if (triggered > 0) console.log(`[Worker] warm-conviction: triggered ${triggered} snapshots`);
     return { triggered };
   },
 
@@ -904,36 +773,22 @@ const jobProcessors = {
    * Runs every hour via BullMQ repeating job — replaces setInterval in app.js.
    */
   'warm-curated-conviction': async (job) => {
-    const STALE_MS = 60 * 60 * 1000; // 1 hour
+    // Hourly: consecutive snapshots this close let new holders' hold times come
+    // straight from the snapshots instead of a transfer-history backfill.
+    const STALE_MS = 55 * 60 * 1000;
 
     const curatedTokens = await db.getCuratedTokens().catch(() => []);
     if (!curatedTokens || curatedTokens.length === 0) return { triggered: 0 };
 
     const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
-    const dbRows   = await db.getTokensBatch(allMints).catch(() => []);
-    const dbRowMap = {};
-    for (const row of dbRows) dbRowMap[row.mint_address] = row;
+    const snapshotTimes = await require('./services/holderStore').getLatestSnapshotTimes(allMints).catch(() => ({}));
+    const holderPipeline = require('./services/holderPipeline');
 
     let triggered = 0;
-    for (const token of curatedTokens) {
-      const mint = token.mintAddress || token.mint_address;
-      if (!mint) continue;
-
-      if (await cache.get(`holder-metrics-pending:${mint}`)) continue;
-
-      const dbRow = dbRowMap[mint];
-      if (dbRow && dbRow.conviction_computed_at) {
-        const ts = new Date(dbRow.conviction_computed_at).getTime();
-        if (!isNaN(ts) && Date.now() - ts < STALE_MS) continue;
-      }
-
-      await require('./services/jobQueue').addAnalyticsJob(
-        'compute-holder-analytics', { mint }, { priority: 10 }
-      ).catch(() => {});
-      triggered++;
-
-      // Stagger every 3 triggers to avoid overloading Helius
-      if (triggered % 3 === 0) await new Promise(r => setTimeout(r, 10000));
+    for (const mint of allMints) {
+      const ts = snapshotTimes[mint];
+      if (ts && Date.now() - ts < STALE_MS) continue;
+      if (await holderPipeline.ensureSnapshot(mint, { priority: 10 })) triggered++;
     }
 
     if (triggered > 0) console.log(`[Worker] warm-curated-conviction: triggered ${triggered}/${curatedTokens.length} curated tokens`);

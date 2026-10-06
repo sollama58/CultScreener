@@ -1833,7 +1833,7 @@ const tokenDetail = {
             }
           } else {
             const sampleEl = document.getElementById('diamond-hands-sample');
-            if (sampleEl && !data.computed) sampleEl.textContent = `${analyzed} Analyzed of Top ${total} Holders (partial)`;
+            if (sampleEl && !data.computed) sampleEl.textContent = `${analyzed} of ${total} sampled holders analyzed (partial)`;
           }
         }
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Done: sample=${data.sampleSize}, analyzed=${data.analyzed}`);
@@ -1866,7 +1866,12 @@ const tokenDetail = {
     const sampleEl = document.getElementById('diamond-hands-sample');
     if (sampleEl) {
       if (data.computed) {
-        sampleEl.textContent = `${data.analyzed} Analyzed of Top ${data.sampleSize} Holders`;
+        sampleEl.textContent = data.holderCount
+          ? `Sample of ${data.sampleSize} across all ${data.holderCount.toLocaleString()} holders`
+          : `${data.analyzed} Analyzed of ${data.sampleSize} Holders`;
+        sampleEl.title = data.sampleMethod
+          ? 'Top 50 holders plus random samples of the rest, weighted to the whole holder base. Hold time counts from when the wallet last went from zero to holding.'
+          : '';
       } else {
         sampleEl.textContent = `${data.analyzed}/${data.totalCount || data.sampleSize} analyzed...`;
       }

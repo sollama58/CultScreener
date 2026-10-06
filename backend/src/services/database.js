@@ -462,6 +462,66 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
         ON holder_history(mint_address, recorded_date DESC);
 
+      -- Full holder snapshots, written by the worker's snapshot-holders job.
+      -- One header row per run; sample/sample_meta hold the conviction sample drawn
+      -- from it (services/holderSnapshot.js selectSample).
+      CREATE TABLE IF NOT EXISTS holder_snapshots (
+        id BIGSERIAL PRIMARY KEY,
+        mint_address VARCHAR(44) NOT NULL,
+        taken_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        complete BOOLEAN NOT NULL,
+        pages INTEGER NOT NULL,
+        account_count INTEGER NOT NULL,
+        holder_count INTEGER NOT NULL,
+        decimals SMALLINT NOT NULL DEFAULT 0,
+        supply NUMERIC,
+        sample JSONB,
+        sample_meta JSONB
+      );
+      CREATE INDEX IF NOT EXISTS idx_holder_snapshots_mint_taken
+        ON holder_snapshots(mint_address, taken_at DESC);
+
+      -- Ranked holders of a snapshot. Only the top ranks are kept (HOLDER_SNAPSHOT_TOP_N)
+      -- and only for the latest few snapshots per mint; holder_positions carries the rest.
+      CREATE TABLE IF NOT EXISTS holder_snapshot_entries (
+        snapshot_id BIGINT NOT NULL REFERENCES holder_snapshots(id) ON DELETE CASCADE,
+        rank INTEGER NOT NULL,
+        wallet VARCHAR(44) NOT NULL,
+        token_account VARCHAR(44),
+        amount NUMERIC NOT NULL,
+        PRIMARY KEY (snapshot_id, rank)
+      );
+
+      -- Every current holder of a tracked mint and when its holding streak began.
+      -- acquired_source: snapshot (first seen between two close snapshots), backfill
+      -- (from transfer history), backfill_capped (history too long; acquired_at is a
+      -- lower bound on hold time), pending (not known yet), failed (backfill gave up).
+      -- Rows for wallets that leave are deleted after a complete snapshot, so a wallet
+      -- that comes back starts a new streak.
+      CREATE TABLE IF NOT EXISTS holder_positions (
+        mint_address VARCHAR(44) NOT NULL,
+        wallet VARCHAR(44) NOT NULL,
+        token_account VARCHAR(44),
+        amount NUMERIC NOT NULL,
+        rank INTEGER,
+        first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        acquired_at TIMESTAMP WITH TIME ZONE,
+        acquired_source VARCHAR(16) NOT NULL DEFAULT 'pending',
+        backfill_cursor VARCHAR(100),
+        backfill_balance NUMERIC,
+        backfill_oldest_at TIMESTAMP WITH TIME ZONE,
+        backfill_pages INTEGER NOT NULL DEFAULT 0,
+        backfill_attempts INTEGER NOT NULL DEFAULT 0,
+        backfill_updated_at TIMESTAMP WITH TIME ZONE,
+        PRIMARY KEY (mint_address, wallet)
+      );
+      CREATE INDEX IF NOT EXISTS idx_holder_positions_mint_seen
+        ON holder_positions(mint_address, last_seen_at);
+
+      -- How the stored conviction numbers were sampled (method, strata, snapshot id)
+      ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_meta JSONB;
+
       -- Generic key-value store for admin-configurable settings
       CREATE TABLE IF NOT EXISTS app_settings (
         key VARCHAR(100) PRIMARY KEY,
@@ -631,7 +691,7 @@ async function getTokensBatch(mintAddresses) {
 }
 
 // Save conviction (diamond hands) data for a token
-async function upsertConviction(mintAddress, distribution, sampleSize, analyzed) {
+async function upsertConviction(mintAddress, distribution, sampleSize, analyzed, meta = null) {
   if (!pool || !mintAddress || !distribution) return null;
   const conviction1m = distribution['1m'] ?? null;
   // Only update existing rows — never insert new ones.
@@ -642,9 +702,11 @@ async function upsertConviction(mintAddress, distribution, sampleSize, analyzed)
        conviction_1m = $2,
        conviction_data = $3,
        conviction_sample_size = $4,
+       conviction_meta = COALESCE($5, conviction_meta),
        conviction_computed_at = NOW()
      WHERE mint_address = $1`,
-    [mintAddress, conviction1m, JSON.stringify(distribution), analyzed != null ? analyzed : sampleSize]
+    [mintAddress, conviction1m, JSON.stringify(distribution), analyzed != null ? analyzed : sampleSize,
+      meta ? JSON.stringify(meta) : null]
   );
 }
 
@@ -3299,9 +3361,13 @@ async function removeCuratedToken(mintAddress) {
   // Clear conviction data so the token no longer appears on the leaderboard
   await pool.query(`
     UPDATE tokens SET conviction_1m = NULL, conviction_data = NULL,
-      conviction_sample_size = NULL, conviction_computed_at = NULL
+      conviction_sample_size = NULL, conviction_computed_at = NULL, conviction_meta = NULL
     WHERE mint_address = $1
   `, [mintAddress]).catch(() => {});
+
+  // Stop carrying its holder snapshots; snapshot entries go with them (ON DELETE CASCADE)
+  await pool.query('DELETE FROM holder_snapshots WHERE mint_address = $1', [mintAddress]).catch(() => {});
+  await pool.query('DELETE FROM holder_positions WHERE mint_address = $1', [mintAddress]).catch(() => {});
 
   return result.rows[0];
 }

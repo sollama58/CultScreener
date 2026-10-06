@@ -212,15 +212,22 @@
           <li><strong>LOW (&lt;25%)</strong> &mdash; Mostly short-term traders</li>
         </ul>
 
+        <h3>Holder Snapshots</h3>
+        <p>For every curated token, HolDEX reads the <strong>complete holder list</strong> about once an hour (Helius DAS <code>getTokenAccounts</code>, every page) and stores it as a snapshot. Token accounts are combined per wallet. LP pools and burn wallets are excluded, and so are dust balances below 0.00001% of the held supply.</p>
+
         <h3>How Hold Time Is Measured</h3>
-        <p>For each holder wallet, HolDEX queries the wallet's <strong>Associated Token Account (ATA)</strong> directly on the Solana blockchain using <code>getSignaturesForAddress</code>. The oldest transaction on that token account tells us when the wallet first received the token. The hold time is <code>now - firstReceivedAt</code>.</p>
-        <p>This approach is reliable regardless of how active the wallet is &mdash; even if a wallet has done thousands of other transactions, the token-specific account only contains transactions for that token.</p>
+        <p>A wallet's hold time starts when its holding streak began: the moment its balance went from zero to positive. Selling part of a position doesn't reset it. Selling out completely and buying back later starts a new streak.</p>
+        <ul>
+          <li><strong>New holders</strong> are dated by the snapshots themselves: a wallet that shows up between two hourly snapshots bought within that hour.</li>
+          <li><strong>Holders who were already there</strong> when tracking began are dated once from their token account's transfer history, by rewinding the balance to the transfer that took it from zero. For extremely active accounts the history is capped and the result is a lower bound.</li>
+        </ul>
+        <p>The hold time is <code>now - streakStart</code>.</p>
 
         <h3>Sampling</h3>
-        <p>HolDEX samples up to <strong>250 holders</strong> per token. Holders are sourced from the Helius DAS API (<code>getTokenAccounts</code>), sorted by balance, with the bottom 10% (dust wallets) excluded. LP pools and burn wallets are also filtered out.</p>
+        <p>Diamond hands are measured on a sample of up to <strong>250 holders</strong> drawn from the full snapshot in three groups: the <strong>50 largest holders</strong>, all included; a random sample of the rest of the <strong>top 10%</strong>; and a random sample of <strong>everyone else</strong>. Each group is weighted by how many holders it stands for, so the percentages describe the whole holder base rather than just the whales. The random picks are stable: a wallet stays in the sample for as long as it holds.</p>
 
         <h3>Diamond Hands Distribution</h3>
-        <p>The Diamond Hands section on each token page shows what percentage of the sample has held for various time periods: &gt;24h, &gt;3d, &gt;1w, &gt;1M, &gt;3M, &gt;6M, &gt;9M. This gives a fuller picture of holder commitment across different timeframes.</p>
+        <p>The Diamond Hands section on each token page shows what percentage of holders have held for at least 6h, 24h, 3d, 1w, 1M, 3M, 6M, 9M and 1yr. The share of supply held by those wallets is computed too.</p>
       </div>
 
       <!-- Token Pages -->
@@ -231,7 +238,7 @@
           <li><strong>Price &amp; Market Data</strong> &mdash; Current price, 24h change, market cap, volume, liquidity. Sourced from GeckoTerminal.</li>
           <li><strong>Token Statistics</strong> &mdash; Market cap, volume, liquidity, holder count, supply, token age, and page views.</li>
           <li><strong>Conviction Metrics</strong> &mdash; Holder concentration (top 5/10/20%), token age, fresh wallet detection, locked/burnt supply, and the Diamond Hands distribution.</li>
-          <li><strong>Top Holders Table</strong> &mdash; The largest 20 holders with balances, USD values, supply percentages, and individual hold times.</li>
+          <li><strong>Top Holders Table</strong> &mdash; The largest 100 holders with balances, USD values, supply percentages, and individual hold times.</li>
           <li><strong>Liquidity Pools</strong> &mdash; Active DEX pools with volume and liquidity data.</li>
         </ul>
       </div>
@@ -249,7 +256,7 @@
         <table class="about-table">
           <thead><tr><th scope="col">Data</th><th scope="col">Source</th><th scope="col">Notes</th></tr></thead>
           <tbody>
-            <tr><td>Holder list &amp; hold times</td><td>Solana RPC via Helius</td><td>DAS API for token accounts, standard RPC for signature history</td></tr>
+            <tr><td>Holder list &amp; hold times</td><td>Solana RPC via Helius</td><td>DAS API for full holder snapshots, Enhanced Transactions for one-time hold-time backfill</td></tr>
             <tr><td>Price, volume, liquidity</td><td>GeckoTerminal</td><td>Free tier, rate-limited with circuit breakers</td></tr>
             <tr><td>Token metadata</td><td>Helius DAS + on-chain</td><td>Name, symbol, logo, social links from on-chain &amp; off-chain JSON</td></tr>
             <tr><td>Holder count</td><td>Jupiter + Helius</td><td>Jupiter search API (fast) with Helius DAS fallback</td></tr>
@@ -268,8 +275,9 @@
         <table class="about-table">
           <thead><tr><th scope="col">Data</th><th scope="col">Cache Duration</th><th scope="col">Notes</th></tr></thead>
           <tbody>
-            <tr><td>Per-wallet hold time</td><td><code>48 hours</code></td><td>Cached per wallet per token. A wallet holding for 30d won't change meaningfully in 48h.</td></tr>
-            <tr><td>Diamond Hands distribution</td><td><code>3 hours</code></td><td>Full distribution recomputed when cache expires</td></tr>
+            <tr><td>Holder snapshot</td><td><code>1 hour</code></td><td>Full holder list for curated tokens, stored in the database</td></tr>
+            <tr><td>Per-wallet hold time</td><td><code>permanent</code></td><td>A streak start is found once and kept until the wallet sells out</td></tr>
+            <tr><td>Diamond Hands distribution</td><td><code>15 min</code></td><td>Recomputed from the latest snapshot</td></tr>
             <tr><td>Token price/market data</td><td><code>1-10 min</code></td><td>Price data: 1 min. Token info: 10 min.</td></tr>
             <tr><td>Conviction leaderboard</td><td><code>1 min</code></td><td>Leaderboard query results cached briefly</td></tr>
             <tr><td>Holder analytics (concentration)</td><td><code>1 hour</code></td><td>Top holder list and concentration metrics</td></tr>
