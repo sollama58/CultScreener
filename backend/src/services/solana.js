@@ -204,7 +204,7 @@ async function withRpcRetry(requestFn, context = 'rpc') {
 }
 
 // Make RPC call with circuit breaker, failover, retry, and 429 backoff
-async function rpcCall(method, params = [], retryCount = 0) {
+async function rpcCall(method, params = [], retryCount = 0, { timeout = 15000 } = {}) {
   const MAX_RETRIES = 2;
   const chain = rpcChains.helius;
 
@@ -225,7 +225,7 @@ async function rpcCall(method, params = [], retryCount = 0) {
           method,
           params
         }, {
-          timeout: 15000, // 15 second timeout (reduced from 30s for faster failover)
+          timeout, // 15s default (reduced from 30s for faster failover)
           httpsAgent
         });
 
@@ -273,7 +273,7 @@ async function rpcCall(method, params = [], retryCount = 0) {
     if ((isConnectionError || isRateLimited) && retryCount < MAX_RETRIES) {
       if (failoverToNextRpc(chain)) {
         console.log(`[Solana] Retrying ${method} with failover endpoint (attempt ${retryCount + 1})`);
-        return rpcCall(method, params, retryCount + 1);
+        return rpcCall(method, params, retryCount + 1, { timeout });
       }
     }
 
@@ -1033,9 +1033,9 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
   const opts = {
     transactionDetails: 'full',
     sortOrder,
-    // Billing is per 100 returned, so small pages cost nothing extra and let
-    // callers stop as soon as they have their answer. They also keep each
-    // response well inside rpcCall's 15s timeout.
+    // Billing is per 100 returned, so page size sets the number of round trips,
+    // not the cost. Callers start small (most answers are on the first page)
+    // and continue in large pages.
     limit: Math.max(1, Math.min(1000, limit)),
     encoding: 'json',
     maxSupportedTransactionVersion: 0,
@@ -1043,7 +1043,8 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
   };
   if (paginationToken) opts.paginationToken = paginationToken;
   try {
-    const result = await rpcCall('getTransactionsForAddress', [address, opts]);
+    // A large page of full transactions is a big response; give it longer
+    const result = await rpcCall('getTransactionsForAddress', [address, opts], 0, { timeout: opts.limit > 100 ? 40000 : 15000 });
     if (!result || !Array.isArray(result.data)) throw new Error('Unexpected getTransactionsForAddress response');
     const extra = Math.ceil(result.data.length / 100) - 1;
     if (extra > 0) countCredits('getTransactionsForAddress', extra * 10);

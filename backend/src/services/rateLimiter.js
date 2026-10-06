@@ -81,6 +81,10 @@ const RATE_LIMITS = {
     burstLimit: 20,      // Allow short bursts up to 20 in a 1s window
     burstWindow: 1000,
     useQueue: true,
+    // Requests in flight at once. Starts stay spaced by minInterval/burstLimit, so
+    // this doesn't raise the request rate; it stops one slow call (a page of full
+    // transactions, a big DAS page) from holding every other Helius call behind it.
+    maxConcurrent: Math.max(1, parseInt(process.env.HELIUS_MAX_CONCURRENT, 10) || 8),
     maxQueueSize: 300,
     queueTimeout: 30000
   },
@@ -102,6 +106,24 @@ const RATE_LIMITS = {
     burstWindow: 1000
   }
 };
+
+// Requests currently running per queued API, and the queue loops waiting for a free slot
+const inFlight = new Map();
+const slotWaiters = new Map();
+
+function waitForSlot(apiName, max) {
+  if ((inFlight.get(apiName) || 0) < max) return null;
+  return new Promise(resolve => {
+    if (!slotWaiters.has(apiName)) slotWaiters.set(apiName, []);
+    slotWaiters.get(apiName).push(resolve);
+  });
+}
+
+function releaseSlot(apiName) {
+  inFlight.set(apiName, (inFlight.get(apiName) || 1) - 1);
+  const next = slotWaiters.get(apiName)?.shift();
+  if (next) next();
+}
 
 // Burst tracking with periodic cleanup
 const burstCounters = new Map();
@@ -308,9 +330,14 @@ async function processQueue(apiName) {
   isProcessing.set(apiName, true);
 
   const queue = requestQueues.get(apiName);
+  const maxConcurrent = (RATE_LIMITS[apiName] || RATE_LIMITS.default).maxConcurrent || 1;
 
   try {
     while (queue && queue.length > 0) {
+      // Wait for a free slot before taking the next item, so an item that times
+      // out meanwhile is still skipped below
+      while ((inFlight.get(apiName) || 0) >= maxConcurrent) await waitForSlot(apiName, maxConcurrent);
+      if (queue.length === 0) break;
       const item = queue.shift();
 
       // Skip if the request was already rejected by the timeout handler
@@ -340,9 +367,12 @@ async function processQueue(apiName) {
         }
         recordRequest(apiName);
 
-        // Execute the actual request
-        const result = await item.requestFn();
-        item.resolve(result);
+        // Execute the actual request; the loop goes on to the next item while it runs
+        inFlight.set(apiName, (inFlight.get(apiName) || 0) + 1);
+        Promise.resolve()
+          .then(() => item.requestFn())
+          .then(item.resolve, item.reject)
+          .finally(() => releaseSlot(apiName));
       } catch (error) {
         item.reject(error);
       }
@@ -405,6 +435,7 @@ function getStatus(apiName) {
     currentBurstCount: burstCounters.get(burstKey) || 0,
     burstLimit: config.burstLimit,
     queueLength: (requestQueues.get(apiName) || []).length,
+    inFlight: inFlight.get(apiName) || 0,
     config
   };
 }

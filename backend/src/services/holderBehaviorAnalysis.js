@@ -16,15 +16,15 @@ const { HB_EXCLUDED_MINTS, computeHoldPairs, swapFromRawTransaction } = require(
 const HB_MAX_HOLDERS          = 50;
 const HB_MAX_SWAPS_PER_HOLDER = 200;           // newest swaps kept per wallet
 const HB_HISTORY_TXS          = 1000;          // raw transactions read per wallet at most
-const HB_HISTORY_PAGE         = 100;           // per call; Helius bills 10 credits per 100 returned
+const HB_HISTORY_PAGE         = 250;           // per call; Helius bills 10 credits per 100 returned, so ≤4 round trips
 const HB_ANALYSIS_CACHE_TTL   = 43200 * 1000; // 12 hours — holder behavior changes slowly
 const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analysis crashes
 
 // ── fetchSwapHistory ─────────────────────────────────────────────────────────
 
 // Fetch up to maxCount of a wallet's most recent swaps, newest first.
-// Preferred source: getTransactionsForAddress pages of 100 full transactions
-// (10 credits each), newest first, read into swaps by swapFromRawTransaction until
+// Preferred source: getTransactionsForAddress pages of 250 full transactions
+// (10 credits per 100), newest first, read into swaps by swapFromRawTransaction until
 // maxCount swaps or HB_HISTORY_TXS transactions. Fallback when Helius doesn't serve that method: the
 // legacy Enhanced Transactions API (100 credits per page of 100 swaps).
 // Results are cached per-wallet for 1 day — the same whale wallets appear as top
@@ -141,11 +141,11 @@ async function runHolderBehaviorAnalysis(mint) {
 
     const processHolder = async (holder) => {
       try {
-        // 25s timeout per holder — prevents one slow/hung Helius call from stalling the entire analysis
+        // 45s timeout per holder — prevents one slow/hung Helius call from stalling the entire analysis
         let timeoutId;
         const txns = await Promise.race([
           fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER),
-          new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('holder timeout')), 25000); })
+          new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('holder timeout')), 45000); })
         ]);
         clearTimeout(timeoutId);
         if (!txns || txns.length === 0) {
@@ -193,10 +193,10 @@ async function runHolderBehaviorAnalysis(mint) {
       accumulateResult(await processHolder(holder));
     }
 
-    // BATCH=2: 2 wallets, one history call each (the legacy path may page twice).
-    // At 40 req/sec that drains in ~100ms; 600ms inter-batch delay gives 6× headroom.
-    const BATCH = 2;
-    const BATCH_DELAY_MS = 600;
+    // BATCH=6: 6 wallets at once, up to 4 history calls each. The Helius queue
+    // (rateLimiter.js) still caps the request rate and the calls in flight.
+    const BATCH = 6;
+    const BATCH_DELAY_MS = 200;
     for (let i = 0; i < uncachedHolders.length; i += BATCH) {
       if (i > 0) await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
       const batch = uncachedHolders.slice(i, i + BATCH);
