@@ -192,12 +192,15 @@ router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, r
 
     try {
       let count = null;
-      if (solanaService.isHeliusConfigured()) {
-        count = await solanaService.getTokenHolderCount(mint, { skipCache: true, maxPages: 500 }).catch(() => null);
-      }
-      // Fall back to cached analytics when Helius is unavailable or not configured
+      // The latest complete holder snapshot is an exact count and costs nothing
+      const snap = await require('../services/holderStore').getLatestSnapshot(mint).catch(() => null);
+      if (snap && snap.complete) count = snap.account_count;
       if (!count || count <= 0) {
         count = await cache.get(`holder-total:${mint}`);
+      }
+      // Only page through DAS (10 credits per 1000 accounts) when nothing cheaper exists
+      if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
+        count = await solanaService.getTokenHolderCount(mint, { maxPages: 500 }).catch(() => null);
       }
       if (!count || count <= 0) {
         const analytics = await cache.get(`holder-analytics:${mint}`);

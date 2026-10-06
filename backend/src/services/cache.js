@@ -103,6 +103,17 @@ class MemoryCache {
     return true;
   }
 
+  /** Add `by` to a numeric key, creating it with the TTL when absent. Returns the new value. */
+  async incrBy(key, by = 1, ttlMs = 60000) {
+    const entry = this.cache.get(key);
+    if (entry && Date.now() <= entry.expiry) {
+      entry.value = (Number(entry.value) || 0) + by;
+      return entry.value;
+    }
+    await this.set(key, by, ttlMs);
+    return by;
+  }
+
   async delete(key) {
     this.cache.delete(key);
   }
@@ -297,6 +308,18 @@ class RedisCache {
     }
   }
 
+  async incrBy(key, by = 1, ttlMs = 60000) {
+    if (!this.isConnected) return null;
+    try {
+      const k = this._prefixKey(key);
+      const value = await this.client.incrby(k, by);
+      if (value === by) await this.client.pexpire(k, ttlMs);
+      return value;
+    } catch (err) {
+      return null;
+    }
+  }
+
   async delete(key) {
     if (!this.isConnected) return;
     try {
@@ -463,6 +486,10 @@ class CacheService {
 
   setNX(key, value, ttlMs = 60000) {
     return this.backend.setNX(key, value, ttlMs);
+  }
+
+  incrBy(key, by = 1, ttlMs = 60000) {
+    return this.backend.incrBy(key, by, ttlMs);
   }
 
   delete(key) {

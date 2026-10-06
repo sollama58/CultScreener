@@ -23,45 +23,126 @@ const RPC_ENDPOINTS = [
 ].filter(Boolean);
 
 // Remove duplicates (e.g. if HELIUS_RPC_URL is the same as the primary)
-const seen = new Set();
-const deduped = RPC_ENDPOINTS.filter(url => {
-  const base = url.split('?')[0];
-  if (seen.has(base)) return false;
-  seen.add(base);
-  return true;
-});
+function dedupeEndpoints(urls) {
+  const seen = new Set();
+  return urls.filter(url => {
+    const base = url.split('?')[0];
+    if (seen.has(base)) return false;
+    seen.add(base);
+    return true;
+  });
+}
+const deduped = dedupeEndpoints(RPC_ENDPOINTS);
 RPC_ENDPOINTS.length = 0;
 RPC_ENDPOINTS.push(...deduped);
 
-// Current RPC index for failover
-let currentRpcIndex = 0;
-let lastRpcFailure = null;
+// Only a few methods need Helius: DAS (separate functions below), getProgramAccounts
+// (public RPCs refuse it) and Helius' own getTransactionsForAddress. Every other
+// method is plain Solana JSON-RPC, so it goes to a free endpoint first and falls
+// back to Helius; that keeps Helius credits (and its rate limit) for DAS work.
+// STANDARD_RPC_URL=off sends everything to Helius as before.
+const HELIUS_ONLY_METHODS = new Set(['getProgramAccounts', 'getTransactionsForAddress']);
+const STANDARD_RPC_URL = process.env.STANDARD_RPC_URL === undefined
+  ? 'https://solana-rpc.publicnode.com'
+  : process.env.STANDARD_RPC_URL.trim();
+const STANDARD_ENDPOINTS = STANDARD_RPC_URL && !/^(off|none|false|0)$/i.test(STANDARD_RPC_URL)
+  ? dedupeEndpoints([STANDARD_RPC_URL, ...RPC_ENDPOINTS])
+  : RPC_ENDPOINTS;
+
 const RPC_FAILOVER_COOLDOWN_MS = 60000; // 1 minute before trying failed endpoint again
 
+// Each chain fails over independently: the standard chain from the free RPC to
+// Helius, the Helius chain from Helius to the public RPC.
+const rpcChains = {
+  helius: { name: 'helius', endpoints: RPC_ENDPOINTS, index: 0, lastFailure: null },
+  standard: { name: 'standard', endpoints: STANDARD_ENDPOINTS, index: 0, lastFailure: null },
+};
+function chainFor(method) {
+  return HELIUS_ONLY_METHODS.has(method) ? rpcChains.helius : rpcChains.standard;
+}
+
 // Get current RPC URL with failover logic
-function getCurrentRpcUrl() {
+function getCurrentRpcUrl(chain = rpcChains.helius) {
   // If primary has been failing, check if cooldown has passed
-  if (currentRpcIndex > 0 && lastRpcFailure) {
-    const elapsed = Date.now() - lastRpcFailure;
+  if (chain.index > 0 && chain.lastFailure) {
+    const elapsed = Date.now() - chain.lastFailure;
     if (elapsed > RPC_FAILOVER_COOLDOWN_MS) {
       // Try to recover to primary
-      currentRpcIndex = 0;
-      lastRpcFailure = null;
-      console.log('[Solana] Attempting to recover to primary RPC endpoint');
+      chain.index = 0;
+      chain.lastFailure = null;
+      console.log(`[Solana] Attempting to recover to primary ${chain.name} RPC endpoint`);
     }
   }
-  return RPC_ENDPOINTS[currentRpcIndex] || RPC_ENDPOINTS[0];
+  return chain.endpoints[chain.index] || chain.endpoints[0];
 }
 
 // Failover to next RPC endpoint
-function failoverToNextRpc() {
-  if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
-    currentRpcIndex++;
-    lastRpcFailure = Date.now();
-    console.log(`[Solana] Failing over to RPC endpoint ${currentRpcIndex + 1}/${RPC_ENDPOINTS.length}`);
+function failoverToNextRpc(chain = rpcChains.helius) {
+  if (chain.index < chain.endpoints.length - 1) {
+    chain.index++;
+    chain.lastFailure = Date.now();
+    console.log(`[Solana] Failing over ${chain.name} RPC to endpoint ${chain.index + 1}/${chain.endpoints.length}`);
     return true;
   }
   return false;
+}
+
+// ── Helius credit accounting ─────────────────────────────────────────────────
+// Helius bills per call: 1 credit for standard RPC, 10 for DAS, getProgramAccounts
+// and getTransactionsForAddress, 100 for the legacy Enhanced Transactions API.
+// Counted per method, flushed to the cache every few seconds under a per-UTC-day
+// key, and shown on /health/detailed so credit spend can be watched without the
+// Helius dashboard.
+const DAS_CREDITS = 10;
+const ENHANCED_CREDITS = 100;
+const RPC_METHOD_CREDITS = { getProgramAccounts: 10, getTransactionsForAddress: 10 };
+const CREDIT_KEY_TTL = 3 * 24 * 3600000;
+const creditBuffer = new Map();          // method → credits not yet flushed
+const creditTotals = new Map();          // method → credits since process start
+let creditsSinceStart = 0;
+
+function countCredits(method, credits) {
+  creditBuffer.set(method, (creditBuffer.get(method) || 0) + credits);
+  creditTotals.set(method, (creditTotals.get(method) || 0) + credits);
+  creditsSinceStart += credits;
+}
+
+function creditDay(offsetDays = 0) {
+  return new Date(Date.now() - offsetDays * 86400000).toISOString().slice(0, 10);
+}
+
+async function flushCredits() {
+  if (creditBuffer.size === 0) return;
+  const entries = [...creditBuffer.entries()];
+  creditBuffer.clear();
+  const day = creditDay();
+  let total = 0;
+  for (const [method, credits] of entries) {
+    total += credits;
+    await cache.incrBy(`helius-credits:${day}:${method}`, credits, CREDIT_KEY_TTL).catch(() => {});
+  }
+  await cache.incrBy(`helius-credits:${day}`, total, CREDIT_KEY_TTL).catch(() => {});
+}
+const creditFlushTimer = setInterval(() => { flushCredits().catch(() => {}); }, 10000);
+if (creditFlushTimer.unref) creditFlushTimer.unref();
+
+/** Credit spend for today and yesterday (all processes, via the shared cache) plus this process. */
+async function getCreditUsage() {
+  await flushCredits().catch(() => {});
+  const today = creditDay();
+  const yesterday = creditDay(1);
+  const byMethod = {};
+  try {
+    for (const key of await cache.scanKeys(`helius-credits:${today}:*`)) {
+      const method = key.slice(`helius-credits:${today}:`.length);
+      byMethod[method] = Number(await cache.get(key)) || 0;
+    }
+  } catch (_) {}
+  return {
+    today: { date: today, credits: Number(await cache.get(`helius-credits:${today}`).catch(() => 0)) || 0, byMethod },
+    yesterday: { date: yesterday, credits: Number(await cache.get(`helius-credits:${yesterday}`).catch(() => 0)) || 0 },
+    thisProcess: { credits: creditsSinceStart, byMethod: Object.fromEntries(creditTotals) },
+  };
 }
 
 // Legacy export for backwards compatibility
@@ -135,18 +216,21 @@ async function withRpcRetry(requestFn, context = 'rpc') {
 }
 
 // Make RPC call with circuit breaker, failover, retry, and 429 backoff
-async function rpcCall(method, params = [], retryCount = 0) {
+async function rpcCall(method, params = [], retryCount = 0, chainOverride = null) {
   const MAX_RETRIES = 2;
+  const chain = chainOverride || chainFor(method);
 
   try {
     // Pick rate limiter key: use 'helius' when talking to a Helius endpoint so all
     // Helius traffic (RPC + DAS) shares one queue and respects a single rate limit.
-    const rpcUrl = getCurrentRpcUrl();
-    const rateLimiterKey = rpcUrl.includes('helius') ? 'helius' : 'solana';
+    const rpcUrl = getCurrentRpcUrl(chain);
+    const isHelius = rpcUrl.includes('helius');
+    const rateLimiterKey = isHelius ? 'helius' : (rpcUrl === STANDARD_RPC_URL ? 'standardRpc' : 'solana');
 
     return await withRpcRetry(() => rateLimitedRequest(rateLimiterKey, () => circuitBreakers.solanaRpc.execute(async () => {
 
       try {
+        if (isHelius) countCredits(method, RPC_METHOD_CREDITS[method] || 1);
         const response = await axios.post(rpcUrl, {
           jsonrpc: '2.0',
           id: 1,
@@ -164,7 +248,9 @@ async function rpcCall(method, params = [], retryCount = 0) {
 
         if (response.data.error) {
           const errorMsg = response.data.error.message || response.data.error.code || 'Unknown RPC error';
-          throw new Error(errorMsg);
+          const rpcError = new Error(errorMsg);
+          rpcError.rpcCode = response.data.error.code;
+          throw rpcError;
         }
 
         return response.data.result;
@@ -191,10 +277,17 @@ async function rpcCall(method, params = [], retryCount = 0) {
       error.code === 'ECONNREFUSED' ||
       !error.response;
 
-    if (isConnectionError && retryCount < MAX_RETRIES) {
-      if (failoverToNextRpc()) {
+    // A free endpoint that doesn't serve the method (-32601) or rate-limits us
+    // (429, after withRpcRetry's own retry) answers nothing useful: go to Helius.
+    const isRateLimited = error.response?.status === 429;
+    const unsupported = error.rpcCode === -32601 && chain !== rpcChains.helius;
+    if (unsupported && retryCount < MAX_RETRIES) {
+      return rpcCall(method, params, retryCount + 1, rpcChains.helius);
+    }
+    if ((isConnectionError || isRateLimited) && retryCount < MAX_RETRIES) {
+      if (failoverToNextRpc(chain)) {
         console.log(`[Solana] Retrying ${method} with failover endpoint (attempt ${retryCount + 1})`);
-        return rpcCall(method, params, retryCount + 1);
+        return rpcCall(method, params, retryCount + 1, chain);
       }
     }
 
@@ -271,21 +364,24 @@ async function getSignaturesForAddress(address, limit = 10) {
 async function checkHealth() {
   try {
     const result = await rpcCall('getHealth');
-    const currentUrl = getCurrentRpcUrl();
+    const chain = rpcChains.standard;
+    const currentUrl = getCurrentRpcUrl(chain);
     return {
       healthy: result === 'ok',
       rpcUrl: currentUrl.split('?')[0], // Hide API key
-      currentEndpoint: currentRpcIndex + 1,
-      totalEndpoints: RPC_ENDPOINTS.length,
-      usingFallback: currentRpcIndex > 0,
+      currentEndpoint: chain.index + 1,
+      totalEndpoints: chain.endpoints.length,
+      usingFallback: chain.index > 0,
+      heliusEndpoint: getCurrentRpcUrl(rpcChains.helius).split('?')[0],
+      heliusUsingFallback: rpcChains.helius.index > 0,
       circuitBreakerState: circuitBreakers.solanaRpc.getStatus().state
     };
   } catch (error) {
     return {
       healthy: false,
       error: error.message,
-      currentEndpoint: currentRpcIndex + 1,
-      totalEndpoints: RPC_ENDPOINTS.length,
+      currentEndpoint: rpcChains.standard.index + 1,
+      totalEndpoints: rpcChains.standard.endpoints.length,
       circuitBreakerState: circuitBreakers.solanaRpc.getStatus().state
     };
   }
@@ -355,6 +451,7 @@ async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
       let isExact = false;
 
       while (page <= maxPages) {
+        countCredits('getTokenAccounts', DAS_CREDITS);
         const response = await rateLimitedRequest('helius', () =>
           axios.post(HELIUS_DAS_URL, {
             jsonrpc: '2.0',
@@ -427,6 +524,7 @@ async function getTokenMetadata(mintAddress) {
   try {
     // Fetching from Helius DAS (cache miss)
 
+    countCredits('getAsset', DAS_CREDITS);
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.post(HELIUS_DAS_URL, {
         jsonrpc: '2.0',
@@ -456,6 +554,9 @@ async function getTokenMetadata(mintAddress) {
       await cache.set(metaCacheKey, 'NOT_FOUND', 300000); // 5-min negative cache
       return null;
     }
+    // The same getAsset answer carries the authorities; fill that cache too so
+    // getTokenAuthorities never pays a second DAS call for the same mint.
+    await cache.set(`token-auth:${mintAddress}`, { authorities: asset.authorities || [], creators: asset.creators || [] }, TTL.DAY).catch(() => {});
 
     const tokenInfo = asset.token_info || {};
     const content = asset.content || {};
@@ -610,6 +711,7 @@ async function getTokenMetadataBatch(mintAddresses) {
     if (addresses.length === 0) return {};
     console.log(`[Solana] Fetching batch token metadata for ${addresses.length} tokens`);
 
+    countCredits('getAssetBatch', DAS_CREDITS);
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.post(HELIUS_DAS_URL, {
         jsonrpc: '2.0',
@@ -716,6 +818,7 @@ async function getTokenLargestAccountsDAS(mintAddress, decimals = 0) {
   if (!HELIUS_DAS_URL) return null;
 
   try {
+    countCredits('getTokenAccounts', DAS_CREDITS);
     const response = await circuitBreakers.heliusDas.execute(() =>
       withRpcRetry(() => rateLimitedRequest('helius', () =>
         axios.post(HELIUS_DAS_URL, {
@@ -782,6 +885,7 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
   if (!HELIUS_DAS_URL) return null;
 
   try {
+    countCredits('getTokenAccounts', DAS_CREDITS);
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.post(HELIUS_DAS_URL, {
         jsonrpc: '2.0',
@@ -865,6 +969,7 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100 } = {}) {
   let page = 1;
   let complete = false;
   while (page <= maxPages) {
+    countCredits('getTokenAccounts', DAS_CREDITS);
     const response = await circuitBreakers.heliusDas.execute(() =>
       withRpcRetry(() => rateLimitedRequest('helius', () =>
         axios.post(HELIUS_DAS_URL, {
@@ -902,6 +1007,7 @@ async function getSignaturesPage(address, { limit = 100, before } = {}) {
 async function parseTransactions(signatures) {
   if (!HELIUS_API_KEY) throw new Error('Helius not configured');
   if (!signatures || signatures.length === 0) return [];
+  countCredits('enhanced:/v0/transactions', ENHANCED_CREDITS);
   const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
     axios.post(
       'https://api.helius.xyz/v0/transactions',
@@ -912,6 +1018,45 @@ async function parseTransactions(signatures) {
   if (!Array.isArray(response.data)) throw new Error('Unexpected parseTransactions response');
   const bySig = new Map(response.data.filter(Boolean).map(t => [t.signature, t]));
   return signatures.map(sig => bySig.get(sig)).filter(Boolean);
+}
+
+// Helius' getTransactionsForAddress (10 credits per call, up to 1000 full
+// transactions) replaces getSignaturesForAddress + the 100-credit Enhanced
+// Transactions parse for the hold-time backfill. Latched off for the process
+// when the endpoint doesn't serve it (-32601) so callers use the legacy path.
+let gtfaUnavailable = false;
+
+function isTransactionHistoryAvailable() {
+  return !!HELIUS_API_KEY && !gtfaUnavailable;
+}
+
+/**
+ * One page of an account's succeeded transactions with full meta (pre/post token
+ * balances), newest first, via getTransactionsForAddress.
+ * @returns {Promise<{txs: Array, paginationToken: string|null}>}
+ */
+async function getAccountTransactionsPage(address, { limit = 1000, paginationToken, sortOrder = 'desc' } = {}) {
+  if (!isTransactionHistoryAvailable()) throw new Error('getTransactionsForAddress not available');
+  const opts = {
+    transactionDetails: 'full',
+    sortOrder,
+    limit: Math.max(1, Math.min(1000, limit)),
+    encoding: 'json',
+    maxSupportedTransactionVersion: 0,
+    filters: { status: 'succeeded' },
+  };
+  if (paginationToken) opts.paginationToken = paginationToken;
+  try {
+    const result = await rpcCall('getTransactionsForAddress', [address, opts]);
+    if (!result || !Array.isArray(result.data)) throw new Error('Unexpected getTransactionsForAddress response');
+    return { txs: result.data, paginationToken: result.paginationToken || null };
+  } catch (error) {
+    if (error.rpcCode === -32601) {
+      gtfaUnavailable = true;
+      console.warn('[Solana] getTransactionsForAddress not served by this endpoint; backfill falls back to signatures + Enhanced API');
+    }
+    throw error;
+  }
 }
 
 /**
@@ -930,6 +1075,7 @@ async function getTokenAuthorities(mintAddress) {
   if (cached) return cached;
 
   try {
+    countCredits('getAsset', DAS_CREDITS);
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.post(HELIUS_DAS_URL, {
         jsonrpc: '2.0',
@@ -974,6 +1120,7 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
     if (type) params.type = type;
     if (before) params.before = before;
 
+    countCredits('enhanced:/v0/addresses/transactions', ENHANCED_CREDITS);
     const response = await withRpcRetry(() => rateLimitedRequest('helius', () =>
       axios.get(
         `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions`,
@@ -1004,14 +1151,21 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
  * @param {number} decimals - Token decimals for converting raw amounts
  * @returns {Promise<number>} - Total locked amount in UI units (0 if none found)
  */
-// Cache Streamflow results — vesting schedules change slowly (1h TTL)
+// Cache Streamflow results: getProgramAccounts is 10 credits and vesting
+// schedules change slowly, so keep answers for a day in the shared cache (every
+// process sees them) and in a small local map for speed.
 const streamflowCache = new Map();
-const STREAMFLOW_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const STREAMFLOW_CACHE_TTL = TTL.DAY;
 
 async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
-  // Check local cache first
+  // Check local cache first, then the shared cache
   const cached = streamflowCache.get(mintAddress);
   if (cached && Date.now() < cached.expiry) return cached.value;
+  const shared = await cache.get(`streamflow-locked:${mintAddress}:${decimals}`).catch(() => undefined);
+  if (typeof shared === 'number') {
+    streamflowCache.set(mintAddress, { value: shared, expiry: Date.now() + 60 * 60 * 1000 });
+    return shared;
+  }
 
   const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
   const STREAM_ACC_SIZE = 1104;
@@ -1034,7 +1188,11 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
       }
     ]);
 
-    if (!result || result.length === 0) return 0;
+    if (!result || result.length === 0) {
+      streamflowCache.set(mintAddress, { value: 0, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
+      await cache.set(`streamflow-locked:${mintAddress}:${decimals}`, 0, STREAMFLOW_CACHE_TTL).catch(() => {});
+      return 0;
+    }
 
     const divisor = Math.pow(10, decimals);
     let totalLocked = 0;
@@ -1053,6 +1211,7 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
 
     console.log(`[Solana] Streamflow locked for ${mintAddress}: ${totalLocked} (${result.length} contracts found)`);
     streamflowCache.set(mintAddress, { value: totalLocked, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
+    await cache.set(`streamflow-locked:${mintAddress}:${decimals}`, totalLocked, STREAMFLOW_CACHE_TTL).catch(() => {});
     return totalLocked;
   } catch (error) {
     console.error('[Solana] getStreamflowLockedAmount error:', error.message);
@@ -1086,6 +1245,12 @@ module.exports = {
   getStreamflowLockedAmount,
   getTokenAuthorities,
   getTransactionsForAddress,
+  getAccountTransactionsPage,
+  isTransactionHistoryAvailable,
   isHeliusConfigured,
-  checkHealth
+  checkHealth,
+  getCreditUsage,
+  countCredits,
+  // exported for tests
+  _rpcChains: rpcChains,
 };
