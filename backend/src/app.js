@@ -384,7 +384,7 @@ app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
 // image-only content type and this route's rate limiter, that covers open-proxy abuse without
 // pretending we can enumerate the internet's image hosts.
 const { agentsFor, isBlockedHostLiteral } = require('./services/safeFetchAgent');
-const { sniffImageType } = require('./services/tokenImage');
+const { sniffImageType, imageSourceFallbacks, ipfsContentPath } = require('./services/tokenImage');
 // Dedicated rate limiter for image proxy. Every table row's logo now routes through
 // this endpoint (not just the old canvas share-image feature), so a single page load
 // can legitimately request dozens of distinct images at once — 20/min was sized for
@@ -502,6 +502,37 @@ function withTimeout(promise, ms, fallback) {
 // one upstream request instead of stampeding the origin (and each other, via Redis).
 const imageProxyInFlight = new Map();
 
+// One upstream fetch for the image proxy: bytes plus a content type judged from the bytes.
+async function fetchImageBytes(target, signal) {
+  const axios = require('axios');
+  const response = await axios.get(target, {
+    responseType: 'arraybuffer',
+    timeout: 8000,
+    signal,
+    maxContentLength: IMAGE_PROXY_MAX_BYTES,
+    maxBodyLength: IMAGE_PROXY_MAX_BYTES,
+    // The address guard lives in these. Every hop of a redirect chain opens a new connection
+    // through them, so a public URL that bounces to 169.254.169.254 is refused at the hop.
+    // Empty where an egress proxy is configured, which axios must be left to handle itself.
+    ...agentsFor(),
+    maxRedirects: 3,
+    headers: {
+      // A browser's UA rather than a bot's: Cloudflare-fronted image hosts (DexScreener's CDN
+      // among them) answer an obvious bot UA with a 403 challenge page, which became a 502 here
+      // and the fallback logo in the browser.
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+      'Accept': 'image/webp,image/png,image/jpeg,image/*',
+    },
+  });
+  const body = Buffer.from(response.data);
+  // Trust the bytes over the label: IPFS gateways, Arweave/Irys and S3 often serve real images
+  // as application/octet-stream or text/plain, and those used to be refused here.
+  const labelled = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const contentType = sniffImageType(body) || (labelled.startsWith('image/') ? labelled : null);
+  if (!contentType) throw new Error(`Non-image response: ${labelled || 'no content-type'}`);
+  return { buffer: body, contentType };
+}
+
 app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // Set on every response from this route — including the validation/error paths below —
   // not just the successful-image ones. Helmet's default Cross-Origin-Resource-Policy:
@@ -552,35 +583,35 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   let fetchPromise = imageProxyInFlight.get(cacheKey);
   if (!fetchPromise) {
     fetchPromise = (async () => {
-      const axios = require('axios');
-      const response = await axios.get(url, {
-        responseType: 'arraybuffer',
-        timeout: 8000,
-        maxContentLength: IMAGE_PROXY_MAX_BYTES,
-        maxBodyLength: IMAGE_PROXY_MAX_BYTES,
-        // The address guard lives in these. Every hop of a redirect chain opens a new connection
-        // through them, so a public URL that bounces to 169.254.169.254 is refused at the hop.
-        // Empty where an egress proxy is configured, which axios must be left to handle itself.
-        ...agentsFor(),
-        maxRedirects: 3,
-        headers: {
-          // A browser's UA rather than a bot's: Cloudflare-fronted image hosts (DexScreener's CDN
-          // among them) answer an obvious bot UA with a 403 challenge page, which became a 502 here
-          // and the fallback logo in the browser.
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
-          'Accept': 'image/webp,image/png,image/jpeg,image/*',
-          'Referer': `https://${parsed.hostname}/`,
-        },
-      });
-      const body = Buffer.from(response.data);
-      // Trust the bytes over the label: IPFS gateways, Arweave/Irys and S3 often serve real images
-      // as application/octet-stream or text/plain, and those used to be refused here.
-      const labelled = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-      const sourceType = sniffImageType(body) || (labelled.startsWith('image/') ? labelled : null);
-      if (!sourceType) throw new Error(`Non-image response: ${labelled || 'no content-type'}`);
+      // An IPFS image races its original URL against the other gateways and Helius's image CDN
+      // (see imageSourceFallbacks): ipfs.io refuses or stalls on requests from cloud servers often
+      // enough that waiting for it first made those logos slow at best. Anything else tries its
+      // own host first and the CDN only if that fails. The losers are aborted once one succeeds.
+      const fallbacks = imageSourceFallbacks(url);
+      const controller = new AbortController();
+      let image;
+      try {
+        if (ipfsContentPath(url)) {
+          image = await Promise.any([url, ...fallbacks].map((target) => fetchImageBytes(target, controller.signal)));
+        } else {
+          try {
+            image = await fetchImageBytes(url, controller.signal);
+          } catch (firstErr) {
+            if (fallbacks.length === 0) throw firstErr;
+            image = await Promise.any(fallbacks.map((target) => fetchImageBytes(target, controller.signal)))
+              .catch(() => { throw firstErr; });
+          }
+        }
+      } catch (err) {
+        // Promise.any rejects with an AggregateError; report the original URL's own failure so
+        // the 404/410 "gone" handling below still sees its status.
+        throw err instanceof AggregateError ? err.errors[0] : err;
+      } finally {
+        controller.abort();
+      }
       // Downscaled BEFORE the cache write, so the expensive part happens once per image rather
       // than once per request, and every cache hit is already small.
-      return downscaleImage(body, sourceType, width);
+      return downscaleImage(image.buffer, image.contentType, width);
     })();
     // then(fn, fn) rather than .finally(fn): `.finally` returns a NEW promise that rejects
     // whenever the original does, and nothing was awaiting that one. Every failed image fetch -

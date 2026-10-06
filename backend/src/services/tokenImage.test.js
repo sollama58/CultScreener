@@ -1,6 +1,6 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { normalizeLogoUri, sniffImageType } = require('./tokenImage');
+const { normalizeLogoUri, sniffImageType, ipfsContentPath, imageSourceFallbacks } = require('./tokenImage');
 
 describe('normalizeLogoUri', () => {
   test('keeps https URLs and upgrades http ones', () => {
@@ -43,5 +43,32 @@ describe('sniffImageType', () => {
     assert.strictEqual(sniffImageType(Buffer.from('{"error":1}')), null);
     assert.strictEqual(sniffImageType(Buffer.from([1, 2])), null);
     assert.strictEqual(sniffImageType(null), null);
+  });
+});
+
+describe('imageSourceFallbacks', () => {
+  const CID = 'bafybeig5lqz6iboifwo2ljsumooiuucpgqzf3wo2cqqpss56qhdmh4swge';
+
+  test('finds the CID in path and subdomain gateway URLs', () => {
+    assert.strictEqual(ipfsContentPath(`https://ipfs.io/ipfs/${CID}`), CID);
+    assert.strictEqual(ipfsContentPath(`https://ipfs.io/ipfs/${CID}/logo.png?x=1`), `${CID}/logo.png?x=1`);
+    assert.strictEqual(ipfsContentPath(`https://${CID}.ipfs.nftstorage.link/`), CID);
+    assert.strictEqual(ipfsContentPath('https://example.com/ipfs/short'), null);
+    assert.strictEqual(ipfsContentPath('https://example.com/a.png'), null);
+  });
+
+  test('offers other gateways and the Helius CDN for an IPFS image, never the original', () => {
+    const original = `https://ipfs.io/ipfs/${CID}`;
+    const alts = imageSourceFallbacks(original);
+    assert.ok(alts.includes(`https://dweb.link/ipfs/${CID}`));
+    assert.ok(alts.includes(`https://cdn.helius-rpc.com/cdn-cgi/image//${original}`));
+    assert.ok(!alts.includes(original));
+    assert.ok(alts.every((a) => a.startsWith('https://')));
+    assert.ok(!imageSourceFallbacks(`https://dweb.link/ipfs/${CID}`).includes(`https://dweb.link/ipfs/${CID}`));
+  });
+
+  test('offers only the Helius CDN for a non-IPFS image', () => {
+    assert.deepStrictEqual(imageSourceFallbacks('https://example.com/a.png'), ['https://cdn.helius-rpc.com/cdn-cgi/image//https://example.com/a.png']);
+    assert.deepStrictEqual(imageSourceFallbacks('not a url'), []);
   });
 });

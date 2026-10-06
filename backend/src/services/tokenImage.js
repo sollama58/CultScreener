@@ -53,4 +53,50 @@ function sniffImageType(buf) {
   return null;
 }
 
-module.exports = { normalizeLogoUri, sniffImageType };
+/**
+ * Other places the same image can be fetched from, for when the original host fails.
+ *
+ * Most token art lives on IPFS behind ipfs.io, and ipfs.io routinely refuses or times out on
+ * requests from cloud servers - the image proxy answered 502 for those logos even though the
+ * browser could load them. The same content is addressable on any gateway by its CID, so an
+ * IPFS URL (path form /ipfs/CID/... on any host, or subdomain form CID.ipfs.host) gets the other
+ * public gateways. Every image, IPFS or not, also gets Helius's image CDN, which fetches and
+ * caches the original from Cloudflare's network rather than ours.
+ *
+ * Returns https URLs on fixed hosts, never including the original.
+ */
+const IPFS_FALLBACK_GATEWAYS = [
+  'https://dweb.link/ipfs/',
+  'https://w3s.link/ipfs/',
+  'https://gateway.pinata.cloud/ipfs/',
+  'https://ipfs.filebase.io/ipfs/',
+];
+const HELIUS_IMAGE_CDN = 'https://cdn.helius-rpc.com/cdn-cgi/image//';
+const CID_RE = /^[a-zA-Z0-9]{20,}$/;
+
+function ipfsContentPath(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const rest = (path) => (path && path !== '/' ? path : '') + u.search;
+  const pathForm = /^\/ipfs\/([^/]+)(\/.*)?$/.exec(u.pathname);
+  if (pathForm && CID_RE.test(pathForm[1])) return pathForm[1] + rest(pathForm[2]);
+  const subdomainForm = /^([a-z0-9]+)\.ipfs\./i.exec(u.hostname);
+  if (subdomainForm && CID_RE.test(subdomainForm[1])) return subdomainForm[1] + rest(u.pathname);
+  return null;
+}
+
+function imageSourceFallbacks(url) {
+  let host;
+  try { host = new URL(url).host; } catch { return []; }
+  const out = [];
+  const contentPath = ipfsContentPath(url);
+  if (contentPath) {
+    for (const gateway of IPFS_FALLBACK_GATEWAYS) {
+      if (new URL(gateway).host !== host) out.push(gateway + contentPath);
+    }
+  }
+  if (host !== new URL(HELIUS_IMAGE_CDN).host) out.push(HELIUS_IMAGE_CDN + url);
+  return out;
+}
+
+module.exports = { normalizeLogoUri, sniffImageType, ipfsContentPath, imageSourceFallbacks };
