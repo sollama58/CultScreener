@@ -20,7 +20,9 @@
 // v48: the fetch handler no longer takes over cross-origin requests, so any third-party
 // responses the previous version stored in DYNAMIC_CACHE need clearing - the activate handler
 // below deletes every holdex-* cache that isn't the current version.
-const CACHE_VERSION = 'holdex-v58';
+// v59: token page redesign - new css/token.css, tokenDetail.js v25, holderBehavior.js v6;
+// sentiment.js dropped (no page loads it any more).
+const CACHE_VERSION = 'holdex-v59';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -30,6 +32,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=17',
+  '/css/token.css?v=1',
   '/js/config.js?v=3',
   '/js/api.js?v=9',
   '/js/deviceLink.js?v=2',
@@ -40,11 +43,10 @@ const APP_SHELL = [
   '/js/versus.js?v=12',
   '/js/mainViewTabs.js?v=1',
   '/js/kotp.js?v=2',
-  '/js/tokenDetail.js?v=23',
+  '/js/tokenDetail.js?v=25',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=5',
-  '/js/sentiment.js?v=2',
-  '/js/holderBehavior.js?v=5',
+  '/js/holderBehavior.js?v=6',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=24',

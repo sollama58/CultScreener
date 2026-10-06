@@ -310,6 +310,8 @@
   letter-spacing: 0;
   text-transform: none;
   line-height: 1.4;
+  word-spacing: normal;
+  font-family: var(--font);
   display: inline-flex;
   align-items: center;
   font-size: 12px;
@@ -359,8 +361,17 @@
   letter-spacing: -0.03em;
   line-height: 1.05;
 }
-.tp-price.price-refreshing { opacity: 0.6; transition: opacity 0.15s; }
-.token-page .price-refresh-spinner { display: none; }
+.tp-price { transition: opacity 0.15s; }
+.token-page .token-price-container.price-refreshing { opacity: 1; }
+.token-price-container.price-refreshing .tp-price { opacity: 0.6; }
+.token-page .price-refresh-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--brand-ink);
+  animation: tp-spin 0.8s linear infinite;
+}
 
 .token-page .price-change-badge {
   display: inline-flex;
@@ -623,7 +634,13 @@
 .token-page .diamond-bar-pct.dh-text-low { color: var(--ink-2) !important; }
 
 /* Shown only in the share screenshot (tokenDetail._shareHolderAnalytics reveals it) */
-.token-page .diamond-hands-footer { display: flex; justify-content: flex-end; }
+.token-page .diamond-hands-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
 .token-page .diamond-hands-watermark {
   display: none;
   align-items: center;
@@ -811,6 +828,7 @@
 .token-page .perf-metric-sub.negative { color: var(--bad-ink); }
 
 /* ---------- Holder behavior card ---------- */
+.token-page .hb-card { margin: 0; }
 .token-page .hb-card-cost { color: var(--brand-ink); }
 .token-page .hb-card-cost svg { color: var(--brand-ink); }
 .token-page .hb-card-desc {
@@ -866,6 +884,8 @@
   gap: 8px;
 }
 .token-page .pool-card {
+  margin: 0;
+  animation: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -878,8 +898,10 @@
 .token-page .pool-pair {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
   min-width: 0;
+  margin: 0;
 }
 .token-page .pool-symbols {
   font-weight: 650;
@@ -1310,6 +1332,7 @@
   .tp-hero { padding: 18px 16px; }
   .tp-hero-top { flex-direction: column; gap: 16px; }
   .tp-price-block { align-items: flex-start; }
+  .tp-identity { width: 100%; align-items: flex-start; }
   .token-page .tp-name-row h1 { font-size: 26px; }
   .tp-logo { width: 48px; height: 48px; }
   .tp-price { font-size: 26px; }
@@ -1323,7 +1346,9 @@
   .token-page .holders-share-col { display: none; }
   .token-page .holders-table th,
   .token-page .holders-table td { padding: 9px 10px; }
-  .token-page .perf-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .token-page .perf-metrics { gap: 8px; }
+  .token-page .perf-metric { padding: 10px; }
+  .token-page .perf-metric-value { font-size: 14px; }
   .hb-overlay .hb-modal { padding: 18px; max-height: 92vh; }
   .hb-overlay .hb-results-summary { grid-template-columns: minmax(0, 1fr); }
   .hb-overlay .hb-results-header { flex-wrap: wrap; }
