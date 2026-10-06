@@ -223,6 +223,7 @@ const tokenChart = (() => {
         </div>
         <div class="tc-toolbar">
           ${seg('tf', TIMEFRAMES, prefs.tf, 'Timeframe')}
+          <div class="tc-toolbar-more">
           ${seg('unit', [{ id: 'price', label: 'Price' }, { id: 'mcap', label: 'MCap', disabled: !canMcap, title: canMcap ? 'Market cap (price × supply)' : 'Market cap needs supply data' }], prefs.unit, 'Value')}
           ${seg('style', [{ id: 'candles', label: 'Candles' }, { id: 'line', label: 'Line' }], prefs.style, 'Chart style')}
           <div class="tc-toggles" role="group" aria-label="Indicators">
@@ -230,11 +231,34 @@ const tokenChart = (() => {
             <button type="button" class="tc-chip${prefs.log ? ' on' : ''}" data-log aria-pressed="${!!prefs.log}" title="Logarithmic price scale">Log</button>
             <button type="button" class="tc-chip" data-fit title="Show all candles">Reset</button>
           </div>
+          </div>
         </div>
         <div class="tc-legend num" id="tc-legend" aria-live="off"></div>
-        <div class="tc-chart-wrap">
-          <div class="tc-chart" id="tc-chart"></div>
-          <div class="tc-overlay-msg" id="tc-msg"><div class="tc-spinner" aria-hidden="true"></div><span>Loading chart...</span></div>
+        <div class="tc-body">
+          <div class="tc-rail" role="toolbar" aria-label="Drawing tools">
+            <button type="button" class="tc-tool" data-draw="trend" aria-pressed="false" title="Trendline: click two points">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/><circle cx="5" cy="19" r="2" fill="currentColor"/><circle cx="19" cy="5" r="2" fill="currentColor"/></svg>
+              <span>Trend</span>
+            </button>
+            <button type="button" class="tc-tool" data-draw="fib" aria-pressed="false" title="Fibonacci retracement: click the start, then the end of a move">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="4" x2="21" y2="4"/><line x1="3" y1="9" x2="21" y2="9" opacity=".7"/><line x1="3" y1="13" x2="21" y2="13" opacity=".7"/><line x1="3" y1="16.5" x2="21" y2="16.5" opacity=".7"/><line x1="3" y1="20" x2="21" y2="20"/></svg>
+              <span>Fib</span>
+            </button>
+            <span class="tc-rail-gap"></span>
+            <button type="button" class="tc-tool" data-del disabled title="Delete the selected drawing (Delete key)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              <span>Delete</span>
+            </button>
+            <button type="button" class="tc-tool" data-clear disabled title="Remove all drawings on this token">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <span>Clear</span>
+            </button>
+          </div>
+          <div class="tc-chart-wrap">
+            <div class="tc-chart" id="tc-chart"></div>
+            <div class="tc-hint" id="tc-hint" hidden></div>
+            <div class="tc-overlay-msg" id="tc-msg"><div class="tc-spinner" aria-hidden="true"></div><span>Loading chart...</span></div>
+          </div>
         </div>
         <div class="tc-foot">
           <span>Candles from the token's top pool via GeckoTerminal. Times in your local time zone.</span>
@@ -294,10 +318,93 @@ const tokenChart = (() => {
     state.LWC = LWC;
     state.series = {};
     chart.subscribeCrosshairMove(param => renderLegend(param));
+    bindDrawPointer(el, chart);
+  }
+
+  // Drawing input. Lightweight Charts' own click events drop a second click that lands soon
+  // after the first (it waits to see a double click), so taps and clicks are read straight
+  // from pointer events on the chart instead.
+  function bindDrawPointer(el, chart) {
+    let down = null;
+    const toParam = e => {
+      const r = el.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      let paneW = r.width, paneH = r.height;
+      try { paneW = chart.timeScale().width(); paneH = chart.paneSize(0).height; } catch { /* use the box */ }
+      if (x < 0 || y < 0 || x > paneW || y > paneH) return null; // price scale, time axis or RSI pane
+      return { point: { x, y }, paneIndex: 0 };
+    };
+    el.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      down = { x: e.clientX, y: e.clientY, at: Date.now(), id: e.pointerId };
+    });
+    el.addEventListener('pointerup', e => {
+      const d = down;
+      down = null;
+      if (!d || d.id !== e.pointerId || !state?.draw) return;
+      // A tap or click, not the end of a pan
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8 || Date.now() - d.at > 700) return;
+      const param = toParam(e);
+      if (param) state.draw.handleClick(param, e.pointerType === 'touch');
+    });
+    el.addEventListener('pointercancel', () => { down = null; });
+    el.addEventListener('pointermove', e => {
+      if (!state?.draw?.placing || e.pointerType === 'touch') return;
+      const param = toParam(e);
+      if (param) state.draw.handleMove(param);
+    });
+  }
+
+  function isCoarse() {
+    try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; }
+  }
+
+  // ── Drawing tools (chartDrawings.js) ───────────────────────────────────
+  function tfSeconds() {
+    return (TIMEFRAMES.find(t => t.id === state?.prefs.tf) || TIMEFRAMES[2]).seconds;
+  }
+  function displayFactor() {
+    return state?.prefs.unit === 'mcap' && state.info.supplyFactor ? state.info.supplyFactor : 1;
+  }
+  function createDrawings(mint) {
+    if (typeof chartDrawings === 'undefined') return null;
+    return chartDrawings.create({
+      storageKey: `holdex.tokenChart.drawings.${mint}`,
+      getCandles: () => state?.candles || [],
+      getTfSeconds: tfSeconds,
+      getFactor: displayFactor,
+      formatValue: fmtValue,
+      onChange: renderDrawTools
+    });
+  }
+  function renderDrawTools() {
+    if (!state) return;
+    const d = state.draw;
+    const root = state.root;
+    root.querySelectorAll('[data-draw]').forEach(b => {
+      const on = !!d && d.tool === b.dataset.draw;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    const del = root.querySelector('[data-del]');
+    const clr = root.querySelector('[data-clear]');
+    if (del) del.disabled = !d?.selectedId;
+    if (clr) clr.disabled = !d?.count;
+    const hint = root.querySelector('#tc-hint');
+    if (!hint) return;
+    const verb = isCoarse() ? 'Tap' : 'Click';
+    let text = '';
+    if (d?.tool === 'trend') text = d.placing ? `${verb} the second point` : `${verb} the start of the trendline`;
+    else if (d?.tool === 'fib') text = d.placing ? `${verb} the end of the move (level 0)` : `${verb} the start of the move (level 1)`;
+    else if (d?.selectedId) text = 'Drawing selected. Delete removes it.';
+    hint.textContent = text;
+    hint.hidden = !text;
+    root.querySelector('.tc-chart-wrap')?.classList.toggle('is-drawing', !!d?.tool);
   }
 
   function clearSeries() {
     const { chart, series } = state;
+    state.draw?.detach();
     for (const key of Object.keys(series)) {
       try { chart.removeSeries(series[key]); } catch { /* already gone */ }
     }
@@ -351,6 +458,7 @@ const tokenChart = (() => {
       s.setData(candles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
       state.series.main = s;
     }
+    state.draw?.attach(chart, state.series.main);
 
     if (prefs.ind.vol) {
       const v = chart.addSeries(LWC.HistogramSeries, {
@@ -505,6 +613,8 @@ const tokenChart = (() => {
     document.body.appendChild(root);
     document.body.classList.add('tc-open');
     state = { root, info, prefs, raw: [], candles: [], fetchSeq: 0, lastTf: null, chart: null, series: {}, opener: document.activeElement };
+    state.draw = createDrawings(info.mint);
+    renderDrawTools();
     requestAnimationFrame(() => root.classList.add('tc-overlay--visible'));
 
     root.addEventListener('click', onClick);
@@ -536,7 +646,17 @@ const tokenChart = (() => {
 
   function onKey(e) {
     if (!state) return;
-    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      // First Escape drops the active tool or selection; the next one closes
+      if (!state.draw?.cancel()) close();
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && state.draw?.selectedId) {
+      e.preventDefault();
+      state.draw.deleteSelected();
+      return;
+    }
     // Keep Tab inside the dialog
     if (e.key === 'Tab') {
       const f = [...state.root.querySelectorAll('button:not([disabled]), a[href]')];
@@ -567,6 +687,12 @@ const tokenChart = (() => {
       return;
     }
     if (!state.chart) return;
+    if (t.dataset.draw) { state.draw?.setTool(t.dataset.draw); return; }
+    if (t.hasAttribute('data-del')) { state.draw?.deleteSelected(); return; }
+    if (t.hasAttribute('data-clear')) {
+      if (state.draw?.count && window.confirm('Remove all drawings on this token?')) state.draw.clearAll();
+      return;
+    }
     const segEl = t.closest('[data-seg]');
     if (segEl) {
       const name = segEl.dataset.seg;
@@ -601,9 +727,68 @@ const tokenChart = (() => {
     }
   }
 
+  // ── Preview card on the page ───────────────────────────────────────────
+  // Last 48 hourly closes drawn as a sparkline. Uses the 100-candle cache entry, so it costs at
+  // most one GeckoTerminal call per token every few minutes across all visitors.
+  function sparkPath(values, w, h, pad) {
+    const min = Math.min(...values), max = Math.max(...values);
+    const span = max - min || max || 1;
+    const step = values.length > 1 ? w / (values.length - 1) : 0;
+    return values.map((v, i) => {
+      const x = i * step;
+      const y = pad + (h - pad * 2) * (1 - (v - min) / span);
+      return `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  }
+  function drawPlaceholderSpark(svg) {
+    // Decorative candles while loading, or when there's no data to draw
+    const bars = [38, 30, 34, 24, 28, 20, 26, 16, 22, 14, 18, 10];
+    svg.innerHTML = bars.map((y, i) => {
+      const x = 12 + i * 24;
+      const up = i % 3 !== 1;
+      const color = up ? 'rgba(74,222,128,0.35)' : 'rgba(255,128,128,0.35)';
+      return `<line x1="${x}" y1="${y - 8}" x2="${x}" y2="${y + 26}" stroke="${color}" stroke-width="1.5"/><rect x="${x - 5}" y="${y}" width="10" height="16" rx="1.5" fill="${color}"/>`;
+    }).join('');
+  }
+  async function loadPreview() {
+    const svg = document.getElementById('chart-cta-spark');
+    const label = document.getElementById('chart-cta-range');
+    const mint = utils.getUrlParam('mint');
+    if (!svg || !mint) return;
+    drawPlaceholderSpark(svg);
+    try {
+      const res = await api.request(`/api/tokens/${encodeURIComponent(mint)}/ohlcv?interval=1h&limit=100`, { retries: 1, timeout: 20000 });
+      const candles = normalizeCandles(res?.data, 1).slice(-48);
+      if (candles.length < 2) return;
+      const closes = candles.map(c => c.close);
+      const first = candles[0].open || closes[0];
+      const last = closes[closes.length - 1];
+      const pct = first > 0 ? ((last - first) / first) * 100 : 0;
+      const color = pct >= 0 ? '#4ade80' : '#ff8080';
+      const W = 300, H = 72;
+      const line = sparkPath(closes, W, H, 6);
+      svg.innerHTML = `
+        <defs><linearGradient id="tc-spark-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.28"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+        </linearGradient></defs>
+        <path d="${line} L${W},${H} L0,${H} Z" fill="url(#tc-spark-fill)"/>
+        <path d="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`;
+      if (label) {
+        const hours = Math.round((candles[candles.length - 1].time - candles[0].time) / 3600) + 1;
+        label.textContent = `${hours}h ${fmtPct(pct)}`;
+        label.style.color = color;
+      }
+    } catch { /* keep the placeholder; the card still opens the chart */ }
+  }
+
   function init() {
     const btn = document.getElementById('chart-btn');
     if (btn) btn.addEventListener('click', open);
+    const cta = document.getElementById('chart-cta');
+    if (cta) {
+      cta.addEventListener('click', open);
+      loadPreview();
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

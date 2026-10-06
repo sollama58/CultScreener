@@ -38,7 +38,7 @@
   <link rel="dns-prefetch" href="https://api.jup.ag">
   <link rel="dns-prefetch" href="https://api.dexscreener.com">
 
-  <link rel="stylesheet" href="css/token.css?v=2">
+  <link rel="stylesheet" href="css/token.css?v=3">
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=3" as="script">
@@ -173,7 +173,7 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
             Trade on Jupiter
           </a>
-          <button id="chart-btn" class="tp-btn" type="button" title="Open the advanced price chart" aria-haspopup="dialog">
+          <button id="chart-btn" class="tp-btn tp-btn-chart" type="button" title="Open the advanced price chart" aria-haspopup="dialog">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><rect x="4" y="7" width="4" height="8" rx="1"/><line x1="12" y1="3" x2="12" y2="21"/><rect x="10" y="5" width="4" height="10" rx="1"/><line x1="18" y1="5" x2="18" y2="21"/><rect x="16" y="9" width="4" height="7" rx="1"/></svg>
             Chart
           </button>
@@ -197,6 +197,23 @@
           <div id="token-socials" class="tp-socials" style="display:none"></div>
         </div>
       </section>
+
+      <!-- Chart preview: the whole card opens the chart modal (tokenChart.js) -->
+      <button type="button" class="tp-panel tp-chart-cta" id="chart-cta" aria-haspopup="dialog" aria-label="Open the advanced price chart">
+        <span class="tp-chart-cta-text">
+          <span class="tp-eyebrow tp-eyebrow-brand">Price chart</span>
+          <strong class="tp-chart-cta-title">Open advanced chart</strong>
+          <span class="tp-chart-cta-sub">Candles, indicators, trendlines and Fibonacci</span>
+        </span>
+        <span class="tp-chart-cta-spark-wrap">
+          <svg class="tp-chart-cta-spark" id="chart-cta-spark" viewBox="0 0 300 72" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <span class="tp-chart-cta-range num" id="chart-cta-range"></span>
+        </span>
+        <span class="tp-chart-cta-go">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><rect x="4" y="7" width="4" height="8" rx="1"/><line x1="12" y1="3" x2="12" y2="21"/><rect x="10" y="5" width="4" height="10" rx="1"/><line x1="18" y1="5" x2="18" y2="21"/><rect x="16" y="9" width="4" height="7" rx="1"/></svg>
+          Open chart
+        </span>
+      </button>
 
       <!-- Market KPIs -->
       <div class="tp-kpis">
@@ -500,7 +517,8 @@
   <script src="https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js" integrity="sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ" crossorigin="anonymous" defer></script>
   <script src="js/holderBehavior.js?v=7"></script>
   <!-- Chart modal; loads js/vendor/lightweight-charts on first open -->
-  <script src="js/tokenChart.js?v=1"></script>
+  <script src="js/chartDrawings.js?v=1"></script>
+  <script src="js/tokenChart.js?v=2"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>
