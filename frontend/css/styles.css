@@ -1811,6 +1811,215 @@ select:focus {
 
 
 /* =============================================
+   11b. Home token tables (js/tokenTable.js)
+   Shared by Diamond Hands, Tech, Emerging, Performance and vs SOL.
+   ============================================= */
+
+.tt-row {
+  cursor: pointer;
+}
+
+.terminal-table tbody .tt-row td {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  transition: background var(--transition-fast);
+}
+
+.tt-row:hover td {
+  background: var(--highlight);
+}
+
+/* A brand edge on the hovered row, drawn as an inset shadow so nothing reflows. */
+.tt-row:hover td:first-child,
+.tt-row:focus-visible td:first-child {
+  box-shadow: inset 2px 0 0 var(--brand-a);
+}
+
+.tt-row:focus-visible {
+  outline: none;
+}
+
+.tt-row:focus-visible td {
+  background: var(--brand-wash);
+}
+
+.tt-token {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.tt-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  background: var(--surface-3);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.tt-token-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tt-name-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tt-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.tt-tag {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+
+.tt-symbol {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.tt-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.tt-rank-top {
+  color: var(--brand-ink);
+  background: var(--brand-wash);
+  font-weight: 600;
+}
+
+.tt-pct {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.tt-pct.up { color: var(--good-ink); }
+.tt-pct.down { color: var(--bad-ink); }
+
+.tt-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+}
+
+.tt-pill.up { background: var(--good-wash); }
+.tt-pill.down { background: var(--bad-wash); }
+
+.tt-na {
+  color: var(--muted);
+}
+
+/* Conviction bars: five buckets, 6h -> 1m. */
+.tt-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 4px;
+  width: 66px;
+  height: 28px;
+  vertical-align: middle;
+}
+
+.tt-bar {
+  display: block;
+  flex: 1;
+  min-height: 2px;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--axis);
+}
+
+.tt-bar.hi { background: linear-gradient(to top, var(--brand-b), var(--brand-a)); }
+.tt-bar.mid { background: color-mix(in srgb, var(--brand-b) 55%, var(--surface-3)); }
+
+.tt-bars.stale { opacity: 0.45; }
+
+.tt-dist-head {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.tt-dist-legend {
+  display: flex;
+  justify-content: space-between;
+  width: 66px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.tt-dist-legend i { font-style: normal; }
+
+.tt-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+
+.tt-empty strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .tt-name { max-width: 140px; }
+  .tt-logo { width: 28px; height: 28px; }
+  .tt-token { gap: 10px; }
+}
+
+@media (max-width: 480px) {
+  .terminal-table tbody .tt-row td { padding-top: 10px; padding-bottom: 10px; }
+  .tt-name { max-width: 110px; font-size: 0.85rem; }
+  .tt-logo { width: 26px; height: 26px; }
+  .tt-pill { padding: 2px 6px; }
+}
+
+
+/* =============================================
    12. Sample Info
    ============================================= */
 

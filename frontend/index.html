@@ -35,7 +35,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/styles.css?v=18">
+  <link rel="stylesheet" href="css/styles.css?v=19">
 
   <style>
     /* ── King of the Pill widget ────────────────────────── */
@@ -211,6 +211,32 @@
     }
     .main-view-tab.active svg {
       color: var(--brand-ink);
+    }
+    /* Sliding highlight (js/mainViewTabs.js); the active tab drops its own background then. */
+    .main-view-tabs.has-indicator { position: relative; }
+    .main-view-indicator {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      left: 0;
+      width: 0;
+      border-radius: 9px;
+      background: var(--surface-solid);
+      border: 1px solid var(--border-strong);
+      box-shadow: 0 2px 10px -4px rgba(0, 0, 0, 0.5);
+      transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+      will-change: transform;
+      pointer-events: none;
+    }
+    .has-indicator .main-view-tab { position: relative; z-index: 1; }
+    .has-indicator .main-view-tab.active {
+      background: transparent;
+      border-color: transparent;
+      box-shadow: none;
+    }
+    .main-view-tab:focus-visible { outline: 2px solid var(--brand-b); outline-offset: -2px; }
+    @media (prefers-reduced-motion: reduce) {
+      .main-view-indicator { transition: none; }
     }
 
     /* ── vs SOL Section ─────────────────────────────────── */
@@ -773,26 +799,24 @@
     <!-- View Tab Switcher -->
     <div class="main-view-tabs" role="tablist" aria-label="Main view">
       <button class="main-view-tab active" id="tab-diamond" role="tab" aria-selected="true" aria-controls="view-diamond" data-view="diamond">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-        </svg>
-        Diamond Hands
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20M12 21 8 9l4-6 4 6-4 12"/></svg>
+        <span>Diamond Hands</span>
       </button>
-      <button class="main-view-tab" id="tab-performance" role="tab" aria-selected="false" aria-controls="view-performance" data-view="performance">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
-          <polyline points="16 7 22 7 22 13"/>
-        </svg>
-        Performance
+      <button class="main-view-tab" id="tab-performance" role="tab" aria-selected="false" aria-controls="view-performance" data-view="performance" tabindex="-1">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        <span>Performance</span>
       </button>
-      <button class="main-view-tab" id="tab-tech" role="tab" aria-selected="false" aria-controls="view-tech" data-view="tech">
-        🤖 Tech
+      <button class="main-view-tab" id="tab-tech" role="tab" aria-selected="false" aria-controls="view-tech" data-view="tech" tabindex="-1">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+        <span>Tech</span>
       </button>
-      <button class="main-view-tab" id="tab-emerging" role="tab" aria-selected="false" aria-controls="view-emerging" data-view="emerging">
-        🔨 Emerging
+      <button class="main-view-tab" id="tab-emerging" role="tab" aria-selected="false" aria-controls="view-emerging" data-view="emerging" tabindex="-1">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22V12"/><path d="M12 12C12 8 9 5 4 5c0 4 3 7 8 7z"/><path d="M12 14c0-4 3-7 8-7 0 4-3 7-8 7z"/></svg>
+        <span>Emerging</span>
       </button>
-      <button class="main-view-tab" id="tab-versus" role="tab" aria-selected="false" aria-controls="view-versus" data-view="versus">
-        📈 vs SOL
+      <button class="main-view-tab" id="tab-versus" role="tab" aria-selected="false" aria-controls="view-versus" data-view="versus" tabindex="-1">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+        <span>vs SOL</span>
       </button>
     </div>
 
@@ -857,9 +881,9 @@
               <th scope="col" class="cell-token">Token</th>
               <th scope="col" class="cell-price sortable" data-sort="price">Price <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-mcap sortable" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
-              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH since listing</th>
               <th scope="col" class="cell-updated sortable" data-sort="holders">Holders <span class="sort-arrow"></span></th>
-              <th scope="col" class="cell-dist" title="Holder conviction distribution by hold time">Distribution</th>
+              <th scope="col" class="cell-dist" title="Share of holders by how long they have held: 6 hours to 1 month"><span class="tt-dist-head">Conviction<span class="tt-dist-legend"><i>6h</i><i>1m</i></span></span></th>
             </tr>
           </thead>
           <tbody id="conviction-table-body">
@@ -924,7 +948,7 @@
               <th scope="col" class="cell-token">Token</th>
               <th scope="col" class="cell-price">Price</th>
               <th scope="col" class="cell-mcap">MCap</th>
-              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH since listing</th>
               <th scope="col" class="cell-updated">Holders</th>
             </tr>
           </thead>
@@ -958,7 +982,7 @@
               <th scope="col" class="cell-token">Token</th>
               <th scope="col" class="cell-price">Price</th>
               <th scope="col" class="cell-mcap">MCap</th>
-              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH % since Listing</th>
+              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH since listing</th>
               <th scope="col" class="cell-updated">Holders</th>
             </tr>
           </thead>
@@ -1011,9 +1035,9 @@
             <tr>
               <th scope="col" class="perf-th-rank">#</th>
               <th scope="col" class="perf-th-token">Token</th>
-              <th scope="col" class="perf-th-ath">ATH % since Listing</th>
-              <th scope="col" class="perf-th-current">Current % since Listing</th>
-              <th scope="col" class="perf-th-mcap">Current MCap</th>
+              <th scope="col" class="perf-th-ath">ATH since listing</th>
+              <th scope="col" class="perf-th-current">Now since listing</th>
+              <th scope="col" class="perf-th-mcap">MCap</th>
             </tr>
           </thead>
           <tbody id="perf-table-body"></tbody>
@@ -1069,7 +1093,7 @@
               <th scope="col" class="cell-vs-btc" data-sort="vsBtc">vs BTC <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-mcap" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-updated" data-sort="holders">Holders <span class="sort-arrow"></span></th>
-              <th scope="col" class="cell-dist">Distribution</th>
+              <th scope="col" class="cell-dist" title="Share of holders by how long they have held: 6 hours to 1 month"><span class="tt-dist-head">Conviction<span class="tt-dist-legend"><i>6h</i><i>1m</i></span></span></th>
             </tr>
           </thead>
           <tbody id="versus-table-body">
@@ -1102,12 +1126,13 @@
   <script src="js/deviceLink.js?v=2"></script>
   <script src="js/wallet.js?v=6"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/conviction.js?v=16"></script>
-  <script src="js/tech.js?v=5"></script>
-  <script src="js/emerging.js?v=5"></script>
-  <script src="js/performance.js?v=25"></script>
-  <script src="js/versus.js?v=13"></script>
-  <script src="js/mainViewTabs.js?v=1"></script>
+  <script src="js/tokenTable.js?v=1"></script>
+  <script src="js/conviction.js?v=17"></script>
+  <script src="js/tech.js?v=6"></script>
+  <script src="js/emerging.js?v=6"></script>
+  <script src="js/performance.js?v=26"></script>
+  <script src="js/versus.js?v=14"></script>
+  <script src="js/mainViewTabs.js?v=2"></script>
   <script src="js/pwa.js?v=3"></script>
   <script src="js/kotp.js?v=2"></script>
 </body>

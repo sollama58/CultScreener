@@ -1,4 +1,4 @@
-/* global api, apiCache, utils */
+/* global api, apiCache, utils, tokenTable */
 
 const convictionPage = {
   currentPage: 1,
@@ -430,178 +430,34 @@ const convictionPage = {
   render() {
     const tbody = document.getElementById('conviction-table-body');
     if (!tbody) return;
+    tokenTable.bind(tbody);
 
     if (!this.tokens || this.tokens.length === 0) {
       const isWatchlist = this._activeTier === 'watchlist';
-      const emptyMsg = isWatchlist
-        ? 'Your watchlist is empty. Visit token pages and click the star to add tokens.'
-        : 'No tokens match current filters. Adjust filters or visit token pages to trigger analysis.';
-      tbody.innerHTML = `
-        <tr class="empty-row">
-          <td colspan="7">
-            <div class="empty-state">
-              <span style="font-size: 1.5rem; margin-bottom: 0.5rem; opacity: 0.4;">${isWatchlist ? 'EMPTY WATCHLIST' : 'NO DATA'}</span>
-              <span>${emptyMsg}</span>
-            </div>
-          </td>
-        </tr>
-      `;
+      tbody.innerHTML = isWatchlist
+        ? tokenTable.emptyRow(7, 'Your watchlist is empty', 'Visit token pages and click the star to add tokens.')
+        : tokenTable.emptyRow(7, 'No tokens match', 'Adjust the filters, or visit token pages to trigger analysis.');
       return;
     }
 
-    const defaultLogo = utils.getDefaultLogo();
     const offset = (this.currentPage - 1) * this.pageSize;
 
     // One scale for the whole page, so bars are comparable down the column.
-    const convScale = this.convictionScale(this.tokens);
+    const convScale = tokenTable.scale(this.tokens);
 
     tbody.innerHTML = this.tokens.map((token, index) => {
-      const rank = offset + index + 1;
-      const address = token.mintAddress || token.address || '';
-      if (!address) return '';
-
-      const safeAddress = utils.escapeHtml(address);
-      const safeLogo = utils.escapeHtml(utils.proxyImageUrl(token.logoUri || token.logoURI) || defaultLogo);
-      const safeName = utils.escapeHtml(token.name || `${address.slice(0, 4)}...${address.slice(-4)}`);
-      const safeSymbol = utils.escapeHtml(token.symbol || address.slice(0, 5).toUpperCase());
-      const emergingBadge = token.emergingCult
-        ? '<span class="cult-hammer" title="Emerging Cult">🔨</span>'
-        : '';
-      const techBadge = token.techCoin
-        ? '<span class="cult-hammer" title="Tech Coin">🤖</span>'
-        : '';
-
-      // Holders count
-      const holdersHtml = token.holders
-        ? `<span class="mono-num">${token.holders.toLocaleString()}</span>`
-        : '<span style="color:var(--text-dim)">--</span>';
-
-      // Format price with color
-      const priceStr = utils.formatPrice(token.price, 6);
-      const mcapStr = utils.formatNumber(token.marketCap, '$');
-
-      // ATH % change from listing mcap
-      let athPctHtml = '<span style="color:var(--text-dim)">--</span>';
-      if (token.mcapAtAdded != null && token.mcapAtAdded > 0 && token.mcapAth != null) {
-        const pct = ((token.mcapAth - token.mcapAtAdded) / token.mcapAtAdded) * 100;
-        const sign = pct >= 0 ? '+' : '';
-        const color = pct >= 0 ? 'var(--green)' : 'var(--red)';
-        const athStr = utils.formatNumber(token.mcapAth, '$');
-        athPctHtml = `<span class="mono-num" style="color:${color}" title="ATH MCap: ${athStr}">${sign}${pct.toFixed(0)}%</span>`;
-      }
-
-      // Conviction distribution mini bars (no score — just the bucket chart)
-      const dist = token.conviction || {};
-      const distHtml = Object.keys(dist).length > 0
-        ? this.renderMiniBars(dist, convScale, token.convictionUpdatedAt)
-        : '<span style="color:var(--text-dim)">--</span>';
-
+      if (!tokenTable.mintOf(token)) return '';
       return `
-        <tr class="token-row terminal-row" data-mint="${safeAddress}">
-          <td class="cell-rank">${rank}</td>
-          <td class="cell-token cell-token-clickable" data-navigate="${safeAddress}">
-            <div class="token-cell">
-              <img class="token-logo" src="${safeLogo}" alt="${safeSymbol}" loading="lazy">
-              <div class="token-info">
-                <div class="table-name-line">
-                  <span class="token-name">${safeName}</span>${emergingBadge}${techBadge}
-                </div>
-                <span class="token-symbol-cell">${safeSymbol}</span>
-              </div>
-            </div>
-          </td>
-          <td class="cell-price mono-num" data-navigate="${safeAddress}">${priceStr}</td>
-          <td class="cell-mcap mono-num" data-navigate="${safeAddress}">${mcapStr}</td>
-          <td class="cell-ath-pct" data-navigate="${safeAddress}">${athPctHtml}</td>
-          <td class="cell-updated" data-navigate="${safeAddress}">${holdersHtml}</td>
-          <td class="cell-dist" data-navigate="${safeAddress}">${distHtml}</td>
-        </tr>
-      `;
+        <tr ${tokenTable.rowAttrs(token)}>
+          ${tokenTable.rankCell(offset + index + 1)}
+          ${tokenTable.tokenCell(token)}
+          <td class="cell-price num">${utils.formatPrice(token.price, 6)}</td>
+          <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}</td>
+          <td class="cell-ath-pct">${tokenTable.athCell(token)}</td>
+          <td class="cell-updated">${tokenTable.holders(token)}</td>
+          <td class="cell-dist">${tokenTable.distBars(token, convScale)}</td>
+        </tr>`;
     }).join('');
-
-    // Logo fallbacks
-    const defaultLogoSrc = defaultLogo;
-    tbody.querySelectorAll('.token-logo').forEach(img => {
-      img.onerror = function() { this.onerror = null; this.src = defaultLogoSrc; };
-    });
-
-    // Click navigation
-    tbody.querySelectorAll('[data-navigate]').forEach(el => {
-      el.addEventListener('click', () => {
-        const mint = el.dataset.navigate;
-        if (mint) window.location.href = `token.html?mint=${encodeURIComponent(mint)}`;
-      });
-      el.style.cursor = 'pointer';
-    });
-  },
-
-  // The domain the bars are drawn against, derived from the rows actually on screen.
-  //
-  // These were drawn against a fixed 0-100 scale, on a table sorted by conviction descending, so
-  // every value on a page sat between about 88 and 100 - measured over 25 rows, all 125 bars fell
-  // in the top colour band and 94 per cent were within 2px of the 28px maximum. The chart could
-  // not show the thing it exists to show.
-  //
-  // The floor keeps that fix from overcorrecting: when a page genuinely is uniform, a spread of a
-  // fraction of a point should not be stretched into a full-height swing. Below a 10-point spread
-  // the scale stays 10 points wide and the bars stay close together, which is the truth.
-  // Past this, a score is old enough that the reader should be told before trusting it.
-  STALE_CONVICTION_MS: 7 * 24 * 60 * 60 * 1000,
-
-  convictionScale(tokens) {
-    const keys = ['6h', '24h', '3d', '1w', '1m'];
-    const MIN_SPAN = 10;
-    let lo = Infinity;
-    let hi = -Infinity;
-    (tokens || []).forEach(t => {
-      const dist = (t && t.conviction) || {};
-      keys.forEach(k => {
-        const v = dist[k];
-        if (typeof v === 'number' && isFinite(v)) {
-          if (v < lo) lo = v;
-          if (v > hi) hi = v;
-        }
-      });
-    });
-    if (!isFinite(lo) || !isFinite(hi)) return { base: 0, span: 100 };
-    const span = Math.max(hi - lo, MIN_SPAN);
-    return { base: Math.max(0, hi - span), span };
-  },
-
-  // Age is shown because a conviction score is only as good as when it was computed. The API has
-  // always returned convictionUpdatedAt; nothing rendered it, so a score from an hour ago and one
-  // from two months ago looked identical. On a live leaderboard that spread reached 64 days.
-  renderMiniBars(dist, scale, updatedAt) {
-    const buckets = [
-      { key: '6h', label: '6h' },
-      { key: '24h', label: '24h' },
-      { key: '3d', label: '3d' },
-      { key: '1w', label: '1w' },
-      { key: '1m', label: '1m' }
-    ];
-    const maxH = 28;
-    const s = (scale && scale.span > 0) ? scale : { base: 0, span: 100 };
-
-    const ageMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : null;
-    const ageText = (updatedAt && isFinite(ageMs) && ageMs >= 0 && typeof utils !== 'undefined')
-      ? utils.formatAge(updatedAt)
-      : null;
-    const stale = ageMs != null && isFinite(ageMs) && ageMs > this.STALE_CONVICTION_MS;
-    const groupTitle = ageText ? ` title="Scored ${ageText} ago"` : '';
-    const staleCls = stale ? ' conviction-mini-bars--stale' : '';
-
-    return `<div class="conviction-mini-bars terminal-bars${staleCls}"${groupTitle}>${buckets.map(b => {
-      const val = dist[b.key] || 0;
-      const pos = Math.min(1, Math.max(0, (val - s.base) / s.span));
-      const h = Math.max(2, Math.round(pos * maxH));
-      // Colour tracks the same position as height, so the two channels agree instead of one of
-      // them sitting permanently saturated. The tooltip still carries the real percentage.
-      const colorClass = pos >= 0.66 ? 'bar-high' : pos >= 0.33 ? 'bar-mid' : 'bar-low';
-      return `<div class="conviction-mini-bar" title="${b.label}: ${val.toFixed(1)}%">
-        <div class="conviction-mini-fill ${colorClass}" style="height:${h}px"></div>
-        <span class="conviction-mini-label">${b.label}</span>
-      </div>`;
-    }).join('')}</div>`;
   },
 
   goToPage(page) {
