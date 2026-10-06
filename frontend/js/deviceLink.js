@@ -1,31 +1,22 @@
 /**
  * Mobile Connect - the browser half.
  *
- * One QR, two backends. HolDEX proper and TrenchScanner are separate services with separate
- * databases and separate notions of "who is this", so pairing a phone means pairing it twice.
- * The desktop mints one code from each and packs both into a single link; the phone redeems both
- * on arrival. Either half can be missing (you might be signed into Trenches but have no wallet
- * connected here, or the reverse) and the flow still works for the half that is available.
+ * The desktop mints a single-use code and packs it into a link; the phone redeems it on arrival.
  *
- * What the phone ends up holding is deliberately unequal, because the two sides are not the same
- * kind of thing:
+ * This site has no accounts. Identity here is a wallet in the browser and every write is signed
+ * at the moment it happens. A phone cannot be given that - the key never leaves the desktop's
+ * wallet - so what it gets is a proof of which wallet it belongs to, which is enough for
+ * personalised reads and nothing more. Writing still asks for a wallet on the phone. A device
+ * token that leaked would show somebody a watchlist, not let them act as its owner.
  *
- *   - Trenches has real accounts, so the phone gets a real Trenches session, in a cookie, and can
- *     do everything the desktop can.
- *   - This site has no accounts at all. Identity here is a wallet in the browser and every write
- *     is signed at the moment it happens. A phone cannot be given that - the key never leaves the
- *     desktop's wallet - so what it gets is a proof of which wallet it belongs to, which is enough
- *     for personalised reads and nothing more. Writing still asks for a wallet on the phone.
- *
- * That asymmetry is the point rather than an omission: a device token that leaked would show
- * somebody a watchlist, not let them act as its owner.
+ * (The QR used to carry a second code for the in-site Trenches app. That app moved to
+ * trenchscanner.app, which this site has no session for, so the code now pairs HolDEX only.)
  */
 const deviceLink = {
   /**
-   * Fallback only, for a backend that does not report its own TTL. Both of them do, and the
-   * countdown uses what they say (see mintSiteCode / mintTrenchesCode): a constant duplicated
-   * across three codebases is a constant that will eventually disagree with two of them, and the
-   * failure mode is a QR that reads as live after it is dead.
+   * Fallback only, for a backend that does not report its own TTL. The backend does, and the
+   * countdown uses what it says (see mintSiteCode): a constant duplicated across codebases will
+   * eventually disagree, and the failure mode is a QR that reads as live after it is dead.
    */
   CODE_TTL_MS: 2 * 60 * 1000,
 
@@ -42,9 +33,6 @@ const deviceLink = {
 
   siteApi() {
     return (typeof config !== 'undefined' && config.api?.baseUrl) || '';
-  },
-  trenchesApi() {
-    return (typeof config !== 'undefined' && config.api?.trenchesUrl) || '';
   },
   key(name) {
     return (typeof config !== 'undefined' && config.storageKeys?.[name]) || `holdex_${name}`;
@@ -81,22 +69,23 @@ const deviceLink = {
   // ------------------------------------------------------------------------------ the QR payload
 
   /**
-   * Both codes ride in the URL *fragment*, never the query string. A fragment is never sent to
+   * The code rides in the URL *fragment*, never the query string. A fragment is never sent to
    * the server, so these single-use credentials stay out of access logs, out of the Referer
    * header, and out of any analytics that records full URLs. The landing page strips it from the
    * address bar as soon as it has read it, so a screenshot or a shoulder-surfer gets nothing.
    */
-  buildLinkUrl(origin, siteToken, trenchesToken) {
-    return `${origin}/link.html#${siteToken || ''}.${trenchesToken || ''}`;
+  buildLinkUrl(origin, siteToken) {
+    return `${origin}/link.html#${siteToken || ''}`;
   },
 
   /** The inverse. Anything malformed reads as "absent" rather than throwing - the page is meant
-   *  to say "this link isn't valid any more", not to break. */
+   *  to say "this link isn't valid any more", not to break. Reads only the part before any
+   *  '.', which is where older two-code links kept this site's half. */
   parseLinkHash(hash) {
     const raw = (hash || '').replace(/^#/, '');
-    const [site, trenches] = raw.split('.');
+    const [site] = raw.split('.');
     const ok = (t) => (typeof t === 'string' && /^[a-f0-9]{64}$/.test(t) ? t : null);
-    return { siteToken: ok(site), trenchesToken: ok(trenches) };
+    return { siteToken: ok(site) };
   },
 
   // ------------------------------------------------------------------------------- desktop side
@@ -133,30 +122,6 @@ const deviceLink = {
     };
   },
 
-  /**
-   * Mint Trenches' half from the Trenches session cookie. Returns null rather than throwing when
-   * there is no session: not being signed into Trenches is an ordinary state, and the desktop
-   * panel says so instead of failing the whole pairing.
-   */
-  /* eslint-disable-next-line no-unused-vars */
-  async mintTrenchesCode() {
-    try {
-      // No Content-Type header, because there is no body. Declaring application/json on an
-      // empty POST makes Fastify's JSON parser reject the request at 400 before the route ever
-      // runs - which reads exactly like "not signed in" and is not.
-      const res = await fetch(`${this.trenchesApi()}/auth/link/code`, {
-        method: 'POST',
-        credentials: 'include'
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (typeof data.code !== 'string') return null;
-      return { code: data.code, expiresAt: this.deadlineFrom(data.ttlMs) };
-    } catch (_) {
-      return null;
-    }
-  },
-
   // --------------------------------------------------------------------------------- phone side
 
   /** Redeem this site's half. Returns the wallet the phone is now recognised as. */
@@ -170,22 +135,6 @@ const deviceLink = {
     if (!res.ok) throw new Error(data.error || 'This code is not valid any more');
     this.setSession(data.sessionToken, data.wallet);
     return data.wallet;
-  },
-
-  /** Redeem Trenches' half. The session arrives as a cookie, so there is nothing to store here -
-   *  which is also why credentials must be included on both this call and every later one. */
-  async redeemTrenchesCode(code) {
-    const res = await fetch(`${this.trenchesApi()}/auth/link/redeem`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error === 'invalid_or_expired'
-      ? 'This code is not valid any more'
-      : (data.error || 'Could not link Trenches'));
-    return data.walletAddress;
   },
 
   // ------------------------------------------------------------------------- managing what is linked
@@ -227,29 +176,6 @@ const deviceLink = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Could not disconnect');
     return data.revoked || 0;
-  },
-
-  /** The phones paired to Trenches. Empty when this browser has no Trenches session, which is
-   *  not an error - it just means there is nothing of theirs to show. */
-  async listTrenchesDevices() {
-    try {
-      const res = await fetch(`${this.trenchesApi()}/auth/devices`, { credentials: 'include' });
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data.devices || [];
-    } catch (_) {
-      return null;
-    }
-  },
-
-  async revokeTrenchesDevice(deviceId) {
-    const path = deviceId === null ? '/auth/devices' : `/auth/devices/${encodeURIComponent(deviceId)}`;
-    const res = await fetch(`${this.trenchesApi()}${path}`, {
-      method: 'DELETE',
-      credentials: 'include'
-    });
-    if (!res.ok) throw new Error('Could not disconnect');
-    return true;
   },
 
   // -------------------------------------------------------------------------------------- display

@@ -38,7 +38,9 @@
 // on first open, not precached), token.css v2.
 // v67: chart modal gets trendline + Fibonacci tools (new js/chartDrawings.js), phone layout and
 // a chart preview card on the token page - tokenChart.js v2, token.css v3.
-const CACHE_VERSION = 'holdex-v68';
+// v69: in-site Trenches app removed; nav links to trenchscanner.app and Mobile Connect pairs
+// HolDEX only - api.js v13, config.js v4, deviceLink.js v3, connectPhone.js v3, linkPage.js v3.
+const CACHE_VERSION = 'holdex-v69';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -49,9 +51,9 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 const APP_SHELL = [
   '/css/styles.css?v=20',
   '/css/token.css?v=3',
-  '/js/config.js?v=3',
-  '/js/api.js?v=12',
-  '/js/deviceLink.js?v=2',
+  '/js/config.js?v=4',
+  '/js/api.js?v=13',
+  '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
   '/js/tokenTable.js?v=3',
   '/js/conviction.js?v=18',
@@ -84,8 +86,8 @@ const API_PATTERNS = [
 
 // Hosts whose responses must never be written to a cache.
 //
-// The Trenches app (/trenches/) talks to its own backend with cookie-authenticated,
-// per-user endpoints — /auth/me, /filters, /matches — none of which carry the /api/ prefix
+// TrenchScanner's API (once used by the in-site Trenches app, now moved to trenchscanner.app)
+// serves cookie-authenticated, per-user endpoints — /auth/me, /filters, /matches — none of which carry the /api/ prefix
 // API_PATTERNS matches on, and all of which are cross-origin. Without this they'd fall
 // through to the catch-all network-first branch at the bottom of the fetch handler and be
 // stored in DYNAMIC_CACHE: one user's filters and account details left on disk, still served
@@ -195,21 +197,6 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(networkFirstWithCache(request, STATIC_CACHE));
     return;
   }
-
-  // The Trenches SPA's build output is content-hashed and served immutable - the HTTP cache
-  // already makes every repeat visit instant, so this worker adds nothing by storing a second
-  // copy. It does subtract, though: when a worker update takes control mid-navigation, the entry
-  // document's modulepreloads and the module requests behind them get answered in different
-  // worlds, Chrome discards the preloads as a "cross-world service worker resource mismatch",
-  // and the page's two biggest chunks download twice. Handing these back to the browser makes
-  // both requests live in the same world every time.
-  //
-  // The whole /trenches/ prefix, not just /assets/: boot-prefetch.js is a Vite public/ file with
-  // no ?v= and no content hash, so the cache-first branch below violated its own "versioned URLs
-  // make cache-first safe" invariant on it - once stored, returning visitors ran the old script
-  // until the next manual CACHE_VERSION bump, silently degrading the boot prefetch after any
-  // deploy that changed it. (The SPA's HTML never reaches this line - documents returned above.)
-  if (url.pathname.startsWith('/trenches/')) return;
 
   // Same-origin static assets (JS, CSS, images) â†’ Cache First.
   // Assets use ?v=N versioning in their URLs, so cache-first is safe:

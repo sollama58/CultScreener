@@ -6,7 +6,7 @@
 # this file said static sites couldn't be blueprint-managed; that hasn't been true for a while.
 # It matters: frontend/_headers and frontend/_redirects are Netlify/Cloudflare Pages conventions
 # that Render does not read - verified in production, where the site was serving no CSP, no
-# X-Frame-Options and no Referrer-Policy at all, and where /trenches/deep-link 404'd. Header and
+# X-Frame-Options and no Referrer-Policy at all. Header and
 # rewrite config for a Render static site lives in this file (or the Dashboard), nowhere else.
 
 services:
@@ -77,8 +77,8 @@ services:
   # =====================================================
   # Frontend Static Site
   # =====================================================
-  # Publishes frontend/ from the repo root. The build step compiles the Trenches SPA
-  # (trenches/) into frontend/trenches/, which is git-ignored and generated at deploy time.
+  # Publishes frontend/ from the repo root. The site has no build step; the root `npm run build`
+  # is a no-op kept so a Dashboard-configured build command keeps working.
   - type: web
     name: HolDEX-frontend
     runtime: static
@@ -86,14 +86,16 @@ services:
     staticPublishPath: ./frontend
 
     # Render checks for a real file before applying any rule here ("Render does not apply
-    # redirect or rewrite rules to a path if a resource exists at that path"), so the
-    # /trenches/* rule cannot swallow the SPA's own hashed assets.
+    # redirect or rewrite rules to a path if a resource exists at that path").
     routes:
-      # Trenches SPA: hand any unmatched /trenches/* path to the app's entry document, so a
-      # refresh or a pasted link lands in the app instead of a 404.
-      - type: rewrite
+      # The in-site Trenches app was removed in favour of TrenchScanner's own site. Old links
+      # and bookmarks go there instead of 404ing.
+      - type: redirect
+        source: /trenches
+        destination: https://trenchscanner.app
+      - type: redirect
         source: /trenches/*
-        destination: /trenches/index.html
+        destination: https://trenchscanner.app
       # Extensionless URLs for the hand-authored pages.
       - type: rewrite
         source: /token/*
@@ -116,7 +118,7 @@ services:
       # these entries keep fonts working for them in the meantime.
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://cultscreener-api.onrender.com https://api.holdex.live https://solana-rpc.publicnode.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'"
+        value: "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://cultscreener-api.onrender.com https://api.mainnet-beta.solana.com https://*.helius-rpc.com https://api.geckoterminal.com https://quote-api.jup.ag https://api.dexscreener.com; frame-src 'none'; object-src 'none'"
       - path: /*
         name: X-Content-Type-Options
         value: "nosniff"
@@ -142,10 +144,6 @@ services:
       - path: /css/*
         name: Cache-Control
         value: "public, max-age=3600, stale-while-revalidate=86400"
-      # The SPA's bundle is content-hashed: a changed file always has a new URL, so immutable.
-      - path: /trenches/assets/*
-        name: Cache-Control
-        value: "public, max-age=31536000, immutable"
 
   # =====================================================
   # Background Worker (BullMQ job processor)
@@ -252,8 +250,10 @@ databases:
 #      domain would have to be moved.
 #
 #    OR set the same values by hand, which changes nothing about how the site is managed:
-#      Settings > Redirects/Rewrites - add all four, Rewrite (not Redirect):
-#        /trenches/*  ->  /trenches/index.html
+#      Settings > Redirects/Rewrites - add these as Redirect:
+#        /trenches    ->  https://trenchscanner.app
+#        /trenches/*  ->  https://trenchscanner.app
+#      and these as Rewrite:
 #        /token/*     ->  /token.html
 #        /community   ->  /community.html
 #        /about       ->  /about.html
@@ -263,17 +263,8 @@ databases:
 #
 #    Until then the site serves NO security headers at all - confirmed in production.
 #
-#    NOTE ON THE ROOT/BUILD CHANGE (was: Root Directory "frontend", no build command):
-#    The published tree is identical either way — Publish Directory "frontend" from the repo
-#    root resolves to the same files that Root Directory "frontend" + Publish "." did, so every
-#    existing page keeps its current URL. What changes:
-#      - The build step now runs on every deploy. It compiles trenches/ into frontend/trenches/
-#        (git-ignored, generated at deploy time). If that build fails, the WHOLE static site
-#        deploy fails, where previously there was no build to fail. Render keeps serving the
-#        last successful deploy, so a failure stalls updates rather than taking the site down.
-#      - Auto-deploy now triggers on any change in the repo, not just frontend/, because the
-#        service's root is the repo root.
-#      - Deploys are slower (npm ci for the SPA's dependencies).
+#    The static site has no real build step. The root package.json keeps a no-op `build`
+#    script so a site still configured with `npm ci && npm run build` deploys unchanged.
 #
 # 3. Update CORS_ORIGIN on HolDEX-api:
 #    After creating the static site, copy its URL and update

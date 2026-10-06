@@ -627,8 +627,7 @@ img {
   color: var(--ink);
 }
 
-/* Wallet connect button: a pill like TrenchScanner's wallet chip. #connect-wallet is also what the
-   /trenches wallet bridge looks for, so keep the id. */
+/* Wallet connect button: a pill like TrenchScanner's wallet chip. */
 .btn-wallet,
 #connect-wallet {
   border: 1px solid var(--border);
