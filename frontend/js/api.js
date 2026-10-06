@@ -959,17 +959,24 @@ const utils = {
   handleImageError(img, fallback) {
     fallback = fallback || img.dataset.fallback;
     if (!fallback) return;
-    const src = img.getAttribute('src') || '';
-    if (src === fallback) return;
-    if (!img.dataset.logoRetried && src.includes('/api/image-proxy')) {
-      img.dataset.logoRetried = '1';
-      img.src = fallback;
-      setTimeout(() => {
-        if (img.isConnected) img.src = `${src}&retry=1`;
-      }, 1500 + Math.random() * 2500);
-      return;
-    }
+    if ((img.getAttribute('src') || '') === fallback) return;
+    if (this.retryProxiedImage(img, fallback)) return;
     img.src = fallback;
+  },
+
+  // The retry half of handleImageError, for images whose final failure is handled differently
+  // (hidden rather than swapped). Schedules one jittered retry of a proxied image, showing
+  // `placeholder` meanwhile if given, and returns true; returns false when the image is not
+  // proxied or has already had its retry, so the caller applies its own fallback.
+  retryProxiedImage(img, placeholder) {
+    const src = img.getAttribute('src') || '';
+    if (img.dataset.logoRetried || !src.includes('/api/image-proxy')) return false;
+    img.dataset.logoRetried = '1';
+    if (placeholder) img.src = placeholder;
+    setTimeout(() => {
+      if (img.isConnected) img.src = `${src}&retry=1`;
+    }, 1500 + Math.random() * 2500);
+    return true;
   },
 
   // Mark a horizontally scrolling element so its edges can show there is more to reach.

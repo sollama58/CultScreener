@@ -720,7 +720,17 @@ function PumpTokCard({
               /* A dead image URL would otherwise leave the alt box and a broken-image glyph
                  sitting behind the text. */
               onError={(e) => {
-                e.currentTarget.style.display = "none";
+                // One retry first, as TokenArtwork does, then hide.
+                const img = e.currentTarget;
+                if (!img.dataset.retried && img.src.includes("/api/image-proxy")) {
+                  img.dataset.retried = "1";
+                  const retrySrc = `${img.src}&retry=1`;
+                  setTimeout(() => {
+                    if (img.isConnected) img.src = retrySrc;
+                  }, 1500 + Math.random() * 2500);
+                  return;
+                }
+                img.style.display = "none";
               }}
             />
             <span className="pumptok-card__scrim" aria-hidden="true" />

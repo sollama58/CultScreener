@@ -56,6 +56,9 @@
     var logoEl = el.querySelector('.kotp-logo');
     if (logoEl) {
       logoEl.addEventListener('error', function () {
+        // One retry first (see utils.handleImageError), with the default logo shown while it waits.
+        if (typeof utils !== 'undefined' && utils.retryProxiedImage &&
+            utils.retryProxiedImage(this, utils.getDefaultLogo())) return;
         this.style.display = 'none';
       });
     }
