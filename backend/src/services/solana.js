@@ -37,60 +37,12 @@ const deduped = dedupeEndpoints(RPC_ENDPOINTS);
 RPC_ENDPOINTS.length = 0;
 RPC_ENDPOINTS.push(...deduped);
 
-// Only a few methods need Helius: DAS (separate functions below), getProgramAccounts
-// (public RPCs refuse it) and Helius' own getTransactionsForAddress. Every other
-// method is plain Solana JSON-RPC, so it goes to a free endpoint first and falls
-// back to Helius; that keeps Helius credits (and its rate limit) for DAS work.
-// STANDARD_RPC_URL=off sends everything to Helius as before.
-const HELIUS_ONLY_METHODS = new Set(['getProgramAccounts', 'getTransactionsForAddress']);
-const STANDARD_RPC_URL = process.env.STANDARD_RPC_URL === undefined
-  ? 'https://solana-rpc.publicnode.com'
-  : process.env.STANDARD_RPC_URL.trim();
-const STANDARD_ENDPOINTS = STANDARD_RPC_URL && !/^(off|none|false|0)$/i.test(STANDARD_RPC_URL)
-  ? dedupeEndpoints([STANDARD_RPC_URL, ...RPC_ENDPOINTS])
-  : RPC_ENDPOINTS;
-
 const RPC_FAILOVER_COOLDOWN_MS = 60000; // 1 minute before trying failed endpoint again
 
-// Each chain fails over independently: the standard chain from the free RPC to
-// Helius, the Helius chain from Helius to the public RPC.
+// Every JSON-RPC call goes to Helius; the public RPC is only an outage failover.
 const rpcChains = {
   helius: { name: 'helius', endpoints: RPC_ENDPOINTS, index: 0, lastFailure: null },
-  standard: { name: 'standard', endpoints: STANDARD_ENDPOINTS, index: 0, lastFailure: null },
 };
-function chainFor(method) {
-  if (HELIUS_ONLY_METHODS.has(method) || isStandardBenched()) return rpcChains.helius;
-  return rpcChains.standard;
-}
-
-// When the free endpoint refuses us (403 from a blocked datacenter IP, 401,
-// 429, 5xx, no response) the call goes straight to Helius and the free endpoint
-// is benched for a while, so later calls don't pay a doomed round trip first.
-// 401/403 usually means the provider blocks our host, so that bench is longer.
-const STANDARD_BENCH_MS = { forbidden: 30 * 60000, rateLimited: 2 * 60000, other: 60000 };
-let standardBenchedUntil = 0;
-function isStandardBenched() {
-  return Date.now() < standardBenchedUntil;
-}
-function benchStandardRpc(status, method) {
-  const ms = status === 401 || status === 403 ? STANDARD_BENCH_MS.forbidden
-    : status === 429 ? STANDARD_BENCH_MS.rateLimited
-    : STANDARD_BENCH_MS.other;
-  const wasBenched = isStandardBenched();
-  standardBenchedUntil = Math.max(standardBenchedUntil, Date.now() + ms);
-  if (!wasBenched) {
-    console.warn(`[Solana] Free RPC refused ${method} (${status ? `HTTP ${status}` : 'no response'}); using Helius for ${Math.round(ms / 60000)} min`);
-  }
-}
-function rpcHost(url) {
-  try { return new URL(url).host; } catch (_) { return 'rpc'; }
-}
-function isFreeEndpointRefusal(error) {
-  if (error.isOverloaded || error.rpcCode !== undefined) return false;
-  const status = error.response?.status;
-  if (!status) return true; // timeout / connection error
-  return status === 401 || status === 403 || status === 429 || status >= 500;
-}
 
 // Get current RPC URL with failover logic
 function getCurrentRpcUrl(chain = rpcChains.helius) {
@@ -247,21 +199,18 @@ async function withRpcRetry(requestFn, context = 'rpc') {
 }
 
 // Make RPC call with circuit breaker, failover, retry, and 429 backoff
-async function rpcCall(method, params = [], retryCount = 0, chainOverride = null) {
+async function rpcCall(method, params = [], retryCount = 0) {
   const MAX_RETRIES = 2;
-  const chain = chainOverride || chainFor(method);
-  const rpcUrl = getCurrentRpcUrl(chain);
-  const onFreeRpc = rpcUrl === STANDARD_RPC_URL;
+  const chain = rpcChains.helius;
 
   try {
     // Pick rate limiter key: use 'helius' when talking to a Helius endpoint so all
     // Helius traffic (RPC + DAS) shares one queue and respects a single rate limit.
+    const rpcUrl = getCurrentRpcUrl(chain);
     const isHelius = rpcUrl.includes('helius');
-    const rateLimiterKey = isHelius ? 'helius' : (onFreeRpc ? 'standardRpc' : 'solana');
+    const rateLimiterKey = isHelius ? 'helius' : 'solana';
 
-    // On the free endpoint a 429 goes straight to Helius instead of sleeping and retrying.
-    const retry = onFreeRpc ? (fn) => fn() : withRpcRetry;
-    return await retry(() => rateLimitedRequest(rateLimiterKey, () => circuitBreakers.solanaRpc.execute(async () => {
+    return await withRpcRetry(() => rateLimitedRequest(rateLimiterKey, () => circuitBreakers.solanaRpc.execute(async () => {
 
       try {
         if (isHelius) countCredits(method, RPC_METHOD_CREDITS[method] || 1);
@@ -293,7 +242,7 @@ async function rpcCall(method, params = [], retryCount = 0, chainOverride = null
         if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
           console.error(`[Solana] RPC timeout (${method}): Request timed out`);
         } else if (error.response) {
-          console.error(`[Solana] RPC error (${method}) from ${rpcHost(rpcUrl)}: HTTP ${error.response.status}`);
+          console.error(`[Solana] RPC error (${method}): HTTP ${error.response.status}`);
         } else if (error.request) {
           console.error(`[Solana] RPC error (${method}): No response received`);
         }
@@ -311,21 +260,12 @@ async function rpcCall(method, params = [], retryCount = 0, chainOverride = null
       error.code === 'ECONNREFUSED' ||
       !error.response;
 
-    // A free endpoint that doesn't serve the method (-32601) or rate-limits us
-    // (429, after withRpcRetry's own retry) answers nothing useful: go to Helius.
+    // Rate limited even after withRpcRetry's own retry: try the next endpoint.
     const isRateLimited = error.response?.status === 429;
-    const unsupported = error.rpcCode === -32601 && chain !== rpcChains.helius;
-    if (unsupported && retryCount < MAX_RETRIES) {
-      return rpcCall(method, params, retryCount + 1, rpcChains.helius);
-    }
-    if (onFreeRpc && isFreeEndpointRefusal(error) && retryCount < MAX_RETRIES) {
-      benchStandardRpc(error.response?.status, method);
-      return rpcCall(method, params, retryCount + 1, rpcChains.helius);
-    }
     if ((isConnectionError || isRateLimited) && retryCount < MAX_RETRIES) {
       if (failoverToNextRpc(chain)) {
         console.log(`[Solana] Retrying ${method} with failover endpoint (attempt ${retryCount + 1})`);
-        return rpcCall(method, params, retryCount + 1, chain);
+        return rpcCall(method, params, retryCount + 1);
       }
     }
 
@@ -402,7 +342,7 @@ async function getSignaturesForAddress(address, limit = 10) {
 async function checkHealth() {
   try {
     const result = await rpcCall('getHealth');
-    const chain = rpcChains.standard;
+    const chain = rpcChains.helius;
     const currentUrl = getCurrentRpcUrl(chain);
     return {
       healthy: result === 'ok',
@@ -410,16 +350,14 @@ async function checkHealth() {
       currentEndpoint: chain.index + 1,
       totalEndpoints: chain.endpoints.length,
       usingFallback: chain.index > 0,
-      heliusEndpoint: getCurrentRpcUrl(rpcChains.helius).split('?')[0],
-      heliusUsingFallback: rpcChains.helius.index > 0,
       circuitBreakerState: circuitBreakers.solanaRpc.getStatus().state
     };
   } catch (error) {
     return {
       healthy: false,
       error: error.message,
-      currentEndpoint: rpcChains.standard.index + 1,
-      totalEndpoints: rpcChains.standard.endpoints.length,
+      currentEndpoint: rpcChains.helius.index + 1,
+      totalEndpoints: rpcChains.helius.endpoints.length,
       circuitBreakerState: circuitBreakers.solanaRpc.getStatus().state
     };
   }
