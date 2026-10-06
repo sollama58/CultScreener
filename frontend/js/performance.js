@@ -459,7 +459,18 @@ const performancePage = {
         }
       };
 
-      img.onerror = () => { clearTimeout(timer); resolve(avatar); };
+      // One quick retry inside the timeout above, for a passing proxy failure (a 429 or a cold
+      // cache timing out upstream); see utils.handleImageError.
+      let retried = false;
+      img.onerror = () => {
+        if (!retried && proxied && proxied.includes('/api/image-proxy')) {
+          retried = true;
+          setTimeout(() => { img.src = `${proxied}&retry=1`; }, 1000);
+          return;
+        }
+        clearTimeout(timer);
+        resolve(avatar);
+      };
       img.src = proxied;
     });
   },

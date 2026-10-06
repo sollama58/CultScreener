@@ -31,12 +31,17 @@ export function TokenArtwork({
 }) {
   const [failed, setFailed] = useState(false);
   const [started, setStarted] = useState(false);
+  // 0: first load. "waiting": the first load failed and a retry is scheduled (initials shown
+  // meanwhile). 1: the retry is loading. See onError below.
+  const [attempt, setAttempt] = useState<0 | "waiting" | 1>(0);
   const releaseRef = useRef<(() => void) | undefined>(undefined);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (!src) return;
     setStarted(false);
     setFailed(false);
+    setAttempt(0);
     let cancelled = false;
 
     void acquireImageSlot().then((release) => {
@@ -54,6 +59,7 @@ export function TokenArtwork({
       cancelled = true;
       releaseRef.current?.();
       releaseRef.current = undefined;
+      clearTimeout(retryTimerRef.current);
     };
   }, [src]);
 
@@ -62,7 +68,7 @@ export function TokenArtwork({
     releaseRef.current = undefined;
   };
 
-  if (!src || failed) {
+  if (!src || failed || attempt === "waiting") {
     return (
       <span className={`${className} ${fallbackClassName ?? ""}`.trim()} aria-hidden="true">
         {label.slice(0, 2).toUpperCase()}
@@ -75,12 +81,21 @@ export function TokenArtwork({
       className={className}
       // Rendered from the start so the box reserves its space, but with no src until the queue
       // releases it - an <img> with no src requests nothing.
-      src={started ? src : undefined}
+      src={started ? (attempt === 1 ? `${src}&retry=1` : src) : undefined}
       alt=""
       decoding="async"
       onLoad={settle}
       onError={() => {
         settle();
+        // A proxied image usually fails for a passing reason (a 429 while a page loads many at
+        // once, or the proxy's upstream timing out on a cold cache), so it gets one jittered
+        // retry before the initials become final. retry=1 also makes the proxy skip a remembered
+        // transient failure, and keeps the browser from replaying the failed response.
+        if (attempt === 0 && src.includes("/api/image-proxy")) {
+          setAttempt("waiting");
+          retryTimerRef.current = setTimeout(() => setAttempt(1), 1500 + Math.random() * 2500);
+          return;
+        }
         setFailed(true);
       }}
     />

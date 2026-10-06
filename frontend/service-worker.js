@@ -26,7 +26,9 @@
 // cultify.js v16, new app icons.
 // v61: home token tables redesign - new js/tokenTable.js, styles.css v19, conviction.js v17,
 // tech.js v6, emerging.js v6, performance.js v26, versus.js v14, mainViewTabs.js v2.
-const CACHE_VERSION = 'holdex-v61';
+// v62: token images retry once before falling back - api.js v10, tokenTable.js v2, kotp.js v3,
+// tokenDetail.js v26, performance.js v27, versus.js v15.
+const CACHE_VERSION = 'holdex-v62';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -38,23 +40,23 @@ const APP_SHELL = [
   '/css/styles.css?v=19',
   '/css/token.css?v=1',
   '/js/config.js?v=3',
-  '/js/api.js?v=9',
+  '/js/api.js?v=10',
   '/js/deviceLink.js?v=2',
   '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=1',
+  '/js/tokenTable.js?v=2',
   '/js/conviction.js?v=17',
   '/js/tech.js?v=6',
   '/js/emerging.js?v=6',
-  '/js/versus.js?v=14',
+  '/js/versus.js?v=15',
   '/js/mainViewTabs.js?v=2',
-  '/js/kotp.js?v=2',
-  '/js/tokenDetail.js?v=25',
+  '/js/kotp.js?v=3',
+  '/js/tokenDetail.js?v=26',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=6',
   '/js/holderBehavior.js?v=6',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=26',
+  '/js/performance.js?v=27',
   '/js/cultify.js?v=16',
   '/js/admin.js?v=16',
   '/js/apiKeys.js?v=2',
