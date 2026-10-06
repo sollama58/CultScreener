@@ -4598,7 +4598,7 @@ select:focus {
 .footer {
   background: transparent;
   border-top: 1px solid var(--border);
-  padding: 24px 2rem 40px;
+  padding: 24px 2rem;
   margin-top: auto;
   position: relative;
 }
