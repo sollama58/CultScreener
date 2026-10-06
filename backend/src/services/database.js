@@ -549,6 +549,15 @@ async function initializeDatabase() {
         WHERE logo_uri IS NOT NULL
           AND (logo_uri !~* '^https?://' OR logo_uri ~* '/missing(_[a-z]+)?[.]png$');
 
+      -- Hold-time backfills that gave up before 2026-10-07 mostly failed on the public-RPC
+      -- failover (removed then), which left diamond hands "Unavailable". Put them back in the
+      -- queue once. Only rows last touched before the cutoff match, so this is a no-op
+      -- after the first boot that runs it.
+      UPDATE holder_positions SET acquired_source = 'pending', backfill_attempts = 0,
+             backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL,
+             backfill_pages = 0, backfill_updated_at = NOW()
+        WHERE acquired_source = 'failed' AND backfill_updated_at < '2026-10-07T00:00:00Z';
+
       -- Generic key-value store for admin-configurable settings
       CREATE TABLE IF NOT EXISTS app_settings (
         key VARCHAR(100) PRIMARY KEY,
