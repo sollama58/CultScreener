@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { normalizeLogoUri } = require('./tokenImage');
 const { httpsAgent } = require('./httpAgent');
 const { circuitBreakers } = require('./circuitBreaker');
 const { rateLimitedRequest } = require('./rateLimiter');
@@ -620,7 +621,7 @@ async function getTokenMetadata(mintAddress) {
       price: price,
       hasPriceData: price !== null,
       // Logo from content if available (checked multiple locations)
-      logoUri: logoUri,
+      logoUri: normalizeLogoUri(logoUri),
       // json_uri for off-chain metadata fetch (social links live here)
       jsonUri: (typeof content.json_uri === 'string' && content.json_uri) ? content.json_uri : null,
       // On-chain fallback links (extensions / content.links)
@@ -769,7 +770,7 @@ async function getTokenMetadataBatch(mintAddresses) {
         supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, tokenInfo.decimals || 9) : null,
         price: priceInfo.price_per_token || null,
         hasPriceData: !!priceInfo.price_per_token,
-        logoUri: logoUri
+        logoUri: normalizeLogoUri(logoUri)
       };
     }
 

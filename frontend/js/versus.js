@@ -492,6 +492,7 @@ const versusPage = {
     if (!url) return avatar;
 
     const proxied = utils.proxyImageUrl(url);
+    if (!proxied) return avatar;
 
     return new Promise((resolve) => {
       const img = new Image();

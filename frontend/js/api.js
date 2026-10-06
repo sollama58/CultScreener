@@ -914,15 +914,27 @@ const utils = {
   // (ipfs.io, Irys, ...) doesn't leave the image blank for every visitor — only the first
   // request after the cache expires ever touches the original host.
   // Leaves data: URIs and already-proxied/non-https URLs untouched.
+  //
+  // Returns null for anything a browser cannot load as an image, so the caller's default logo
+  // applies: GeckoTerminal's "missing.png" placeholder (a relative path, which used to request
+  // /missing.png from this site and 404), and other non-URLs. ipfs:// and ar:// go through a
+  // gateway, and http is tried as https, since the page is https and the proxy fetches https only.
   proxyImageUrl(url) {
-    if (!url) return url;
-    if (url.startsWith('data:') || url.includes('/api/image-proxy')) return url;
+    if (!url || typeof url !== 'string') return null;
+    url = url.trim();
+    if (url.startsWith('data:image/') || url.includes('/api/image-proxy')) return url;
+    if (/^ipfs:\/\//i.test(url)) url = 'https://ipfs.io/ipfs/' + url.replace(/^ipfs:\/\/(ipfs\/)?/i, '');
+    else if (/^ar:\/\//i.test(url)) url = 'https://arweave.net/' + url.replace(/^ar:\/\//i, '');
+    let parsed;
     try {
-      if (new URL(url).protocol !== 'https:') return url; // proxy only handles https sources
+      parsed = new URL(url);
     } catch {
-      return url;
+      return null;
     }
-    return `${API_BASE_URL}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    if (parsed.protocol === 'http:') parsed.protocol = 'https:';
+    if (parsed.protocol !== 'https:') return null;
+    if (/\/missing(_[a-z]+)?\.png$/i.test(parsed.pathname)) return null;
+    return `${API_BASE_URL}/api/image-proxy?url=${encodeURIComponent(parsed.href)}`;
   },
 
   // Attach the logo fallback that used to be written as an onerror="" attribute on each <img>.

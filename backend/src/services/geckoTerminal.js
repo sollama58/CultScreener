@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { normalizeLogoUri } = require('./tokenImage');
 const { rateLimitedRequest, sleep } = require('./rateLimiter');
 const { circuitBreakers } = require('./circuitBreaker');
 const { httpsAgent } = require('./httpAgent');
@@ -260,8 +261,8 @@ async function getTokenInfo(mintAddress) {
       name: attrs.name || null,
       symbol: attrs.symbol || null,
       decimals: attrs.decimals || 9,
-      logoUri: attrs.image_url || null,
-      logoURI: attrs.image_url || null,
+      logoUri: normalizeLogoUri(attrs.image_url),
+      logoURI: normalizeLogoUri(attrs.image_url),
       price: parseFloat(attrs.price_usd) || 0,
       volume24h: parseFloat(attrs.volume_usd?.h24) || 0,
       marketCap: parseFloat(attrs.market_cap_usd) || 0,
@@ -341,7 +342,7 @@ async function getMultiTokenInfo(addresses) {
         name:         attrs.name,
         symbol:       attrs.symbol,
         decimals:     attrs.decimals,
-        logoUri:      attrs.image_url
+        logoUri:      normalizeLogoUri(attrs.image_url)
       };
     }
     return result;
