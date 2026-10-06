@@ -338,7 +338,6 @@ img {
   padding: 4px 10px;
   white-space: nowrap;
   transition: border-color var(--transition-fast), color var(--transition-fast);
-  margin-right: auto;
   text-decoration: none;
 }
 
@@ -353,8 +352,9 @@ img {
   fill: var(--brand-ink);
 }
 
-/* Navigation: TrenchScanner's segmented tab bar. */
+/* Navigation: TrenchScanner's segmented tab bar, pushed to the right of the logo. */
 .nav {
+  margin-left: auto;
   display: flex;
   gap: 2px;
   padding: 4px;
@@ -848,7 +848,51 @@ img {
   color: var(--ink);
 }
 
+/* Page hero: eyebrow + title + lede at the top of a page. */
+.page-hero {
+  margin: 0.75rem 0 1.5rem;
+}
+@media (max-width: 768px) {
+  .page-hero { margin: 0.25rem 0 1rem; }
+  .page-lede { font-size: 0.9rem; }
+}
+
+/* Centered call to action inside an empty panel. */
+.empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 28px 16px;
+  color: var(--ink-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-s);
+}
+
+/* Right-aligned numeric columns: th needs the extra weight to beat the table header rule. */
+.terminal-table thead th.text-right,
+.token-table thead th.text-right,
+.terminal-table thead th.cell-price,
+.terminal-table thead th.cell-mcap,
+.terminal-table thead th.cell-ath-pct,
+.terminal-table thead th.cell-updated,
+.terminal-table thead th.cell-change,
+.terminal-table thead th.cell-vs-sol,
+.terminal-table thead th.cell-vs-btc,
+.terminal-table thead th.perf-th-ath,
+.terminal-table thead th.perf-th-current,
+.terminal-table thead th.perf-th-mcap {
+  text-align: right;
+}
+.terminal-table thead th.cell-rank,
+.terminal-table thead th.perf-th-rank,
+.terminal-table thead th.cell-dist {
+  text-align: center;
+}
+
 /* Layout helpers */
+.community-panel + .community-panel { margin-top: 18px; }
 .stack { display: flex; flex-direction: column; gap: 18px; }
 .row { display: flex; align-items: center; gap: 10px; }
 .row.between { justify-content: space-between; }
@@ -2312,7 +2356,6 @@ select:focus {
 /* Cards — fire terminal panels */
 .chart-section,
 .holders-section,
-.community-section,
 .stats-section,
 .curated-performance-section {
   background: var(--bg-secondary);
@@ -5054,7 +5097,8 @@ select:focus {
 
   .conviction-section,
   .terminal-section,
-  .community-section { padding: 0.85rem; }
+  .community-section,
+  .panel { padding: 0.85rem; }
 
   /* Token detail — single column, reorder so stats appear before the heavy holders table */
   .token-content-grid { grid-template-columns: 1fr; grid-template-areas: none; gap: 1rem; }
@@ -5190,7 +5234,8 @@ select:focus {
 
   .conviction-section,
   .terminal-section,
-  .community-section { padding: 0.6rem; border-radius: var(--radius-sm); }
+  .community-section,
+  .panel { padding: 0.6rem; border-radius: var(--radius-s); }
 
   /* Table — ultra compact */
   .terminal-table-container,
