@@ -7,6 +7,7 @@ const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
 const jobQueue = require('../services/jobQueue');
+const { checkBurnTransaction } = require('../services/burnTxPolicy');
 const {
   HB_ANALYSIS_CACHE_TTL,
   HB_PENDING_TTL,
@@ -587,6 +588,11 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
   // Validate base64 format and size (max ~2KB for a Solana tx)
   if (!/^[A-Za-z0-9+/=]+$/.test(transaction) || transaction.length > 1700) {
     return res.status(400).json({ error: 'Invalid transaction format' });
+  }
+  // Only relay burns of the burn mint; this endpoint is not a general-purpose RPC relay.
+  const policy = checkBurnTransaction(transaction, [BURN_MINT]);
+  if (!policy.ok) {
+    return res.status(400).json({ error: 'Only burn transactions can be sent through this endpoint', reason: policy.reason });
   }
 
   try {
