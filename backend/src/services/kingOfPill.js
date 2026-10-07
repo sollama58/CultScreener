@@ -20,6 +20,7 @@
 const db = require('./database');
 const { cache } = require('./cache');
 const { DAY, PARAMS, scoreToken, pickKing } = require('./kotpScore');
+const priceChanges = require('./priceChanges');
 
 const FEATURED_CACHE_KEY = 'king-of-pill:featured';
 const MAX_CONTENDERS = 3;
@@ -124,7 +125,18 @@ async function getCoreWeekAgo(mints, today) {
  * Age is measured from the pair creation when known, else from the earliest the
  * site has seen the token (first holder count point or curated added_at).
  */
-function buildInput(curated, row, trend, coreWeekAgo, now) {
+/** Stored 1d/7d/30d reference prices per curated mint (priceChanges.js keeps them fresh). */
+async function getPriceRefs(mints) {
+  if (!mints.length) return {};
+  const { rows } = await pool().query(
+    `SELECT mint_address, price_ref_1d, price_ref_7d, price_ref_30d, price_refs_at
+       FROM curated_tokens WHERE mint_address = ANY($1)`, [mints]);
+  const out = {};
+  for (const r of rows) out[r.mint_address] = r;
+  return out;
+}
+
+function buildInput(curated, row, trend, coreWeekAgo, now, refs) {
   const meta = row?.conviction_meta || {};
   const candidates = [row?.pair_created_at, trend?.firstPointAt, curated.addedAt]
     .map(v => (v ? new Date(v).getTime() : NaN)).filter(Number.isFinite);
@@ -146,8 +158,16 @@ function buildInput(curated, row, trend, coreWeekAgo, now) {
     holdersMonthAgo: trend?.holdersMonthAgo ?? null,
     volume24h: row?.volume_24h != null ? Number(row.volume_24h) : null,
     marketCap: row?.market_cap != null ? Number(row.market_cap) : null,
+    priceChanges: priceChangesFor(row, refs, now),
     bornAt, snapshotAt,
   };
+}
+
+/** { d1, d7, d30 } percent price changes from the live price and the stored references. */
+function priceChangesFor(row, refs, now) {
+  if (!row) return null;
+  const c = priceChanges.changesForRow({ ...row, ...(refs || {}) }, now);
+  return { d1: c.priceChange24h ?? null, d7: c.priceChange7d ?? null, d30: c.priceChange30d ?? null };
 }
 
 // ── The daily job ───────────────────────────────────────────────────────────
@@ -163,8 +183,8 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
 
   const curated = await db.getCuratedTokens();
   const mints = curated.map(t => t.mintAddress).filter(Boolean);
-  const [rows, trends, coresWeekAgo] = await Promise.all([
-    db.getTokensBatch(mints), getHolderTrend(mints, now), getCoreWeekAgo(mints, today),
+  const [rows, trends, coresWeekAgo, priceRefs] = await Promise.all([
+    db.getTokensBatch(mints), getHolderTrend(mints, now), getCoreWeekAgo(mints, today), getPriceRefs(mints),
   ]);
   const rowMap = {};
   for (const r of rows) rowMap[r.mint_address] = r;
@@ -174,11 +194,12 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
   for (const t of curated) {
     const mint = t.mintAddress;
     if (!mint) continue;
-    const input = buildInput(t, rowMap[mint], trends[mint], coresWeekAgo[mint], now);
+    const input = buildInput(t, rowMap[mint], trends[mint], coresWeekAgo[mint], now, priceRefs[mint]);
     const res = scoreToken(input, params);
     const components = res.eligible
       ? { headcount: res.headcount, supply: res.supply, confidence: res.confidence, momentum: res.momentum, retention: res.retention,
           activity: res.activity, volume24h: input.volume24h, marketCap: input.marketCap,
+          priceMomentum: res.priceMomentum, priceChanges: input.priceChanges,
           holders: input.holders, holdersMonthAgo: input.holdersMonthAgo, ageDays: Math.round(input.ageMs / DAY), snapshotAt: input.snapshotAt }
       : { reason: res.reason, holders: input.holders, ageDays: Math.round(input.ageMs / DAY), snapshotAt: input.snapshotAt };
     await pool().query(

@@ -1,6 +1,6 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { DAY, PARAMS, holdIndex, scoreToken, pickKing } = require('./kotpScore');
+const { DAY, PARAMS, holdIndex, priceMomentumIndex, scoreToken, pickKing } = require('./kotpScore');
 
 const full = { '6h': 97, '24h': 94, '3d': 88, '1w': 80, '1m': 62, '3m': 40, '6m': 25, '9m': 15, '1yr': 8 };
 const young = { '6h': 98, '24h': 95, '3d': 85, '1w': 70, '1m': 0, '3m': 0, '6m': 0, '9m': 0, '1yr': 0 };
@@ -86,6 +86,22 @@ describe('scoreToken', () => {
     // Without a market cap only the dollar half counts
     const noMcap = scoreToken({ ...base, volume24h: 100_000, marketCap: null });
     assert.ok(Math.abs(noMcap.activity) < 1e-9);
+  });
+  test('price momentum: gains add up to 15%, losses cost up to 10%, longer windows weigh more', () => {
+    const r = scoreToken(base);
+    assert.strictEqual(r.priceMomentum, 0);
+    const up = scoreToken({ ...base, priceChanges: { d1: 30, d7: 80, d30: 150 } });
+    const down = scoreToken({ ...base, priceChanges: { d1: -30, d7: -60, d30: -100 } });
+    assert.strictEqual(up.priceMomentum, 1);
+    assert.strictEqual(down.priceMomentum, -1);
+    assert.ok(Math.abs(up.score - r.score * 1.15) < 0.02);
+    assert.ok(Math.abs(down.score - r.score * 0.9) < 0.02);
+    // A 24h spike alone (full swing) is worth 0.2 of the index; a 30d doubling 0.4
+    assert.ok(Math.abs(priceMomentumIndex({ d1: 25, d7: 0, d30: 0 }) - 0.2) < 1e-9);
+    assert.ok(Math.abs(priceMomentumIndex({ d1: 0, d7: 0, d30: 100 }) - 0.4) < 1e-9);
+    // Missing windows drop out: only a 7d figure, half its swing, gives 0.5
+    assert.ok(Math.abs(priceMomentumIndex({ d1: null, d7: 25, d30: null }) - 0.5) < 1e-9);
+    assert.strictEqual(priceMomentumIndex(null), 0);
   });
 });
 

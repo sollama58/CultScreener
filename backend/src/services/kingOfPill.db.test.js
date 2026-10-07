@@ -63,6 +63,10 @@ if (!DB_URL) {
       { env: { ...process.env, DATABASE_URL: DB_URL }, stdio: 'ignore' });
     await cleanup();
     await seedToken(A, { name: 'ALPHA', m3: 60, ageDays: 400, holders: 5000, holdersMonthAgo: 4800, snapshotAt: T0 - 3600_000 });
+    // ALPHA is up 10% on the day, 25% on the week and doubled on the month
+    await db.pool.query(`UPDATE tokens SET price = 2, price_change_24h = 10 WHERE mint_address = $1`, [A]);
+    await db.pool.query(`UPDATE curated_tokens SET price_ref_1d = 1.8, price_ref_7d = 1.6, price_ref_30d = 1, price_refs_at = $2 WHERE mint_address = $1`,
+      [A, new Date(T0 - 3600_000)]);
     await seedToken(B, { name: 'BETA',  m3: 38, ageDays: 300, holders: 3000, holdersMonthAgo: 3000, snapshotAt: T0 - 3600_000 });
     await seedToken(C, { name: 'GAMMA', m3: 30, ageDays: 200, holders: 2000, holdersMonthAgo: 2500, snapshotAt: T0 - 3600_000 });
     await seedToken(D, { name: 'DELTA', m3: 90, ageDays: 3,   holders: 900,  holdersMonthAgo: null, snapshotAt: T0 - 3600_000 });
@@ -94,6 +98,12 @@ if (!DB_URL) {
       assert.strictEqual(rows[0].components.holdersMonthAgo, 4800);
       // No volume or market cap seeded: trading activity is neutral
       assert.strictEqual(rows[0].components.activity, 0);
+      // ALPHA's price changes come through: 10% (stored 24h figure), 25% and 100%
+      const pc = rows[0].components.priceChanges;
+      assert.strictEqual(pc.d1, 10);
+      assert.ok(Math.abs(pc.d7 - 25) < 1e-9 && Math.abs(pc.d30 - 100) < 1e-9);
+      assert.ok(Math.abs(rows[0].components.priceMomentum - (0.2 * 0.4 + 0.4 * 0.5 + 0.4 * 1)) < 1e-9);
+      assert.strictEqual(rows[1].components.priceMomentum, 0);
       // The home table reads each mint's latest score; the ineligible one reads as null
       const latest = await kotp.getLatestScores(MINTS);
       assert.ok(Math.abs(latest[A].score - Number(rows[0].score)) < 1e-9);
