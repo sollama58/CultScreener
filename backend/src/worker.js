@@ -27,6 +27,7 @@ const telegramBot = require('./telegram-bot');
 const db = require('./services/database');
 const geckoService = require('./services/geckoTerminal');
 const solanaService = require('./services/solana');
+const heliusCredits = require('./services/heliusCredits');
 const { cache, TTL, keys } = require('./services/cache');
 const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('./constants');
 
@@ -839,7 +840,8 @@ function createWorker(queueName, redisConfig) {
 
       const startTime = Date.now();
       try {
-        const result = await processor(job);
+        // Helius calls made by the job are credited to it (admin Helius Credits tab)
+        const result = await heliusCredits.withSource(`job:${job.name}`, () => processor(job));
         const duration = Date.now() - startTime;
         console.log(`[Worker] Job ${job.name} completed in ${duration}ms`);
         return result;
@@ -881,6 +883,7 @@ function createWorker(queueName, redisConfig) {
  * Start the worker process
  */
 async function start() {
+  heliusCredits.setProcessRole('worker');
   console.log(`
 ╔════════════════════════════════════════════╗
 ║     HolDEX Background Worker         ║

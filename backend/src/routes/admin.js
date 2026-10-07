@@ -62,6 +62,14 @@ router.post('/logout', asyncHandler(async (req, res) => {
 // Dashboard Stats
 // ==========================================
 
+// GET /api/admin/helius-credits — Helius credit spend: last 31 days by method and by
+// job/route, last 48 hours, month to date and projected against the plan
+// (services/heliusCredits.js). ?fresh=true skips the 30s result cache.
+router.get('/helius-credits', asyncHandler(async (req, res) => {
+  const usage = await require('../services/heliusCredits').getUsage({ fresh: req.query.fresh === 'true' });
+  res.json(usage);
+}));
+
 router.get('/stats', asyncHandler(async (req, res) => {
   const stats = await db.getAdminStats();
   res.json(stats);
