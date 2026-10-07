@@ -359,17 +359,33 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
 // King of the Pill
 // ==========================================
 
+// The override mint (if any) plus the automatic King and the recent reigns
 router.get('/king-of-pill', asyncHandler(async (req, res) => {
   const mint = await db.getSetting('king_of_pill_mint');
-  if (!mint) return res.json({ mint: null, token: null });
-  const row = await db.getToken(mint);
+  const row = mint ? await db.getToken(mint) : null;
   const token = row ? {
     mintAddress: mint,
     name: row.name || null,
     symbol: row.symbol || null,
     logoUri: row.logo_uri || null,
   } : null;
-  res.json({ mint, token });
+
+  const kingOfPill = require('../services/kingOfPill');
+  const auto = await kingOfPill.getCurrentKing().catch(() => null);
+  let autoToken = null;
+  if (auto) {
+    const r = await db.getToken(auto.mint);
+    autoToken = { ...auto, name: r?.name || null, symbol: r?.symbol || null, logoUri: r?.logo_uri || null };
+  }
+  const reigns = await kingOfPill.getReigns(10).catch(() => []);
+  res.json({ mint, token, auto: autoToken, reigns });
+}));
+
+// Run today's scoring and crowning now instead of waiting for 00:20 UTC. Idempotent:
+// scores are recomputed, the crown is only decided once per day.
+router.post('/king-of-pill/run', strictLimiter, asyncHandler(async (req, res) => {
+  const summary = await require('../services/kingOfPill').runDailyCrowning();
+  res.json({ success: true, ...summary });
 }));
 
 router.post('/king-of-pill', strictLimiter, asyncHandler(async (req, res) => {

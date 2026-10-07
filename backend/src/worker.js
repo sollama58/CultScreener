@@ -14,6 +14,7 @@
  * - compute-holder-behavior: Holder behavior analysis (HB) for a token
  * - warm-conviction: Refresh conviction scores for top-viewed tokens (every 10 min)
  * - warm-curated-conviction: Refresh conviction scores for all curated tokens (every hour)
+ * - crown-king-of-pill: Daily Diamond Hands scores and the King of the Pill (00:20 UTC)
  *
  * Recurring schedules are listed in services/jobQueue.js (RECURRING_JOBS); this
  * process re-checks them every few minutes.
@@ -588,6 +589,15 @@ const jobProcessors = {
   // ==========================================
   // Curated Price Refresh
   // ==========================================
+
+  /**
+   * Score every curated token's diamond hands for today and settle the King of the
+   * Pill (services/kingOfPill.js). Reads stored data only; idempotent within a day.
+   */
+  'crown-king-of-pill': async () => {
+    const kingOfPill = require('./services/kingOfPill');
+    return kingOfPill.runDailyCrowning();
+  },
 
   /**
    * Daily safety net for holder count history. Points are written by holder

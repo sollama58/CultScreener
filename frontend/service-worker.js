@@ -45,7 +45,8 @@
 // v71: copy/download chart image buttons (new js/chartShot.js) - token.css v5, tokenChart.js v4, holderChart.js v2.
 // v72: holder line labelled on charts and in chart images - chartShot.js v2, tokenChart.js v5, holderChart.js v3, token.css v6.
 // v73: diamond hands keeps polling while progress moves - tokenDetail.js v30.
-const CACHE_VERSION = 'holdex-v73';
+// v74: King of the Pill is scored daily (tooltip shows score, reign day and contenders) - kotp.js v4, admin.js v18.
+const CACHE_VERSION = 'holdex-v74';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -66,7 +67,7 @@ const APP_SHELL = [
   '/js/emerging.js?v=6',
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
-  '/js/kotp.js?v=3',
+  '/js/kotp.js?v=4',
   '/js/tokenDetail.js?v=30',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=2',
@@ -79,7 +80,7 @@ const APP_SHELL = [
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
   '/js/cultify.js?v=17',
-  '/js/admin.js?v=17',
+  '/js/admin.js?v=18',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
   '/icons/icon.svg',
