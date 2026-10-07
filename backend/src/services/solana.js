@@ -82,6 +82,8 @@ function failoverToNextRpc(chain = rpcChains.helius) {
 // key, and shown on /health/detailed so credit spend can be watched without the
 // Helius dashboard.
 const DAS_CREDITS = 10;
+// DAS pages read at once by getAllTokenAccounts (holder snapshots)
+const DAS_PAGE_CONCURRENCY = Math.max(1, parseInt(process.env.HOLDER_SNAPSHOT_PAGE_CONCURRENCY, 10) || 4);
 const ENHANCED_CREDITS = 100;
 const RPC_METHOD_CREDITS = { getProgramAccounts: 10, getTransactionsForAddress: 10 };
 const CREDIT_KEY_TTL = 3 * 24 * 3600000;
@@ -955,13 +957,11 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
  *
  * @returns {Promise<{accounts: Array<{owner, address, amount}>, pages: number, complete: boolean}>}
  */
-async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1, accounts: already = [] } = {}) {
+async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1, accounts: already = [], concurrency = DAS_PAGE_CONCURRENCY } = {}) {
   if (!HELIUS_DAS_URL) throw new Error('Helius DAS not configured');
   // startPage/accounts continue a read whose earlier pages the caller already has
   const accounts = already.slice();
-  let page = startPage;
-  let complete = false;
-  while (page <= maxPages) {
+  const fetchPage = async page => {
     countCredits('getTokenAccounts', DAS_CREDITS);
     const response = await circuitBreakers.heliusDas.execute(() =>
       withRpcRetry(() => rateLimitedRequest('helius', () =>
@@ -976,12 +976,28 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
     if (response.data.error) {
       throw new Error(`DAS page ${page}: ${response.data.error.message || response.data.error.code}`);
     }
-    const batch = response.data.result?.token_accounts || [];
-    for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
-    if (batch.length < 1000) { complete = true; break; }
-    page++;
+    return response.data.result?.token_accounts || [];
+  };
+
+  // Pages are numbered, so several can be read at once. A big token's snapshot
+  // used to read up to 250 pages one after another. Past the last page a read
+  // returns nothing, so the most a wave wastes is concurrency-1 empty pages.
+  let page = startPage;
+  let lastPage = Math.max(startPage - 1, 0);
+  let complete = false;
+  while (page <= maxPages && !complete) {
+    const wave = [];
+    for (let p = page; p < page + Math.max(1, concurrency) && p <= maxPages; p++) wave.push(p);
+    const batches = await Promise.all(wave.map(fetchPage));
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
+      lastPage = wave[i];
+      if (batch.length < 1000) { complete = true; break; }
+    }
+    page += wave.length;
   }
-  return { accounts, pages: Math.min(page, maxPages), complete };
+  return { accounts, pages: lastPage, complete };
 }
 
 /**

@@ -16,7 +16,7 @@
 const solanaService = require('./solana');
 const store = require('./holderStore');
 const { cache, TTL } = require('./cache');
-const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
+const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, DIAMOND_HANDS_BUCKETS } = require('../constants');
 const {
   aggregateHolders, newWalletAcquisition, selectSample, tokenAccountDelta, metaTokenAccountDelta,
   holderFingerprint, rewindToStreakStart, toBigInt,
@@ -37,21 +37,29 @@ const CONFIG = {
   // Curated tokens are re-snapshotted this often (the hourly job checks staleness).
   // Under 6h, new holders are still dated from consecutive snapshots.
   refreshMs: envInt('HOLDER_SNAPSHOT_REFRESH_HOURS', 4) * 3_600_000,
-  backfillWalletsPerRun: envInt('HOLDER_BACKFILL_WALLETS_PER_RUN', 48),
-  backfillConcurrency: envInt('HOLDER_BACKFILL_CONCURRENCY', 8), // wallets read at once per mint
+  // A backfill job keeps going until every wallet is settled or this much time has
+  // passed, then re-queues itself. Re-queueing after every few dozen wallets put
+  // each token back at the end of the shared job queue, behind every other job.
+  backfillRunMs: envInt('HOLDER_BACKFILL_RUN_SECONDS', 240) * 1000,
+  backfillConcurrency: envInt('HOLDER_BACKFILL_CONCURRENCY', 12), // wallets read at once per mint
   backfillPagesPerWallet: 5,                                 // per run; progress is saved between runs
   // Transactions read per wallet before accepting a lower bound.
   backfillMaxTxs: envInt('HOLDER_BACKFILL_MAX_TXS', 2000),
   // getTransactionsForAddress bills 10 credits per 100 transactions returned, so
   // page size sets round trips, not cost. Most holders' token accounts settle on a
-  // small first page; the busy ones continue in large pages (2000 txs = 3 calls).
+  // small first page; the busy ones continue in larger pages (2000 txs = 5 calls).
   backfillFirstPageSize: envInt('HOLDER_BACKFILL_FIRST_PAGE_SIZE', 100),
-  backfillPageSize: envInt('HOLDER_BACKFILL_PAGE_SIZE', 1000),
+  // 500, not 1000: a page of 1000 full transactions is several MB to download
+  // and parse, and with a dozen in flight it risked timeouts and memory spikes.
+  backfillPageSize: envInt('HOLDER_BACKFILL_PAGE_SIZE', 500),
   backfillMaxAttempts: 3,
+  // Rate limits, timeouts and an open circuit say nothing about the wallet, so
+  // they get more tries before the wallet is given up.
+  backfillMaxTransientAttempts: 8,
   resultTtl: 15 * 60 * 1000,                                 // hold times grow; recompute often (cheap, DB only)
   snapshotLockTtl: 10 * 60 * 1000,
   snapshotFailCooldown: 5 * 60 * 1000,
-  backfillLockTtl: 10 * 60 * 1000,
+  backfillLockTtl: 10 * 60 * 1000,                           // > backfillRunMs plus the slowest wallet
   staleSnapshotMs: 24 * 3_600_000,                           // routes ask for a fresh one past this
 };
 
@@ -313,7 +321,7 @@ async function readLegacyPage(tokenAccount, mint, decimals, cursor) {
  * Find one wallet's streak start from its token account's history. Resumes from
  * the saved cursor. Returns true when the wallet is settled (resolved or given up).
  */
-async function backfillWallet(mint, pos, decimals) {
+async function backfillWallet(mint, pos, decimals, { boundBeforeMs = null } = {}) {
   const tokenAccount = pos.token_account;
   if (!tokenAccount) {
     await store.saveBackfill(mint, pos.wallet, { source: 'failed', attempted: true });
@@ -382,7 +390,10 @@ async function backfillWallet(mint, pos, decimals) {
     balance = r.balance;
     cursor = page.nextCursor;
 
-    if (txsBefore + txsRead >= CONFIG.backfillMaxTxs) {
+    // Once the history read reaches back past boundBeforeMs (the oldest diamond
+    // hands bucket), more pages can't change which bucket the wallet lands in.
+    const pastBound = boundBeforeMs != null && oldestAt != null && oldestAt <= boundBeforeMs;
+    if (pastBound || txsBefore + txsRead >= CONFIG.backfillMaxTxs) {
       // Very active account. The streak began before the oldest transaction we read,
       // so this is a lower bound on the hold time; good enough for the buckets.
       await store.saveBackfill(mint, pos.wallet, {
@@ -396,52 +407,110 @@ async function backfillWallet(mint, pos, decimals) {
   return false;
 }
 
+// A failure that says nothing about the wallet itself: Helius rate limiting or
+// erroring, our own queue or circuit breaker refusing, or the request timing out.
+// Helius or our own queue pushing back (as opposed to one slow request).
+function isPushback(err) {
+  return err?.response?.status === 429 || !!err?.isOverloaded || !!err?.isCircuitBreakerError || err?.name === 'CircuitBreakerError';
+}
+
+function isTransientError(err) {
+  if (!err) return false;
+  const status = err.response?.status;
+  if (status === 429 || (status >= 500 && status < 600)) return true;
+  if (err.isOverloaded || err.isCircuitBreakerError || err.name === 'CircuitBreakerError') return true;
+  if (['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN'].includes(err.code)) return true;
+  return /timeout|timed out|socket hang up/i.test(String(err.message || ''));
+}
+
 /**
- * One bounded backfill pass for a mint. Worker only. Re-queues itself while work
- * remains; when everything is settled, recomputes and stores diamond hands.
+ * Backfill pass for a mint. Worker only. Works the pending wallets with a small
+ * pool until all are settled or CONFIG.backfillRunMs has passed, then re-queues
+ * itself while work remains; when everything is settled, recomputes and stores
+ * diamond hands.
  */
 async function runBackfill(mint) {
   let remaining = 0;
+  let retryDelay = 2000;
+  const startedAt = Date.now();
   try {
     const snap = await store.getLatestSnapshot(mint);
     if (!snap) return { status: 'no-snapshot' };
     const entries = await store.getSnapshotEntries(snap.id, CONFIG.listN);
     const wallets = walletsOfInterest(snap, entries);
     const positions = await store.getPositions(mint, wallets);
-    const pending = wallets.map(w => positions.get(w)).filter(p => p && p.acquired_source === 'pending');
+    const pendingAtStart = wallets.filter(w => positions.get(w)?.acquired_source === 'pending');
 
-    const batch = pending.slice(0, CONFIG.backfillWalletsPerRun);
-    // A small pool: each slot takes the next wallet as soon as its last one is done,
-    // so one slow account doesn't hold the others back.
-    let settled = 0;
-    let next = 0;
-    const runOne = async pos => {
+    // Listed top holders show their exact hold time, so only sample-only wallets
+    // stop reading once their history is older than the oldest bucket.
+    const listed = new Set(entries.map(e => e.wallet));
+    const oldestBucketMs = Math.max(...DIAMOND_HANDS_BUCKETS.map(b => b.ms));
+
+    const stats = { settled: 0, errors: 0, transient: 0, slowestMs: 0, slowestWallet: null };
+    const queue = pendingAtStart.slice();
+    const outOfTime = () => Date.now() - startedAt >= CONFIG.backfillRunMs;
+
+    const runOne = async wallet => {
+      // Re-read the row: an earlier pass in this run may have saved a cursor for it
+      const pos = (await store.getPositions(mint, [wallet])).get(wallet);
+      if (!pos || pos.acquired_source !== 'pending') return true;
+      const t0 = Date.now();
       try {
-        return await backfillWallet(mint, pos, snap.decimals || 0);
+        const done = await backfillWallet(mint, pos, snap.decimals || 0, {
+          boundBeforeMs: listed.has(wallet) ? null : Date.now() - oldestBucketMs,
+        });
+        const ms = Date.now() - t0;
+        if (ms > stats.slowestMs) { stats.slowestMs = ms; stats.slowestWallet = wallet; }
+        if (ms > 15000) console.log(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} took ${ms}ms${done ? '' : ' (more history to read)'}`);
+        return done;
       } catch (err) {
-        const giveUp = (pos.backfill_attempts || 0) + 1 >= CONFIG.backfillMaxAttempts;
-        console.warn(`[Holders] Backfill ${pos.wallet.slice(0, 8)} on ${mint.slice(0, 8)} failed${giveUp ? ' (giving up)' : ''}:`, err.message);
-        await store.saveBackfill(mint, pos.wallet, {
+        const transient = isTransientError(err);
+        stats.errors++;
+        if (transient) stats.transient++;
+        const limit = transient ? CONFIG.backfillMaxTransientAttempts : CONFIG.backfillMaxAttempts;
+        const giveUp = (pos.backfill_attempts || 0) + 1 >= limit;
+        console.warn(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} failed${transient ? ' (transient)' : ''}${giveUp ? ' (giving up)' : ''}:`, err.message);
+        await store.saveBackfill(mint, wallet, {
           source: giveUp ? 'failed' : null,
           cursor: pos.backfill_cursor,
           balance: pos.backfill_balance != null ? toBigInt(pos.backfill_balance) : null,
           oldestAt: pos.backfill_oldest_at ? new Date(pos.backfill_oldest_at).getTime() : null,
           attempted: true,
         }).catch(() => {});
-        return giveUp;
+        if (giveUp) return true;
+        // Helius is pushing back: stop taking new wallets this run and come back later
+        if (isPushback(err)) { stats.backoff = true; return false; }
+        return null; // try again on a later run
       }
     };
-    await Promise.all(Array.from({ length: Math.min(CONFIG.backfillConcurrency, batch.length) }, async () => {
-      while (next < batch.length) {
-        if (await runOne(batch[next++])) settled++;
+
+    // A pool: each slot takes the next wallet as soon as its last one is done, so
+    // one slow account doesn't hold the others back. A wallet with more history
+    // to read goes to the back of the line and continues from its saved cursor.
+    await Promise.all(Array.from({ length: Math.min(CONFIG.backfillConcurrency, queue.length) }, async () => {
+      while (queue.length > 0 && !outOfTime() && !stats.backoff) {
+        const wallet = queue.shift();
+        const done = await runOne(wallet);
+        if (done === true) stats.settled++;
+        else if (done === false && !stats.backoff) queue.push(wallet);
       }
     }));
 
-    remaining = pending.length - settled;
-    console.log(`[Holders] Backfill ${mint.slice(0, 8)}: ${settled}/${batch.length} settled this run, ${remaining} pending`);
+    if (stats.backoff) retryDelay = 15000;
+
+    const after = await store.getPositions(mint, wallets);
+    remaining = wallets.filter(w => after.get(w)?.acquired_source === 'pending').length;
+    const elapsed = Date.now() - startedAt;
+    console.log(`[Holders] Backfill ${mint.slice(0, 8)}: ${stats.settled}/${pendingAtStart.length} settled in ${elapsed}ms, ` +
+      `${remaining} pending, slowest wallet ${stats.slowestMs}ms${stats.slowestWallet ? ` (${stats.slowestWallet.slice(0, 8)})` : ''}` +
+      `${stats.errors ? `, ${stats.errors} errors (${stats.transient} transient)` : ''}${stats.backoff ? ', backing off' : ''}`);
     if (remaining === 0) {
       await cache.delete(keys.result(mint)).catch(() => {});
       const dh = await getDiamondHands(mint, { dispatch: false });
+      if (dh.computed && pendingAtStart.length > 0) {
+        const sinceSnapshot = Date.now() - new Date(snap.taken_at).getTime();
+        console.log(`[Holders] Diamond hands ready for ${mint.slice(0, 8)}: ${Math.round(sinceSnapshot / 1000)}s after its snapshot`);
+      }
       // A snapshot taken while this run was going brings its own pending wallets,
       // and its backfill request was refused because this run held the lock.
       // Go round again on the new snapshot.
@@ -450,10 +519,10 @@ async function runBackfill(mint) {
         if (latest && latest.id !== snap.id) remaining = dh.sampleSize - dh.analyzed;
       }
     }
-    return { status: 'ok', settled, remaining };
+    return { status: 'ok', settled: stats.settled, remaining, ms: elapsed };
   } finally {
     await cache.delete(keys.backfillPending(mint)).catch(() => {});
-    if (remaining > 0) await ensureBackfill(mint, { delay: 2000 }).catch(() => {});
+    if (remaining > 0) await ensureBackfill(mint, { delay: retryDelay }).catch(() => {});
   }
 }
 

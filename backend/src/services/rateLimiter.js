@@ -84,7 +84,7 @@ const RATE_LIMITS = {
     // Requests in flight at once. Starts stay spaced by minInterval/burstLimit, so
     // this doesn't raise the request rate; it stops one slow call (a page of full
     // transactions, a big DAS page) from holding every other Helius call behind it.
-    maxConcurrent: Math.max(1, parseInt(process.env.HELIUS_MAX_CONCURRENT, 10) || 8),
+    maxConcurrent: Math.max(1, parseInt(process.env.HELIUS_MAX_CONCURRENT, 10) || 24),
     maxQueueSize: 300,
     queueTimeout: 30000
   },

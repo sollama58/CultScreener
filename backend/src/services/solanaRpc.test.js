@@ -48,4 +48,38 @@ describe('rpcCall', () => {
     await assert.rejects(solana.getAccountTransactionsPage('Acct'));
     assert.strictEqual(solana.isTransactionHistoryAvailable(), false);
   });
+
+  test('getAllTokenAccounts reads DAS pages several at a time and stops at the last one', async () => {
+    calls = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const realPost2 = axios.post;
+    axios.post = async (url, body) => {
+      calls.push({ url, method: body.method, params: body.params });
+      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(r => setTimeout(r, 150)); // longer than the queue's 25ms start spacing
+      inFlight--;
+      const page = body.params.page;
+      const n = page <= 5 ? 1000 : page === 6 ? 10 : 0;
+      return { data: { result: { token_accounts: Array.from({ length: n }, (_, i) => ({ owner: `o${page}_${i}`, address: `a${page}_${i}`, amount: '1' })) } } };
+    };
+    try {
+      const r = await solana.getAllTokenAccounts('Mint', { maxPages: 250, concurrency: 4 });
+      assert.strictEqual(r.complete, true);
+      assert.strictEqual(r.pages, 6);
+      assert.strictEqual(r.accounts.length, 5010);
+      assert.strictEqual(r.accounts[0].owner, 'o1_0', 'pages kept in order');
+      assert.strictEqual(r.accounts[5009].owner, 'o6_9');
+      assert.deepStrictEqual(calls.map(c => c.params.page), [1, 2, 3, 4, 5, 6, 7, 8], 'two waves of 4');
+      assert.ok(maxInFlight > 1, 'pages were read at the same time');
+
+      calls = [];
+      const capped = await solana.getAllTokenAccounts('Mint', { maxPages: 3, concurrency: 4 });
+      assert.strictEqual(capped.complete, false);
+      assert.strictEqual(capped.pages, 3);
+      assert.deepStrictEqual(calls.map(c => c.params.page), [1, 2, 3], 'never past maxPages');
+    } finally {
+      axios.post = realPost2;
+    }
+  });
 });
