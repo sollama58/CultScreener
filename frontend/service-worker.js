@@ -45,7 +45,9 @@
 // v71: copy/download chart image buttons (new js/chartShot.js) - token.css v5, tokenChart.js v4, holderChart.js v2.
 // v72: holder line labelled on charts and in chart images - chartShot.js v2, tokenChart.js v5, holderChart.js v3, token.css v6.
 // v73: diamond hands keeps polling while progress moves - tokenDetail.js v30.
-const CACHE_VERSION = 'holdex-v73';
+// v74: Diamond Hands table swaps Price and ATH for 24h/7d/30d change, holder velocity arrows -
+// styles.css v21, tokenTable.js v4, conviction.js v19.
+const CACHE_VERSION = 'holdex-v74';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -54,14 +56,14 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=20',
+  '/css/styles.css?v=21',
   '/css/token.css?v=6',
   '/js/config.js?v=4',
   '/js/api.js?v=13',
   '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=3',
-  '/js/conviction.js?v=18',
+  '/js/tokenTable.js?v=4',
+  '/js/conviction.js?v=19',
   '/js/tech.js?v=6',
   '/js/emerging.js?v=6',
   '/js/versus.js?v=17',

@@ -1944,6 +1944,40 @@ select:focus {
   color: var(--muted);
 }
 
+/* Diamond Hands table (index.html .dh-table): 24h/7d/30d change columns and the holder
+   velocity mark (tokenTable.change / tokenTable.velocity). */
+.terminal-table thead th.cell-chg { text-align: right; }
+.cell-chg {
+  min-width: 64px;
+  text-align: right;
+  white-space: nowrap;
+}
+.cell-chg .tt-pct { font-size: 0.82rem; font-weight: 500; }
+
+.tt-holders {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.tt-vel {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tt-vel.up { color: var(--good-ink); }
+.tt-vel.down { color: var(--bad-ink); }
+.tt-vel.flat { color: var(--muted); }
+.tt-vel.none { opacity: 0.45; }
+
+/* The 24h change under MCap, for phones where the change columns are hidden */
+.tt-mcap-chg { display: none; }
+
 /* Diamond hands cell: % held 3mo+, then one 0-100% bar split by hold time (tokenTable.dhCell). */
 .tt-dh {
   display: inline-flex;
@@ -6731,3 +6765,21 @@ strong {
   }
 }
 
+
+/* Diamond Hands table on phones: MCap stays (it replaced the Price column), with the 24h
+   change under it; the 7d/30d columns and the separate 24h column go. */
+@media (max-width: 768px) {
+  .dh-table .cell-mcap { display: table-cell; }
+  .dh-table .cell-chg { display: none; }
+  .dh-table .tt-mcap-chg { display: block; margin-top: 2px; font-size: 0.7rem; line-height: 1.2; }
+  .dh-table .tt-mcap-chg .tt-pct { font-weight: 500; }
+}
+
+/* Narrow phones: the diamond hands cell drops its 1mo+ note so the whole column fits on screen */
+@media (max-width: 480px) {
+  .dh-table .tt-dh { width: 76px; }
+  .dh-table .cell-dist { width: 90px; min-width: 90px; }
+  .dh-table .tt-dh-sub { display: none; }
+  .dh-table .cell-mcap { min-width: 0; }
+  .dh-table thead th.cell-dist { white-space: normal; }
+}

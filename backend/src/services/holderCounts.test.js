@@ -128,3 +128,36 @@ describe('downsample', () => {
     assert.strictEqual(out[out.length - 1].v, 1999);
   });
 });
+
+describe('holderVelocity', () => {
+  const { holderVelocity } = require('./holderCounts');
+  const at = (holders, baseHolders, spanH = 24, ageH = 1) => holderVelocity({
+    holders, baseHolders, takenAt: NOW - ageH * HOUR, baseAt: NOW - (ageH + spanH) * HOUR,
+  }, NOW);
+
+  test('levels by 24h percent change', () => {
+    assert.strictEqual(at(1030, 1000).level, 2);
+    assert.strictEqual(at(1010, 1000).level, 1);
+    assert.strictEqual(at(1001, 1000).level, 0);
+    assert.strictEqual(at(990, 1000).level, -1);
+    assert.strictEqual(at(970, 1000).level, -2);
+  });
+
+  test('a couple of wallets on a tiny token is flat', () => {
+    assert.strictEqual(at(102, 100).level, 0);
+    assert.strictEqual(at(104, 100).level, 2);
+  });
+
+  test('reports delta, pct and span', () => {
+    assert.deepStrictEqual(at(1010, 1000, 26), { level: 1, delta: 10, pct: 1, hours: 26 });
+  });
+
+  test('null without enough history', () => {
+    assert.strictEqual(holderVelocity({ holders: 1000, takenAt: NOW }, NOW).level, null);
+    // baseline too far before the 24h mark
+    assert.strictEqual(at(1100, 1000, 40).level, null);
+    // latest snapshot too old to describe now
+    assert.strictEqual(at(1100, 1000, 24, 48).level, null);
+    assert.strictEqual(holderVelocity(null, NOW).level, null);
+  });
+});

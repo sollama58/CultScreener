@@ -10,6 +10,7 @@ const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
 const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
+const priceChanges = require('../services/priceChanges');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -1093,7 +1094,8 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       name: row.name || `${row.mint_address.slice(0, 4)}...${row.mint_address.slice(-4)}`,
       symbol: row.symbol || row.mint_address.slice(0, 5).toUpperCase(),
       price: parseFloat(row.price) || 0,
-      priceChange24h: row.price_change_24h != null ? parseFloat(row.price_change_24h) : null,
+      // 24h, 7d and 30d change against stored reference prices (services/priceChanges.js)
+      ...priceChanges.changesForRow(row),
       volume24h: parseFloat(row.volume_24h) || 0,
       marketCap: parseFloat(row.market_cap) || null,
       logoUri: row.logo_uri || null,
@@ -1109,14 +1111,23 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
       emergingCult: row.is_emerging_cult || false,
       techCoin: row.is_tech_coin || false,
-      holders: null
+      holders: null,
+      holderVelocity: null
     };
   });
 
-  // Holder counts: Redis, else the latest holder snapshot's count from Postgres
+  // Holder counts: Redis, else the latest holder snapshot's count from Postgres.
+  // Velocity: 24h change between holder snapshots (holderCounts.holderVelocity).
   if (tokens.length > 0) {
-    const counts = await holderCounts.getDisplayCounts(tokens.map(t => t.mintAddress)).catch(() => ({}));
-    for (const t of tokens) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+    const mints = tokens.map(t => t.mintAddress);
+    const [counts, velocity] = await Promise.all([
+      holderCounts.getDisplayCounts(mints).catch(() => ({})),
+      db.pool ? holderCounts.getHolderVelocity(mints).catch(() => ({})) : {},
+    ]);
+    for (const t of tokens) {
+      if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+      t.holderVelocity = velocity[t.mintAddress] || { level: null };
+    }
   }
 
   // Queue background Helius fetches for any tokens still missing holder counts

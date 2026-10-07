@@ -159,6 +159,8 @@ const RECURRING_JOBS = [
   { id: 'warm-curated-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 60 * 60 * 1000 } },
   // Curated market cap and ATH from GeckoTerminal
   { id: 'refresh-curated-prices', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 } },
+  // Curated prices 1, 7 and 30 days ago, for the home table's 7d/30d change (a few tokens per run)
+  { id: 'refresh-curated-price-refs', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 15 * 60 * 1000 } },
   // Daily holder counts, 00:05 UTC
   { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' } },
   // Expired admin sessions, at :00 and :30
