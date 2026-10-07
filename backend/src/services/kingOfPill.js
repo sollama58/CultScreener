@@ -144,6 +144,8 @@ function buildInput(curated, row, trend, coreWeekAgo, now) {
     snapshotAgeMs: snapshotAt != null ? now - snapshotAt : Infinity,
     coreWeekAgo: coreWeekAgo ?? null,
     holdersMonthAgo: trend?.holdersMonthAgo ?? null,
+    volume24h: row?.volume_24h != null ? Number(row.volume_24h) : null,
+    marketCap: row?.market_cap != null ? Number(row.market_cap) : null,
     bornAt, snapshotAt,
   };
 }
@@ -176,6 +178,7 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
     const res = scoreToken(input, params);
     const components = res.eligible
       ? { headcount: res.headcount, supply: res.supply, confidence: res.confidence, momentum: res.momentum, retention: res.retention,
+          activity: res.activity, volume24h: input.volume24h, marketCap: input.marketCap,
           holders: input.holders, holdersMonthAgo: input.holdersMonthAgo, ageDays: Math.round(input.ageMs / DAY), snapshotAt: input.snapshotAt }
       : { reason: res.reason, holders: input.holders, ageDays: Math.round(input.ageMs / DAY), snapshotAt: input.snapshotAt };
     await pool().query(
@@ -293,11 +296,28 @@ async function getReigns(limit = 20) {
   }));
 }
 
+/**
+ * Each mint's most recent Diamond Hands score (null while ineligible), for ranking the
+ * home table: mint → { score, date }. Empty without a database or before the first run.
+ */
+async function getLatestScores(mints) {
+  if (!mints || !mints.length) return {};
+  await ensureSchema();
+  const { rows } = await pool().query(
+    `SELECT DISTINCT ON (mint_address) mint_address, score, score_date, eligible
+       FROM diamond_hands_scores WHERE mint_address = ANY($1)
+      ORDER BY mint_address, score_date DESC`, [mints]);
+  const out = {};
+  for (const r of rows) out[r.mint_address] = { score: r.eligible ? num(r.score) : null, date: isoDate(r.score_date) };
+  return out;
+}
+
 module.exports = {
   FEATURED_CACHE_KEY,
   ensureSchema,
   runDailyCrowning,
   getCurrentKing,
+  getLatestScores,
   getReigns,
   // for tests
   buildInput,

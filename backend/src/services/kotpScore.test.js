@@ -71,6 +71,22 @@ describe('scoreToken', () => {
     assert.ok(Math.abs(grow.score - r.score * 1.05) < 0.02);
     assert.ok(Math.abs(shrink.score - r.score * 0.75) < 0.02);
   });
+  test('trading activity moves the score up to ±10%, unknown volume is neutral', () => {
+    const r = scoreToken(base);
+    assert.strictEqual(r.activity, 0);
+    const busy = scoreToken({ ...base, volume24h: 2_000_000, marketCap: 4_000_000 });   // $2M/day, 50% turnover
+    const dead = scoreToken({ ...base, volume24h: 0, marketCap: 50_000_000 });         // nothing traded
+    assert.strictEqual(busy.activity, 1);
+    assert.strictEqual(dead.activity, -1);
+    assert.ok(Math.abs(busy.score - r.score * 1.1) < 0.02);
+    assert.ok(Math.abs(dead.score - r.score * 0.9) < 0.02);
+    // $100k/day is the middle of the log scale; at 2.5% turnover (a tenth of full) the mean lands below it
+    const mid = scoreToken({ ...base, volume24h: 100_000, marketCap: 4_000_000 });
+    assert.ok(Math.abs(mid.activity - ((0.5 + 0.1) - 1)) < 1e-9);
+    // Without a market cap only the dollar half counts
+    const noMcap = scoreToken({ ...base, volume24h: 100_000, marketCap: null });
+    assert.ok(Math.abs(noMcap.activity) < 1e-9);
+  });
 });
 
 describe('pickKing', () => {
