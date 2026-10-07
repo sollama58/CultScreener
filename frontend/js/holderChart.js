@@ -203,6 +203,7 @@ const holderChart = (() => {
     else setMsg('');
     st.chart.timeScale().fitContent();
     renderLegend(null);
+    setShotEnabled(n > 0);
   }
 
   function renderLegend(param) {
@@ -260,7 +261,32 @@ const holderChart = (() => {
     }
   }
 
+  // Chart image (js/chartShot.js): the chart as shown, with the range and current count
+  function makeShot() {
+    const m = metric();
+    const cur = st.data?.current;
+    const v = cur ? (m === 'real' ? cur.real : cur.holders) : null;
+    const rangeLabel = st.range === 'all' ? 'All time' : st.range.toUpperCase();
+    const ch = st.data?.series?.[m]?.changes?.[st.range === '24h' ? '24h' : st.range === '7d' ? '7d' : '30d'];
+    const chText = ch ? `  ${ch.delta >= 0 ? '+' : ''}${ch.delta.toLocaleString()}${ch.pct != null ? ` (${ch.delta >= 0 ? '+' : ''}${ch.pct.toFixed(2)}%)` : ''}` : '';
+    return chartShot.capture(st.chart, {
+      title: `${m === 'real' ? 'Holders over $' + (st.data?.dustUsd ?? 1) : 'Holders'} · ${rangeLabel}`,
+      detail: v == null ? '' : `${fmtCount(v)}${cur.complete === false ? '+' : ''}${chText}`,
+      accent: ch ? (ch.delta >= 0 ? cssVar('--good-ink', '#4ade80') : cssVar('--bad-ink', '#ff8080')) : undefined,
+    });
+  }
+  function setShotEnabled(on) {
+    st?.root.querySelectorAll('[data-shot]').forEach(b => { b.disabled = !on; });
+  }
+
   function onClick(e) {
+    const shot = e.target.closest('[data-shot]');
+    if (shot) {
+      if (!st.chart || typeof chartShot === 'undefined') return;
+      if (shot.dataset.shot === 'copy') chartShot.copy(makeShot, 'holders');
+      else chartShot.download(makeShot, 'holders');
+      return;
+    }
     const b = e.target.closest('.hc-range button');
     if (b && b.dataset.range && b.dataset.range !== st.range) show(b.dataset.range);
   }

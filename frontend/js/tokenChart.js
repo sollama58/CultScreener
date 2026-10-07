@@ -232,7 +232,12 @@ const tokenChart = (() => {
               <div class="tc-last"><span class="tc-last-value num" id="tc-last">--</span> <span class="tc-last-change num" id="tc-change"></span></div>
             </div>
           </div>
-          <button type="button" class="tc-close" id="tc-close" aria-label="Close chart">&times;</button>
+          <div class="tc-head-tools">
+            ${typeof chartShot !== 'undefined' ? `
+            <button type="button" class="tc-close" data-shot="copy" title="Copy chart image" aria-label="Copy chart image">${chartShot.ICONS.copy}</button>
+            <button type="button" class="tc-close" data-shot="download" title="Download chart image" aria-label="Download chart image">${chartShot.ICONS.download}</button>` : ''}
+            <button type="button" class="tc-close" id="tc-close" aria-label="Close chart">&times;</button>
+          </div>
         </div>
         <div class="tc-toolbar">
           ${seg('tf', TIMEFRAMES, prefs.tf, 'Timeframe')}
@@ -742,6 +747,24 @@ const tokenChart = (() => {
       return;
     }
     if (!state.chart) return;
+    if (t.dataset.shot) {
+      if (!state.candles?.length) return;
+      const make = () => {
+        const tf = TIMEFRAMES.find(x => x.id === state.prefs.tf);
+        const unit = state.prefs.unit === 'mcap' ? 'Market cap' : 'Price';
+        const last = state.candles[state.candles.length - 1].close;
+        const chg = state.root.querySelector('#tc-change')?.textContent?.trim() || '';
+        const up = !chg.startsWith('-');
+        return chartShot.capture(state.chart, {
+          title: `${unit} · ${tf ? tf.label : ''} candles`,
+          detail: `$${fmtValue(last)}${chg ? `  ${chg}` : ''}`,
+          accent: chg ? cssVar(up ? '--good-ink' : '--bad-ink', up ? '#4ade80' : '#ff8080') : undefined,
+        });
+      };
+      if (t.dataset.shot === 'copy') chartShot.copy(make, 'chart');
+      else chartShot.download(make, 'chart');
+      return;
+    }
     if (t.dataset.draw) { state.draw?.setTool(t.dataset.draw); return; }
     if (t.hasAttribute('data-del')) { state.draw?.deleteSelected(); return; }
     if (t.hasAttribute('data-clear')) {

@@ -38,7 +38,7 @@
   <link rel="dns-prefetch" href="https://api.jup.ag">
   <link rel="dns-prefetch" href="https://api.dexscreener.com">
 
-  <link rel="stylesheet" href="css/token.css?v=4">
+  <link rel="stylesheet" href="css/token.css?v=5">
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=4" as="script">
@@ -401,12 +401,20 @@
                 <span class="tp-eyebrow">Holder count</span>
                 <h2>Holders</h2>
               </div>
-              <div class="tp-seg hc-range" role="group" aria-label="Holder chart range">
-                <button type="button" data-range="24h">24H</button>
-                <button type="button" data-range="7d" class="on">7D</button>
-                <button type="button" data-range="30d">30D</button>
-                <button type="button" data-range="90d">90D</button>
-                <button type="button" data-range="all">All</button>
+              <div class="hc-head-tools">
+                <div class="tp-seg hc-range" role="group" aria-label="Holder chart range">
+                  <button type="button" data-range="24h">24H</button>
+                  <button type="button" data-range="7d" class="on">7D</button>
+                  <button type="button" data-range="30d">30D</button>
+                  <button type="button" data-range="90d">90D</button>
+                  <button type="button" data-range="all">All</button>
+                </div>
+                <button type="button" class="tp-icon-btn" data-shot="copy" title="Copy chart image" aria-label="Copy chart image" disabled>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                <button type="button" class="tp-icon-btn" data-shot="download" title="Download chart image" aria-label="Download chart image" disabled>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
               </div>
             </div>
             <div class="hc-top">
@@ -534,8 +542,9 @@
   <script src="js/holderBehavior.js?v=7"></script>
   <!-- Chart modal; loads js/vendor/lightweight-charts on first open -->
   <script src="js/chartDrawings.js?v=1"></script>
-  <script src="js/tokenChart.js?v=3"></script>
-  <script src="js/holderChart.js?v=1"></script>
+  <script src="js/chartShot.js?v=1"></script>
+  <script src="js/tokenChart.js?v=4"></script>
+  <script src="js/holderChart.js?v=2"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>
