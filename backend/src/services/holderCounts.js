@@ -154,6 +154,41 @@ function changesFor({ actual, est }) {
   return out;
 }
 
+// Holder velocity for the home table: how fast the holder count moved over the last day,
+// from two snapshot points about 24h apart. Levels -2..2 map to ↓↓ ↓ – ↑ ↑↑.
+// A move is only "fast" at 2% a day, and smaller than 0.25% (or 3 wallets) counts as flat,
+// which keeps snapshot-to-snapshot noise on big holder bases from reading as a trend.
+const VELOCITY = {
+  WINDOW: DAY,
+  // Baseline must be within this of 24h before the latest point
+  TOLERANCE: 6 * HOUR,
+  // Latest point older than this says nothing about now
+  MAX_AGE: 36 * HOUR,
+  FAST_PCT: 2,
+  MOVE_PCT: 0.25,
+  MIN_DELTA: 3,
+};
+
+/**
+ * @param {{holders, takenAt, baseHolders, baseAt}} p latest and ~24h-earlier counts
+ * @returns {{level: number|null, delta?: number, pct?: number, hours?: number}}
+ *   level null: too little history to say
+ */
+function holderVelocity(p, now = Date.now()) {
+  if (!p || !(p.holders > 0) || !Number.isFinite(p.takenAt)) return { level: null };
+  if (now - p.takenAt > VELOCITY.MAX_AGE) return { level: null };
+  if (!(p.baseHolders > 0) || !Number.isFinite(p.baseAt)) return { level: null };
+  const span = p.takenAt - p.baseAt;
+  if (span < VELOCITY.WINDOW || span - VELOCITY.WINDOW > VELOCITY.TOLERANCE) return { level: null };
+  const delta = p.holders - p.baseHolders;
+  const pct = (delta / p.baseHolders) * 100;
+  let level = 0;
+  if (Math.abs(delta) >= VELOCITY.MIN_DELTA && Math.abs(pct) >= VELOCITY.MOVE_PCT) {
+    level = (Math.abs(pct) >= VELOCITY.FAST_PCT ? 2 : 1) * Math.sign(delta);
+  }
+  return { level, delta, pct: Math.round(pct * 100) / 100, hours: Math.round(span / HOUR) };
+}
+
 // Keep at most `max` points: the last point of each equal-width time bucket.
 function downsample(list, max = MAX_CHART_POINTS) {
   if (list.length <= max) return list;
@@ -324,6 +359,42 @@ async function getDisplayCounts(mints) {
   return out;
 }
 
+/**
+ * Holder velocity per mint for the home table (see holderVelocity): the latest complete
+ * point and the latest complete point at least 24h before it. One query for the page.
+ * @returns {Object<string, {level, delta?, pct?, hours?}>} only mints with a latest point
+ */
+async function getHolderVelocity(mints, now = Date.now()) {
+  if (!mints || mints.length === 0) return {};
+  const { rows } = await pool().query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (mint_address) mint_address, taken_at, holders
+         FROM holder_count_points
+        WHERE mint_address = ANY($1) AND holders IS NOT NULL AND complete
+        ORDER BY mint_address, taken_at DESC
+     )
+     SELECT l.mint_address, l.taken_at, l.holders, b.taken_at AS base_at, b.holders AS base_holders
+       FROM latest l
+       LEFT JOIN LATERAL (
+         SELECT taken_at, holders FROM holder_count_points p
+          WHERE p.mint_address = l.mint_address AND p.holders IS NOT NULL AND p.complete
+            AND p.taken_at <= l.taken_at - INTERVAL '24 hours'
+          ORDER BY p.taken_at DESC LIMIT 1
+       ) b ON TRUE`,
+    [mints]
+  );
+  const out = {};
+  for (const r of rows) {
+    out[r.mint_address] = holderVelocity({
+      holders: r.holders,
+      takenAt: new Date(r.taken_at).getTime(),
+      baseHolders: r.base_holders,
+      baseAt: r.base_at ? new Date(r.base_at).getTime() : NaN,
+    }, now);
+  }
+  return out;
+}
+
 async function clearSeriesCache(mint) {
   const { cache } = require('./cache');
   await Promise.all(Object.keys(RANGES).map(r => cache.delete(`holder-count:${mint}:${r}`).catch(() => {})));
@@ -359,6 +430,9 @@ module.exports = {
   getLatestPoints,
   getDisplayCounts,
   getDailyHistory,
+  getHolderVelocity,
+  holderVelocity,
+  VELOCITY,
   clearSeriesCache,
   _test: { seriesFor, changesFor, downsample },
 };

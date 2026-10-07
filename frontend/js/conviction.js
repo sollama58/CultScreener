@@ -178,11 +178,19 @@ const convictionPage = {
     const field = this._sortField;
     const dir = this._sortDir === 'asc' ? 1 : -1;
 
-    if (field !== 'rank') {
+    // Price changes sort tokens without one last in either direction.
+    const changeKey = { change24h: 'priceChange24h', change7d: 'priceChange7d', change30d: 'priceChange30d' }[field];
+    if (changeKey) {
+      const val = t => (t[changeKey] != null && isFinite(t[changeKey]) ? t[changeKey] : null);
+      this._allTokens.sort((a, b) => {
+        const va = val(a), vb = val(b);
+        if (va == null || vb == null) return (va == null) - (vb == null);
+        return (va - vb) * dir;
+      });
+    } else if (field !== 'rank') {
       this._allTokens.sort((a, b) => {
         let va, vb;
         switch (field) {
-          case 'price': va = a.price || 0; vb = b.price || 0; break;
           case 'mcap': va = a.marketCap ?? 0; vb = b.marketCap ?? 0; break;
           case 'holders': va = a.holders || 0; vb = b.holders || 0; break;
           default: return 0;
@@ -270,7 +278,7 @@ const convictionPage = {
 
     tbody.innerHTML = `
       <tr class="loading-row">
-        <td colspan="7">
+        <td colspan="8">
           <div class="loading-state">
             <div class="loading-spinner"></div>
             <span>Scanning blockchain data...</span>
@@ -339,6 +347,25 @@ const convictionPage = {
               });
             }
           } catch (_) { /* batch enrichment non-critical */ }
+
+          // Price changes, holders and holder velocity come with the leaderboard (curated
+          // tokens only, usually already in the client cache).
+          try {
+            const board = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
+            const byMint = {};
+            (board?.tokens || []).forEach(t => { byMint[t.mintAddress] = t; });
+            this._allTokens.forEach(t => {
+              const b = byMint[t.mintAddress];
+              if (!b) return;
+              t.priceChange24h = b.priceChange24h;
+              t.priceChange7d = b.priceChange7d;
+              t.priceChange30d = b.priceChange30d;
+              t.holders = b.holders || t.holders;
+              t.holderVelocity = b.holderVelocity;
+              t.pairCreatedAt = t.pairCreatedAt || b.pairCreatedAt;
+              t.convictionUpdatedAt = t.convictionUpdatedAt || b.convictionUpdatedAt;
+            });
+          } catch (_) { /* leaderboard enrichment non-critical */ }
         }
       } else {
         // Fetch all tokens, shuffle client-side for random order
@@ -383,7 +410,7 @@ const convictionPage = {
       }
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="7">
+          <td colspan="8">
             <div class="empty-state">
               <span>Failed to load terminal data. Please try again.</span>
             </div>
@@ -435,8 +462,8 @@ const convictionPage = {
     if (!this.tokens || this.tokens.length === 0) {
       const isWatchlist = this._activeTier === 'watchlist';
       tbody.innerHTML = isWatchlist
-        ? tokenTable.emptyRow(7, 'Your watchlist is empty', 'Visit token pages and click the star to add tokens.')
-        : tokenTable.emptyRow(7, 'No tokens match', 'Adjust the filters, or visit token pages to trigger analysis.');
+        ? tokenTable.emptyRow(8, 'Your watchlist is empty', 'Visit token pages and click the star to add tokens.')
+        : tokenTable.emptyRow(8, 'No tokens match', 'Adjust the filters, or visit token pages to trigger analysis.');
       return;
     }
 
@@ -449,10 +476,11 @@ const convictionPage = {
         <tr ${tokenTable.rowAttrs(token)}>
           ${tokenTable.rankCell(offset + index + 1)}
           ${tokenTable.tokenCell(token)}
-          <td class="cell-price num">${utils.formatPrice(token.price, 6)}</td>
-          <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}</td>
-          <td class="cell-ath-pct">${tokenTable.athCell(token)}</td>
-          <td class="cell-updated">${tokenTable.holders(token)}</td>
+          <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}<span class="tt-mcap-chg">${tokenTable.change(token.priceChange24h, '24h')}</span></td>
+          <td class="cell-chg">${tokenTable.change(token.priceChange24h, '24h')}</td>
+          <td class="cell-chg cell-chg-long">${tokenTable.change(token.priceChange7d, '7d')}</td>
+          <td class="cell-chg cell-chg-long">${tokenTable.change(token.priceChange30d, '30d')}</td>
+          <td class="cell-updated">${tokenTable.holdersWithVelocity(token)}</td>
           <td class="cell-dist">${tokenTable.dhCell(token)}</td>
         </tr>`;
     }).join('');

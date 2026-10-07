@@ -35,7 +35,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/styles.css?v=20">
+  <link rel="stylesheet" href="css/styles.css?v=21">
 
   <style>
     /* ── King of the Pill widget ────────────────────────── */
@@ -747,7 +747,7 @@
   <link rel="preload" href="js/config.js?v=4" as="script">
   <link rel="preload" href="js/api.js?v=13" as="script">
   <link rel="preload" href="js/wallet.js?v=6" as="script">
-  <link rel="preload" href="js/conviction.js?v=18" as="script">
+  <link rel="preload" href="js/conviction.js?v=19" as="script">
 </head>
 <body>
   <header class="header">
@@ -875,21 +875,22 @@
 
       <!-- Data Table -->
       <div class="community-table-container terminal-table-container">
-        <table class="token-table community-table conviction-table terminal-table">
+        <table class="token-table community-table conviction-table terminal-table dh-table">
           <thead>
             <tr>
               <th scope="col" class="cell-rank">#</th>
               <th scope="col" class="cell-token">Token</th>
-              <th scope="col" class="cell-price sortable" data-sort="price">Price <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-mcap sortable" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
-              <th scope="col" class="cell-ath-pct" title="% change from MCap at listing to ATH MCap">ATH since listing</th>
-              <th scope="col" class="cell-updated sortable" data-sort="holders">Holders <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-chg sortable" data-sort="change24h" title="Price change over the last 24 hours">24h <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-chg cell-chg-long sortable" data-sort="change7d" title="Price change over the last 7 days">7d <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-chg cell-chg-long sortable" data-sort="change30d" title="Price change over the last 30 days">30d <span class="sort-arrow"></span></th>
+              <th scope="col" class="cell-updated sortable" data-sort="holders" title="Holder count. Arrows show the change over the last 24h: two arrows for 2% or more, one for 0.25% or more, a dash for flat or not enough history yet.">Holders <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-dist" title="Share of holders who have held for 3 months or more. The bar splits all holders by how long they have held: 3mo+, 1-3mo, 1w-1mo, 1d-1w, under 1d.">Held 3mo+</th>
             </tr>
           </thead>
           <tbody id="conviction-table-body">
             <tr class="loading-row">
-              <td colspan="7">
+              <td colspan="8">
                 <div class="loading-state">
                   <div class="loading-spinner"></div>
                   <span>Initializing terminal...</span>
@@ -1127,8 +1128,8 @@
   <script src="js/deviceLink.js?v=3"></script>
   <script src="js/wallet.js?v=6"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/tokenTable.js?v=3"></script>
-  <script src="js/conviction.js?v=18"></script>
+  <script src="js/tokenTable.js?v=4"></script>
+  <script src="js/conviction.js?v=19"></script>
   <script src="js/tech.js?v=6"></script>
   <script src="js/emerging.js?v=6"></script>
   <script src="js/performance.js?v=28"></script>

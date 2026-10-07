@@ -724,6 +724,38 @@ const jobProcessors = {
     return { updated, athUpdated, logosFilled };
   },
 
+  /**
+   * Store each curated token's price 1, 7 and 30 days ago (services/priceChanges.js) so the
+   * home table can show 24h/7d/30d changes without calling upstream on page load. One 4h-candle
+   * OHLCV request per token; at most PRICE_REFS_PER_RUN tokens per run, oldest refs first, so
+   * every token is refreshed about every REFRESH_AFTER_MS without bursting GeckoTerminal.
+   */
+  'refresh-curated-price-refs': async (job) => {
+    const priceChanges = require('./services/priceChanges');
+    const PRICE_REFS_PER_RUN = 15;
+    const mints = await db.getCuratedMintsNeedingPriceRefs(PRICE_REFS_PER_RUN, priceChanges.REFRESH_AFTER_MS).catch(() => []);
+    let stored = 0;
+    let empty = 0;
+    for (let i = 0; i < mints.length; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 2000));
+      const mint = mints[i];
+      try {
+        // null: no pool or no candles, so there is nothing to compare against
+        const refs = await priceChanges.fetchReferencePrices(mint);
+        await db.setCuratedPriceRefs(mint, refs || {});
+        if (refs) stored++; else empty++;
+      } catch (err) {
+        // Upstream failed: keep the old references (they expire after a day on their own)
+        // and move the token to the back of the queue.
+        console.warn(`[Worker] refresh-curated-price-refs failed for ${mint.slice(0, 8)}:`, err.message);
+        await db.setCuratedPriceRefs(mint, null).catch(() => {});
+      }
+    }
+    if (stored > 0) await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
+    if (mints.length > 0) console.log(`[Worker] refresh-curated-price-refs: ${stored} stored, ${empty} without candles`);
+    return { stored, empty };
+  },
+
   // ==========================================
   // Conviction Warming (moved from app.js setInterval)
   // ==========================================

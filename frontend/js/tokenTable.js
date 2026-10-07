@@ -77,6 +77,47 @@ const tokenTable = {
     return token.holders ? `<span class="num">${Number(token.holders).toLocaleString()}</span>` : this.dash();
   },
 
+  // Price change column (Diamond Hands 24h/7d/30d): plain signed percent, whole numbers once
+  // the move is three digits so a pump doesn't widen the column.
+  change(value, label) {
+    if (value == null || !isFinite(value)) {
+      return `<span class="tt-na" title="${this.esc(`No ${label} price history yet`)}">--</span>`;
+    }
+    return this.pct(value, { digits: Math.abs(value) >= 100 ? 0 : 1, title: `${label} price change` });
+  },
+
+  // Holder count with a velocity mark from the 24h holder change (holderCounts.holderVelocity on
+  // the server): two arrows fast, one arrow moving, a dash for flat. A token without a snapshot
+  // about a day back gets the dash drawn fainter.
+  VELOCITY_GLYPHS: {
+    2: '<path d="M2.5 5.5 6 2l3.5 3.5M2.5 10 6 6.5l3.5 3.5"/>',
+    1: '<path d="M2.5 7.75 6 4.25l3.5 3.5"/>',
+    0: '<path d="M3 6h6"/>',
+    '-1': '<path d="M2.5 4.25 6 7.75l3.5-3.5"/>',
+    '-2': '<path d="M2.5 2 6 5.5 9.5 2M2.5 6.5 6 10l3.5-3.5"/>',
+  },
+  VELOCITY_WORDS: { 2: 'Rising fast', 1: 'Rising', 0: 'Flat', '-1': 'Falling', '-2': 'Falling fast' },
+
+  velocity(token) {
+    const v = token.holderVelocity || {};
+    const known = Number.isInteger(v.level) && this.VELOCITY_GLYPHS[v.level] != null;
+    const level = known ? v.level : 0;
+    const tone = level > 0 ? 'up' : level < 0 ? 'down' : 'flat';
+    let tip;
+    if (known) {
+      const sign = v.delta > 0 ? '+' : '';
+      tip = `${this.VELOCITY_WORDS[level]}: ${sign}${Number(v.delta).toLocaleString()} holders (${sign}${v.pct}%) in ${v.hours}h`;
+    } else {
+      tip = 'Not enough holder history for a 24h trend yet';
+    }
+    return `<svg class="tt-vel ${tone}${known ? '' : ' none'}" viewBox="0 0 12 12" width="12" height="12" role="img" aria-label="${this.esc(tip)}"><title>${this.esc(tip)}</title>${this.VELOCITY_GLYPHS[level]}</svg>`;
+  },
+
+  holdersWithVelocity(token) {
+    if (!token.holders) return this.dash();
+    return `<span class="tt-holders">${this.velocity(token)}<span class="num">${Number(token.holders).toLocaleString()}</span></span>`;
+  },
+
   // Diamond hands cell: the share of holders who have held 3 months or more, with the 1 month+
   // share beside it, over one bar on a fixed 0-100% scale split by how long holders have held.
   // The buckets are cumulative ("held at least X"), so each segment is the difference between
