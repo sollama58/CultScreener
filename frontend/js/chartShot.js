@@ -88,7 +88,8 @@ const chartShot = (() => {
     return { shot: out, scale: dpr };
   }
 
-  async function capture(chart, { title = '', detail = '', accent } = {}) {
+  // legend: [{label, color, dashed?}] drawn as a key above the chart so every line is named
+  async function capture(chart, { title = '', detail = '', accent, legend = [] } = {}) {
     // No crosshair in the picture; give the chart a frame to redraw without it
     try { chart.clearCrosshairPosition(); } catch { /* older API */ }
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -101,7 +102,8 @@ const chartShot = (() => {
     const footH = k(44);
     const chartW = Math.max(shot.width, minW - pad * 2);
     const W = chartW + pad * 2;
-    const H = pad + headH + k(10) + shot.height + footH;
+    const legH = legend.length ? k(28) : 0;
+    const H = pad + headH + k(10) + legH + shot.height + footH;
 
     const [logo, brand] = await Promise.all([tokenLogo(), loadImage(BRAND_ICON, false)]);
     const font = cssVar('--font', 'Inter, system-ui, sans-serif');
@@ -126,7 +128,7 @@ const chartShot = (() => {
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = cssVar('--surface-solid', '#11131a');
-    roundRect(ctx, k(12), pad + headH, W - k(24), shot.height + k(20), k(14));
+    roundRect(ctx, k(12), pad + headH, W - k(24), shot.height + legH + k(20), k(14));
     ctx.fill();
 
     // Header: logo, name, $TICKER, title line
@@ -196,7 +198,29 @@ const chartShot = (() => {
     }
 
     // Chart
-    ctx.drawImage(shot, pad + (chartW - shot.width) / 2, pad + headH + k(10));
+    ctx.drawImage(shot, pad + (chartW - shot.width) / 2, pad + headH + k(10) + legH);
+
+    // Legend key: a short line in each series' color, then its name
+    if (legend.length) {
+      let lx = pad + k(6);
+      const lyMid = pad + headH + k(10) + legH / 2;
+      ctx.font = `600 ${k(13)}px ${font}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      for (const item of legend) {
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = k(3);
+        ctx.setLineDash(item.dashed ? [k(4), k(4)] : []);
+        ctx.beginPath();
+        ctx.moveTo(lx, lyMid);
+        ctx.lineTo(lx + k(20), lyMid);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = ink2;
+        ctx.fillText(item.label, lx + k(28), lyMid);
+        lx += k(28) + ctx.measureText(item.label).width + k(22);
+      }
+    }
 
     // Footer
     ctx.textBaseline = 'middle';

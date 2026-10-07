@@ -43,7 +43,8 @@
 // v70: holder count overhaul - new js/holderChart.js (Holders panel on Lightweight Charts),
 // Holders overlay in the chart modal - token.css v4, tokenDetail.js v29, tokenChart.js v3, admin.js v17.
 // v71: copy/download chart image buttons (new js/chartShot.js) - token.css v5, tokenChart.js v4, holderChart.js v2.
-const CACHE_VERSION = 'holdex-v71';
+// v72: holder line labelled on charts and in chart images - chartShot.js v2, tokenChart.js v5, holderChart.js v3, token.css v6.
+const CACHE_VERSION = 'holdex-v72';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -53,7 +54,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=20',
-  '/css/token.css?v=5',
+  '/css/token.css?v=6',
   '/js/config.js?v=4',
   '/js/api.js?v=13',
   '/js/deviceLink.js?v=3',
@@ -67,9 +68,9 @@ const APP_SHELL = [
   '/js/kotp.js?v=3',
   '/js/tokenDetail.js?v=29',
   '/js/chartDrawings.js?v=1',
-  '/js/chartShot.js?v=1',
-  '/js/tokenChart.js?v=4',
-  '/js/holderChart.js?v=2',
+  '/js/chartShot.js?v=2',
+  '/js/tokenChart.js?v=5',
+  '/js/holderChart.js?v=3',
   '/js/watchlist.js?v=2',
   '/js/communityPage.js?v=6',
   '/js/holderBehavior.js?v=7',
