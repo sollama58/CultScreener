@@ -549,6 +549,37 @@ async function initializeDatabase() {
         WHERE logo_uri IS NOT NULL
           AND (logo_uri !~* '^https?://' OR logo_uri ~* '/missing(_[a-z]+)?[.]png$');
 
+      -- Holder count history: one point per holder snapshot (services/holderCounts.js).
+      -- holders = unique wallets with a balance, burn/LP excluded; dust = those under
+      -- HOLDER_DUST_USD; legacy_count = token accounts with a balance (the definition
+      -- holder_history used), or an imported count from elsewhere.
+      CREATE TABLE IF NOT EXISTS holder_count_points (
+        mint_address VARCHAR(44) NOT NULL,
+        taken_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        holders INTEGER,
+        dust INTEGER,
+        legacy_count INTEGER,
+        complete BOOLEAN NOT NULL DEFAULT TRUE,
+        source VARCHAR(16) NOT NULL,
+        PRIMARY KEY (mint_address, taken_at)
+      );
+
+      -- Carry over what the older tables already know. Both inserts skip rows that
+      -- exist, so re-running on every boot is a cheap no-op. The old daily table only
+      -- has token-account counts; snapshot headers have the wallet count (LP wallets
+      -- taken out; burn wallets, at most a few, can't be told apart after the fact).
+      INSERT INTO holder_count_points (mint_address, taken_at, legacy_count, complete, source)
+        SELECT mint_address, (recorded_date::timestamp AT TIME ZONE 'UTC'), holder_count, TRUE, 'daily'
+          FROM holder_history WHERE holder_count > 0
+        ON CONFLICT (mint_address, taken_at) DO NOTHING;
+      INSERT INTO holder_count_points (mint_address, taken_at, holders, legacy_count, complete, source)
+        SELECT mint_address, taken_at,
+               GREATEST(holder_count - COALESCE(jsonb_array_length(
+                 CASE WHEN jsonb_typeof(sample_meta->'lpWallets') = 'array' THEN sample_meta->'lpWallets' END), 0), 0),
+               account_count, complete, 'snapshot'
+          FROM holder_snapshots WHERE supply IS NOT NULL
+        ON CONFLICT (mint_address, taken_at) DO NOTHING;
+
       -- Hold-time backfills that gave up before 2026-10-07 mostly failed on the public-RPC
       -- failover (removed then), which left diamond hands "Unavailable". Put them back in the
       -- queue once. Only rows last touched before the cutoff match, so this is a no-op
@@ -3588,51 +3619,6 @@ async function getWhitelistedWallets() {
   return result.rows;
 }
 
-// ─── Holder History ───────────────────────────────────────────────────────────
-
-/**
- * Upsert one holder-count snapshot for today.
- * Safe to call multiple times per day — subsequent calls update the value.
- */
-async function recordHolderCount(mintAddress, holderCount, date = null) {
-  if (!pool) return null;
-  // date can be a 'YYYY-MM-DD' string for backfill; omit to use today
-  const result = date
-    ? await pool.query(
-        `INSERT INTO holder_history (mint_address, holder_count, recorded_date, recorded_at)
-         VALUES ($1, $2, $3::date, NOW())
-         ON CONFLICT (mint_address, recorded_date)
-         DO UPDATE SET holder_count = $2, recorded_at = NOW()
-         RETURNING *`,
-        [mintAddress, holderCount, date]
-      )
-    : await pool.query(
-        `INSERT INTO holder_history (mint_address, holder_count, recorded_date, recorded_at)
-         VALUES ($1, $2, CURRENT_DATE, NOW())
-         ON CONFLICT (mint_address, recorded_date)
-         DO UPDATE SET holder_count = $2, recorded_at = NOW()
-         RETURNING *`,
-        [mintAddress, holderCount]
-      );
-  return result.rows[0] || null;
-}
-
-/**
- * Return up to `days` daily snapshots for a token, newest first.
- */
-async function getHolderHistory(mintAddress, days = 30) {
-  if (!pool) return [];
-  const result = await pool.query(
-    `SELECT recorded_date, holder_count
-     FROM holder_history
-     WHERE mint_address = $1
-     ORDER BY recorded_date DESC
-     LIMIT $2`,
-    [mintAddress, Math.min(days, 90)]
-  );
-  return result.rows;
-}
-
 async function getSetting(key) {
   if (!pool) return null;
   const result = await pool.query(
@@ -3815,8 +3801,6 @@ module.exports = {
   removeWhitelistedWallet,
   getWhitelistedWallets,
   // Holder history
-  recordHolderCount,
-  getHolderHistory,
   // App settings
   getSetting,
   setSetting,

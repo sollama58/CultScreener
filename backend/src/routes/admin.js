@@ -142,7 +142,7 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
     await cache.delete(keys.holderCount(mint)).catch(() => {});
   }
 
-  // Fetch fresh counts from Solscan
+  // Fetch fresh counts (unique wallets) from Helius DAS
   for (const mint of mints) {
     try {
       const count = await solanaService.getTokenHolderCount(mint);
@@ -156,7 +156,7 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
     } catch {
       failed++;
     }
-    // Rate limit Solscan: 500ms between calls
+    // Space out the DAS pagination: 500ms between tokens
     if (updated + failed < mints.length) {
       await new Promise(r => setTimeout(r, 500));
     }
@@ -174,56 +174,27 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
     }
   } catch (_) {}
 
-  console.log(`[Admin] Refreshed holder counts from Solscan: ${updated} updated, ${failed} failed, ${mints.length} total`);
+  console.log(`[Admin] Refreshed holder counts from Helius DAS: ${updated} updated, ${failed} failed, ${mints.length} total`);
   res.json({ success: true, updated, failed, total: mints.length });
 }));
 
+// "Snapshot Holders Now": queue a fresh holder snapshot for every curated token.
+// Each snapshot writes a holder count point (services/holderCounts.js); counting
+// any other way would put a second definition into the history.
 router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
-  const solanaService = require('../services/solana');
-
+  const holderPipeline = require('../services/holderPipeline');
   const curatedTokens = await db.getCuratedTokens().catch(() => []);
   let recorded = 0;
   let skipped  = 0;
-  const errors = [];
-
   for (const token of curatedTokens) {
     const mint = token.mintAddress || token.mint_address;
     if (!mint) { skipped++; continue; }
-
-    try {
-      let count = null;
-      // The latest complete holder snapshot is an exact count and costs nothing
-      const snap = await require('../services/holderStore').getLatestSnapshot(mint).catch(() => null);
-      if (snap && snap.complete) count = snap.account_count;
-      if (!count || count <= 0) {
-        count = await cache.get(`holder-total:${mint}`);
-      }
-      // Only page through DAS (10 credits per 1000 accounts) when nothing cheaper exists
-      if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
-        count = await solanaService.getTokenHolderCount(mint, { maxPages: 500 }).catch(() => null);
-      }
-      if (!count || count <= 0) {
-        const analytics = await cache.get(`holder-analytics:${mint}`);
-        count = analytics?.metrics?.holderCount || null;
-      }
-
-      if (!count || count <= 0) { skipped++; continue; }
-
-      await db.recordHolderCount(mint, count);
-      recorded++;
-
-      // Clear all holder-history cache variants so fresh data is served immediately
-      for (const days of [7, 30, 31, 90]) {
-        await cache.delete(`holder-history:${mint}:${days}`).catch(() => {});
-      }
-    } catch (err) {
-      errors.push(`${mint.slice(0, 8)}: ${err.message}`);
-      skipped++;
-    }
+    // false = one is already queued or running for this mint
+    if (await holderPipeline.ensureSnapshot(mint).catch(() => false)) recorded++;
+    else skipped++;
   }
-
-  console.log(`[Admin] Snapshot holder counts: ${recorded} recorded, ${skipped} skipped`);
-  res.json({ success: true, recorded, skipped, total: curatedTokens.length, errors: errors.slice(0, 5) });
+  console.log(`[Admin] Snapshot holders now: ${recorded} queued, ${skipped} already queued`);
+  res.json({ success: true, recorded, skipped, total: curatedTokens.length, queued: true });
 }));
 
 // ==========================================
@@ -253,9 +224,10 @@ router.post('/backfill-holder-history', strictLimiter, asyncHandler(async (req, 
 
     try {
       const dailyPairs = await geckoService.getTokenHoldersChart(mint, '30');
-      for (const [tsMs, count] of dailyPairs) {
-        const date = new Date(tsMs).toISOString().slice(0, 10);
-        dateMap.set(date, count);
+      for (const [ts, count] of dailyPairs) {
+        const t = new Date(ts).getTime();
+        if (!Number.isFinite(t) || !(Number(count) > 0)) continue;
+        dateMap.set(new Date(t).toISOString().slice(0, 10), Number(count));
       }
       tokenResult.daily = dailyPairs.length;
     } catch (err) {
@@ -269,31 +241,26 @@ router.post('/backfill-holder-history', strictLimiter, asyncHandler(async (req, 
     try {
       const maxPairs = await geckoService.getTokenHoldersChart(mint, 'max');
       const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-      for (const [tsMs, count] of maxPairs) {
-        if (tsMs >= thirtyDaysAgo) continue; // already covered by daily
-        const date = new Date(tsMs).toISOString().slice(0, 10);
-        if (!dateMap.has(date)) dateMap.set(date, count);
+      for (const [ts, count] of maxPairs) {
+        const t = new Date(ts).getTime();
+        if (!Number.isFinite(t) || t >= thirtyDaysAgo || !(Number(count) > 0)) continue; // daily covers the last 30d
+        const date = new Date(t).toISOString().slice(0, 10);
+        if (!dateMap.has(date)) dateMap.set(date, Number(count));
       }
       tokenResult.weekly = maxPairs.length;
     } catch (err) {
       tokenResult.errors.push(`max: ${err.message}`);
     }
 
-    // ── 3. Write all collected dates to holder_history ────────────────────────
-    for (const [date, count] of dateMap) {
-      try {
-        await db.recordHolderCount(mint, count, date);
-        results.inserted++;
-      } catch (err) {
-        results.failed++;
-        tokenResult.errors.push(`insert ${date}: ${err.message}`);
-      }
-    }
-
-    // Invalidate cached holder-history for this token so fresh data is served
-    const { cache } = require('../services/cache');
-    for (const d of [7, 30, 90]) {
-      await cache.delete(`holder-history:${mint}:${d}`).catch(() => {});
+    // ── 3. Import as history before our own first count ───────────────────────
+    // CoinGecko counts differently from us, so these only fill time before our
+    // first snapshot point (drawn as an estimate) and never replace stored rows.
+    try {
+      const list = [...dateMap].map(([date, count]) => ({ takenAt: Date.parse(`${date}T00:00:00Z`), count }));
+      results.inserted += await require('../services/holderCounts').importLegacyPoints(mint, list, 'coingecko');
+    } catch (err) {
+      results.failed++;
+      tokenResult.errors.push(`insert: ${err.message}`);
     }
 
     results.tokens.push(tokenResult);
@@ -331,6 +298,7 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
       `holders:${addr}`,
       `batch:${addr}`,
       `holder-total:${addr}`,
+      ...['24h', '7d', '30d', '90d', 'all'].map(r => `holder-count:${addr}:${r}`),
       `holder-analytics:${addr}`,
       `holder-classify-pending:${addr}`,
       `holder-metrics-pending:${addr}`,

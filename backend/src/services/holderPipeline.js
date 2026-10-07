@@ -22,6 +22,7 @@ const {
   holderFingerprint, rewindToStreakStart, toBigInt,
 } = require('./holderSnapshot');
 const { buildStratifiedDiamondHands } = require('./holderMetrics');
+const holderCounts = require('./holderCounts');
 
 const envInt = (name, fallback) => {
   const v = parseInt(process.env[name], 10);
@@ -128,6 +129,51 @@ async function mergeLargestAccounts(mint, accounts) {
   });
 }
 
+// ── Holder count history ─────────────────────────────────────────────────────
+
+/**
+ * Record the snapshot's holder count (services/holderCounts.js). A complete
+ * snapshot's count is exact and becomes the displayed count; a capped one is
+ * stored as a lower bound. Never fails the snapshot.
+ */
+async function recordSnapshotPoint(mint, { takenAt, complete, holders, exclude, decimals, supply, accountCount }) {
+  try {
+    const token = await require('./database').getToken(mint).catch(() => null);
+    const dustRaw = holderCounts.dustThresholdRaw({ priceUsd: token?.price, decimals, supplyRaw: supply });
+    const counts = holderCounts.countHolders(holders, { exclude, dustRaw });
+    await holderCounts.recordPoint(mint, {
+      takenAt, holders: counts.holders, dust: counts.dust, legacyCount: accountCount, complete, source: 'snapshot',
+    });
+    if (complete && counts.holders > 0) {
+      await cache.set(`holder-total:${mint}`, counts.holders, TTL.HOLDER_COUNT).catch(() => {});
+    }
+  } catch (err) {
+    console.warn(`[Holders] Count point failed for ${mint.slice(0, 8)}:`, err.message);
+  }
+}
+
+/**
+ * The pre-check found the previous snapshot still accurate. When that check read
+ * every account (one page), the count is confirmed for now too, so the history
+ * gets a point; otherwise only the first page is known and nothing is recorded.
+ */
+async function recordUnchangedPoint(mint, prev, now, checkedAll) {
+  try {
+    const latest = (await holderCounts.getLatestPoints([mint]))[mint];
+    if (!latest || !latest.complete) return;
+    if (latest.holders > 0) {
+      await cache.set(`holder-total:${mint}`, latest.holders, TTL.HOLDER_COUNT).catch(() => {});
+    }
+    if (!checkedAll || !prev.complete) return;
+    await holderCounts.recordPoint(mint, {
+      takenAt: now, holders: latest.holders, dust: latest.dust, legacyCount: prev.account_count,
+      complete: true, source: 'verified',
+    });
+  } catch (err) {
+    console.warn(`[Holders] Count point failed for ${mint.slice(0, 8)}:`, err.message);
+  }
+}
+
 /**
  * Take a full holder snapshot for a mint and store it. Worker only.
  */
@@ -159,10 +205,7 @@ async function takeSnapshot(mint) {
     if (prevUsable && prevFingerprint && fingerprint === prevFingerprint) {
       const now = Date.now();
       await cache.set(keys.snapshotVerified(mint), now, CONFIG.refreshMs * 2).catch(() => {});
-      // Keep the exact holder count warm so nothing re-pages for it
-      if (prev.complete && prev.account_count > 0) {
-        await cache.set(`holder-total:${mint}`, prev.account_count, TTL.HOLDER_COUNT).catch(() => {});
-      }
+      await recordUnchangedPoint(mint, prev, now, first.complete);
       await cache.delete(keys.snapshotPending(mint)).catch(() => {});
       console.log(`[Holders] Snapshot ${prev.id} for ${mint.slice(0, 8)} unchanged (${first.accounts.length} accounts checked); kept`);
       await ensureBackfill(mint);
@@ -201,12 +244,7 @@ async function takeSnapshot(mint) {
     });
     await store.pruneSnapshots(mint).catch(err => console.warn(`[Holders] Prune failed for ${mint.slice(0, 8)}:`, err.message));
 
-    // A complete snapshot is an exact holder count. Keep the existing meaning
-    // (token accounts with a balance) so holder_history stays continuous.
-    if (complete) {
-      await cache.set(`holder-total:${mint}`, accounts.length, TTL.HOLDER_COUNT).catch(() => {});
-      require('./database').recordHolderCount(mint, accounts.length).catch(() => {});
-    }
+    await recordSnapshotPoint(mint, { takenAt, complete, holders, exclude, decimals, supply, accountCount: accounts.length });
     await cache.delete(keys.result(mint)).catch(() => {});
     await cache.delete(keys.snapshotVerified(mint)).catch(() => {});
 
@@ -464,7 +502,7 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
     computed: pending === 0,
     sampleMethod: meta.method || null,
     // Same meaning as the holder count shown elsewhere (token accounts with a balance)
-    holderCount: snap.account_count,
+    holderCount: snap.holder_count,
     snapshotAt,
   };
 

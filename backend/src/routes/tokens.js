@@ -9,6 +9,7 @@ const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_A
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
 const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
+const holderCounts = require('../services/holderCounts');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -1069,12 +1070,9 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   if (cached) {
     // Enrich cached result with any holder counts fetched since this result was cached
     if (cached.tokens && cached.tokens.length > 0) {
-      await Promise.all(cached.tokens.map(async (t) => {
-        if (!t.holders) {
-          const count = await cache.get(`holder-total:${t.mintAddress}`);
-          if (count && count > 0) t.holders = count;
-        }
-      }));
+      const need = cached.tokens.filter(t => !t.holders);
+      const counts = need.length ? await holderCounts.getDisplayCounts(need.map(t => t.mintAddress)).catch(() => ({})) : {};
+      for (const t of need) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
     }
     return res.json(cached);
   }
@@ -1115,13 +1113,10 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
     };
   });
 
-  // Batch-fetch holder counts from cache — check primary key first, fall back to secondary
-  // Sequential fallback avoids a redundant second Redis GET on cache hit (common case)
+  // Holder counts: Redis, else the latest holder snapshot's count from Postgres
   if (tokens.length > 0) {
-    await Promise.all(tokens.map(async (t) => {
-      const count = await cache.get(`holder-total:${t.mintAddress}`);
-      if (count && count > 0) t.holders = count;
-    }));
+    const counts = await holderCounts.getDisplayCounts(tokens.map(t => t.mintAddress)).catch(() => ({}));
+    for (const t of tokens) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
   }
 
   // Queue background Helius fetches for any tokens still missing holder counts
@@ -1130,7 +1125,7 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
     if (missing.length > 0) {
       jobQueue.addAnalyticsJob('fetch-holder-counts-batch', {
         mints: missing.map(t => t.mintAddress)
-      }, { priority: 10 }).catch(() => {});
+      }).catch(() => {});
     }
   }
 
@@ -1464,7 +1459,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
           return null;
         }),
         db.getApprovedSubmissions(mint).catch(() => []),
-        cache.get(`holder-total:${mint}`)
+        holderCounts.getDisplayCounts([mint]).then(c => c[mint] || null).catch(() => null)
       ];
 
       const results = await Promise.all(fetchPromises);
@@ -1473,7 +1468,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       // Use cached holder count; if missing, queue a background fetch via worker
       let holders = (typeof cachedHolders === 'number' && cachedHolders > 0) ? cachedHolders : null;
       if (!holders && solanaService.isHeliusConfigured()) {
-        jobQueue.addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }, { priority: 5 }).catch(() => {});
+        jobQueue.addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }).catch(() => {});
       }
 
       // Privacy: Don't log API response details
@@ -2049,11 +2044,11 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
       };
 
       try {
-        const totalCount = await cache.get(`holder-total:${mint}`);
+        const totalCount = (await holderCounts.getDisplayCounts([mint]))[mint];
         if (totalCount && totalCount > 0) {
           metrics.holderCount = totalCount;
         } else if (solanaService.isHeliusConfigured()) {
-          jobQueue.addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }, { priority: 5 }).catch(() => {});
+          jobQueue.addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }).catch(() => {});
         }
       } catch (_) {}
     }
@@ -2102,7 +2097,7 @@ async function _serveSnapshotHolders(mint, snapList, cacheKey) {
   const holders = rawAccounts.map((a, i) => ({
     rank: i + 1, address: a.wallet, balance: a.uiAmount, percentage: null, isLP: false, isBurnt: false
   })).filter(h => h.balance > 0);
-  const holderCount = await cache.get(`holder-total:${mint}`).catch(() => null);
+  const holderCount = (await holderCounts.getDisplayCounts([mint]).catch(() => ({})))[mint];
   const metrics = {
     top5Pct: null, top10Pct: null, top20Pct: null, herfindahl: null, top1Pct: null,
     dominance: null, avgBalance: null, avgPct: null, holderCount: holderCount || null
@@ -2271,23 +2266,34 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
 // (>24hr or missing), queues a background worker job to compute them.
 // Response includes `computed: false` when stale wallets are pending so the
 // frontend knows to re-poll.
-// ─── Holder History ──────────────────────────────────────────────────────────
+// ─── Holder count history ────────────────────────────────────────────────────
+// One point per holder snapshot (services/holderCounts.js). Reads Postgres only.
+router.get('/:mint/holder-count', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
+  const { mint } = req.params;
+  const range = holderCounts.RANGES[req.query.range] != null ? req.query.range : '30d';
+  const cacheKey = `holder-count:${mint}:${range}`;
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached) return res.json(cached);
+
+  const points = await holderCounts.getPoints(mint);
+  const result = {
+    mint,
+    ...holderCounts.buildHolderSeries(points, { range }),
+    dustUsd: holderCounts.DUST_USD,
+    refreshHours: Math.round(holderPipeline.CONFIG.refreshMs / 3_600_000),
+  };
+  // New points clear this key (holderCounts.clearSeriesCache); the TTL only
+  // bounds how stale the change stats' "now" can get.
+  await cache.set(cacheKey, result, 10 * TTL.MEDIUM).catch(() => {});
+  res.json(result);
+}));
+
+// Older daily shape, kept for pages still running the previous frontend.
 router.get('/:mint/holder-history', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   const days = Math.min(parseInt(req.query.days) || 30, 90);
-
-  const cacheKey = `holder-history:${mint}:${days}`;
-  const cached = await cache.get(cacheKey);
-  // Only serve from cache when there's actual history — empty results must not be
-  // cached for 6 hours or a freshly-taken snapshot will never surface to the user
-  if (cached && Array.isArray(cached.history) && cached.history.length > 0) return res.json(cached);
-
-  const history = await db.getHolderHistory(mint, days);
-  const result = { mint, history };
-  // Cache for 6 hours only when there is data — skip caching empty results so
-  // a snapshot taken shortly after won't be hidden behind a stale cache entry
-  if (history.length > 0) await cache.set(cacheKey, result, 6 * TTL.HOUR);
-  res.json(result);
+  const history = await holderCounts.getDailyHistory(mint, days);
+  res.json({ mint, history });
 }));
 
 router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {

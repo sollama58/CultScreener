@@ -49,6 +49,7 @@ if (!DB_URL) {
     await db.getInitializationPromise();
     await db.pool.query('DELETE FROM holder_snapshots WHERE mint_address = $1', [MINT]);
     await db.pool.query('DELETE FROM holder_positions WHERE mint_address = $1', [MINT]);
+    await db.pool.query('DELETE FROM holder_count_points WHERE mint_address = $1', [MINT]);
 
     solana.getTokenSupply = async () => ({ value: { amount: '1000000000000', decimals: 6 } });
     solana.getAllTokenAccounts = async () => {
@@ -91,6 +92,7 @@ if (!DB_URL) {
     Date.now = realNow;
     await db.pool.query('DELETE FROM holder_snapshots WHERE mint_address = $1', [MINT]).catch(() => {});
     await db.pool.query('DELETE FROM holder_positions WHERE mint_address = $1', [MINT]).catch(() => {});
+    await db.pool.query('DELETE FROM holder_count_points WHERE mint_address = $1', [MINT]).catch(() => {});
     await db.pool.end();
   });
 
@@ -136,7 +138,8 @@ if (!DB_URL) {
       assert.strictEqual(p.acquired_source, 'pending');
       assert.strictEqual(p.acquired_at, null);
       assert.ok(queued.some(q => q.name === 'backfill-holder-acquisitions'));
-      assert.strictEqual(await cache.get(`holder-total:${MINT}`), 301);
+      // displayed count: unique wallets with a balance, LP wallet (POOL) excluded
+      assert.strictEqual(await cache.get(`holder-total:${MINT}`), 300);
     });
 
     test('diamond hands waits for the backfill, then settles from transfer history', async () => {
@@ -212,6 +215,12 @@ if (!DB_URL) {
       assert.strictEqual(fresh[MINT], now);
       assert.ok(await pipeline.getSnapshotHolderList(MINT, { maxAgeMs: HOUR }), 'served as recent');
       assert.ok(await cache.get(`holder-snapshot-verified:${MINT}`));
+      // one page read in full: the count is confirmed now, so the history gets a point
+      const pts = await require('./holderCounts').getPoints(MINT);
+      const last = pts[pts.length - 1];
+      assert.strictEqual(last.source, 'verified');
+      assert.strictEqual(new Date(last.taken_at).getTime(), now);
+      assert.strictEqual(last.holders, pts[pts.length - 2].holders);
 
       setHolder('CHANGED', 1_000_000, [{ sig: 'buy_CHANGED', ts: now / 1000, delta: 1_000_000n }]);
       assert.strictEqual((await pipeline.takeSnapshot(MINT)).status, 'ok');
@@ -446,6 +455,67 @@ if (!DB_URL) {
       }
       await drainBackfill();
       assert.strictEqual((await position('WHALE3')).acquired_source, 'backfill');
+    });
+  });
+
+  describe('holder count history (Postgres)', () => {
+    const holderCounts = require('./holderCounts');
+
+    test('every snapshot left a point with wallets, dust and the token-account count', async () => {
+      const points = await holderCounts.getPoints(MINT);
+      const snapshots = await db.pool.query(
+        'SELECT taken_at, complete FROM holder_snapshots WHERE mint_address = $1 ORDER BY taken_at', [MINT]);
+      const snapTimes = new Set(snapshots.rows.map(r => new Date(r.taken_at).getTime()));
+      const fromSnapshots = points.filter(p => p.source === 'snapshot');
+      assert.ok(fromSnapshots.length >= snapTimes.size);
+      for (const t of snapTimes) assert.ok(fromSnapshots.some(p => new Date(p.taken_at).getTime() === t));
+
+      const first = points[0];
+      assert.strictEqual(new Date(first.taken_at).getTime(), T0);
+      assert.strictEqual(first.holders, 300);            // POOL excluded
+      assert.strictEqual(first.legacy_count, 301);       // token accounts
+      assert.strictEqual(first.dust, 0);                 // nobody under a millionth of supply
+
+      const capped = points.filter(p => p.complete === false);
+      assert.ok(capped.length >= 1, 'capped snapshot stored as a lower bound');
+    });
+
+    test('series payload and displayed count agree with the latest exact point', async () => {
+      const points = await holderCounts.getPoints(MINT);
+      const r = holderCounts.buildHolderSeries(points, { range: 'all', now });
+      const latest = points[points.length - 1];
+      assert.strictEqual(r.current.holders, latest.holders);
+      await cache.delete(`holder-total:${MINT}`);
+      const counts = await holderCounts.getDisplayCounts([MINT]);
+      const lastExact = [...points].reverse().find(p => p.holders != null && p.complete);
+      assert.strictEqual(counts[MINT], lastExact.holders);
+      assert.strictEqual(await cache.get(`holder-total:${MINT}`), lastExact.holders);
+    });
+
+    test('imported history only fills time before our first point and never overwrites', async () => {
+      const inserted = await holderCounts.importLegacyPoints(MINT, [
+        { takenAt: T0 - 2 * DAY, count: 280 },
+        { takenAt: T0 - DAY, count: 290 },
+        { takenAt: T0, count: 999 },           // same time as our first point
+        { takenAt: T0 + 5 * HOUR, count: 999 }, // after it
+      ], 'coingecko');
+      assert.strictEqual(inserted, 2);
+      const points = await holderCounts.getPoints(MINT);
+      assert.strictEqual(points.find(p => new Date(p.taken_at).getTime() === T0).holders, 300);
+
+      const r = holderCounts.buildHolderSeries(points, { range: 'all', now });
+      assert.strictEqual(r.series.holders.est.length, 2);
+      assert.strictEqual(r.series.holders.est[0][1], Math.round(280 * 300 / 301));
+    });
+
+    test('old daily endpoint shape: one row per day, newest first, real counts preferred', async () => {
+      const rows = await holderCounts.getDailyHistory(MINT, 30);
+      assert.ok(rows.length >= 3);
+      assert.match(rows[0].recorded_date, /^\d{4}-\d{2}-\d{2}$/);
+      assert.ok(rows[0].recorded_date > rows[1].recorded_date);
+      const t0Day = new Date(T0).toISOString().slice(0, 10);
+      const day = rows.find(r => r.recorded_date === t0Day);
+      assert.ok(day.holder_count >= 300 && day.holder_count < 999);
     });
   });
 }
