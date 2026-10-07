@@ -814,6 +814,7 @@
 .token-page .holders-expand-btn { margin-top: 12px; }
 
 /* ---------- Holder count (js/holderChart.js) ---------- */
+.token-page .hc-head-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .token-page .hc-top {
   display: flex;
   align-items: flex-end;
@@ -946,7 +947,8 @@
   .token-page .hc-change-value { font-size: 13px; }
   .token-page .hc-chart-box { height: 200px; }
   .token-page .holder-trend-section .tp-section-head { gap: 10px; }
-  .token-page .hc-range { width: 100%; }
+  .token-page .hc-head-tools { width: 100%; flex-wrap: nowrap; }
+  .token-page .hc-range { flex: 1; min-width: 0; }
   .token-page .hc-range button { flex: 1; padding: 4px 0; }
   .token-page .hc-note { text-align: left; }
 }
@@ -1597,6 +1599,9 @@ body.tc-open { overflow: hidden; }
   cursor: pointer;
 }
 .tc-close:hover { color: var(--ink); background: var(--surface-2); }
+.tc-head-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+.tc-head-tools .tc-close svg { display: block; }
+.tc-close:disabled { opacity: 0.4; cursor: default; }
 .tc-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .tc-toolbar-more { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .tc-toolbar .tp-seg button:disabled { opacity: 0.4; cursor: default; }
