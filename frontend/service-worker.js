@@ -50,7 +50,8 @@
 // v75: token age chip next to token names in the home tables and token page header -
 // styles.css v22, token.css v7, api.js v14, tokenTable.js v5, tokenDetail.js v31.
 // v76: diamond hands audit fixes (hold-time floors, whole percents, partial render gating) - tokenDetail.js v32.
-const CACHE_VERSION = 'holdex-v76';
+// v77: King of the Pill is scored daily (tooltip shows score, reign day and contenders) - kotp.js v4, admin.js v18.
+const CACHE_VERSION = 'holdex-v77';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -71,7 +72,7 @@ const APP_SHELL = [
   '/js/emerging.js?v=6',
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
-  '/js/kotp.js?v=3',
+  '/js/kotp.js?v=4',
   '/js/tokenDetail.js?v=31',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=2',
@@ -84,7 +85,7 @@ const APP_SHELL = [
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
   '/js/cultify.js?v=17',
-  '/js/admin.js?v=17',
+  '/js/admin.js?v=18',
   '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
   '/icons/icon.svg',

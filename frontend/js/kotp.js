@@ -18,6 +18,28 @@
     return { text: sign + v.toFixed(2) + '% 24h', cls: v >= 0 ? 'pos' : 'neg' };
   }
 
+  // The automatic King is the top daily Diamond Hands score (services/kingOfPill.js);
+  // a hand-picked override keeps the original wording.
+  function tooltipText(token) {
+    var k = token.kotp;
+    if (!k || k.mode !== 'auto') {
+      return 'King of the Pill is chosen by the most-raided community token, including their HolDEX link. Winner determined by ASDF CultRaid Tech.';
+    }
+    var parts = ['King of the Pill goes to the curated token with the strongest Diamond Hands score: how long its holders have held, judged against what its age makes possible, with a bonus for holders sticking around.'];
+    var reign = [];
+    if (k.score != null) reign.push('Score ' + Number(k.score).toFixed(1));
+    if (k.reignDay) reign.push('day ' + k.reignDay + ' of its reign');
+    if (reign.length) parts.push(esc(reign.join(', ')) + '.');
+    if (k.contenders && k.contenders.length) {
+      parts.push('Next in line: ' + k.contenders.map(function (c) {
+        var label = c.symbol ? '$' + c.symbol : (c.name || '?');
+        return esc(label) + (c.score != null ? ' (' + Number(c.score).toFixed(1) + ')' : '');
+      }).join(', ') + '.');
+    }
+    parts.push('Scores update once a day and the crown moves every few days.');
+    return parts.join(' ');
+  }
+
   function render(token) {
     if (!token) { wrap.innerHTML = ''; return; }
     // Through the image proxy, like every other logo on the site. Hotlinked straight from the
@@ -45,7 +67,7 @@
       '<span class="kotp-tooltip-wrap">' +
         '<i class="kotp-tooltip-icon">?</i>' +
       '</span>' +
-      '<span class="kotp-tooltip-box">King of the Pill is chosen by the most-raided community token, including their HolDEX link. Winner determined by ASDF CultRaid Tech.</span>';
+      '<span class="kotp-tooltip-box">' + tooltipText(token) + '</span>';
     wrap.innerHTML = '';
     wrap.appendChild(el);
 

@@ -230,6 +230,8 @@ const admin = {
     const kotpClearBtn = document.getElementById('admin-kotp-clear');
     if (kotpSetBtn)   kotpSetBtn.addEventListener('click', () => this.setKingOfPill());
     if (kotpClearBtn) kotpClearBtn.addEventListener('click', () => this.clearKingOfPill());
+    const kotpRunBtn   = document.getElementById('admin-kotp-run');
+    if (kotpRunBtn)   kotpRunBtn.addEventListener('click', () => this.runKingOfPill());
     if (wipeBtn) wipeBtn.addEventListener('click', () => this.wipeTokenCache());
   },
 
@@ -327,16 +329,33 @@ const admin = {
     if (!el) return;
     try {
       const data = await this.request('/api/admin/king-of-pill');
-      if (!data.mint) {
-        el.textContent = 'No token set — widget is hidden.';
-      } else {
-        const t = data.token;
-        const name = this.esc(t ? (t.name || t.symbol || data.mint) : data.mint);
+      const label = (t, mint) => {
+        const name = this.esc(t ? (t.name || t.symbol || mint) : mint);
         const sym  = t?.symbol ? ` ($${this.esc(t.symbol)})` : '';
-        const mint = this.esc(data.mint);
-        el.innerHTML = `Currently: <strong>${name}${sym}</strong> — <code style="font-size:0.75rem;color:var(--text-dim)">${mint}</code>`;
+        return `<strong>${name}${sym}</strong> — <code style="font-size:0.75rem;color:var(--text-dim)">${this.esc(mint)}</code>`;
+      };
+      if (!data.mint) {
+        el.textContent = data.auto ? 'No override — the banner shows the automatic King.' : 'No override and no automatic King yet — widget is hidden.';
+      } else {
+        el.innerHTML = `Override: ${label(data.token, data.mint)}`;
         const input = document.getElementById('kotp-mint-input');
         if (input && !input.value) input.value = data.mint;
+      }
+      const autoEl = document.getElementById('kotp-auto');
+      if (autoEl) {
+        if (!data.auto) {
+          autoEl.textContent = 'Automatic King: none yet (the daily job has not run, or no curated token is eligible).';
+        } else {
+          const a = data.auto;
+          const score = a.score != null ? Number(a.score).toFixed(1) : '?';
+          const next = (a.contenders || []).map(c => `${this.esc(c.symbol ? '$' + c.symbol : (c.name || '?'))} ${c.score != null ? Number(c.score).toFixed(1) : ''}`).join(', ');
+          const history = (data.reigns || []).slice(0, 6).map(r =>
+            `${this.esc(r.symbol ? '$' + r.symbol : (r.name || r.mintAddress.slice(0, 6)))} ${this.esc(r.crownedOn)}${r.endedOn ? '→' + this.esc(r.endedOn) : ' (now)'}`).join(' · ');
+          autoEl.innerHTML = `Automatic King: ${label(a, a.mint)}<br>` +
+            `Score ${score} (scored ${this.esc(a.scoreDate || '?')}), day ${a.reignDay} of its reign since ${this.esc(a.crownedOn)}.` +
+            (next ? `<br>Next in line: ${next}` : '') +
+            (history ? `<br><span style="color:var(--text-dim)">Reigns: ${history}</span>` : '');
+        }
       }
     } catch {
       el.textContent = 'Could not load current setting.';
@@ -376,6 +395,28 @@ const admin = {
     }
   },
 
+  async runKingOfPill() {
+    const btn    = document.getElementById('admin-kotp-run');
+    const status = document.getElementById('admin-kotp-status');
+    btn.disabled = true;
+    btn.textContent = 'Scoring…';
+    status.textContent = '';
+    try {
+      const data = await this.request('/api/admin/king-of-pill/run', { method: 'POST', body: JSON.stringify({}) });
+      const skipped = Object.entries(data.skipped || {}).map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`).join(', ');
+      status.textContent = `Scored ${data.scored} tokens for ${data.date}${skipped ? ` (${skipped})` : ''}. ` +
+        (data.king ? (data.changed ? 'New King crowned.' : `King unchanged (${String(data.reason).replace(/_/g, ' ')}).`) : 'No eligible token to crown.');
+      status.style.color = 'var(--green)';
+      this.loadKingOfPill();
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.style.color = 'var(--red)';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Score & Crown Now';
+    }
+  },
+
   async clearKingOfPill() {
     const btn    = document.getElementById('admin-kotp-clear');
     const status = document.getElementById('admin-kotp-status');
@@ -386,7 +427,7 @@ const admin = {
 
     try {
       await this.request('/api/admin/king-of-pill', { method: 'POST', body: JSON.stringify({ mint: null }) });
-      status.textContent = 'Cleared — widget is now hidden.';
+      status.textContent = 'Override cleared — the banner shows the automatic King.';
       status.style.color = 'var(--text-muted)';
       const input = document.getElementById('kotp-mint-input');
       if (input) input.value = '';

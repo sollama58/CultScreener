@@ -1145,13 +1145,30 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
-// GET /api/tokens/king-of-pill - Admin-featured token shown as a persistent widget on the main page
+// GET /api/tokens/king-of-pill - The featured token in the banner on the main page.
+// The automatic King (services/kingOfPill.js: the top daily Diamond Hands score with a
+// rotation rule) unless an admin override mint is set, which always wins.
 router.get('/king-of-pill', asyncHandler(async (req, res) => {
   const cacheKey = 'king-of-pill:featured';
   const cached = await cache.get(cacheKey);
   if (cached) return res.json(cached);
 
-  const mint = await db.getSetting('king_of_pill_mint');
+  const manual = await db.getSetting('king_of_pill_mint');
+  let mint = manual || null;
+  let kotp = null;
+  if (manual) {
+    kotp = { mode: 'manual' };
+  } else {
+    const king = await require('../services/kingOfPill').getCurrentKing().catch(err => {
+      console.error('[KotP] Read failed:', err.message);
+      return null;
+    });
+    if (king) {
+      mint = king.mint;
+      kotp = { mode: 'auto', score: king.score, scoreDate: king.scoreDate, reignDay: king.reignDay, crownedOn: king.crownedOn,
+               contenders: king.contenders.map(c => ({ name: c.name, symbol: c.symbol, score: c.score })) };
+    }
+  }
   if (!mint) return res.json({ token: null });
 
   // Fetch basic token data from DB (name, symbol, logo)
@@ -1170,6 +1187,7 @@ router.get('/king-of-pill', asyncHandler(async (req, res) => {
     logoUri: row.logo_uri || null,
     price: priceData?.price ?? (row.price ? parseFloat(row.price) : null),
     priceChange24h: priceData?.priceChange24h ?? (row.price_change_24h != null ? parseFloat(row.price_change_24h) : null),
+    kotp,
   };
 
   const result = { token };
