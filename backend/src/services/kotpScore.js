@@ -33,6 +33,13 @@ const PARAMS = {
   volumeFloorUsd: 10_000,      // $10k/day of volume or less counts as none
   volumeFullUsd: 1_000_000,    // $1M/day saturates the dollar half
   turnoverFull: 0.25,          // 25% of market cap traded per day saturates the turnover half
+  // Price momentum: the 24h, 7d and 30d price changes, each saturating at its own swing
+  // and weighted so the longer windows count more (a 24h spike alone moves little).
+  // Gains are worth more than losses cost, so the crown leans towards tokens on the way up.
+  priceGainWeight: 0.15,       // up to +15% for rising prices
+  priceLossWeight: 0.10,       // up to -10% for falling prices
+  priceFullSwing: { d1: 25, d7: 50, d30: 100 },   // percent change that saturates each window
+  priceWindowWeight: { d1: 0.2, d7: 0.4, d30: 0.4 },
   // Crowning
   minReignDays: 3,             // nobody is dethroned before this
   maxReignDays: 7,             // and nobody keeps it past this
@@ -84,6 +91,23 @@ function activityIndex(volume24h, marketCap, p = PARAMS) {
 }
 
 /**
+ * Price momentum, -1..1: the weighted mean of the 24h, 7d and 30d price changes, each
+ * clamped to ±1 at its full swing. Windows without a figure drop out of the mean
+ * (renormalised); no figures at all gives 0.
+ */
+function priceMomentumIndex(changes, p = PARAMS) {
+  let num = 0, den = 0;
+  for (const key of ['d1', 'd7', 'd30']) {
+    const v = changes ? Number(changes[key]) : NaN;
+    if (changes == null || changes[key] == null || !Number.isFinite(v)) continue;
+    const w = p.priceWindowWeight[key];
+    num += w * clamp(v / p.priceFullSwing[key], -1, 1);
+    den += w;
+  }
+  return den > 0 ? num / den : 0;
+}
+
+/**
  * Daily Diamond Hands score for one token.
  *
  * @param {object} t
@@ -96,7 +120,8 @@ function activityIndex(volume24h, marketCap, p = PARAMS) {
  *   holdersMonthAgo     holder count 30 days ago (or the oldest known, at least 7 days back; null if unknown)
  *   volume24h           24h trading volume in USD (null if unknown)
  *   marketCap           market cap in USD (null if unknown)
- * @returns {{eligible, reason?, score, core, headcount, supply, confidence, momentum, retention, activity}}
+ *   priceChanges        { d1, d7, d30 } percent price changes (each null if unknown)
+ * @returns {{eligible, reason?, score, core, headcount, supply, confidence, momentum, retention, activity, priceMomentum}}
  */
 function scoreToken(t, p = PARAMS) {
   const ageDays = (t.ageMs || 0) / DAY;
@@ -116,12 +141,15 @@ function scoreToken(t, p = PARAMS) {
     ? clamp((t.holders / t.holdersMonthAgo - 1) / p.retentionFullSwing, -1, 1) : 0;
   const retentionWeight = retention < 0 ? p.retentionLossWeight : p.retentionGainWeight;
   const activity = activityIndex(t.volume24h, t.marketCap, p);
+  const priceMomentum = priceMomentumIndex(t.priceChanges, p);
+  const priceWeight = priceMomentum < 0 ? p.priceLossWeight : p.priceGainWeight;
 
   const score = 100 * confidence * core
-    * (1 + p.momentumWeight * momentum + retentionWeight * retention + p.volumeWeight * activity);
+    * (1 + p.momentumWeight * momentum + retentionWeight * retention + p.volumeWeight * activity
+         + priceWeight * priceMomentum);
   return {
     eligible: true, score: Math.round(score * 100) / 100,
-    core: Math.round(core * 10000) / 10000, headcount, supply, confidence, momentum, retention, activity,
+    core: Math.round(core * 10000) / 10000, headcount, supply, confidence, momentum, retention, activity, priceMomentum,
   };
 }
 
@@ -171,4 +199,4 @@ function pickKing(scored, king, lastReignEnd, today, p = PARAMS, reignEnds = {})
   return { mint: challenger.mint, changed: true, reason: 'overtaken', score: challenger.score, reignDays: 0 };
 }
 
-module.exports = { BUCKETS, PARAMS, DAY, holdIndex, activityIndex, scoreToken, pickKing };
+module.exports = { BUCKETS, PARAMS, DAY, holdIndex, activityIndex, priceMomentumIndex, scoreToken, pickKing };

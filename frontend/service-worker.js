@@ -58,7 +58,8 @@
 // v80: Diamond Hands table sorted by the daily score (new Score column); the score counts
 // trading activity - styles.css v24, tokenTable.js v7, conviction.js v20, kotp.js v6.
 // v81: the Score column is gone again (the order stays) - styles.css v25, tokenTable.js v8, conviction.js v21.
-const CACHE_VERSION = 'holdex-v81';
+// v82: the King of the Pill tooltip mentions price momentum - kotp.js v7.
+const CACHE_VERSION = 'holdex-v82';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -79,7 +80,7 @@ const APP_SHELL = [
   '/js/emerging.js?v=6',
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
-  '/js/kotp.js?v=6',
+  '/js/kotp.js?v=7',
   '/js/tokenDetail.js?v=33',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
