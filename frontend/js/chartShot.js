@@ -1,5 +1,6 @@
 // Chart screenshots: a Lightweight Charts canvas framed with the token's logo, name and ticker
-// on top and holdex.live branding, copied to the clipboard or downloaded as a PNG.
+// on top (plus a King of the Pill chip when the token wears the crown) and holdex.live
+// branding, copied to the clipboard or downloaded as a PNG.
 // Used by the Holders panel (holderChart.js) and the chart modal (tokenChart.js).
 const chartShot = (() => {
   const BRAND_ICON = 'icons/icon.svg';
@@ -170,6 +171,31 @@ const chartShot = (() => {
       ctx.font = `600 ${k(16)}px ${mono}`;
       ctx.fillText(fitText(ctx, `$${symbol}`, Math.max(k(40), textMax - nameW - k(10))), tx + nameW + k(10), ly + k(23));
     }
+    // King of the Pill chip after the ticker, when this token wears the crown
+    if (typeof tokenDetail !== 'undefined' && tokenDetail.isKingOfPill && tokenDetail.isKingOfPill()) {
+      const symW = symbol ? ctx.measureText(fitText(ctx, `$${symbol}`, Math.max(k(40), textMax - nameW - k(10)))).width + k(10) : 0;
+      const cx = tx + nameW + symW + k(12);
+      ctx.font = `700 ${k(12)}px ${font}`;
+      const roomW = W - pad - brandW - cx;
+      const full = '💊 King of the Pill';
+      const label = ctx.measureText(full).width + k(18) <= roomW ? full : '💊 King';
+      const chipW = ctx.measureText(label).width + k(18);
+      if (chipW <= roomW) {
+        const chipH = k(22);
+        const cy = ly + k(23) - chipH + k(4);
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
+        roundRect(ctx, cx, cy, chipW, chipH, chipH / 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.55)';
+        ctx.lineWidth = Math.max(1, k(1));
+        ctx.stroke();
+        ctx.fillStyle = '#fde68a';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, cx + k(9), cy + chipH / 2 + k(1));
+        ctx.textBaseline = 'alphabetic';
+      }
+    }
+
     ctx.font = `500 ${k(15)}px ${font}`;
     ctx.fillStyle = ink2;
     const titleText = fitText(ctx, title, textMax);

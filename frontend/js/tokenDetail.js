@@ -38,6 +38,7 @@ const tokenDetail = {
     this.loadPools().catch(() => {});
     this.loadDexScreenerData().catch(() => {});
     this.loadHolderTrend().catch(() => {});
+    this.loadKingOfPill().catch(() => {});
 
     try {
       // Load core token data. renderToken() depends on this.token being set.
@@ -354,6 +355,49 @@ const tokenDetail = {
     }
   },
 
+  // King of the Pill: the token featured in the home page banner. Fetched once per page
+  // visit (the API caches it for five minutes); when it is this token, a badge goes next
+  // to the name and chartShot.js adds the same label to every shared chart image.
+  kingOfPill: null, // { mint, kotp } or null
+
+  isKingOfPill() {
+    return !!(this.kingOfPill && this.mint && this.kingOfPill.mint === this.mint);
+  },
+
+  // Short description for the badge tooltip and the image chip
+  kingOfPillLabel() {
+    const k = this.kingOfPill?.kotp;
+    if (!k || k.mode !== 'auto') return 'King of the Pill';
+    const bits = [];
+    if (k.score != null) bits.push(`Diamond Hands score ${Number(k.score).toFixed(1)}`);
+    if (k.reignDay) bits.push(`day ${k.reignDay} of its reign`);
+    return bits.length ? `King of the Pill · ${bits.join(', ')}` : 'King of the Pill';
+  },
+
+  async loadKingOfPill() {
+    try {
+      const d = await api.request('/api/tokens/king-of-pill');
+      this.kingOfPill = d?.token?.mintAddress ? { mint: d.token.mintAddress, kotp: d.token.kotp || null } : null;
+    } catch {
+      this.kingOfPill = null;
+    }
+    this.applyKingBadge();
+  },
+
+  // Insert or remove the badge right after the token name (first of the badges)
+  applyKingBadge() {
+    const nameEl = document.getElementById('token-name');
+    if (!nameEl) return;
+    nameEl.parentElement.querySelectorAll('.tp-kotp-badge').forEach(el => el.remove());
+    if (!this.isKingOfPill() || !this.token) return;
+    const badge = document.createElement('a');
+    badge.className = 'tp-kotp-badge';
+    badge.href = '/';
+    badge.title = `${this.kingOfPillLabel()}. Featured at the top of the HolDEX home page.`;
+    badge.innerHTML = '<span class="tp-kotp-pill" aria-hidden="true">💊</span>King of the Pill';
+    nameEl.insertAdjacentElement('afterend', badge);
+  },
+
   // Load token data
   async loadToken() {
     const _t0 = performance.now();
@@ -520,6 +564,7 @@ const tokenDetail = {
         badge.textContent = '🔨 Emerging Cult';
         nameEl.insertAdjacentElement('afterend', badge);
       }
+      this.applyKingBadge();
     }
 
     const symbolEl = document.getElementById('token-symbol');
@@ -1456,6 +1501,7 @@ const tokenDetail = {
             <div style="font-size:1rem;font-weight:800;color:${C.ink};letter-spacing:-0.02em;line-height:1.2;">${esc(tokenName)}</div>
             <div style="font-size:0.7rem;font-family:'JetBrains Mono',monospace;color:${C.muted};text-transform:uppercase;letter-spacing:0.04em;">${esc(tokenSymbol)}</div>
           </div>
+          ${this.isKingOfPill() ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:0.35rem;padding:2px 8px;border-radius:999px;font-size:0.68rem;font-weight:700;color:#fde68a;background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.45);white-space:nowrap;">💊 King of the Pill</span>` : ''}
         </div>
         <div style="text-align:right;">
           ${tokenPrice ? `<div style="font-size:1.1rem;font-weight:700;color:${C.ink};font-family:'JetBrains Mono',monospace;letter-spacing:-0.02em;">${esc(tokenPrice)}</div>` : ''}
