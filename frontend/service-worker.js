@@ -53,7 +53,9 @@
 // v77: King of the Pill is scored daily (tooltip shows score, reign day and contenders) - kotp.js v4, admin.js v18.
 // v78: King of the Pill badge on the King's token page and in shared chart images; service worker
 // now lists tokenDetail.js v32+ (v77 still cached v31) - token.css v8, tokenDetail.js v33, chartShot.js v3.
-const CACHE_VERSION = 'holdex-v78';
+// v79: King of the Pill chip beside the King's name in the home tables and community lists -
+// styles.css v23, api.js v15, tokenTable.js v6, kotp.js v5, communityPage.js v7.
+const CACHE_VERSION = 'holdex-v79';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -62,26 +64,26 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=22',
+  '/css/styles.css?v=23',
   '/css/token.css?v=8',
   '/js/config.js?v=4',
-  '/js/api.js?v=14',
+  '/js/api.js?v=15',
   '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=5',
+  '/js/tokenTable.js?v=6',
   '/js/conviction.js?v=19',
   '/js/tech.js?v=6',
   '/js/emerging.js?v=6',
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
-  '/js/kotp.js?v=4',
+  '/js/kotp.js?v=5',
   '/js/tokenDetail.js?v=33',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
   '/js/tokenChart.js?v=5',
   '/js/holderChart.js?v=3',
   '/js/watchlist.js?v=2',
-  '/js/communityPage.js?v=6',
+  '/js/communityPage.js?v=7',
   '/js/holderBehavior.js?v=7',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',

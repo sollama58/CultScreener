@@ -85,6 +85,7 @@ const communityPage = {
 
       this.bindRowClicks(tbody);
       utils.bindImageFallbacks(tbody);
+      this.markKing(tbody);
 
       tbody.querySelectorAll('[data-remove-wl]').forEach(btn => {
         btn.addEventListener('click', async (e) => {
@@ -149,10 +150,25 @@ const communityPage = {
 
       this.bindRowClicks(tbody);
       utils.bindImageFallbacks(tbody);
+      this.markKing(tbody);
     } catch (err) {
       console.error('Watchlist leaderboard error:', err.message);
       tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state">Failed to load leaderboard</div></td></tr>';
     }
+  },
+
+  // King of the Pill chip after the King's name (same request the home page shares)
+  markKing(tbody) {
+    if (typeof api === 'undefined' || !api.kingOfPill) return;
+    api.kingOfPill().then(king => {
+      if (!king) return;
+      tbody.querySelectorAll('.token-row[data-mint] .token-name').forEach(name => {
+        const row = name.closest('.token-row');
+        if (row.dataset.mint === king.mintAddress && !name.querySelector('.tt-king')) {
+          name.insertAdjacentHTML('beforeend', ' <span class="tt-tag tt-king" title="King of the Pill">💊</span>');
+        }
+      });
+    });
   },
 
   bindRowClicks(tbody) {
