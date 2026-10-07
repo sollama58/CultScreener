@@ -115,8 +115,11 @@
     }, { passive: true });
   }
 
-  fetch(apiBase + '/api/tokens/king-of-pill')
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (d) { if (d) render(d.token); })
-    .catch(function () {});
+  // One request shared with the table chips (tokenTable.js) when api.js is loaded
+  var pending = (typeof api !== 'undefined' && api.kingOfPill)
+    ? api.kingOfPill()
+    : fetch(apiBase + '/api/tokens/king-of-pill')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { return d ? d.token : null; });
+  pending.then(function (token) { if (token) render(token); }).catch(function () {});
 })();

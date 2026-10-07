@@ -205,6 +205,18 @@ function isRateLimited() { return Date.now() < _rateLimitedUntil; }
 
 // API Client
 const api = {
+  // King of the Pill (home banner, list chips, token page badge): the featured token
+  // or null, fetched once per page visit and shared by every caller.
+  _kingOfPill: null,
+  kingOfPill() {
+    if (!this._kingOfPill) {
+      this._kingOfPill = this.request('/api/tokens/king-of-pill')
+        .then(d => (d && d.token && d.token.mintAddress ? d.token : null))
+        .catch(() => null);
+    }
+    return this._kingOfPill;
+  },
+
   // Generic fetch wrapper with timeout and exponential backoff retry logic
   async request(endpoint, options = {}) {
     const url = `${API_BASE_URL}${endpoint}`;

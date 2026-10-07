@@ -37,8 +37,34 @@ const tokenTable = {
       </td>`;
   },
 
+  // King of the Pill: the banner's featured token gets a pill chip first after its name in
+  // every table. The mint arrives from one shared request (api.kingOfPill); rows rendered
+  // before it lands are patched by markKing, later renders include it from badges().
+  _king: null,
+
+  isKing(mint) {
+    return !!(this._king && mint && this._king.mintAddress === mint);
+  },
+
+  kingChip() {
+    return '<span class="tt-tag tt-king" title="King of the Pill">💊</span>';
+  },
+
+  markKing(root = document) {
+    root.querySelectorAll('.tt-king').forEach(el => {
+      const row = el.closest('tr[data-mint]');
+      if (!row || !this.isKing(row.dataset.mint)) el.remove();
+    });
+    if (!this._king) return;
+    const sel = `tr[data-mint="${(window.CSS && CSS.escape) ? CSS.escape(this._king.mintAddress) : this._king.mintAddress}"] .tt-name`;
+    root.querySelectorAll(sel).forEach(name => {
+      if (!name.parentElement.querySelector('.tt-king')) name.insertAdjacentHTML('afterend', this.kingChip());
+    });
+  },
+
   badges(token) {
     let html = '';
+    if (this.isKing(this.mintOf(token))) html += this.kingChip();
     if (token.emergingCult) html += '<span class="tt-tag" title="Emerging Cult">🔨</span>';
     if (token.techCoin) html += '<span class="tt-tag" title="Tech Coin">🤖</span>';
     html += this.ageChip(token);
@@ -240,3 +266,7 @@ const tokenTable = {
     return `class="token-row tt-row" data-mint="${this.esc(this.mintOf(token))}" tabindex="0"`;
   },
 };
+
+if (typeof api !== 'undefined' && api.kingOfPill) {
+  api.kingOfPill().then(token => { tokenTable._king = token; tokenTable.markKing(); });
+}
