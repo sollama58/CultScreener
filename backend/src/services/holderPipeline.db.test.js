@@ -352,7 +352,7 @@ if (!DB_URL) {
       const prevPages = pipeline.CONFIG.backfillPagesPerWallet;
       const prevSize = pipeline.CONFIG.backfillPageSize;
       assert.strictEqual(pipeline.CONFIG.backfillFirstPageSize, 100, 'small first page: most accounts settle on it');
-      assert.strictEqual(prevSize, 1000, 'then large pages: Helius bills per 100 returned, so size only sets round trips');
+      assert.strictEqual(prevSize, 500, 'then larger pages: Helius bills per 100 returned, so size only sets round trips');
       pipeline.CONFIG.backfillPagesPerWallet = 1;
       try {
         let pos = await position(w);
@@ -365,8 +365,8 @@ if (!DB_URL) {
         assert.strictEqual(pos.backfill_pages, 1);
         pipeline.CONFIG.backfillPagesPerWallet = prevPages;
         assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), true);
-        assert.deepStrictEqual(calls.slice(1).map(c => [c.limit, c.paginationToken]), [[1000, '1:100'], [1000, '1:1100']],
-          'resumed from the saved token in large pages');
+        assert.deepStrictEqual(calls.slice(1).map(c => [c.limit, c.paginationToken]), [[500, '1:100'], [500, '1:600'], [500, '1:1100']],
+          'resumed from the saved token in larger pages');
         pos = await position(w);
         assert.strictEqual(pos.acquired_source, 'backfill');
         assert.strictEqual(new Date(pos.acquired_at).getTime(), rebuyTs * 1000);
@@ -388,6 +388,34 @@ if (!DB_URL) {
       const pos = await position(w);
       assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), true);
       assert.strictEqual((await position(w)).acquired_source, 'failed');
+    });
+
+    test('rate limiting keeps a wallet pending past the normal attempt limit, then it settles', async () => {
+      const snap = await store.getLatestSnapshot(MINT);
+      const lp = new Set(snap.sample_meta.lpWallets || []);
+      const w = snap.sample.map(x => x.wallet).find(x => !lp.has(x) && chain[x] && chain[x].amount > 0n && chain[x].history.length > 0);
+      assert.ok(w, 'a sampled wallet with history');
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = NULL,
+        backfill_balance = NULL, backfill_attempts = 0 WHERE mint_address = $1 AND wallet = $2`, [MINT, w]);
+      const realSigs = solana.getSignaturesPage;
+      solana.getSignaturesPage = async (a, opts) => {
+        if (walletOfAta(a) === w) { const e = new Error('Request failed with status code 429'); e.response = { status: 429 }; throw e; }
+        return realSigs(a, opts);
+      };
+      try {
+        for (let i = 1; i <= pipeline.CONFIG.backfillMaxAttempts + 1; i++) {
+          const r = await pipeline.runBackfill(MINT);
+          assert.ok(r.remaining >= 1);
+          const pos = await position(w);
+          assert.strictEqual(pos.acquired_source, 'pending', `still pending after ${i} rate-limited tries`);
+          assert.strictEqual(pos.backfill_attempts, i);
+        }
+      } finally {
+        solana.getSignaturesPage = realSigs;
+      }
+      await drainBackfill();
+      const pos = await position(w);
+      assert.ok(['backfill', 'backfill_capped'].includes(pos.acquired_source), pos.acquired_source);
     });
 
     test('top holder list comes from the snapshot', async () => {

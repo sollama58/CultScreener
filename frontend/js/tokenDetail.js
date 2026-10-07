@@ -1567,6 +1567,7 @@ const tokenDetail = {
       this._diamondHandsLoaded = false;
       this._dhLastState = null;
       this._dhStalledCount = 0;
+      this._dhExtendedUsed = 0;
       // Preserve _dhAutoRetried when called from the auto-retry itself (_dhIsAutoRetry flag).
       // Without this, the auto-retry resets _dhAutoRetried = false, allowing a second
       // auto-retry when polls exhaust again â†’ infinite retry loop + bars stuck as shimmer.
@@ -1615,6 +1616,14 @@ const tokenDetail = {
         this._dhStalledCount = 0;
         this._dhLastState = stateKey;
       }
+      // Slow cadence: only polls that saw no progress use up the extended budget, so a
+      // big token that is still moving keeps updating until it finishes instead of
+      // stopping at a partial result. MAX_TOTAL_POLLS is the hard stop.
+      const MAX_TOTAL_POLLS = 200;
+      const progressing = total > 0 && this._dhStalledCount === 0;
+      if (isExtended && !progressing) this._dhExtendedUsed = (this._dhExtendedUsed || 0) + 1;
+      const canPoll = attempt + 1 < MAX_TOTAL_POLLS &&
+        (!isExtended ? attempt < MAX_POLLS : (this._dhExtendedUsed || 0) < EXTENDED_POLLS);
 
       // Show progress status text even before distribution is ready
       if (!data.computed) {
@@ -1641,10 +1650,10 @@ const tokenDetail = {
         this._renderDiamondHands(data);
       }
 
-      const canContinue = !data.computed && canRetry;
+      const canContinue = !data.computed && canPoll;
 
       if (canContinue) {
-        const nextDelay = isExtended ? EXTENDED_DELAY : POLL_DELAYS[attempt];
+        const nextDelay = isExtended ? (progressing ? 6000 : EXTENDED_DELAY) : POLL_DELAYS[attempt];
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] ${analyzed}/${total} analyzed, re-polling in ${nextDelay}ms`);
         this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), nextDelay);
       } else {

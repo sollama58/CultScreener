@@ -44,7 +44,8 @@
 // Holders overlay in the chart modal - token.css v4, tokenDetail.js v29, tokenChart.js v3, admin.js v17.
 // v71: copy/download chart image buttons (new js/chartShot.js) - token.css v5, tokenChart.js v4, holderChart.js v2.
 // v72: holder line labelled on charts and in chart images - chartShot.js v2, tokenChart.js v5, holderChart.js v3, token.css v6.
-const CACHE_VERSION = 'holdex-v72';
+// v73: diamond hands keeps polling while progress moves - tokenDetail.js v30.
+const CACHE_VERSION = 'holdex-v73';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -66,7 +67,7 @@ const APP_SHELL = [
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
   '/js/kotp.js?v=3',
-  '/js/tokenDetail.js?v=29',
+  '/js/tokenDetail.js?v=30',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=2',
   '/js/tokenChart.js?v=5',
