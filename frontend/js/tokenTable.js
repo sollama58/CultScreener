@@ -87,15 +87,6 @@ const tokenTable = {
     return '<span class="tt-na">--</span>';
   },
 
-  // Daily Diamond Hands score (0-100, the King of the Pill ranking); a dash while the
-  // token is not scored (too young, too few holders or no fresh snapshot).
-  dhScore(token) {
-    const s = token.diamondHandsScore;
-    if (s == null || !isFinite(s)) return `<span class="tt-score tt-na" title="Not scored yet: tokens need to be a week old with 100+ holders and a fresh holder snapshot">--</span>`;
-    const when = token.diamondHandsScoreDate ? ` as of ${this.esc(token.diamondHandsScoreDate)}` : '';
-    return `<span class="tt-score" title="Diamond Hands score${when}: how long holders hold for the token's age, with holder retention and trading activity. Updated daily.">${Number(s).toFixed(1)}</span>`;
-  },
-
   // Signed percent. pill: tinted chip for the column a view is about.
   pct(value, opts = {}) {
     if (value == null || !isFinite(value)) return this.dash();

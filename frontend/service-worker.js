@@ -57,7 +57,8 @@
 // styles.css v23, api.js v15, tokenTable.js v6, kotp.js v5, communityPage.js v7.
 // v80: Diamond Hands table sorted by the daily score (new Score column); the score counts
 // trading activity - styles.css v24, tokenTable.js v7, conviction.js v20, kotp.js v6.
-const CACHE_VERSION = 'holdex-v80';
+// v81: the Score column is gone again (the order stays) - styles.css v25, tokenTable.js v8, conviction.js v21.
+const CACHE_VERSION = 'holdex-v81';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -66,14 +67,14 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=24',
+  '/css/styles.css?v=25',
   '/css/token.css?v=8',
   '/js/config.js?v=4',
   '/js/api.js?v=15',
   '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=7',
-  '/js/conviction.js?v=20',
+  '/js/tokenTable.js?v=8',
+  '/js/conviction.js?v=21',
   '/js/tech.js?v=6',
   '/js/emerging.js?v=6',
   '/js/versus.js?v=17',
