@@ -29,7 +29,7 @@ const PARAMS = {
   // the full mark), half the turnover (24h volume as a share of market cap). A token
   // trading at the full mark on both gets +volumeWeight, a dead one -volumeWeight,
   // and one with no volume or market cap data sits in the middle (no effect).
-  volumeWeight: 0.10,          // ±10% for trading activity
+  volumeWeight: 0.25,          // ±25% for trading activity
   volumeFloorUsd: 10_000,      // $10k/day of volume or less counts as none
   volumeFullUsd: 1_000_000,    // $1M/day saturates the dollar half
   turnoverFull: 0.25,          // 25% of market cap traded per day saturates the turnover half

@@ -7,7 +7,8 @@ const convictionPage = {
   tokens: [],
   _allTokens: [],
   _searchTimeout: null,
-  // Default order: the daily Diamond Hands score (the King of the Pill ranking), highest first
+  // Default order: the daily Diamond Hands score (the King of the Pill ranking), highest
+  // first. The score itself is not shown in the table; the rank column carries the order.
   _sortField: 'score',
   _sortDir: 'desc',
   _activeTier: 'all',
@@ -289,7 +290,7 @@ const convictionPage = {
 
     tbody.innerHTML = `
       <tr class="loading-row">
-        <td colspan="9">
+        <td colspan="8">
           <div class="loading-state">
             <div class="loading-spinner"></div>
             <span>Scanning blockchain data...</span>
@@ -423,7 +424,7 @@ const convictionPage = {
       }
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="9">
+          <td colspan="8">
             <div class="empty-state">
               <span>Failed to load terminal data. Please try again.</span>
             </div>
@@ -489,7 +490,6 @@ const convictionPage = {
         <tr ${tokenTable.rowAttrs(token)}>
           ${tokenTable.rankCell(offset + index + 1)}
           ${tokenTable.tokenCell(token)}
-          <td class="cell-score num">${tokenTable.dhScore(token)}</td>
           <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}<span class="tt-mcap-chg">${tokenTable.change(token.priceChange24h, '24h')}</span></td>
           <td class="cell-chg">${tokenTable.change(token.priceChange24h, '24h')}</td>
           <td class="cell-chg cell-chg-long">${tokenTable.change(token.priceChange7d, '7d')}</td>

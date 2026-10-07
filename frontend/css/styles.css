@@ -874,7 +874,6 @@ img {
 .token-table thead th.text-right,
 .terminal-table thead th.cell-price,
 .terminal-table thead th.cell-mcap,
-.terminal-table thead th.cell-score,
 .terminal-table thead th.cell-ath-pct,
 .terminal-table thead th.cell-updated,
 .terminal-table thead th.cell-change,
@@ -1589,17 +1588,6 @@ select:focus {
 .cell-mcap {
   min-width: 90px;
   text-align: right;
-}
-
-/* Diamond Hands score column (the table's default order) */
-.cell-score {
-  min-width: 56px;
-  text-align: right;
-}
-.tt-score {
-  font-family: var(--font-mono, monospace);
-  font-weight: 600;
-  color: #f59e0b;
 }
 
 .cell-conviction {
@@ -6812,7 +6800,6 @@ strong {
 
 /* Narrow phones: the diamond hands cell drops its 1mo+ note so the whole column fits on screen */
 @media (max-width: 480px) {
-  .dh-table .cell-score { min-width: 0; padding-left: 0; padding-right: 4px; font-size: 0.72rem; }
   .dh-table .tt-dh { width: 76px; }
   .dh-table .cell-dist { width: 90px; min-width: 90px; }
   .dh-table .tt-dh-sub { display: none; }
