@@ -14,6 +14,7 @@ const admin = {
     this.bindMaintenanceActions();
     this.bindWhitelistActions();
     this.bindApiKeyActions();
+    this.bindCreditsActions();
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
@@ -180,6 +181,7 @@ const admin = {
       case 'submissions': this.loadSubmissions(); break;
       case 'whitelist': this.loadWhitelist(); break;
       case 'api-keys': this.loadApiKeys(); break;
+      case 'credits': this.loadCredits(); break;
       case 'health': this.loadHealth(); break;
     }
   },
@@ -1211,6 +1213,131 @@ const admin = {
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
     }
+  },
+
+  // ── Helius Credits ────────────────────────────
+
+  bindCreditsActions() {
+    const refresh = document.getElementById('credits-refresh');
+    const day = document.getElementById('credits-day');
+    if (refresh) refresh.addEventListener('click', () => this.loadCredits(true));
+    if (day) day.addEventListener('change', () => this.selectCreditsDay(day.value));
+  },
+
+  async loadCredits(fresh = false) {
+    const stats = document.getElementById('credits-stats');
+    if (!this.credits) stats.innerHTML = '<div class="empty-msg">Loading credit data...</div>';
+    try {
+      this.credits = await this.request(`/api/admin/helius-credits${fresh ? '?fresh=true' : ''}`);
+      const u = this.credits;
+      if (!this.creditsDay || !u.days.some(d => d.date === this.creditsDay)) this.creditsDay = u.today.date;
+      this.renderCreditStats(u);
+      this.renderCreditDayOptions(u);
+      this.renderCreditCharts(u);
+      this.selectCreditsDay(this.creditsDay);
+      const p = u.thisProcess || {};
+      document.getElementById('credits-note').innerHTML =
+        `Counted at every Helius call in the API and worker and summed in Redis; days are UTC. ` +
+        `Weights: standard RPC 1 credit, DAS and getProgramAccounts 10, getTransactionsForAddress 10 per 100 transactions returned, ` +
+        `legacy Enhanced API (enhanced:*) 100. Retries are counted per attempt. Budget is ${this.fmtNum(u.month.budget)} credits/month ` +
+        `(HELIUS_MONTHLY_CREDITS). This API process: ${this.fmtNum(p.credits)} credits in ${this.fmtNum(p.calls)} calls since ` +
+        `${this.esc(p.since ? new Date(p.since).toLocaleString() : '--')}. Updated ${this.esc(new Date(u.generatedAt).toLocaleTimeString())}.`;
+    } catch (err) {
+      stats.innerHTML = `<div class="empty-msg">Error: ${this.esc(err.message)}</div>`;
+    }
+  },
+
+  renderCreditStats(u) {
+    const card = (label, value, sub, subClass = '') => `<div class="admin-stat-card"><div class="label">${this.esc(label)}</div>` +
+      `<div class="value">${value}</div>${sub ? `<div class="sub ${subClass}">${sub}</div>` : ''}</div>`;
+    const m = u.month;
+    const projClass = m.budgetPct == null ? '' : m.budgetPct >= 100 ? 'err' : m.budgetPct >= 80 ? 'warn' : '';
+    document.getElementById('credits-stats').innerHTML = [
+      card('Today', this.fmtNum(u.today.credits), `${this.fmtNum(u.today.calls)} calls`),
+      card('Yesterday', this.fmtNum(u.yesterday?.credits), `${this.fmtNum(u.yesterday?.calls)} calls`),
+      card('7-day average', u.avg7d != null ? this.fmtNum(u.avg7d) : '--', 'credits per full day'),
+      card('Month to date', this.fmtNum(m.toDate), `${m.toDatePct}% of plan`),
+      card('Projected month', m.projected != null ? this.fmtNum(m.projected) : '--',
+        m.budgetPct != null ? `${m.budgetPct}% of ${this.fmtCompact(m.budget)}` : 'not enough data yet', projClass),
+    ].join('');
+  },
+
+  renderCreditDayOptions(u) {
+    const sel = document.getElementById('credits-day');
+    sel.innerHTML = u.days.slice().reverse()
+      .map(d => `<option value="${this.esc(d.date)}"${d.date === this.creditsDay ? ' selected' : ''}>${this.esc(d.date)}${d.date === u.today.date ? ' (today)' : ''}</option>`)
+      .join('');
+  },
+
+  renderCreditCharts(u) {
+    const bars = (items, { label, valueOf, keyOf, clickable }) => {
+      const max = Math.max(1, ...items.map(valueOf));
+      return items.map(it => {
+        const v = valueOf(it);
+        const h = v > 0 ? Math.max(2, Math.round((v / max) * 100)) : 2;
+        const cls = ['credits-bar', v > 0 ? '' : 'empty', clickable ? 'clickable' : '',
+          clickable && keyOf(it) === this.creditsDay ? 'selected' : ''].filter(Boolean).join(' ');
+        const tag = clickable ? 'button' : 'div';
+        return `<${tag} class="${cls}" ${clickable ? `data-credits-day="${this.esc(keyOf(it))}" type="button"` : ''} ` +
+          `title="${this.esc(label(it))}: ${this.fmtNum(v)} credits"><span style="height:${h}%"></span></${tag}>`;
+      }).join('');
+    };
+    const axis = (first, last) => `<div class="credits-axis"><span>${this.esc(first)}</span><span>${this.esc(last)}</span></div>`;
+
+    const daysEl = document.getElementById('credits-days-chart');
+    daysEl.innerHTML = bars(u.days, { label: d => d.date, valueOf: d => d.credits, keyOf: d => d.date, clickable: true });
+    this.setCreditsAxis(daysEl, axis(u.days[0].date.slice(5), u.days[u.days.length - 1].date.slice(5)));
+    daysEl.querySelectorAll('[data-credits-day]').forEach(b =>
+      b.addEventListener('click', () => this.selectCreditsDay(b.dataset.creditsDay)));
+
+    const hoursEl = document.getElementById('credits-hours-chart');
+    hoursEl.innerHTML = bars(u.hours, { label: h => `${h.hour.replace('T', ' ')}:00 UTC`, valueOf: h => h.credits });
+    const h0 = u.hours[0].hour, h1 = u.hours[u.hours.length - 1].hour;
+    this.setCreditsAxis(hoursEl, axis(`${h0.slice(5).replace('T', ' ')}:00`, `${h1.slice(5).replace('T', ' ')}:00`));
+  },
+
+  // One axis row under a chart, replaced on every render
+  setCreditsAxis(chartEl, html) {
+    const next = chartEl.nextElementSibling;
+    if (next && next.classList.contains('credits-axis')) next.remove();
+    chartEl.insertAdjacentHTML('afterend', html);
+  },
+
+  selectCreditsDay(date) {
+    const u = this.credits;
+    if (!u) return;
+    const day = u.days.find(d => d.date === date) || u.today;
+    this.creditsDay = day.date;
+    const sel = document.getElementById('credits-day');
+    if (sel) sel.value = day.date;
+    document.querySelectorAll('#credits-days-chart [data-credits-day]').forEach(b =>
+      b.classList.toggle('selected', b.dataset.creditsDay === day.date));
+    const label = `· ${day.date}${day.date === u.today.date ? ' so far' : ''}`;
+    document.getElementById('credits-method-day').textContent = label;
+    document.getElementById('credits-source-day').textContent = label;
+
+    const share = v => (day.credits > 0 ? `${((v / day.credits) * 100).toFixed(1)}%` : '--');
+    const empty = cols => `<tr><td colspan="${cols}" class="empty-msg">No Helius calls recorded for this day</td></tr>`;
+    document.getElementById('credits-method-body').innerHTML = day.byMethod.length ? day.byMethod.map(r =>
+      `<tr><td class="mono">${this.esc(r.name)}</td><td class="num">${this.fmtNum(r.calls)}</td>` +
+      `<td class="num">${this.fmtNum(r.credits)}</td><td class="num">${share(r.credits)}</td>` +
+      `<td class="num">${r.calls > 0 ? (r.credits / r.calls).toFixed(r.credits % r.calls ? 1 : 0) : '--'}</td></tr>`
+    ).join('') : empty(5);
+    document.getElementById('credits-source-body').innerHTML = day.bySource.length ? day.bySource.map(r =>
+      `<tr><td class="mono">${this.esc(r.name)}</td><td class="num">${this.fmtNum(r.calls)}</td>` +
+      `<td class="num">${this.fmtNum(r.credits)}</td><td class="num">${share(r.credits)}</td></tr>`
+    ).join('') : empty(4);
+  },
+
+  fmtNum(n) {
+    return n == null || Number.isNaN(Number(n)) ? '--' : Number(n).toLocaleString('en-US');
+  },
+
+  fmtCompact(n) {
+    if (n == null) return '--';
+    if (n >= 1e6) return `${+(n / 1e6).toFixed(1)}M`;
+    if (n >= 1e3) return `${+(n / 1e3).toFixed(1)}k`;
+    return String(n);
   },
 
   // ── System Health ─────────────────────────────

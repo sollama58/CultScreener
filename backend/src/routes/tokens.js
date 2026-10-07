@@ -1906,6 +1906,7 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
     // DAS getTokenAccounts can find Token-2022 accounts that standard RPC may miss
     if (balance === 0 && HELIUS_DAS_URL) {
       try {
+        solanaService.countCredits('getTokenAccounts', 10);
         const dasResponse = await axios.post(HELIUS_DAS_URL, {
           jsonrpc: '2.0', id: 1,
           method: 'getTokenAccounts',

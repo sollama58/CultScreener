@@ -281,6 +281,9 @@ app.use('/api/', (req, res, next) => (req.path === '/image-proxy' ? next() : def
 // Without this, browsers apply heuristic caching and serve stale responses to fetch() calls.
 app.use('/api/', (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
+// Attribute Helius calls made while serving a request to its route (admin Helius Credits tab)
+app.use(require('./services/heliusCredits').requestMiddleware);
+
 
 // Health check routes (no rate limiting)
 app.use('/health', healthRoutes);

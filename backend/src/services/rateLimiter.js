@@ -3,6 +3,8 @@
  * Prevents overloading external APIs by staggering requests
  */
 
+const { AsyncResource } = require('async_hooks');
+
 // Track last request time per API
 const lastRequestTime = new Map();
 
@@ -267,6 +269,9 @@ async function rateLimitedRequest(apiName, requestFn) {
  * @returns {Promise<any>} Result of the request
  */
 async function queueRequest(apiName, requestFn) {
+  // Run the request in the caller's async context, not the queue loop's, so
+  // per-context bookkeeping (Helius credits by job or route) sees the caller
+  requestFn = AsyncResource.bind(requestFn);
   const config = RATE_LIMITS[apiName] || RATE_LIMITS.default;
   const maxQueueSize = config.maxQueueSize || MAX_QUEUE_SIZE;
   const baseTimeout = config.queueTimeout || QUEUE_TIMEOUT_MS;

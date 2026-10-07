@@ -4,6 +4,7 @@ const { httpsAgent } = require('./httpAgent');
 const { circuitBreakers } = require('./circuitBreaker');
 const { rateLimitedRequest } = require('./rateLimiter');
 const { cache, TTL } = require('./cache');
+const heliusCredits = require('./heliusCredits');
 
 // RPC endpoint configuration with failover
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
@@ -78,9 +79,8 @@ function failoverToNextRpc(chain = rpcChains.helius) {
 // getProgramAccounts, 100 for the legacy Enhanced Transactions API.
 // getTransactionsForAddress in "full" mode is 10 credits per 100 transactions
 // returned (rounded up, 10 minimum): 10 here, the rest added per page below.
-// Counted per method, flushed to the cache every few seconds under a per-UTC-day
-// key, and shown on /health/detailed so credit spend can be watched without the
-// Helius dashboard.
+// Counted by services/heliusCredits.js (per method, per job or route, per day and
+// hour), shown on the admin panel's Helius Credits tab and /health/detailed.
 const DAS_CREDITS = 10;
 // DAS pages read at once by getAllTokenAccounts (holder snapshots)
 const DAS_PAGE_CONCURRENCY = Math.max(1, parseInt(process.env.HOLDER_SNAPSHOT_PAGE_CONCURRENCY, 10) || 4);
@@ -88,53 +88,14 @@ const DAS_PAGE_CONCURRENCY = Math.max(1, parseInt(process.env.HOLDER_SNAPSHOT_PA
 const DAS_PAGE_ATTEMPTS = [1000, 3000, 8000, null];
 const ENHANCED_CREDITS = 100;
 const RPC_METHOD_CREDITS = { getProgramAccounts: 10, getTransactionsForAddress: 10 };
-const CREDIT_KEY_TTL = 3 * 24 * 3600000;
-const creditBuffer = new Map();          // method → credits not yet flushed
-const creditTotals = new Map();          // method → credits since process start
-let creditsSinceStart = 0;
 
-function countCredits(method, credits) {
-  creditBuffer.set(method, (creditBuffer.get(method) || 0) + credits);
-  creditTotals.set(method, (creditTotals.get(method) || 0) + credits);
-  creditsSinceStart += credits;
+function countCredits(method, credits, calls = 1) {
+  heliusCredits.count(method, credits, calls);
 }
-
-function creditDay(offsetDays = 0) {
-  return new Date(Date.now() - offsetDays * 86400000).toISOString().slice(0, 10);
-}
-
-async function flushCredits() {
-  if (creditBuffer.size === 0) return;
-  const entries = [...creditBuffer.entries()];
-  creditBuffer.clear();
-  const day = creditDay();
-  let total = 0;
-  for (const [method, credits] of entries) {
-    total += credits;
-    await cache.incrBy(`helius-credits:${day}:${method}`, credits, CREDIT_KEY_TTL).catch(() => {});
-  }
-  await cache.incrBy(`helius-credits:${day}`, total, CREDIT_KEY_TTL).catch(() => {});
-}
-const creditFlushTimer = setInterval(() => { flushCredits().catch(() => {}); }, 10000);
-if (creditFlushTimer.unref) creditFlushTimer.unref();
 
 /** Credit spend for today and yesterday (all processes, via the shared cache) plus this process. */
 async function getCreditUsage() {
-  await flushCredits().catch(() => {});
-  const today = creditDay();
-  const yesterday = creditDay(1);
-  const byMethod = {};
-  try {
-    for (const key of await cache.scanKeys(`helius-credits:${today}:*`)) {
-      const method = key.slice(`helius-credits:${today}:`.length);
-      byMethod[method] = Number(await cache.get(key)) || 0;
-    }
-  } catch (_) {}
-  return {
-    today: { date: today, credits: Number(await cache.get(`helius-credits:${today}`).catch(() => 0)) || 0, byMethod },
-    yesterday: { date: yesterday, credits: Number(await cache.get(`helius-credits:${yesterday}`).catch(() => 0)) || 0 },
-    thisProcess: { credits: creditsSinceStart, byMethod: Object.fromEntries(creditTotals) },
-  };
+  return heliusCredits.getSummary();
 }
 
 // Legacy export for backwards compatibility
@@ -1095,7 +1056,7 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
     const result = await rpcCall('getTransactionsForAddress', [address, opts], 0, { timeout: opts.limit > 100 ? 40000 : 15000 });
     if (!result || !Array.isArray(result.data)) throw new Error('Unexpected getTransactionsForAddress response');
     const extra = Math.ceil(result.data.length / 100) - 1;
-    if (extra > 0) countCredits('getTransactionsForAddress', extra * 10);
+    if (extra > 0) countCredits('getTransactionsForAddress', extra * 10, 0);
     return { txs: result.data, paginationToken: result.paginationToken || null };
   } catch (error) {
     if (isMethodRefusal(error)) {
