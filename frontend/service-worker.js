@@ -45,7 +45,8 @@
 // v71: copy/download chart image buttons (new js/chartShot.js) - token.css v5, tokenChart.js v4, holderChart.js v2.
 // v72: holder line labelled on charts and in chart images - chartShot.js v2, tokenChart.js v5, holderChart.js v3, token.css v6.
 // v73: diamond hands keeps polling while progress moves - tokenDetail.js v30.
-const CACHE_VERSION = 'holdex-v73';
+// v74: diamond hands audit fixes (hold-time floors, whole percents, partial render gating) - tokenDetail.js v31.
+const CACHE_VERSION = 'holdex-v74';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;

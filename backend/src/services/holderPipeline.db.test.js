@@ -215,6 +215,7 @@ if (!DB_URL) {
       assert.strictEqual(fresh[MINT], now);
       assert.ok(await pipeline.getSnapshotHolderList(MINT, { maxAgeMs: HOUR }), 'served as recent');
       assert.ok(await cache.get(`holder-snapshot-verified:${MINT}`));
+      assert.strictEqual(new Date((await store.getLatestSnapshot(MINT)).verified_at).getTime(), now, 'verified_at recorded');
       // one page read in full: the count is confirmed now, so the history gets a point
       const pts = await require('./holderCounts').getPoints(MINT);
       const last = pts[pts.length - 1];
@@ -379,7 +380,7 @@ if (!DB_URL) {
       }
     });
 
-    test('a wallet whose account is already empty is settled as failed', async () => {
+    test('a wallet whose account is already empty is marked left, and dated afresh if it comes back', async () => {
       const w = 'GONE';
       setHolder(w, 1_000_000_000, [{ sig: 'buy_GONE', ts: T0 / 1000, delta: 1_000_000_000n }]);
       now = T0 + 15 * HOUR;
@@ -387,7 +388,57 @@ if (!DB_URL) {
       chain[w].amount = 0n;
       const pos = await position(w);
       assert.strictEqual(await pipeline.backfillWallet(MINT, pos, 6), true);
-      assert.strictEqual((await position(w)).acquired_source, 'failed');
+      assert.strictEqual((await position(w)).acquired_source, 'left');
+      // not resolved, not pending: diamond hands does not wait on it
+      const dh = await pipeline.getDiamondHands(MINT, { dispatch: false });
+      assert.ok(dh.resolved <= dh.analyzed);
+
+      // Holding again before the next snapshot: a new streak, dated like a newcomer
+      now = T0 + 15.5 * HOUR;
+      chain[w].amount = 2_000_000n;
+      await pipeline.takeSnapshot(MINT);
+      const back = await position(w);
+      assert.strictEqual(back.acquired_source, 'snapshot');
+      assert.strictEqual(new Date(back.acquired_at).getTime(), now);
+      assert.strictEqual(back.backfill_attempts, 0);
+    });
+
+    test('hold times flag lower bounds, and wait for wallets a snapshot in flight will bring', async () => {
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'backfill_capped' WHERE mint_address = $1 AND wallet = 'W007'`, [MINT]);
+      try {
+        const r = await pipeline.getHoldTimes(MINT, ['W007', 'W008']);
+        assert.strictEqual(r.computed, true);
+        assert.ok(r.holdTimes.W007 > 0 && r.holdTimes.W008 > 0);
+        assert.deepStrictEqual(r.floors, ['W007']);
+      } finally {
+        await db.pool.query(`UPDATE holder_positions SET acquired_source = 'backfill' WHERE mint_address = $1 AND wallet = 'W007'`, [MINT]);
+      }
+      // A wallet with no position row: settled (not a holder we know) unless a
+      // snapshot is being taken, which may be about to add it
+      assert.strictEqual((await pipeline.getHoldTimes(MINT, ['UNKNOWN'])).computed, true);
+      await cache.set(`holder-snapshot-pending:${MINT}`, Date.now(), 60_000);
+      try {
+        assert.strictEqual((await pipeline.getHoldTimes(MINT, ['UNKNOWN'])).computed, false);
+      } finally {
+        await cache.delete(`holder-snapshot-pending:${MINT}`);
+        await cache.delete(`holder-backfill-pending:${MINT}`);
+      }
+    });
+
+    test('failed wallets get another try a day later', async () => {
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'failed', backfill_attempts = 3,
+        backfill_updated_at = $2 WHERE mint_address = $1 AND wallet = 'W009'`, [MINT, new Date(now - 25 * HOUR)]);
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'failed', backfill_attempts = 3,
+        backfill_updated_at = $2 WHERE mint_address = $1 AND wallet = 'W011'`, [MINT, new Date(now - HOUR)]);
+      now += 10 * 60 * 1000;
+      chain.W009.amount += 1n; // so the pre-check sees a change
+      await pipeline.takeSnapshot(MINT);
+      assert.strictEqual((await position('W009')).acquired_source, 'pending', 'old failure retried');
+      assert.strictEqual((await position('W011')).acquired_source, 'failed', 'recent failure left alone');
+      await drainBackfill();
+      assert.strictEqual((await position('W009')).acquired_source, 'backfill');
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'backfill', acquired_at = $2 WHERE mint_address = $1 AND wallet = 'W011'`,
+        [MINT, new Date(T0 - 11 * DAY)]);
     });
 
     test('rate limiting keeps a wallet pending past the normal attempt limit, then it settles', async () => {
@@ -398,24 +449,99 @@ if (!DB_URL) {
       await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = NULL,
         backfill_balance = NULL, backfill_attempts = 0 WHERE mint_address = $1 AND wallet = $2`, [MINT, w]);
       const realSigs = solana.getSignaturesPage;
+      const prevPause = pipeline.CONFIG.pushbackPauseMs;
+      pipeline.CONFIG.pushbackPauseMs = 5;
+      let calls = 0;
       solana.getSignaturesPage = async (a, opts) => {
-        if (walletOfAta(a) === w) { const e = new Error('Request failed with status code 429'); e.response = { status: 429 }; throw e; }
+        if (walletOfAta(a) === w) { calls++; const e = new Error('Request failed with status code 429'); e.response = { status: 429 }; throw e; }
         return realSigs(a, opts);
       };
       try {
         for (let i = 1; i <= pipeline.CONFIG.backfillMaxAttempts + 1; i++) {
+          calls = 0;
           const r = await pipeline.runBackfill(MINT);
           assert.ok(r.remaining >= 1);
+          // the run pauses and retries pushbackMaxPauses times before giving the run up
+          assert.strictEqual(calls, pipeline.CONFIG.pushbackMaxPauses + 1, 'paused and retried within the run');
           const pos = await position(w);
-          assert.strictEqual(pos.acquired_source, 'pending', `still pending after ${i} rate-limited tries`);
-          assert.strictEqual(pos.backfill_attempts, i);
+          assert.strictEqual(pos.acquired_source, 'pending', `still pending after ${i} rate-limited runs`);
+          assert.strictEqual(pos.backfill_attempts, i, 'one attempt per run, not per retry');
         }
       } finally {
         solana.getSignaturesPage = realSigs;
+        pipeline.CONFIG.pushbackPauseMs = prevPause;
       }
       await drainBackfill();
       const pos = await position(w);
       assert.ok(['backfill', 'backfill_capped'].includes(pos.acquired_source), pos.acquired_source);
+    });
+
+    test('only a few tokens backfill at once; the rest wait and re-queue', async () => {
+      const held = [];
+      for (let i = 0; i < pipeline.CONFIG.backfillMaxTokens; i++) {
+        const key = `holder-backfill-slot:${i}`;
+        assert.ok(await cache.setNX(key, `OtherMint${i}`, 60_000));
+        held.push(key);
+      }
+      const before = queued.length;
+      try {
+        const r = await pipeline.runBackfill(MINT);
+        assert.strictEqual(r.status, 'waiting');
+        const job = queued[queued.length - 1];
+        assert.ok(queued.length > before && job.name === 'backfill-holder-acquisitions');
+        // slots other tokens hold are left alone
+        assert.strictEqual(await cache.get(held[0]), 'OtherMint0');
+      } finally {
+        for (const key of held) await cache.delete(key);
+        await cache.delete(`holder-backfill-pending:${MINT}`);
+      }
+      // with a slot free the run proceeds and releases it afterwards
+      const r = await pipeline.runBackfill(MINT);
+      assert.notStrictEqual(r.status, 'waiting');
+      assert.strictEqual(await cache.get('holder-backfill-slot:0'), undefined);
+    });
+
+    test('backfill order interleaves the strata so partial results cover all of them', () => {
+      const snap = { sample: [
+        { wallet: 't1', stratum: 'top' }, { wallet: 't2', stratum: 'top' },
+        { wallet: 'm1', stratum: 'mid' }, { wallet: 'm2', stratum: 'mid' }, { wallet: 'm3', stratum: 'mid' },
+        { wallet: 'l1', stratum: 'tail' },
+      ], sample_meta: { lpWallets: ['m2'] } };
+      const order = pipeline.walletsOfInterest(snap, [{ wallet: 'POOL' }, { wallet: 't1' }, { wallet: 'x1' }]);
+      assert.deepStrictEqual(order, ['t1', 'm1', 'l1', 't2', 'm3', 'POOL', 'x1']);
+    });
+
+    test('a partial distribution waits until every stratum has some resolved wallets', () => {
+      const strata = { top: { population: 50, sampled: 50 }, mid: { population: 900, sampled: 100 }, tail: { population: 9000, sampled: 100 } };
+      assert.strictEqual(pipeline.partialReady(strata, { top: 50 }), false);
+      assert.strictEqual(pipeline.partialReady(strata, { top: 10, mid: 10, tail: 9 }), false);
+      assert.strictEqual(pipeline.partialReady(strata, { top: 10, mid: 10, tail: 10 }), true);
+      // a stratum with fewer sampled wallets than the minimum only needs all of them
+      assert.strictEqual(pipeline.partialReady({ top: { population: 3, sampled: 3 } }, { top: 3 }), true);
+      assert.strictEqual(pipeline.partialReady({ top: { population: 3, sampled: 3 }, tail: { population: 0, sampled: 0 } }, { top: 2 }), false);
+    });
+
+    test('each mint comes due on its own refresh schedule', () => {
+      const R = pipeline.CONFIG.refreshMs;
+      const mints = Array.from({ length: 40 }, (_, i) => `Mint${i}`);
+      const t = 1_800_000_000_000;
+      // all snapshotted at t: at the next hourly tick only some are due, all are due within a cycle
+      const dueAt = tick => mints.filter(m => pipeline.isRefreshDue(m, t, t + tick * HOUR)).length;
+      assert.ok(dueAt(1) > 0 && dueAt(1) < mints.length, `${dueAt(1)} due after one hour`);
+      assert.strictEqual(dueAt(R / HOUR), mints.length);
+      assert.strictEqual(pipeline.isRefreshDue('Mint1', undefined, t), true);
+      // once refreshed, not due again until its next boundary
+      for (const m of mints) {
+        if (!pipeline.isRefreshDue(m, t, t + HOUR)) continue;
+        assert.strictEqual(pipeline.isRefreshDue(m, t + HOUR, t + 2 * HOUR), false);
+        assert.strictEqual(pipeline.isRefreshDue(m, t + HOUR, t + HOUR + R), true);
+      }
+    });
+
+    test('a program-owned account is not a person', () => {
+      assert.strictEqual(pipeline.isProgramOwned({ owner: '11111111111111111111111111111111' }), false);
+      assert.strictEqual(pipeline.isProgramOwned({ owner: 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m' }), true);
+      assert.strictEqual(pipeline.isProgramOwned(null), false);
     });
 
     test('top holder list comes from the snapshot', async () => {
@@ -483,6 +609,20 @@ if (!DB_URL) {
       }
       await drainBackfill();
       assert.strictEqual((await position('WHALE3')).acquired_source, 'backfill');
+    });
+
+    test('newcomers after a verified-unchanged check are dated from the check, not the old snapshot', async () => {
+      // latest snapshot at T0+30h; nothing changes, so the 34h check keeps it and marks it verified
+      now = T0 + 34 * HOUR;
+      const kept = await pipeline.takeSnapshot(MINT);
+      assert.strictEqual(kept.status, 'unchanged');
+      // 7h after the snapshot (too long for the 6h window) but 3h after the check
+      now = T0 + 37 * HOUR;
+      setHolder('VERIFIEDNEW', 4_000_000_000);
+      await pipeline.takeSnapshot(MINT);
+      const p = await position('VERIFIEDNEW');
+      assert.strictEqual(p.acquired_source, 'snapshot');
+      assert.strictEqual(new Date(p.acquired_at).getTime(), now);
     });
   });
 

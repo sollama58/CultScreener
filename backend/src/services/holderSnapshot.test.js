@@ -51,6 +51,16 @@ describe('aggregateHolders', () => {
     assert.deepStrictEqual(holders.map(h => h.wallet), ['M', 'Z']);
   });
 
+  test('an account that appears twice (page shift mid-read) is counted once', () => {
+    const h = aggregateHolders([
+      { owner: 'A', address: 'a1', amount: '100' },
+      { owner: 'A', address: 'a1', amount: '100' },
+      { owner: 'A', address: 'a2', amount: '5' },
+    ]);
+    assert.strictEqual(h.length, 1);
+    assert.strictEqual(h[0].amount, 105n);
+  });
+
   test('empty input', () => {
     assert.deepStrictEqual(aggregateHolders([]), []);
     assert.deepStrictEqual(aggregateHolders(undefined), []);
@@ -317,6 +327,14 @@ describe('rewindToStreakStart', () => {
 
   test('empty, exhausted history gives no answer', () => {
     assert.deepStrictEqual(rewindToStreakStart(5n, [], { exhausted: true }), { done: true, acquiredAt: null, balance: 5n, oldestAt: null });
+  });
+
+  test('a transaction without a block time still moves the balance', () => {
+    // 100 now; +60 (no block time), +40 at t=10. Without applying the +60 the
+    // rewind would stop at +40 with a wrong balance.
+    const r = rewindToStreakStart(100n, [{ timestamp: 0, delta: 60n }, { timestamp: 10, delta: 40n }], { exhausted: true });
+    assert.strictEqual(r.done, true);
+    assert.strictEqual(r.acquiredAt, 10_000);
   });
 
   test('zero-delta transactions (e.g. unrelated instructions) are stepped over', () => {

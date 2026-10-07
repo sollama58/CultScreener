@@ -153,8 +153,6 @@ async function addSearchJob(jobName, data = {}, options = {}) {
  * exists keeps its next run time and only re-creates what is missing.
  */
 const RECURRING_JOBS = [
-  // Snapshot freshness for the most-viewed tokens
-  { id: 'warm-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 } },
   // Curated tokens: holder snapshots (every HOLDER_SNAPSHOT_REFRESH_HOURS) and stored diamond hands
   { id: 'warm-curated-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 60 * 60 * 1000 } },
   // Curated market cap and ATH from GeckoTerminal
@@ -163,6 +161,12 @@ const RECURRING_JOBS = [
   { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' } },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
+];
+
+// Schedulers that used to exist and are removed if still found in Redis.
+// warm-conviction only ever acted on curated tokens, which warm-curated-conviction covers.
+const RETIRED_JOBS = [
+  { id: 'warm-conviction', queue: QUEUE_NAMES.ANALYTICS },
 ];
 
 /**
@@ -174,6 +178,13 @@ const RECURRING_JOBS = [
 async function ensureRecurringJobs() {
   if (!isInitialized && !initialize()) return 0;
   let scheduled = 0;
+  for (const { id, queue: queueName } of RETIRED_JOBS) {
+    try {
+      const queue = queues[queueName];
+      await queue.removeJobScheduler(id);
+      for (const j of (await queue.getRepeatableJobs()).filter(j => j.name === id)) await queue.removeRepeatableByKey(j.key);
+    } catch (_) { /* nothing to remove */ }
+  }
   for (const { id, queue: queueName, repeat } of RECURRING_JOBS) {
     const queue = queues[queueName];
     try {

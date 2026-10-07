@@ -76,7 +76,12 @@ const RATE_LIMITS = {
     burstWindow: 1000
   },
   helius: {
-    minInterval: 25,     // 40 req/sec (Developer plan limit is 50/sec; 25ms ≈ 40/sec with buffer)
+    // Requests per second this process may start. The Developer plan allows 50/s per
+    // key and the API and worker processes each run their own limiter, so the two
+    // must add up to under 50: the worker keeps the default 40, the API (which makes
+    // few Helius calls now that holder data comes from snapshots) is set to 10 in
+    // render.yaml.
+    minInterval: Math.round(1000 / Math.max(1, parseInt(process.env.HELIUS_RPS, 10) || 40)),
     maxJitter: 10,
     burstLimit: 20,      // Allow short bursts up to 20 in a 1s window
     burstWindow: 1000,

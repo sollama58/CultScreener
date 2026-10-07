@@ -13,10 +13,11 @@
  * The math is in holderSnapshot.js and holderMetrics.js; SQL in holderStore.js.
  */
 
+const crypto = require('crypto');
 const solanaService = require('./solana');
 const store = require('./holderStore');
 const { cache, TTL } = require('./cache');
-const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, DIAMOND_HANDS_BUCKETS } = require('../constants');
+const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID, DIAMOND_HANDS_BUCKETS } = require('../constants');
 const {
   aggregateHolders, newWalletAcquisition, selectSample, tokenAccountDelta, metaTokenAccountDelta,
   holderFingerprint, rewindToStreakStart, toBigInt,
@@ -42,6 +43,20 @@ const CONFIG = {
   // each token back at the end of the shared job queue, behind every other job.
   backfillRunMs: envInt('HOLDER_BACKFILL_RUN_SECONDS', 240) * 1000,
   backfillConcurrency: envInt('HOLDER_BACKFILL_CONCURRENCY', 12), // wallets read at once per mint
+  // Tokens backfilling at the same time, across the worker. Three tokens at 12
+  // wallets each fill the 24 Helius slots; ten tokens sharing them would each
+  // crawl. The rest wait a few seconds and try again.
+  backfillMaxTokens: envInt('HOLDER_BACKFILL_MAX_TOKENS', 3),
+  backfillSlotWaitMs: 5000,
+  // Helius pushing back (429, full queue, open breaker) pauses the run this long,
+  // doubling each time it happens again straight away; after pushbackMaxPauses in
+  // a row the run ends and comes back later.
+  pushbackPauseMs: 3000,
+  pushbackMaxPauses: 3,
+  // While the backfill is still running, a partial distribution is shown only once
+  // every stratum has this many resolved wallets (or all of its sampled ones), so
+  // the first numbers the page shows are not the whales alone.
+  partialMinResolved: 10,
   backfillPagesPerWallet: 5,                                 // per run; progress is saved between runs
   // Transactions read per wallet before accepting a lower bound.
   backfillMaxTxs: envInt('HOLDER_BACKFILL_MAX_TXS', 2000),
@@ -69,7 +84,10 @@ const keys = {
   backfillPending: mint => `holder-backfill-pending:${mint}`,
   // when a cheap pre-check last found the previous snapshot still accurate
   snapshotVerified: mint => `holder-snapshot-verified:${mint}`,
+  backfillSlot: i => `holder-backfill-slot:${i}`,
 };
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /**
  * When each mint's holder data was last known to be current: the latest
@@ -85,13 +103,31 @@ async function getFreshnessTimes(mints) {
   return times;
 }
 
+/**
+ * Whether a mint is due for its periodic refresh. Each mint has its own fixed
+ * refreshMs-aligned schedule (offset by a hash of the mint), so curated tokens
+ * come due spread across the hourly ticks instead of all in the same one.
+ *
+ * @param {string} mint
+ * @param {number|undefined} freshAt when its data was last known current (ms)
+ */
+function refreshOffset(mint) {
+  return parseInt(crypto.createHash('sha256').update(mint).digest('hex').slice(0, 12), 16) % CONFIG.refreshMs;
+}
+
+function isRefreshDue(mint, freshAt, now = Date.now()) {
+  if (!freshAt) return true;
+  const off = refreshOffset(mint);
+  return Math.floor((now - off) / CONFIG.refreshMs) > Math.floor((freshAt - off) / CONFIG.refreshMs);
+}
+
 // ── Job dispatch (deduped with short-lived locks) ────────────────────────────
 
-async function ensureSnapshot(mint, { priority } = {}) {
+async function ensureSnapshot(mint) {
   const acquired = await cache.setNX(keys.snapshotPending(mint), Date.now(), CONFIG.snapshotLockTtl).catch(() => false);
   if (!acquired) return false;
   const jobQueue = require('./jobQueue');
-  const job = await jobQueue.addAnalyticsJob('snapshot-holders', { mint }, priority ? { priority } : {});
+  const job = await jobQueue.addAnalyticsJob('snapshot-holders', { mint });
   if (!job) await cache.delete(keys.snapshotPending(mint)).catch(() => {});
   return !!job;
 }
@@ -107,7 +143,14 @@ async function ensureBackfill(mint, { delay } = {}) {
 
 // ── Snapshot ─────────────────────────────────────────────────────────────────
 
-// Wallets among the largest holders that are LP vault owners.
+// Wallets among the largest holders that are not people: LP vaults, and any
+// other program-derived account (lockers, staking and vesting vaults, exchange
+// programs). A keypair wallet's account is owned by the System Program; anything
+// else holding the token is a contract, and contracts hold forever.
+function isProgramOwned(acct) {
+  return !!acct && !!acct.owner && acct.owner !== SYSTEM_PROGRAM_ID;
+}
+
 async function detectLpWallets(holders) {
   const lp = new Set();
   const candidates = holders.slice(0, CONFIG.lpCheckN).map(h => h.wallet).filter(w => !BURN_WALLETS.has(w));
@@ -116,7 +159,7 @@ async function detectLpWallets(holders) {
     const batch = candidates.slice(i, i + 100);
     const res = await solanaService.getMultipleAccounts(batch).catch(() => null);
     (res?.value || []).forEach((acct, j) => {
-      if (acct && LP_PROGRAMS.has(acct.owner)) lp.add(batch[j]);
+      if (isProgramOwned(acct)) lp.add(batch[j]);
     });
   }
   return lp;
@@ -213,6 +256,11 @@ async function takeSnapshot(mint) {
     if (prevUsable && prevFingerprint && fingerprint === prevFingerprint) {
       const now = Date.now();
       await cache.set(keys.snapshotVerified(mint), now, CONFIG.refreshMs * 2).catch(() => {});
+      // One page was the whole list, so every account is known unchanged as of
+      // now: newcomers at the next snapshot are dated from here, not from the
+      // old taken_at, which kept them out of the 6h window and sent them to
+      // the paid backfill.
+      if (first.complete) await store.markVerified(prev.id, now).catch(() => {});
       await recordUnchangedPoint(mint, prev, now, first.complete);
       await cache.delete(keys.snapshotPending(mint)).catch(() => {});
       console.log(`[Holders] Snapshot ${prev.id} for ${mint.slice(0, 8)} unchanged (${first.accounts.length} accounts checked); kept`);
@@ -242,7 +290,10 @@ async function takeSnapshot(mint) {
     meta.fingerprint = fingerprint;
 
     const newAcquisition = newWalletAcquisition(
-      prev ? { takenAt: new Date(prev.taken_at).getTime(), complete: prev.complete } : null,
+      prev ? {
+        takenAt: Math.max(new Date(prev.taken_at).getTime(), prev.verified_at ? new Date(prev.verified_at).getTime() : 0),
+        complete: prev.complete,
+      } : null,
       takenAt
     );
 
@@ -272,13 +323,23 @@ async function takeSnapshot(mint) {
 
 // ── Backfill ─────────────────────────────────────────────────────────────────
 
-// Wallets whose hold time we need: the conviction sample, then the listed top holders.
+// Wallets whose hold time we need: the conviction sample, then the listed top
+// holders. The sample's strata are interleaved (top, mid, tail, top, ...) so a
+// partial result during the backfill describes every stratum, not the top 50
+// first and the rest later.
 function walletsOfInterest(snap, entries) {
   const excluded = new Set(snap.sample_meta?.lpWallets || []);
   const ordered = [];
   const seen = new Set();
   const add = w => { if (w && !seen.has(w) && !excluded.has(w) && !BURN_WALLETS.has(w)) { seen.add(w); ordered.push(w); } };
-  for (const s of snap.sample || []) add(s.wallet);
+  const byStratum = new Map();
+  for (const s of snap.sample || []) {
+    const k = s.stratum || 'top';
+    if (!byStratum.has(k)) byStratum.set(k, []);
+    byStratum.get(k).push(s.wallet);
+  }
+  const lists = [...byStratum.values()];
+  for (let i = 0; lists.some(l => i < l.length); i++) for (const l of lists) if (i < l.length) add(l[i]);
   for (const e of entries || []) add(e.wallet);
   return ordered;
 }
@@ -354,8 +415,9 @@ async function backfillWallet(mint, pos, decimals, { boundBeforeMs = null } = {}
     balance = toBigInt(bal?.value?.amount);
     if (balance <= 0n) {
       // Account emptied or closed since the snapshot: the wallet left. The next
-      // complete snapshot drops the row; if it comes back it starts a new streak.
-      await store.saveBackfill(mint, pos.wallet, { source: 'failed', attempted: true });
+      // complete snapshot drops the row; if it is holding again by then, the
+      // snapshot write dates it like a newcomer (a new streak).
+      await store.saveBackfill(mint, pos.wallet, { source: 'left', attempted: true });
       return true;
     }
     firstPage = await pagePromise;
@@ -429,13 +491,37 @@ function isTransientError(err) {
  * itself while work remains; when everything is settled, recomputes and stores
  * diamond hands.
  */
+async function acquireBackfillSlot(mint) {
+  for (let i = 0; i < CONFIG.backfillMaxTokens; i++) {
+    const key = keys.backfillSlot(i);
+    if (await cache.setNX(key, mint, CONFIG.backfillLockTtl).catch(() => true)) return key;
+  }
+  return null;
+}
+
+async function releaseBackfillSlot(key, mint) {
+  if (!key) return;
+  // Only our own slot: the TTL could have let another token take it over
+  const holder = await cache.get(key).catch(() => null);
+  if (holder == null || holder === mint) await cache.delete(key).catch(() => {});
+}
+
 async function runBackfill(mint) {
   let remaining = 0;
   let retryDelay = 2000;
+  let slot = null;
   const startedAt = Date.now();
   try {
     const snap = await store.getLatestSnapshot(mint);
     if (!snap) return { status: 'no-snapshot' };
+    slot = await acquireBackfillSlot(mint);
+    if (!slot) {
+      // Other tokens hold every slot: wait a few seconds rather than share the
+      // Helius concurrency so thinly that every token slows down
+      remaining = 1;
+      retryDelay = CONFIG.backfillSlotWaitMs;
+      return { status: 'waiting' };
+    }
     const entries = await store.getSnapshotEntries(snap.id, CONFIG.listN);
     const wallets = walletsOfInterest(snap, entries);
     const positions = await store.getPositions(mint, wallets);
@@ -446,9 +532,23 @@ async function runBackfill(mint) {
     const listed = new Set(entries.map(e => e.wallet));
     const oldestBucketMs = Math.max(...DIAMOND_HANDS_BUCKETS.map(b => b.ms));
 
-    const stats = { settled: 0, errors: 0, transient: 0, slowestMs: 0, slowestWallet: null };
+    const stats = { settled: 0, errors: 0, transient: 0, pushbacks: 0, slowestMs: 0, slowestWallet: null };
     const queue = pendingAtStart.slice();
     const outOfTime = () => Date.now() - startedAt >= CONFIG.backfillRunMs;
+    // Helius pushing back pauses the whole run (every slot waits), with the pause
+    // doubling while it keeps happening; after pushbackMaxPauses pauses in a row
+    // the run ends and comes back later. Pushbacks that land during a pause are
+    // the same burst and start no new pause.
+    // (monotonic clock: the pause is wall time, independent of Date.now)
+    let pausedUntil = 0;
+    let pausesInARow = 0;
+    const pushedBack = () => {
+      stats.pushbacks++;
+      if (performance.now() < pausedUntil) return;
+      pausesInARow++;
+      if (pausesInARow > CONFIG.pushbackMaxPauses) { stats.backoff = true; return; }
+      pausedUntil = performance.now() + CONFIG.pushbackPauseMs * Math.pow(2, pausesInARow - 1);
+    };
 
     const runOne = async wallet => {
       // Re-read the row: an earlier pass in this run may have saved a cursor for it
@@ -460,26 +560,34 @@ async function runBackfill(mint) {
           boundBeforeMs: listed.has(wallet) ? null : Date.now() - oldestBucketMs,
         });
         const ms = Date.now() - t0;
+        pausesInARow = 0;
         if (ms > stats.slowestMs) { stats.slowestMs = ms; stats.slowestWallet = wallet; }
         if (ms > 15000) console.log(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} took ${ms}ms${done ? '' : ' (more history to read)'}`);
         return done;
       } catch (err) {
         const transient = isTransientError(err);
+        const pushback = isPushback(err);
         stats.errors++;
         if (transient) stats.transient++;
+        if (pushback) pushedBack();
+        // A pushback says nothing about the wallet: it counts as one attempt per
+        // run (when the run gives up on the burst), not one per retry
+        const countsAttempt = !pushback || !!stats.backoff;
         const limit = transient ? CONFIG.backfillMaxTransientAttempts : CONFIG.backfillMaxAttempts;
-        const giveUp = (pos.backfill_attempts || 0) + 1 >= limit;
-        console.warn(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} failed${transient ? ' (transient)' : ''}${giveUp ? ' (giving up)' : ''}:`, err.message);
+        const giveUp = countsAttempt && (pos.backfill_attempts || 0) + 1 >= limit;
+        if (!pushback || stats.backoff) {
+          console.warn(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} failed${transient ? ' (transient)' : ''}${giveUp ? ' (giving up)' : ''}:`, err.message);
+        }
         await store.saveBackfill(mint, wallet, {
           source: giveUp ? 'failed' : null,
           cursor: pos.backfill_cursor,
           balance: pos.backfill_balance != null ? toBigInt(pos.backfill_balance) : null,
           oldestAt: pos.backfill_oldest_at ? new Date(pos.backfill_oldest_at).getTime() : null,
-          attempted: true,
+          attempted: countsAttempt,
         }).catch(() => {});
         if (giveUp) return true;
-        // Helius is pushing back: stop taking new wallets this run and come back later
-        if (isPushback(err)) { stats.backoff = true; return false; }
+        // Pushed back: the run pauses, then this wallet goes back in line
+        if (pushback) return false;
         return null; // try again on a later run
       }
     };
@@ -489,6 +597,8 @@ async function runBackfill(mint) {
     // to read goes to the back of the line and continues from its saved cursor.
     await Promise.all(Array.from({ length: Math.min(CONFIG.backfillConcurrency, queue.length) }, async () => {
       while (queue.length > 0 && !outOfTime() && !stats.backoff) {
+        while (pausedUntil > performance.now() && !stats.backoff) await sleep(Math.max(1, Math.min(500, pausedUntil - performance.now())));
+        if (stats.backoff) break;
         const wallet = queue.shift();
         const done = await runOne(wallet);
         if (done === true) stats.settled++;
@@ -503,7 +613,7 @@ async function runBackfill(mint) {
     const elapsed = Date.now() - startedAt;
     console.log(`[Holders] Backfill ${mint.slice(0, 8)}: ${stats.settled}/${pendingAtStart.length} settled in ${elapsed}ms, ` +
       `${remaining} pending, slowest wallet ${stats.slowestMs}ms${stats.slowestWallet ? ` (${stats.slowestWallet.slice(0, 8)})` : ''}` +
-      `${stats.errors ? `, ${stats.errors} errors (${stats.transient} transient)` : ''}${stats.backoff ? ', backing off' : ''}`);
+      `${stats.errors ? `, ${stats.errors} errors (${stats.transient} transient)` : ''}${stats.pushbacks ? `, ${stats.pushbacks} pushbacks` : ''}${stats.backoff ? ', backing off' : ''}`);
     if (remaining === 0) {
       await cache.delete(keys.result(mint)).catch(() => {});
       const dh = await getDiamondHands(mint, { dispatch: false });
@@ -521,12 +631,23 @@ async function runBackfill(mint) {
     }
     return { status: 'ok', settled: stats.settled, remaining, ms: elapsed };
   } finally {
+    await releaseBackfillSlot(slot, mint);
     await cache.delete(keys.backfillPending(mint)).catch(() => {});
     if (remaining > 0) await ensureBackfill(mint, { delay: retryDelay }).catch(() => {});
   }
 }
 
 // ── Reads (API routes) ───────────────────────────────────────────────────────
+
+// Every stratum with sampled wallets has at least partialMinResolved of them
+// resolved (or all of them, when it has fewer).
+function partialReady(strata, resolvedByStratum) {
+  for (const [k, st] of Object.entries(strata || {})) {
+    if (!(st && st.population > 0 && st.sampled > 0)) continue;
+    if ((resolvedByStratum[k] || 0) < Math.min(CONFIG.partialMinResolved, st.sampled)) return false;
+  }
+  return true;
+}
 
 function holdTimeOf(pos, now) {
   if (!pos || !pos.acquired_at) return null;
@@ -561,13 +682,22 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
   }
 
   const meta = snap.sample_meta || {};
-  const { distribution, supplyDistribution } = buildStratifiedDiamondHands(sample, holdTimes, meta.strata);
+  let { distribution, supplyDistribution, resolved, resolvedByStratum } = buildStratifiedDiamondHands(sample, holdTimes, meta.strata);
+  if (pending > 0 && distribution && !partialReady(meta.strata, resolvedByStratum)) {
+    // Too early to show: with only one stratum in, the number would be that
+    // stratum's alone and then jump as the others arrive
+    distribution = null;
+    supplyDistribution = null;
+  }
   const snapshotAt = new Date(snap.taken_at).getTime();
   const result = {
     distribution,
     supplyDistribution,
     sampleSize: sample.length,
+    // Wallets the backfill has finished with, including those it could not
+    // date ('failed'/'left'); `resolved` is the number the distribution rests on
     analyzed: sample.length - pending,
+    resolved,
     computed: pending === 0,
     sampleMethod: meta.method || null,
     // Same meaning as the holder count shown elsewhere (token accounts with a balance)
@@ -604,25 +734,34 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
  */
 async function getHoldTimes(mint, wallets) {
   const holdTimes = {};
-  if (!wallets || wallets.length === 0) return { holdTimes, computed: true };
+  const floors = [];
+  if (!wallets || wallets.length === 0) return { holdTimes, floors, computed: true };
   const snap = await store.getLatestSnapshot(mint);
   if (!snap) {
     await ensureSnapshot(mint);
-    return { holdTimes, computed: false };
+    return { holdTimes, floors, computed: false };
   }
   const now = Date.now();
   const positions = await store.getPositions(mint, wallets);
   // LP wallets are never backfilled (walletsOfInterest), so never wait on them
   const lp = new Set(snap.sample_meta?.lpWallets || []);
+  // Wallets with no position row yet: the holder list came from RPC before the
+  // first snapshot, or the snapshot in progress will carry them. Wait for it.
+  const snapshotInFlight = !!(await cache.get(keys.snapshotPending(mint)).catch(() => null));
   let pending = 0;
   for (const w of wallets) {
     const pos = positions.get(w);
-    if (pos && pos.acquired_source === 'pending') { if (!lp.has(w)) pending++; continue; }
+    if (!pos) { if (snapshotInFlight && !lp.has(w)) pending++; continue; }
+    if (pos.acquired_source === 'pending') { if (!lp.has(w)) pending++; continue; }
     const ms = holdTimeOf(pos, now);
-    if (ms != null) holdTimes[w] = ms;
+    if (ms != null) {
+      holdTimes[w] = ms;
+      // History read stopped before the streak start: the wallet has held at least this long
+      if (pos.acquired_source === 'backfill_capped') floors.push(w);
+    }
   }
   if (pending > 0) await ensureBackfill(mint);
-  return { holdTimes, computed: pending === 0 };
+  return { holdTimes, floors, computed: pending === 0 };
 }
 
 /**
@@ -651,6 +790,7 @@ async function getSnapshotHolderList(mint, { maxAgeMs = Math.max(6 * 3_600_000, 
 
 module.exports = {
   CONFIG,
+  isRefreshDue,
   ensureSnapshot,
   ensureBackfill,
   getFreshnessTimes,
@@ -662,4 +802,6 @@ module.exports = {
   // exported for tests
   walletsOfInterest,
   backfillWallet,
+  partialReady,
+  isProgramOwned,
 };
