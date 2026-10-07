@@ -92,6 +92,13 @@ if (!DB_URL) {
       assert.ok(rows[0].components.retention > 0);
       assert.ok(rows[2].components.retention < 0);
       assert.strictEqual(rows[0].components.holdersMonthAgo, 4800);
+      // No volume or market cap seeded: trading activity is neutral
+      assert.strictEqual(rows[0].components.activity, 0);
+      // The home table reads each mint's latest score; the ineligible one reads as null
+      const latest = await kotp.getLatestScores(MINTS);
+      assert.ok(Math.abs(latest[A].score - Number(rows[0].score)) < 1e-9);
+      assert.strictEqual(latest[A].date, '2026-10-01');
+      assert.strictEqual(latest[D].score, null);
 
       const king = await kotp.getCurrentKing({ now: T0 });
       assert.strictEqual(king.mint, A);

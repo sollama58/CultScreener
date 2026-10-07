@@ -25,7 +25,7 @@
     if (!k || k.mode !== 'auto') {
       return 'King of the Pill is chosen by the most-raided community token, including their HolDEX link. Winner determined by ASDF CultRaid Tech.';
     }
-    var parts = ['King of the Pill goes to the curated token with the strongest Diamond Hands score: how long its holders have held, judged against what its age makes possible, with a bonus for holders sticking around.'];
+    var parts = ['King of the Pill goes to the curated token with the strongest Diamond Hands score: how long its holders have held, judged against what its age makes possible, with a bonus for holders sticking around and for trading activity (24h volume, and volume against market cap).'];
     var reign = [];
     if (k.score != null) reign.push('Score ' + Number(k.score).toFixed(1));
     if (k.reignDay) reign.push('day ' + k.reignDay + ' of its reign');

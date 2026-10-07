@@ -1112,9 +1112,20 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       emergingCult: row.is_emerging_cult || false,
       techCoin: row.is_tech_coin || false,
       holders: null,
-      holderVelocity: null
+      holderVelocity: null,
+      // Latest daily Diamond Hands score (services/kingOfPill.js); the table's default order
+      diamondHandsScore: null,
+      diamondHandsScoreDate: null
     };
   });
+
+  if (tokens.length > 0 && db.pool) {
+    const scores = await require('../services/kingOfPill').getLatestScores(tokens.map(t => t.mintAddress)).catch(() => ({}));
+    for (const t of tokens) {
+      const s = scores[t.mintAddress];
+      if (s) { t.diamondHandsScore = s.score; t.diamondHandsScoreDate = s.date; }
+    }
+  }
 
   // Holder counts: Redis, else the latest holder snapshot's count from Postgres.
   // Velocity: 24h change between holder snapshots (holderCounts.holderVelocity).

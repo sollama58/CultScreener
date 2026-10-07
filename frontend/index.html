@@ -35,7 +35,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/styles.css?v=23">
+  <link rel="stylesheet" href="css/styles.css?v=24">
 
   <style>
     /* ── King of the Pill widget ────────────────────────── */
@@ -747,7 +747,7 @@
   <link rel="preload" href="js/config.js?v=4" as="script">
   <link rel="preload" href="js/api.js?v=15" as="script">
   <link rel="preload" href="js/wallet.js?v=6" as="script">
-  <link rel="preload" href="js/conviction.js?v=19" as="script">
+  <link rel="preload" href="js/conviction.js?v=20" as="script">
 </head>
 <body>
   <header class="header">
@@ -880,6 +880,7 @@
             <tr>
               <th scope="col" class="cell-rank">#</th>
               <th scope="col" class="cell-token">Token</th>
+              <th scope="col" class="cell-score sortable" data-sort="score" title="Diamond Hands score, 0 to 100: how long holders hold for the token's age, with holder retention and trading activity. Updated daily; the top score wears the King of the Pill crown.">Score <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-mcap sortable" data-sort="mcap">MCap <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-chg sortable" data-sort="change24h" title="Price change over the last 24 hours">24h <span class="sort-arrow"></span></th>
               <th scope="col" class="cell-chg cell-chg-long sortable" data-sort="change7d" title="Price change over the last 7 days">7d <span class="sort-arrow"></span></th>
@@ -890,7 +891,7 @@
           </thead>
           <tbody id="conviction-table-body">
             <tr class="loading-row">
-              <td colspan="8">
+              <td colspan="9">
                 <div class="loading-state">
                   <div class="loading-spinner"></div>
                   <span>Initializing terminal...</span>
@@ -1128,15 +1129,15 @@
   <script src="js/deviceLink.js?v=3"></script>
   <script src="js/wallet.js?v=6"></script>
   <script src="js/watchlist.js?v=2"></script>
-  <script src="js/tokenTable.js?v=6"></script>
-  <script src="js/conviction.js?v=19"></script>
+  <script src="js/tokenTable.js?v=7"></script>
+  <script src="js/conviction.js?v=20"></script>
   <script src="js/tech.js?v=6"></script>
   <script src="js/emerging.js?v=6"></script>
   <script src="js/performance.js?v=28"></script>
   <script src="js/versus.js?v=17"></script>
   <script src="js/mainViewTabs.js?v=2"></script>
   <script src="js/pwa.js?v=3"></script>
-  <script src="js/kotp.js?v=5"></script>
+  <script src="js/kotp.js?v=6"></script>
 </body>
 </html>
 

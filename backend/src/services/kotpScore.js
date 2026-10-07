@@ -25,6 +25,14 @@ const PARAMS = {
   retentionGainWeight: 0.05,   // up to +5% for growing the holder base over 30 days
   retentionLossWeight: 0.25,   // up to -25% for losing holders over 30 days (a dying token is not a king)
   retentionFullSwing: 0.20,    // ±20% holders in a month saturates retention
+  // Trading activity: half the 24h volume in dollars (log scale between the floor and
+  // the full mark), half the turnover (24h volume as a share of market cap). A token
+  // trading at the full mark on both gets +volumeWeight, a dead one -volumeWeight,
+  // and one with no volume or market cap data sits in the middle (no effect).
+  volumeWeight: 0.10,          // ±10% for trading activity
+  volumeFloorUsd: 10_000,      // $10k/day of volume or less counts as none
+  volumeFullUsd: 1_000_000,    // $1M/day saturates the dollar half
+  turnoverFull: 0.25,          // 25% of market cap traded per day saturates the turnover half
   // Crowning
   minReignDays: 3,             // nobody is dethroned before this
   maxReignDays: 7,             // and nobody keeps it past this
@@ -58,6 +66,24 @@ function holdIndex(distribution, ageMs, p = PARAMS) {
 function clamp(x, lo, hi) { return Math.min(hi, Math.max(lo, x)); }
 
 /**
+ * Trading activity, -1..1: the mean of the dollar volume index (log scale from
+ * volumeFloorUsd to volumeFullUsd) and the turnover index (24h volume / market cap,
+ * saturating at turnoverFull), each rescaled from 0..1 to -1..1. Unknown volume gives
+ * 0; unknown market cap leaves only the dollar half in play.
+ */
+function activityIndex(volume24h, marketCap, p = PARAMS) {
+  if (volume24h == null) return 0;
+  const vol = Number(volume24h);
+  if (!Number.isFinite(vol) || vol < 0) return 0;
+  const span = Math.log10(p.volumeFullUsd) - Math.log10(p.volumeFloorUsd);
+  const dollars = clamp((Math.log10(Math.max(vol, 1)) - Math.log10(p.volumeFloorUsd)) / span, 0, 1);
+  const mcap = Number(marketCap);
+  const turnover = Number.isFinite(mcap) && mcap > 0 ? clamp(vol / mcap / p.turnoverFull, 0, 1) : null;
+  const index = turnover == null ? dollars : (dollars + turnover) / 2;
+  return 2 * index - 1;
+}
+
+/**
  * Daily Diamond Hands score for one token.
  *
  * @param {object} t
@@ -68,7 +94,9 @@ function clamp(x, lo, hi) { return Math.min(hi, Math.max(lo, x)); }
  *   snapshotAgeMs       how old the snapshot behind the distribution is
  *   coreWeekAgo         core index stored 7 days ago (null if unknown)
  *   holdersMonthAgo     holder count 30 days ago (or the oldest known, at least 7 days back; null if unknown)
- * @returns {{eligible, reason?, score, core, headcount, supply, confidence, momentum, retention}}
+ *   volume24h           24h trading volume in USD (null if unknown)
+ *   marketCap           market cap in USD (null if unknown)
+ * @returns {{eligible, reason?, score, core, headcount, supply, confidence, momentum, retention, activity}}
  */
 function scoreToken(t, p = PARAMS) {
   const ageDays = (t.ageMs || 0) / DAY;
@@ -87,11 +115,13 @@ function scoreToken(t, p = PARAMS) {
   const retention = (t.holdersMonthAgo > 0 && t.holders > 0)
     ? clamp((t.holders / t.holdersMonthAgo - 1) / p.retentionFullSwing, -1, 1) : 0;
   const retentionWeight = retention < 0 ? p.retentionLossWeight : p.retentionGainWeight;
+  const activity = activityIndex(t.volume24h, t.marketCap, p);
 
-  const score = 100 * confidence * core * (1 + p.momentumWeight * momentum + retentionWeight * retention);
+  const score = 100 * confidence * core
+    * (1 + p.momentumWeight * momentum + retentionWeight * retention + p.volumeWeight * activity);
   return {
     eligible: true, score: Math.round(score * 100) / 100,
-    core: Math.round(core * 10000) / 10000, headcount, supply, confidence, momentum, retention,
+    core: Math.round(core * 10000) / 10000, headcount, supply, confidence, momentum, retention, activity,
   };
 }
 
@@ -141,4 +171,4 @@ function pickKing(scored, king, lastReignEnd, today, p = PARAMS, reignEnds = {})
   return { mint: challenger.mint, changed: true, reason: 'overtaken', score: challenger.score, reignDays: 0 };
 }
 
-module.exports = { BUCKETS, PARAMS, DAY, holdIndex, scoreToken, pickKing };
+module.exports = { BUCKETS, PARAMS, DAY, holdIndex, activityIndex, scoreToken, pickKing };

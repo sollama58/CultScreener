@@ -7,8 +7,9 @@ const convictionPage = {
   tokens: [],
   _allTokens: [],
   _searchTimeout: null,
-  _sortField: 'rank',
-  _sortDir: 'asc',
+  // Default order: the daily Diamond Hands score (the King of the Pill ranking), highest first
+  _sortField: 'score',
+  _sortDir: 'desc',
   _activeTier: 'all',
   _activeMcap: null,
 
@@ -17,6 +18,7 @@ const convictionPage = {
     this.bindFilters();
     this.bindQuickFilters();
     this.bindSortHeaders();
+    this.updateSortIndicators();
     this.bindFiltersToggle();
     this.loadData();
 
@@ -187,6 +189,15 @@ const convictionPage = {
         if (va == null || vb == null) return (va == null) - (vb == null);
         return (va - vb) * dir;
       });
+    } else if (field === 'score') {
+      // Unscored tokens (too young, too few holders, no fresh snapshot) go last in the
+      // shuffled order they arrived in, so they still get a look.
+      const val = t => (t.diamondHandsScore != null && isFinite(t.diamondHandsScore) ? t.diamondHandsScore : null);
+      this._allTokens.sort((a, b) => {
+        const va = val(a), vb = val(b);
+        if (va == null || vb == null) return (va == null) - (vb == null) || (a._originalIndex - b._originalIndex);
+        return (va - vb) * dir || (a._originalIndex - b._originalIndex);
+      });
     } else if (field !== 'rank') {
       this._allTokens.sort((a, b) => {
         let va, vb;
@@ -278,7 +289,7 @@ const convictionPage = {
 
     tbody.innerHTML = `
       <tr class="loading-row">
-        <td colspan="8">
+        <td colspan="9">
           <div class="loading-state">
             <div class="loading-spinner"></div>
             <span>Scanning blockchain data...</span>
@@ -362,6 +373,8 @@ const convictionPage = {
               t.priceChange30d = b.priceChange30d;
               t.holders = b.holders || t.holders;
               t.holderVelocity = b.holderVelocity;
+              t.diamondHandsScore = b.diamondHandsScore;
+              t.diamondHandsScoreDate = b.diamondHandsScoreDate;
               t.pairCreatedAt = t.pairCreatedAt || b.pairCreatedAt;
               t.convictionUpdatedAt = t.convictionUpdatedAt || b.convictionUpdatedAt;
             });
@@ -410,7 +423,7 @@ const convictionPage = {
       }
       tbody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="8">
+          <td colspan="9">
             <div class="empty-state">
               <span>Failed to load terminal data. Please try again.</span>
             </div>
@@ -476,6 +489,7 @@ const convictionPage = {
         <tr ${tokenTable.rowAttrs(token)}>
           ${tokenTable.rankCell(offset + index + 1)}
           ${tokenTable.tokenCell(token)}
+          <td class="cell-score num">${tokenTable.dhScore(token)}</td>
           <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}<span class="tt-mcap-chg">${tokenTable.change(token.priceChange24h, '24h')}</span></td>
           <td class="cell-chg">${tokenTable.change(token.priceChange24h, '24h')}</td>
           <td class="cell-chg cell-chg-long">${tokenTable.change(token.priceChange7d, '7d')}</td>
