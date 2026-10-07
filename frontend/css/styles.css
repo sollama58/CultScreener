@@ -1893,6 +1893,23 @@ select:focus {
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }
 
+/* Token age chip next to the name: quieter than the tag tiles, mono digits */
+.tt-age {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  padding: 3px 5px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .tt-symbol {
   font-family: var(--mono);
   font-size: 0.72rem;
