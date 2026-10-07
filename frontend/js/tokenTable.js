@@ -41,7 +41,16 @@ const tokenTable = {
     let html = '';
     if (token.emergingCult) html += '<span class="tt-tag" title="Emerging Cult">🔨</span>';
     if (token.techCoin) html += '<span class="tt-tag" title="Tech Coin">🤖</span>';
+    html += this.ageChip(token);
     return html;
+  },
+
+  // Token age chip after the name: compact age (5h, 12d, 3mo, 1y), launch date on hover.
+  ageChip(token) {
+    const short = utils.formatAgeShort(token.pairCreatedAt);
+    if (!short) return '';
+    const date = new Date(token.pairCreatedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    return `<span class="tt-age" title="${this.esc(`Token age ${utils.formatAge(token.pairCreatedAt)} · launched ${date}`)}">${this.esc(short)}</span>`;
   },
 
   rankCell(rank) {

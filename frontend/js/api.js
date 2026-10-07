@@ -888,6 +888,21 @@ const utils = {
     return remainingMonths > 0 ? `${years}y ${remainingMonths}mo` : `${years}y`;
   },
 
+  // Compact age for chips: just the largest unit (5h, 12d, 3mo, 1y). Null when unknown.
+  formatAgeShort(date) {
+    if (!date) return null;
+    const ms = Date.now() - new Date(date).getTime();
+    if (!isFinite(ms) || ms < 0) return null;
+    const minutes = Math.floor(ms / 60000);
+    if (minutes < 60) return `${Math.max(minutes, 1)}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d`;
+    if (days < 365) return `${Math.floor(days / 30)}mo`;
+    return `${Math.floor(days / 365)}y`;
+  },
+
   // Validate Solana address
   isValidSolanaAddress(address) {
     return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);

@@ -495,9 +495,19 @@ const tokenDetail = {
 
     // Emerging Cult / Tech Coin badges — inject/remove right after the token name h1
     if (nameEl) {
-      nameEl.parentElement.querySelectorAll('.emerging-cult-badge, .tech-coin-detail-badge').forEach(el => el.remove());
+      nameEl.parentElement.querySelectorAll('.emerging-cult-badge, .tech-coin-detail-badge, .tp-age-badge').forEach(el => el.remove());
       // Insert in reverse visual order: each insertAdjacentElement('afterend') pushes
       // the previous one right, so the last-inserted badge appears first after the name.
+      const ageShort = utils.formatAgeShort(token.pairCreatedAt);
+      if (ageShort) {
+        const badge = document.createElement('span');
+        badge.className = 'tp-age-badge';
+        const date = new Date(token.pairCreatedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        badge.title = `Token age ${utils.formatAge(token.pairCreatedAt)} · launched ${date}`;
+        badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+        badge.append(ageShort);
+        nameEl.insertAdjacentElement('afterend', badge);
+      }
       if (token.techCoin) {
         const badge = document.createElement('span');
         badge.className = 'tech-coin-detail-badge';
