@@ -35,6 +35,11 @@ const LP_AUTHORITIES = new Set([
   'GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL',  // Raydium CPMM authority
 ]);
 
+// Owner of every ordinary (keypair) wallet. A token account whose owner account is
+// owned by any other program is a program-derived vault (AMM pool, locker, staking
+// or vesting contract, exchange program), not a person.
+const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
+
 // ── Diamond hands distribution buckets ──────────────────────────────────────
 // Time thresholds used to categorise holders by how long they have held.
 // A wallet counts towards a bucket when holdTime >= bucket.ms, so the ">6h" label
@@ -54,4 +59,4 @@ const DIAMOND_HANDS_BUCKETS = [
   { key: '1yr', label: '>1yr', ms: 365 * 86_400_000 },
 ];
 
-module.exports = { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, DIAMOND_HANDS_BUCKETS };
+module.exports = { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID, DIAMOND_HANDS_BUCKETS };

@@ -408,6 +408,27 @@
   white-space: nowrap;
 }
 
+/* Token age next to the name: neutral pill, secondary to the category badges */
+.tp-age-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: default;
+}
+.tp-age-badge svg { flex: none; color: var(--muted); }
+
 .tp-address-row {
   display: flex;
   align-items: center;

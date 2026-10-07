@@ -129,8 +129,12 @@ function buildInput(curated, row, trend, coreWeekAgo, now) {
   const candidates = [row?.pair_created_at, trend?.firstPointAt, curated.addedAt]
     .map(v => (v ? new Date(v).getTime() : NaN)).filter(Number.isFinite);
   const bornAt = candidates.length ? Math.min(...candidates) : null;
-  const snapshotAt = meta.snapshotAt ? Number(meta.snapshotAt)
-    : row?.conviction_computed_at ? new Date(row.conviction_computed_at).getTime() : null;
+  // Freshness is the later of the snapshot and the last full recompute: a snapshot the
+  // pre-check verified as unchanged keeps its taken_at, but its diamond hands are
+  // re-stored every hour while it is current.
+  const snapshotAt = Math.max(
+    meta.snapshotAt ? Number(meta.snapshotAt) : 0,
+    row?.conviction_computed_at ? new Date(row.conviction_computed_at).getTime() : 0) || null;
   const holders = meta.holderCount != null ? Number(meta.holderCount) : trend?.holdersNow ?? null;
   return {
     distribution: row?.conviction_data || null,

@@ -7,9 +7,10 @@ const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey, canBypassCache } = require('../middleware/validation');
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
-const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
+const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
+const priceChanges = require('../services/priceChanges');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -50,7 +51,7 @@ const VALID_FILTERS = ['trending', 'new', 'gainers', 'losers', 'most_viewed', 't
 const VALID_SORTS = ['volume', 'price', 'priceChange24h', 'marketCap', 'views'];
 const VALID_ORDERS = ['asc', 'desc'];
 
-// BURN_WALLETS and LP_PROGRAMS imported from ../constants (shared with worker.js)
+// BURN_WALLETS, LP_AUTHORITIES and SYSTEM_PROGRAM_ID imported from ../constants (shared with worker.js)
 const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website'];
 const VALID_SUBMISSION_STATUSES = ['pending', 'approved', 'rejected', 'all'];
 const jobQueue = require('../services/jobQueue');
@@ -1093,7 +1094,8 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       name: row.name || `${row.mint_address.slice(0, 4)}...${row.mint_address.slice(-4)}`,
       symbol: row.symbol || row.mint_address.slice(0, 5).toUpperCase(),
       price: parseFloat(row.price) || 0,
-      priceChange24h: row.price_change_24h != null ? parseFloat(row.price_change_24h) : null,
+      // 24h, 7d and 30d change against stored reference prices (services/priceChanges.js)
+      ...priceChanges.changesForRow(row),
       volume24h: parseFloat(row.volume_24h) || 0,
       marketCap: parseFloat(row.market_cap) || null,
       logoUri: row.logo_uri || null,
@@ -1109,14 +1111,23 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
       mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
       emergingCult: row.is_emerging_cult || false,
       techCoin: row.is_tech_coin || false,
-      holders: null
+      holders: null,
+      holderVelocity: null
     };
   });
 
-  // Holder counts: Redis, else the latest holder snapshot's count from Postgres
+  // Holder counts: Redis, else the latest holder snapshot's count from Postgres.
+  // Velocity: 24h change between holder snapshots (holderCounts.holderVelocity).
   if (tokens.length > 0) {
-    const counts = await holderCounts.getDisplayCounts(tokens.map(t => t.mintAddress)).catch(() => ({}));
-    for (const t of tokens) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+    const mints = tokens.map(t => t.mintAddress);
+    const [counts, velocity] = await Promise.all([
+      holderCounts.getDisplayCounts(mints).catch(() => ({})),
+      db.pool ? holderCounts.getHolderVelocity(mints).catch(() => ({})) : {},
+    ]);
+    for (const t of tokens) {
+      if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+      t.holderVelocity = velocity[t.mintAddress] || { level: null };
+    }
   }
 
   // Queue background Helius fetches for any tokens still missing holder counts
@@ -2198,7 +2209,7 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
           const walletAccounts = await solanaService.getMultipleAccounts(wallets);
           if (walletAccounts?.value) {
             walletAccounts.value.forEach((acct, wi) => {
-              if ((acct && LP_PROGRAMS.has(acct.owner)) || LP_AUTHORITIES.has(wallets[wi])) {
+              if ((acct && acct.owner && acct.owner !== SYSTEM_PROGRAM_ID) || LP_AUTHORITIES.has(wallets[wi])) {
                 const indices = walletToIndices.get(wallets[wi]);
                 if (indices) for (const idx of indices) lpIndices.add(idx);
               }
@@ -2320,7 +2331,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
   try {
     // If Helius isn't configured, hold times can't be computed — return immediately
     if (!solanaService.isHeliusConfigured()) {
-      return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: true });
+      return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: true });
     }
 
     // Get holder data (likely already cached from the main holders call).
@@ -2329,7 +2340,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
     const holdersCache = await cache.get(`holder-analytics:${mint}`);
     if (!holdersCache || !holdersCache.holders || holdersCache.holders.length === 0) {
       console.log(`[HoldTimes] holder-analytics:${mint} cache miss — returning computed: false to trigger re-poll`);
-      return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: false });
+      return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: false });
     }
 
     // Listed holders (skip LP and burn wallets). Hold times come from holder
@@ -2339,13 +2350,14 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       .map(h => h.address);
 
     if (wallets.length === 0) {
-      return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: true });
+      return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: true });
     }
 
-    const { holdTimes, computed } = await holderPipeline.getHoldTimes(mint, wallets);
+    const { holdTimes, floors, computed } = await holderPipeline.getHoldTimes(mint, wallets);
     // holdTimes and tokenHoldTimes are the same thing (time holding this token);
-    // both keys are kept for the frontend.
-    if (!res.headersSent) res.json({ holdTimes, tokenHoldTimes: holdTimes, computed });
+    // both keys are kept for the frontend. floors: wallets whose time is a lower
+    // bound (the history read stopped before the streak start).
+    if (!res.headersSent) res.json({ holdTimes, tokenHoldTimes: holdTimes, floors, computed });
   } catch (error) {
     console.error('[Tokens] Hold times error:', error.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch hold times' });

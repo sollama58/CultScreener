@@ -84,6 +84,8 @@ function failoverToNextRpc(chain = rpcChains.helius) {
 const DAS_CREDITS = 10;
 // DAS pages read at once by getAllTokenAccounts (holder snapshots)
 const DAS_PAGE_CONCURRENCY = Math.max(1, parseInt(process.env.HOLDER_SNAPSHOT_PAGE_CONCURRENCY, 10) || 4);
+// Waits between attempts on one DAS page before the snapshot fails (last entry: no further retry)
+const DAS_PAGE_ATTEMPTS = [1000, 3000, 8000, null];
 const ENHANCED_CREDITS = 100;
 const RPC_METHOD_CREDITS = { getProgramAccounts: 10, getTransactionsForAddress: 10 };
 const CREDIT_KEY_TTL = 3 * 24 * 3600000;
@@ -961,7 +963,7 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
   if (!HELIUS_DAS_URL) throw new Error('Helius DAS not configured');
   // startPage/accounts continue a read whose earlier pages the caller already has
   const accounts = already.slice();
-  const fetchPage = async page => {
+  const fetchPageOnce = async page => {
     countCredits('getTokenAccounts', DAS_CREDITS);
     const response = await circuitBreakers.heliusDas.execute(() =>
       withRpcRetry(() => rateLimitedRequest('helius', () =>
@@ -974,9 +976,31 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
       ), 'getAllTokenAccounts')
     );
     if (response.data.error) {
-      throw new Error(`DAS page ${page}: ${response.data.error.message || response.data.error.code}`);
+      const err = new Error(`DAS page ${page}: ${response.data.error.message || response.data.error.code}`);
+      err.rpcCode = response.data.error.code;
+      throw err;
     }
     return response.data.result?.token_accounts || [];
+  };
+  // One page failing used to fail the snapshot, and the BullMQ retry started over
+  // from page 1: on a 100-page token a 429 on page 70 cost the 70 pages again. Retry
+  // the page itself first; only a page that keeps failing fails the snapshot.
+  const fetchPage = async page => {
+    let lastErr;
+    for (let attempt = 0; attempt < DAS_PAGE_ATTEMPTS.length; attempt++) {
+      try {
+        return await fetchPageOnce(page);
+      } catch (err) {
+        lastErr = err;
+        // An invalid-params answer won't change on retry
+        if (err.rpcCode === -32602) throw err;
+        const delay = DAS_PAGE_ATTEMPTS[attempt];
+        if (delay == null) break;
+        console.warn(`[Solana] getAllTokenAccounts page ${page} failed (${err.message}); retrying in ${delay}ms`);
+        await sleep(delay);
+      }
+    }
+    throw lastErr;
   };
 
   // Pages are numbered, so several can be read at once. A big token's snapshot

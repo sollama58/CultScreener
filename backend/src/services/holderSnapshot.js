@@ -38,8 +38,15 @@ function toBigInt(value) {
  */
 function aggregateHolders(accounts) {
   const byOwner = new Map();
+  // Pages are numbered and read several at a time while accounts are being
+  // created and closed, so an account can turn up on two pages. Count each once.
+  const seenAccounts = new Set();
   for (const a of accounts || []) {
     if (!a || !a.owner) continue;
+    if (a.address) {
+      if (seenAccounts.has(a.address)) continue;
+      seenAccounts.add(a.address);
+    }
     const amount = toBigInt(a.amount);
     if (amount <= 0n) continue;
     const cur = byOwner.get(a.owner);
@@ -279,11 +286,14 @@ function rewindToStreakStart(balance, txs, { exhausted = false } = {}) {
   let bal = balance;
   let oldestAt = null;
   for (const tx of txs) {
-    if (!tx || !tx.timestamp) continue;
-    oldestAt = tx.timestamp * 1000;
+    if (!tx) continue;
+    // A transaction with no block time still moved the balance; only the
+    // timestamp bookkeeping is skipped for it.
+    const at = tx.timestamp ? tx.timestamp * 1000 : null;
+    if (at) oldestAt = at;
     const before = bal - (tx.delta || 0n);
-    if (before <= 0n && (tx.delta || 0n) > 0n) {
-      return { done: true, acquiredAt: tx.timestamp * 1000, balance: before, oldestAt };
+    if (at && before <= 0n && (tx.delta || 0n) > 0n) {
+      return { done: true, acquiredAt: at, balance: before, oldestAt };
     }
     bal = before;
   }

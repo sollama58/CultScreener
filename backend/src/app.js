@@ -65,7 +65,8 @@ async function initializeJobQueue() {
     // Fallback: run everything in-process when Redis is unavailable
     console.log('[App] Job queue not available - using in-process fallback');
     startFallbackCleanup();
-    startFallbackConvictionWarmers();
+    // Holder snapshots and diamond hands run in the worker through the queue, so
+    // there is nothing to fall back to for them here.
   }
 }
 
@@ -107,26 +108,6 @@ function startFallbackCleanup() {
       }
     }
   }, CLEANUP_INTERVAL_MS);
-}
-
-// Track fallback interval IDs so they can be cleared on graceful shutdown
-let _fallbackIntervalIds = [];
-
-// Fallback conviction warmers for when Redis/worker is not available
-function startFallbackConvictionWarmers() {
-  // First run after 2 min, then every 10 min
-  setTimeout(() => {
-    warmConviction();
-    const id1 = setInterval(warmConviction, 10 * 60 * 1000);
-    _fallbackIntervalIds.push(id1);
-  }, 2 * 60 * 1000);
-
-  // First run after 30s, then every hour
-  setTimeout(() => {
-    warmCuratedConviction();
-    const id2 = setInterval(warmCuratedConviction, 60 * 60 * 1000);
-    _fallbackIntervalIds.push(id2);
-  }, 30 * 1000);
 }
 
 // Initialize job queue immediately (no artificial delay needed)
@@ -791,10 +772,6 @@ async function gracefulShutdown(signal) {
     cleanupIntervalId = null;
   }
 
-  // Clear fallback conviction warmer intervals (fallback mode)
-  _fallbackIntervalIds.forEach(id => clearInterval(id));
-  _fallbackIntervalIds = [];
-
   // Clear signature replay protection timer
   try {
     const { stopSignatureCleanup } = require('./middleware/validation');
@@ -885,136 +862,6 @@ async function warmCache() {
     console.log(`[CacheWarm] Warmed ${warmed}/${topTokens.length} top tokens`);
   } catch (err) {
     console.error('[CacheWarm] Failed (non-critical):', err.message);
-  }
-}
-
-// Periodically trigger diamond-hands computation for popular tokens
-// that don't have conviction data yet (or have stale data > 6 hours).
-// Runs every 10 minutes, processes up to 3 tokens per cycle to avoid API overload.
-let _warmConvictionRunning = false;
-async function warmConviction() {
-  if (_warmConvictionRunning) return; // Prevent overlap if previous run takes > 10 min
-  _warmConvictionRunning = true;
-  try {
-    const { cache } = require('./services/cache');
-    const topTokens = await db.getMostViewedTokens(30);
-    if (!topTokens || topTokens.length === 0) return;
-
-    let triggered = 0;
-    const MAX_PER_CYCLE = 3;
-    const STALE_MS = 6 * 3600000; // 6 hours
-
-    // Batch-fetch DB rows upfront — avoids N sequential getToken queries in the loop
-    const allMints = topTokens.map(t => t.token_mint);
-    const dbRows = await db.getTokensBatch(allMints).catch(() => []);
-    const dbRowMap = {};
-    for (const row of dbRows) dbRowMap[row.mint_address] = row;
-
-    // Batch-fetch all cache flags in parallel — avoids N sequential Redis round-trips
-    const cacheChecks = await Promise.all(
-      allMints.map(async mint => ({
-        mint,
-        existing: await cache.get(`diamond-hands:${mint}`).catch(() => null),
-        pending: await cache.get(`holder-metrics-pending:${mint}`).catch(() => null)
-      }))
-    );
-
-    for (const { mint, existing, pending } of cacheChecks) {
-      if (triggered >= MAX_PER_CYCLE) break;
-
-      // Skip if already cached (fresh)
-      if (existing) continue;
-
-      // Skip if already pending
-      if (pending) continue;
-
-      // Check DB — skip if computed recently
-      const dbRow = dbRowMap[mint];
-      if (dbRow && dbRow.conviction_computed_at) {
-        const timestamp = new Date(dbRow.conviction_computed_at).getTime();
-        if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
-      }
-
-      // Trigger directly via job queue — avoids HTTP round-trip through middleware
-      try {
-        await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint }, { priority: 10 });
-        triggered++;
-      } catch { /* non-critical */ }
-    }
-
-    if (triggered > 0) {
-      console.log(`[ConvictionWarm] Triggered diamond-hands for ${triggered} tokens`);
-    }
-  } catch (err) {
-    console.error('[ConvictionWarm] Failed (non-critical):', err.message);
-  } finally {
-    _warmConvictionRunning = false;
-  }
-}
-
-// Trigger conviction analysis for all curated tokens.
-// Runs on startup (after delay) and every hour.
-// Processes tokens that have no conviction data or stale data (>1 hour).
-let _warmCuratedRunning = false;
-async function warmCuratedConviction() {
-  if (_warmCuratedRunning) return; // Prevent overlap if previous run takes > 1 hour
-  _warmCuratedRunning = true;
-  try {
-    const { cache } = require('./services/cache');
-    const curatedTokens = await db.getCuratedTokens();
-    if (!curatedTokens || curatedTokens.length === 0) return;
-
-    let triggered = 0;
-    const STALE_MS = 60 * 60 * 1000; // 1 hour
-
-    // Batch-fetch DB rows upfront — avoids N sequential getToken queries in the loop
-    const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
-    const dbRows = await db.getTokensBatch(allMints).catch(() => []);
-    const dbRowMap = {};
-    for (const row of dbRows) dbRowMap[row.mint_address] = row;
-
-    // Batch-fetch all pending flags in parallel — avoids N sequential Redis round-trips
-    const pendingFlags = await Promise.all(
-      allMints.map(async mint => ({
-        mint,
-        pending: await cache.get(`holder-metrics-pending:${mint}`).catch(() => null)
-      }))
-    );
-    const pendingSet = new Set(pendingFlags.filter(e => e.pending).map(e => e.mint));
-
-    for (const token of curatedTokens) {
-      const mint = token.mintAddress || token.mint_address;
-      if (!mint) continue;
-
-      // Skip if already pending
-      if (pendingSet.has(mint)) continue;
-
-      // Skip if conviction was computed recently
-      const dbRow = dbRowMap[mint];
-      if (dbRow && dbRow.conviction_computed_at) {
-        const timestamp = new Date(dbRow.conviction_computed_at).getTime();
-        if (!isNaN(timestamp) && Date.now() - timestamp < STALE_MS) continue;
-      }
-
-      // Trigger directly via job queue — avoids HTTP round-trip through middleware
-      try {
-        await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint }, { priority: 10 });
-        triggered++;
-      } catch { /* non-critical */ }
-
-      // Stagger requests to avoid overloading Helius API
-      if (triggered > 0 && triggered % 3 === 0) {
-        await new Promise(r => setTimeout(r, 10000));
-      }
-    }
-
-    if (triggered > 0) {
-      console.log(`[CuratedConviction] Triggered diamond-hands for ${triggered}/${curatedTokens.length} curated tokens`);
-    }
-  } catch (err) {
-    console.error('[CuratedConviction] Failed (non-critical):', err.message);
-  } finally {
-    _warmCuratedRunning = false;
   }
 }
 

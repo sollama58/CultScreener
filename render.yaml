@@ -73,6 +73,11 @@ services:
       - key: CACHE_PRICE_TTL
         value: "60"
 
+      # Helius requests per second this process may start. The worker keeps the
+      # default (40); together they stay under the plan's 50/s per key.
+      - key: HELIUS_RPS
+        value: "10"
+
 
   # =====================================================
   # Frontend Static Site

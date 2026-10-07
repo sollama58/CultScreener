@@ -153,18 +153,24 @@ async function addSearchJob(jobName, data = {}, options = {}) {
  * exists keeps its next run time and only re-creates what is missing.
  */
 const RECURRING_JOBS = [
-  // Snapshot freshness for the most-viewed tokens
-  { id: 'warm-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 } },
   // Curated tokens: holder snapshots (every HOLDER_SNAPSHOT_REFRESH_HOURS) and stored diamond hands
   { id: 'warm-curated-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 60 * 60 * 1000 } },
   // Curated market cap and ATH from GeckoTerminal
   { id: 'refresh-curated-prices', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 } },
+  // Curated prices 1, 7 and 30 days ago, for the home table's 7d/30d change (a few tokens per run)
+  { id: 'refresh-curated-price-refs', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 15 * 60 * 1000 } },
   // Daily holder counts, 00:05 UTC
   { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' } },
   // Daily Diamond Hands scores and the King of the Pill, 00:20 UTC
   { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *' } },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
+];
+
+// Schedulers that used to exist and are removed if still found in Redis.
+// warm-conviction only ever acted on curated tokens, which warm-curated-conviction covers.
+const RETIRED_JOBS = [
+  { id: 'warm-conviction', queue: QUEUE_NAMES.ANALYTICS },
 ];
 
 /**
@@ -176,6 +182,13 @@ const RECURRING_JOBS = [
 async function ensureRecurringJobs() {
   if (!isInitialized && !initialize()) return 0;
   let scheduled = 0;
+  for (const { id, queue: queueName } of RETIRED_JOBS) {
+    try {
+      const queue = queues[queueName];
+      await queue.removeJobScheduler(id);
+      for (const j of (await queue.getRepeatableJobs()).filter(j => j.name === id)) await queue.removeRepeatableByKey(j.key);
+    } catch (_) { /* nothing to remove */ }
+  }
   for (const { id, queue: queueName, repeat } of RECURRING_JOBS) {
     const queue = queues[queueName];
     try {

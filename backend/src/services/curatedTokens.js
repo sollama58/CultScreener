@@ -110,10 +110,10 @@ async function addCuratedTokenFully(mintAddress) {
     }).catch(() => { /* non-critical — worker will backfill on next run */ });
   }
 
-  // Trigger conviction analysis via the job queue so the token appears on the leaderboard
+  // Take the first holder snapshot now (then the backfill and diamond hands follow)
+  // instead of waiting for someone to open the token page or for the hourly job.
   try {
-    const jobQueue = require('./jobQueue');
-    await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint: mintAddress }, { priority: 10 });
+    await require('./holderPipeline').ensureSnapshot(mintAddress);
   } catch { /* non-critical */ }
 
   const token = await db.getCuratedToken(mintAddress).catch(() => null);

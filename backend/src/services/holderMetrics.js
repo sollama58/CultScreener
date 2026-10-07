@@ -1,7 +1,7 @@
 /**
  * Holder metric math: pure functions with no I/O, so they can be unit tested
  * without Redis, Postgres or RPC. Used by holderBehaviorAnalysis (worker) and
- * routes/tokens.js (diamond hands distribution).
+ * holderPipeline (diamond hands distribution).
  */
 
 const { DIAMOND_HANDS_BUCKETS } = require('../constants');
@@ -105,29 +105,6 @@ function computeHoldPairs(walletAddress, transactions, now = Date.now()) {
   return pairs;
 }
 
-// ── buildDiamondHandsResult ──────────────────────────────────────────────────
-
-/**
- * Build diamond hands distribution from hold time data.
- * Denominator is values.length (wallets with positive hold times only).
- * Wallets with no data are excluded entirely from the calculation.
- */
-function buildDiamondHandsResult(holdTimes, sampleSize, analyzed) {
-  const values = Object.values(holdTimes);
-  const denominator = values.length;
-  if (denominator === 0) {
-    return { distribution: null, sampleSize, analyzed, computed: true };
-  }
-
-  const distribution = {};
-  for (const bucket of DIAMOND_HANDS_BUCKETS) {
-    const count = values.filter(ms => ms >= bucket.ms).length;
-    distribution[bucket.key] = Math.round((count / denominator) * 1000) / 10;
-  }
-
-  return { distribution, sampleSize, analyzed, computed: true };
-}
-
 // ── buildStratifiedDiamondHands ──────────────────────────────────────────────
 
 const round1 = x => Math.round(x * 1000) / 10; // share 0..1 → percent, one decimal
@@ -149,7 +126,7 @@ const round1 = x => Math.round(x * 1000) / 10; // share 0..1 → percent, one de
  * @param {Object<string, number>} holdTimes wallet → hold time in ms; wallets that
  *   are missing or ≤ 0 are unresolved
  * @param {Object<string, {population, amount}>} strata from the sample meta
- * @returns {{distribution, supplyDistribution, resolved}}
+ * @returns {{distribution, supplyDistribution, resolved, resolvedByStratum}}
  */
 function buildStratifiedDiamondHands(sample, holdTimes, strata) {
   const groups = {};
@@ -161,7 +138,8 @@ function buildStratifiedDiamondHands(sample, holdTimes, strata) {
   }
 
   const resolved = Object.values(groups).reduce((n, g) => n + g.length, 0);
-  if (resolved === 0) return { distribution: null, supplyDistribution: null, resolved: 0 };
+  const resolvedByStratum = Object.fromEntries(Object.entries(groups).map(([k, g]) => [k, g.length]));
+  if (resolved === 0) return { distribution: null, supplyDistribution: null, resolved: 0, resolvedByStratum };
 
   const active = Object.keys(groups).filter(k => strata && strata[k] && strata[k].population > 0);
   const popTotal = active.reduce((n, k) => n + strata[k].population, 0);
@@ -186,7 +164,7 @@ function buildStratifiedDiamondHands(sample, holdTimes, strata) {
     supplyDistribution[bucket.key] = amtTotal > 0 ? round1(bySupply) : null;
   }
 
-  return { distribution, supplyDistribution, resolved };
+  return { distribution, supplyDistribution, resolved, resolvedByStratum };
 }
 
 // ── swapFromRawTransaction ───────────────────────────────────────────────────
@@ -266,6 +244,5 @@ module.exports = {
   HB_EXCLUDED_MINTS,
   computeHoldPairs,
   swapFromRawTransaction,
-  buildDiamondHandsResult,
   buildStratifiedDiamondHands
 };
