@@ -430,7 +430,10 @@ async function getTokenHolderCount(mintAddress, opts = {}) {
 async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
   try {
     return await circuitBreakers.heliusDas.execute(async () => {
-      let totalCount = 0;
+      // Unique owner wallets, burn and known LP authorities excluded: the same
+      // definition holder snapshots use (services/holderCounts.js).
+      const { BURN_WALLETS, LP_AUTHORITIES, LP_PROGRAMS } = require('../constants');
+      const owners = new Set();
       let page = 1;
       let isExact = false;
 
@@ -455,21 +458,26 @@ async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
         );
 
         if (response.data.error) {
-          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — returning partial count (${totalCount})`);
+          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — returning partial count (${owners.size})`);
           break;
         }
 
         const accounts = response.data.result?.token_accounts;
         if (!accounts || accounts.length === 0) { isExact = true; break; }
 
-        totalCount += accounts.length;
+        for (const a of accounts) {
+          if (!a?.owner || BURN_WALLETS.has(a.owner) || LP_AUTHORITIES.has(a.owner) || LP_PROGRAMS.has(a.owner)) continue;
+          if (a.amount != null && Number(a.amount) <= 0) continue;
+          owners.add(a.owner);
+        }
 
         if (accounts.length < 1000) { isExact = true; break; }
         page++;
       }
 
+      const totalCount = owners.size;
       if (totalCount > 0) {
-        console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} (${page} pages${isExact ? '' : ', capped at maxPages'})`);
+        console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} wallets (${page} pages${isExact ? '' : ', capped at maxPages'})`);
       }
       return { count: totalCount > 0 ? totalCount : null, isExact };
     }); // end circuitBreakers.heliusDas.execute

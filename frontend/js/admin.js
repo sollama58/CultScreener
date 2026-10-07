@@ -286,9 +286,9 @@ const admin = {
 
     try {
       const data = await this.request('/api/admin/backfill-holder-counts', { method: 'POST' });
-      status.textContent = `Snapshot complete: ${data.recorded} recorded, ${data.skipped} skipped of ${data.total} tokens. Holder Trend will show updated data immediately.`;
+      status.textContent = `Queued ${data.recorded} holder snapshots (${data.skipped} already running) of ${data.total} tokens. Holder counts update as each one finishes, usually within a few minutes.`;
       status.style.color = 'var(--green)';
-      if (typeof toast !== 'undefined') toast.success(`Snapshot complete: ${data.recorded} tokens recorded`);
+      if (typeof toast !== 'undefined') toast.success(`Queued ${data.recorded} holder snapshots`);
     } catch (err) {
       status.textContent = `Error: ${err.message}`;
       status.style.color = 'var(--red)';

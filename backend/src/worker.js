@@ -349,10 +349,11 @@ const jobProcessors = {
     let fetched = 0;
     let skipped = 0;
 
+    // Redis or the latest holder snapshot's count first; DAS pagination only for the rest
+    const known = await require('./services/holderCounts').getDisplayCounts(mints).catch(() => ({}));
     for (const mint of mints) {
       try {
-        const cached = await cache.get(`holder-total:${mint}`);
-        if (cached && cached > 0) { skipped++; continue; }
+        if (known[mint] > 0) { skipped++; continue; }
 
         const count = await solanaService.getTokenHolderCount(mint);
         // getTokenHolderCount caches exact counts internally (TTL.HOLDER_COUNT)
@@ -500,16 +501,14 @@ const jobProcessors = {
 
         // Fetch holder count
         try {
-          let totalCount = await cache.get(`holder-total:${mint}`);
+          // Redis, then the latest holder snapshot's count, then a DAS count.
+          // History points come only from snapshots (services/holderCounts.js).
+          let totalCount = (await require('./services/holderCounts').getDisplayCounts([mint]))[mint];
           if (!totalCount && solanaService.isHeliusConfigured()) {
             // getTokenHolderCount caches results internally (TTL.HOLDER_COUNT)
             totalCount = await solanaService.getTokenHolderCount(mint).catch(() => null);
           }
-          if (totalCount && totalCount > 0) {
-            metrics.holderCount = totalCount;
-            // Opportunistically record today's snapshot — no separate daily-job dependency
-            db.recordHolderCount(mint, totalCount).catch(() => {});
-          }
+          if (totalCount && totalCount > 0) metrics.holderCount = totalCount;
         } catch (_) {}
       }
 
@@ -591,63 +590,24 @@ const jobProcessors = {
   // ==========================================
 
   /**
-   * Record today's holder count for all curated tokens.
-   * Runs once per day. Reads the already-cached holder-total so no extra RPC
-   * calls are made — if the cache is cold for a token it is simply skipped
-   * (the next analytics run will warm it).
+   * Daily safety net for holder count history. Points are written by holder
+   * snapshots (every HOLDER_SNAPSHOT_REFRESH_HOURS for curated tokens); any curated
+   * token with no exact point in the last day gets a snapshot queued. No counting
+   * here, so every point in the history means the same thing.
    */
   'record-holder-counts': async (job) => {
+    const holderPipeline = require('./services/holderPipeline');
+    const holderCounts = require('./services/holderCounts');
     const curatedTokens = await db.getCuratedTokens().catch(() => []);
-    if (!curatedTokens || curatedTokens.length === 0) return { recorded: 0, skipped: 0 };
+    const mints = (curatedTokens || []).map(t => t.mintAddress || t.mint_address).filter(Boolean);
+    const latest = await holderCounts.getLatestPoints(mints).catch(() => ({}));
 
     let recorded = 0;
     let skipped  = 0;
-
-    for (const token of curatedTokens) {
-      const mint = token.mintAddress || token.mint_address;
-      if (!mint) { skipped++; continue; }
-
-      try {
-        let count = null;
-        // A complete holder snapshot from the last day is already an exact count
-        const snap = await require('./services/holderStore').getLatestSnapshot(mint).catch(() => null);
-        if (snap && snap.complete && Date.now() - new Date(snap.taken_at).getTime() < 26 * 3600000) {
-          count = snap.account_count;
-        }
-        // Otherwise the cached count (26h TTL; capped snapshots don't fill it), and
-        // only then a paginated DAS count. No skipCache: re-paging a token the cache
-        // already covers cost up to 500 DAS calls per token per day for nothing.
-        if (!count || count <= 0) {
-          count = await cache.get(`holder-total:${mint}`);
-        }
-        if ((!count || count <= 0) && solanaService.isHeliusConfigured()) {
-          count = await solanaService.getTokenHolderCount(mint, { maxPages: 500 }).catch(() => null);
-        }
-        if (!count || count <= 0) {
-          const analytics = await cache.get(`holder-analytics:${mint}`);
-          count = analytics?.metrics?.holderCount || null;
-        }
-
-        if (!count || count <= 0) { skipped++; continue; }
-
-        await db.recordHolderCount(mint, count);
-        recorded++;
-      } catch (err) {
-        console.warn(`[Worker] record-holder-counts failed for ${mint.slice(0, 8)}:`, err.message);
-        skipped++;
-      }
-    }
-
-    // Invalidate holder-history cache for all recorded tokens so API returns fresh data
-    if (recorded > 0) {
-      for (const token of curatedTokens) {
-        const mint = token.mintAddress || token.mint_address;
-        if (mint) {
-          for (const days of [7, 30, 31, 90]) {
-            await cache.delete(`holder-history:${mint}:${days}`).catch(() => {});
-          }
-        }
-      }
+    for (const mint of mints) {
+      const p = latest[mint];
+      if (p && p.complete && Date.now() - p.takenAt < 24 * 3600000) { skipped++; continue; }
+      if (await holderPipeline.ensureSnapshot(mint).catch(() => false)) recorded++;
     }
 
     // Daily housekeeping: drop holder snapshots/positions of mints no longer snapshotted
@@ -656,8 +616,8 @@ const jobProcessors = {
       return 0;
     });
 
-    console.log(`[Worker] record-holder-counts: ${recorded} recorded, ${skipped} skipped, ${pruned} stale positions pruned`);
-    return { recorded, skipped };
+    console.log(`[Worker] record-holder-counts: ${recorded} snapshots queued, ${skipped} already current, ${pruned} stale positions pruned`);
+    return { queued: recorded, skipped };
   },
 
   /**
@@ -836,27 +796,6 @@ const jobProcessors = {
     if (triggered > 0 || refreshed > 0) {
       console.log(`[Worker] warm-curated-conviction: ${triggered} snapshots, ${refreshed} diamond hands refreshes, ${curatedTokens.length} curated tokens`);
     }
-
-    // Opportunistically record holder counts for curated tokens where the count is cached.
-    // This fills holder_history without requiring a user page visit, ensuring daily snapshots
-    // accumulate even on low-traffic days between the midnight record-holder-counts job.
-    let holderRecorded = 0;
-    for (const token of curatedTokens) {
-      const mint = token.mintAddress || token.mint_address;
-      if (!mint) continue;
-      try {
-        let count = await cache.get(`holder-total:${mint}`);
-        if (!count || count <= 0) {
-          const analytics = await cache.get(`holder-analytics:${mint}`);
-          count = analytics?.metrics?.holderCount || null;
-        }
-        if (count && count > 0) {
-          await db.recordHolderCount(mint, count);
-          holderRecorded++;
-        }
-      } catch (_) {}
-    }
-    if (holderRecorded > 0) console.log(`[Worker] warm-curated-conviction: recorded holder counts for ${holderRecorded} curated tokens`);
 
     // Update ATH market cap for curated tokens using current market cap from the tokens table.
     // This requires no extra API calls — the tokens table is kept fresh by price refresh jobs.

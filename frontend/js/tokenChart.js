@@ -18,9 +18,10 @@ const tokenChart = (() => {
     { id: 'ma20', label: 'MA 20', title: '20-period simple moving average' },
     { id: 'ema50', label: 'EMA 50', title: '50-period exponential moving average' },
     { id: 'bb', label: 'BB 20', title: 'Bollinger Bands (20, 2)' },
-    { id: 'rsi', label: 'RSI 14', title: 'Relative Strength Index (14)' }
+    { id: 'rsi', label: 'RSI 14', title: 'Relative Strength Index (14)' },
+    { id: 'holders', label: 'Holders', title: 'Holder count on the left scale (one point per holder snapshot)' }
   ];
-  const DEFAULT_PREFS = { tf: '15m', unit: 'price', style: 'candles', log: false, ind: { vol: true, ma20: false, ema50: false, bb: false, rsi: false } };
+  const DEFAULT_PREFS = { tf: '15m', unit: 'price', style: 'candles', log: false, ind: { vol: true, ma20: false, ema50: false, bb: false, rsi: false, holders: false } };
 
   let libPromise = null;
   let state = null; // live modal state; null while closed
@@ -193,6 +194,18 @@ const tokenChart = (() => {
   }
 
   // Price scale step: about four significant digits below the smallest visible value
+  // Holder count at each candle: the latest count taken by the candle's close. Counts come
+  // every few hours, so this is a step line; candles before the first count get none.
+  function holdersPerCandle(candles, points, tfSec) {
+    const out = [];
+    let i = 0, cur = null;
+    for (const c of candles) {
+      while (i < points.length && points[i][0] <= c.time + tfSec) { cur = points[i][1]; i++; }
+      if (cur != null) out.push({ time: c.time, value: cur });
+    }
+    return out;
+  }
+
   function minMoveFor(candles) {
     let min = Infinity;
     for (const c of candles) if (c.low > 0 && c.low < min) min = c.low;
@@ -498,6 +511,26 @@ const tokenChart = (() => {
       try { chart.panes()[1].setStretchFactor(0.28); chart.panes()[0].setStretchFactor(1); } catch { /* ignore */ }
     }
 
+    const showHolders = prefs.ind.holders && state.holders?.length;
+    // Phones have no room for a second axis: the line gets its own hidden scale and the
+    // legend carries the number.
+    const holderAxis = (state.root.querySelector('#tc-chart')?.clientWidth || 0) >= 600;
+    chart.priceScale('left').applyOptions({ visible: !!showHolders && holderAxis, borderVisible: false, scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
+    if (showHolders) {
+      const data = holdersPerCandle(candles, state.holders, tfSeconds());
+      if (data.length) {
+        const h = chart.addSeries(LWC.LineSeries, {
+          priceScaleId: holderAxis ? 'left' : 'holders', color: '#22d3ee', lineWidth: 2, lineType: 1, lastValueVisible: true, priceLineVisible: false,
+          crosshairMarkerVisible: false, priceFormat: { type: 'custom', formatter: fmtVolume, minMove: 1 }
+        });
+        if (!holderAxis) h.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
+        h.setData(data);
+        state.series.holders = h;
+      }
+    } else if (prefs.ind.holders && state.holders == null) {
+      fetchHolders();
+    }
+
     if (prevRange) chart.timeScale().setVisibleLogicalRange(prevRange);
     else showRecent();
     renderHeader();
@@ -560,7 +593,9 @@ const tokenChart = (() => {
       if (p.ma20 && pick('ma20') != null) parts.push(`<span class="tc-lg-ma">MA20&nbsp;${fmtValue(pick('ma20'))}</span>`);
       if (p.ema50 && pick('ema50') != null) parts.push(`<span class="tc-lg-ema">EMA50&nbsp;${fmtValue(pick('ema50'))}</span>`);
       if (p.rsi && pick('rsi') != null) parts.push(`<span class="tc-lg-rsi">RSI&nbsp;${pick('rsi').toFixed(1)}</span>`);
+      if (p.holders && pick('holders') != null) parts.push(`<span class="tc-lg-holders">Holders&nbsp;${Math.round(pick('holders')).toLocaleString()}</span>`);
     }
+    if (p.holders && state.holders && !state.series.holders) parts.push('<span class="tc-lg-holders">Holders: no count in this range yet</span>');
     el.innerHTML = parts.filter(Boolean).join('<span class="tc-lg-gap"></span>');
   }
 
@@ -588,6 +623,26 @@ const tokenChart = (() => {
         : 'Could not load chart data right now.';
       setMsg(msg, { retry: err?.code !== 'NOT_CURATED' });
     }
+  }
+
+  // Holder count history for the Holders overlay, fetched once per open
+  async function fetchHolders() {
+    if (!state || state.holdersLoading) return;
+    const owner = state;
+    owner.holdersLoading = true;
+    try {
+      const res = await api.request(`/api/tokens/${encodeURIComponent(owner.info.mint)}/holder-count?range=all`, { retries: 1, timeout: 20000 });
+      const s = res?.series?.holders || {};
+      const pts = [...(s.est || []), ...(s.actual || [])].map(p => [p[0], p[1]]).sort((a, b) => a[0] - b[0]);
+      if (state !== owner) return;
+      owner.holders = pts;
+    } catch {
+      if (state !== owner) return;
+      owner.holders = [];
+    } finally {
+      owner.holdersLoading = false;
+    }
+    if (state === owner) render(false);
   }
 
   function scheduleRefresh() {
@@ -794,5 +849,5 @@ const tokenChart = (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 
-  return { open, close, _test: { fmtValue, sma, ema, rsi, bollinger, normalizeCandles } };
+  return { open, close, loadLib, _test: { fmtValue, sma, ema, rsi, bollinger, normalizeCandles } };
 })();

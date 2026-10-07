@@ -383,7 +383,7 @@
           <div id="admin-market-caps-status-row" style="display:none;margin-top:0.6rem;padding:0.6rem 0.75rem;background:var(--surface-2,#1a1c22);border-radius:6px;font-size:0.78rem;line-height:1.6;">
             <span id="admin-market-caps-status" style="color:var(--text-muted);"></span>
           </div>
-          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Flush: Clears failed wallet caches so conviction re-computes. Refresh Holders: Re-fetches total holder counts from Helius DAS. Snapshot: Records today's counts into trend history (same as nightly cron). Backfill: Pulls 30d daily + older weekly holder history from CoinGecko Pro for all curated tokens. Refresh Market Caps: Force-fetches latest price/mcap/priceChange24h for all curated tokens from GeckoTerminal in batches of 30 and busts the leaderboard cache.</p>
+          <p style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;">Flush: Clears failed wallet caches so conviction re-computes. Refresh Holders: Re-fetches current holder counts (unique wallets) from Helius DAS for the home tables. Snapshot: Queues a full holder snapshot for every curated token; each one adds a point to the holder chart (snapshots also run on their own every few hours). Backfill: Pulls CoinGecko Pro holder history for curated tokens; it only fills dates before HolDEX's own first count and is shown as an estimate. Refresh Market Caps: Force-fetches latest price/mcap/priceChange24h for all curated tokens from GeckoTerminal in batches of 30 and busts the leaderboard cache.</p>
         </div>
         <div style="margin-top:1.25rem;">
           <h3 style="font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.75rem;">Wipe Token Cache</h3>
@@ -551,7 +551,7 @@
 
   <script src="js/config.js?v=4"></script>
   <script src="js/api.js?v=13"></script>
-  <script src="js/admin.js?v=16"></script>
+  <script src="js/admin.js?v=17"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>

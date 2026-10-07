@@ -250,17 +250,6 @@ const tokenDetail = {
     };
     document.addEventListener('visibilitychange', this.visibilityHandler);
 
-    // Holder trend range buttons — delegated via section
-    const htSection = document.getElementById('holder-trend-section');
-    if (htSection) {
-      const htRangeHandler = (e) => {
-        const btn = e.target.closest('.ht-range-btn');
-        if (!btn) return;
-        this.loadHolderTrend(parseInt(btn.dataset.range));
-      };
-      htSection.addEventListener('click', htRangeHandler);
-      this.boundHandlers.set(htSection, [{ event: 'click', handler: htRangeHandler }]);
-    }
   },
 
   // Remove all bound event listeners
@@ -675,203 +664,10 @@ const tokenDetail = {
     }
   },
 
-  // ── Holder Trend ──────────────────────────────────────────────────────────
-
-  async loadHolderTrend(range) {
-    const section = document.getElementById('holder-trend-section');
-    if (!section) return;
-
-    // Default to 7-day chart view on first load
-    if (range == null) range = this._htRange || 7;
-    this._htRange = range;
-
-    // Sync button active state
-    section.querySelectorAll('.ht-range-btn').forEach(btn => {
-      btn.classList.toggle('active', parseInt(btn.dataset.range) === range);
-    });
-
-    try {
-      // Fetch 31 days so the 30D change stat has a baseline row to compare against
-      const data = await api.tokens.getHolderHistory(this.mint, 31);
-      const history = (data && Array.isArray(data.history)) ? data.history : [];
-
-      // Reverse so oldest â†’ newest (API returns newest first)
-      const allRows = history.slice().reverse();
-
-      section.style.display = '';
-
-      const chartWrap = document.getElementById('ht-chart-wrap');
-      const emptyEl   = document.getElementById('ht-empty');
-
-      if (allRows.length === 0) {
-        if (chartWrap) chartWrap.style.display = 'none';
-        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — use "Snapshot Holders Now" in admin to record today'; }
-        return;
-      }
-
-      // Change stats always use full 30-day window
-      this._renderHolderChangeStats(allRows);
-
-      // Bar chart shows only the selected range
-      const chartRows = allRows.slice(-range);
-
-      if (chartRows.length >= 1) {
-        if (emptyEl) emptyEl.style.display = 'none';
-        if (chartWrap) chartWrap.style.display = '';
-        this._renderHolderBarChart(chartRows);
-      } else {
-        if (chartWrap) chartWrap.style.display = 'none';
-        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — check back tomorrow'; }
-      }
-    } catch (err) {
-      console.warn('[HolderTrend] load error:', err);
-      // Show section with a soft error message rather than leaving it invisible
-      if (section) {
-        section.style.display = '';
-        const chartWrap = document.getElementById('ht-chart-wrap');
-        const emptyEl   = document.getElementById('ht-empty');
-        if (chartWrap) chartWrap.style.display = 'none';
-        if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'No history yet — holder trend data will appear after the first snapshot'; }
-      }
-    }
-  },
-
-  _renderHolderChangeStats(rows) {
-    const el = document.getElementById('ht-changes');
-    if (!el || rows.length === 0) return;
-
-    const latestRow = rows[rows.length - 1];
-    const latest = latestRow.holder_count;
-    const latestDate = new Date(latestRow.recorded_date.slice(0, 10) + 'T00:00:00');
-
-    // Returns { delta, pct } for a given days-ago offset using actual date matching.
-    // Finds the row whose recorded_date is <= (today - daysAgo), so gaps in snapshots
-    // don't silently corrupt the percentage calculation.
-    const getDelta = (daysAgo) => {
-      const target = new Date(latestDate);
-      target.setDate(target.getDate() - daysAgo);
-      const targetStr = target.toISOString().slice(0, 10);
-      // rows are oldestâ†’newest; walk backwards to find the closest row on or before target
-      let pastRow = null;
-      for (let i = rows.length - 2; i >= 0; i--) {
-        if (rows[i].recorded_date <= targetStr) { pastRow = rows[i]; break; }
-      }
-      if (!pastRow) return null;
-      const delta = latest - pastRow.holder_count;
-      const pct   = pastRow.holder_count > 0 ? (delta / pastRow.holder_count * 100) : 0;
-      return { delta, pct };
-    };
-
-    const fmtStat = (d) => {
-      if (!d) return { val: '--', pct: '', cls: '' };
-      const sign = d.delta >= 0 ? '+' : '';
-      const cls  = d.delta >= 0 ? 'ht-delta--up' : 'ht-delta--down';
-      return { val: `${sign}${d.delta.toLocaleString()}`, pct: `${sign}${d.pct.toFixed(1)}%`, cls };
-    };
-
-    const periods = [
-      { label: '1D', stat: fmtStat(getDelta(1)) },
-      { label: '7D', stat: fmtStat(getDelta(7)) },
-      { label: '30D', stat: fmtStat(getDelta(30)) },
-    ];
-
-    el.innerHTML = periods.map(({ label, stat }) => `
-      <div class="ht-change-item">
-        <span class="ht-change-label">${label}</span>
-        <span class="ht-change-value ${stat.cls}">${stat.val}</span>
-        ${stat.pct ? `<span class="ht-change-pct ${stat.cls}">${stat.pct}</span>` : ''}
-      </div>
-    `).join('');
-  },
-
-  _renderHolderBarChart(rows) {
-    const wrap = document.getElementById('ht-chart-wrap');
-    if (!wrap) return;
-
-    // The chart is drawn in pixels, so redraw it when its box changes size (window resize,
-    // or a first render that happened while the page content was still hidden).
-    this._htRows = rows;
-    if (!this._htResizeObserver && typeof ResizeObserver !== 'undefined') {
-      this._htLastWidth = 0;
-      this._htResizeObserver = new ResizeObserver(entries => {
-        const w = Math.round(entries[0].contentRect.width);
-        if (!w || w === this._htLastWidth || !this._htRows) return;
-        this._renderHolderBarChart(this._htRows);
-      });
-      this._htResizeObserver.observe(wrap);
-    }
-
-    const totalW = wrap.getBoundingClientRect().width || wrap.clientWidth || 340;
-    this._htLastWidth = Math.round(totalW);
-    const H      = 160;
-    const PAD_L  = 46;   // space for y-axis labels
-    const PAD_R  = 6;
-    const PAD_T  = 10;
-    const PAD_B  = 6;
-    const chartW = totalW - PAD_L - PAD_R;
-    const chartH = H - PAD_T - PAD_B;
-    const n      = rows.length;
-    const GAP    = n > 20 ? 1 : n > 10 ? 2 : 3;
-    const barW   = Math.max(2, (chartW - GAP * (n - 1)) / n);
-
-    const counts = rows.map(r => r.holder_count);
-    const minVal = Math.min(...counts);
-    const maxVal = Math.max(...counts);
-    const span   = maxVal - minVal || 1;
-
-    const fmtCount = (v) => {
-      if (v >= 1_000_000) return +(v / 1_000_000).toFixed(1) + 'M';
-      if (v >= 1_000)     return +(v / 1_000).toFixed(1) + 'K';
-      return String(v);
-    };
-
-    const fmtDate = (str) => {
-      const d = new Date(str.slice(0, 10) + 'T00:00:00');
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    };
-
-    // 4 y-axis ticks evenly spaced from min â†’ max
-    const ticks = Array.from({ length: 4 }, (_, i) => {
-      const frac = i / 3;
-      return {
-        val: minVal + frac * (maxVal - minVal),
-        y:   PAD_T + chartH * (1 - frac),
-      };
-    });
-
-    const gridLines = ticks.map(({ y }) =>
-      `<line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${(totalW - PAD_R).toFixed(1)}" y2="${y.toFixed(1)}" class="ht-grid" stroke-width="1"/>`
-    ).join('');
-
-    const yLabels = ticks.map(({ val, y }) =>
-      `<text x="${(PAD_L - 6).toFixed(1)}" y="${y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" class="ht-ylabel">${fmtCount(Math.round(val))}</text>`
-    ).join('');
-
-    const bars = rows.map((r, i) => {
-      const x          = PAD_L + i * (barW + GAP);
-      const normalized = n === 1 || span === 0 ? 0.7 : (r.holder_count - minVal) / span;
-      const barH       = Math.max(3, normalized * chartH);
-      const y          = PAD_T + (chartH - barH);
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="1.5" fill="url(#ht-bar-grad)"/>`;
-    }).join('');
-
-    wrap.innerHTML = `
-      <svg class="ht-svg" width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" aria-hidden="true">
-        <defs>
-          <linearGradient id="ht-bar-grad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" class="ht-stop-a"/>
-            <stop offset="100%" class="ht-stop-b"/>
-          </linearGradient>
-        </defs>
-        ${gridLines}
-        ${yLabels}
-        ${bars}
-      </svg>
-      <div class="ht-axis">
-        <span class="ht-axis-label" style="padding-left:${PAD_L}px">${fmtDate(rows[0].recorded_date)}</span>
-        <span class="ht-axis-label">${fmtDate(rows[rows.length - 1].recorded_date)}</span>
-      </div>
-    `;
+  // ── Holder count chart (js/holderChart.js) ──────────────────────────────
+  async loadHolderTrend() {
+    if (typeof holderChart === 'undefined') return;
+    await holderChart.load(this.mint);
   },
 
   // Load pools
@@ -2201,10 +1997,7 @@ const tokenDetail = {
 
   // Cleanup on page unload
   destroy() {
-    if (this._htResizeObserver) {
-      this._htResizeObserver.disconnect();
-      this._htResizeObserver = null;
-    }
+    if (typeof holderChart !== 'undefined') holderChart.destroy();
     // Clear all intervals
     if (this.priceRefreshInterval) {
       clearInterval(this.priceRefreshInterval);

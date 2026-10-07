@@ -190,6 +190,14 @@ async function pruneAbandonedMints() {
     `DELETE FROM holder_snapshots WHERE taken_at < NOW() - make_interval(days => $1)`,
     [SNAPSHOT_RETENTION_DAYS]
   );
+  // Holder count history is kept for good while a token is still snapshotted
+  // (curated tokens every few hours); one-off mints lose theirs after 90 days.
+  await pool().query(
+    `DELETE FROM holder_count_points p
+      WHERE p.mint_address IN (
+        SELECT mint_address FROM holder_count_points GROUP BY mint_address
+        HAVING MAX(taken_at) < NOW() - INTERVAL '90 days')`
+  );
   return rowCount;
 }
 

@@ -270,7 +270,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
           metrics.holderCount = totalCount;
         } else if (solanaService.isHeliusConfigured()) {
           // Count in the worker (deduped there), not inside the API process
-          require('../services/jobQueue').addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }, { priority: 5 }).catch(() => {});
+          require('../services/jobQueue').addAnalyticsJob('fetch-holder-counts-batch', { mints: [mint] }).catch(() => {});
         }
       } catch (_) {}
     }
