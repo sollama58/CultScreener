@@ -1644,7 +1644,8 @@ body.tc-open { overflow: hidden; }
 .tc-legend .tc-lg-ma { color: #fab219; }
 .tc-legend .tc-lg-ema { color: #c084fc; }
 .tc-legend .tc-lg-rsi { color: #b9a6ff; }
-.tc-legend .tc-lg-holders { color: #22d3ee; }
+.tc-legend .tc-lg-holders { color: #22d3ee; display: inline-flex; align-items: center; gap: 5px; }
+.tc-legend .tc-lg-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; background: #22d3ee; }
 .tc-overlay .is-good { color: var(--good-ink); }
 .tc-overlay .is-bad { color: var(--bad-ink); }
 .tc-body { flex: 1; min-height: 0; display: flex; gap: 8px; }

@@ -23,6 +23,7 @@ const tokenChart = (() => {
   ];
   const DEFAULT_PREFS = { tf: '15m', unit: 'price', style: 'candles', log: false, ind: { vol: true, ma20: false, ema50: false, bb: false, rsi: false, holders: false } };
 
+  const HOLDERS_COLOR = '#22d3ee';
   let libPromise = null;
   let state = null; // live modal state; null while closed
 
@@ -525,7 +526,8 @@ const tokenChart = (() => {
       const data = holdersPerCandle(candles, state.holders, tfSeconds());
       if (data.length) {
         const h = chart.addSeries(LWC.LineSeries, {
-          priceScaleId: holderAxis ? 'left' : 'holders', color: '#22d3ee', lineWidth: 2, lineType: 1, lastValueVisible: true, priceLineVisible: false,
+          priceScaleId: holderAxis ? 'left' : 'holders', color: HOLDERS_COLOR, lineWidth: 2, lineType: 1, lastValueVisible: true, priceLineVisible: false,
+          title: 'Holders',
           crosshairMarkerVisible: false, priceFormat: { type: 'custom', formatter: fmtVolume, minMove: 1 }
         });
         if (!holderAxis) h.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
@@ -594,12 +596,21 @@ const tokenChart = (() => {
       const d = param.seriesData.get(s);
       return d && d.value != null ? d.value : null;
     };
+    // Holders stays named in the legend while not hovering: the latest count
+    const holdersNow = () => {
+      const s = state.series.holders;
+      if (!s) return null;
+      const v = param?.seriesData ? pick('holders') : null;
+      if (v != null) return v;
+      const all = s.data();
+      return all.length ? all[all.length - 1].value : null;
+    };
     if (param?.seriesData) {
       if (p.ma20 && pick('ma20') != null) parts.push(`<span class="tc-lg-ma">MA20&nbsp;${fmtValue(pick('ma20'))}</span>`);
       if (p.ema50 && pick('ema50') != null) parts.push(`<span class="tc-lg-ema">EMA50&nbsp;${fmtValue(pick('ema50'))}</span>`);
       if (p.rsi && pick('rsi') != null) parts.push(`<span class="tc-lg-rsi">RSI&nbsp;${pick('rsi').toFixed(1)}</span>`);
-      if (p.holders && pick('holders') != null) parts.push(`<span class="tc-lg-holders">Holders&nbsp;${Math.round(pick('holders')).toLocaleString()}</span>`);
     }
+    if (p.holders && holdersNow() != null) parts.push(`<span class="tc-lg-holders"><i class="tc-lg-key" aria-hidden="true"></i>Holders&nbsp;${Math.round(holdersNow()).toLocaleString()}</span>`);
     if (p.holders && state.holders && !state.series.holders) parts.push('<span class="tc-lg-holders">Holders: no count in this range yet</span>');
     el.innerHTML = parts.filter(Boolean).join('<span class="tc-lg-gap"></span>');
   }
@@ -759,6 +770,10 @@ const tokenChart = (() => {
           title: `${unit} · ${tf ? tf.label : ''} candles`,
           detail: `$${fmtValue(last)}${chg ? `  ${chg}` : ''}`,
           accent: chg ? cssVar(up ? '--good-ink' : '--bad-ink', up ? '#4ade80' : '#ff8080') : undefined,
+          legend: state.series.holders ? [
+            { label: `${unit} (right axis)`, color: cssVar('--good-ink', '#4ade80') },
+            { label: `Holders${state.root.querySelector('#tc-chart')?.clientWidth >= 600 ? ' (left axis)' : ''}`, color: HOLDERS_COLOR },
+          ] : [],
         });
       };
       if (t.dataset.shot === 'copy') chartShot.copy(make, 'chart');

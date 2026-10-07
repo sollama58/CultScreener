@@ -162,7 +162,7 @@ const holderChart = (() => {
       lastValueVisible: false, priceLineVisible: false, crosshairMarkerRadius: 3,
     });
     const actual = chart.addSeries(LWC.AreaSeries, {
-      lineColor: brandB, topColor: hexA(brandA, 0.38), bottomColor: hexA(brandA, 0.02), lineWidth: 2,
+      lineColor: brandB, topColor: hexA(brandA, 0.38), bottomColor: hexA(brandA, 0.02), lineWidth: 2, title: 'Holders',
       priceFormat: fmt, priceLineVisible: false, crosshairMarkerRadius: 4,
     });
     chart.subscribeCrosshairMove(renderLegend);
@@ -190,8 +190,13 @@ const holderChart = (() => {
     return { actual, est, caps: s.actual.filter(p => !p[2]).map(p => p[0]) };
   }
 
+  function lineLabel() {
+    return metric() === 'real' ? `Holders over $${st.data?.dustUsd ?? 1}` : 'Holders';
+  }
+
   function draw() {
     if (!st.chart) return;
+    st.series.actual.applyOptions({ title: lineLabel() });
     const { actual, est, caps } = seriesData();
     st.caps = new Set(caps);
     st.estTimes = new Set(est.map(p => p.time));
@@ -273,6 +278,10 @@ const holderChart = (() => {
       title: `${m === 'real' ? 'Holders over $' + (st.data?.dustUsd ?? 1) : 'Holders'} · ${rangeLabel}`,
       detail: v == null ? '' : `${fmtCount(v)}${cur.complete === false ? '+' : ''}${chText}`,
       accent: ch ? (ch.delta >= 0 ? cssVar('--good-ink', '#4ade80') : cssVar('--bad-ink', '#ff8080')) : undefined,
+      legend: [
+        { label: lineLabel(), color: cssVar('--brand-b', '#3b82f6') },
+        ...(st.series.est.data().length ? [{ label: 'Estimated (older daily counts)', color: cssVar('--muted', '#868da0'), dashed: true }] : []),
+      ],
     });
   }
   function setShotEnabled(on) {
