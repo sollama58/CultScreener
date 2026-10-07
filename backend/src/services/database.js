@@ -468,6 +468,16 @@ async function initializeDatabase() {
       EXCEPTION WHEN OTHERS THEN NULL;
       END $mca$;
 
+      -- Prices 1, 7 and 30 days ago for the home table's 24h/7d/30d columns
+      -- (services/priceChanges.js, refreshed by the refresh-curated-price-refs job)
+      DO $pref$ BEGIN
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_ref_1d DECIMAL;
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_ref_7d DECIMAL;
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_ref_30d DECIMAL;
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_at TIMESTAMP WITH TIME ZONE;
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $pref$;
+
       -- Daily holder count history — one row per token per day
       CREATE TABLE IF NOT EXISTS holder_history (
         id SERIAL PRIMARY KEY,
@@ -834,7 +844,8 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     WITH combined AS (
       SELECT t.mint_address, t.name, t.symbol, t.logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
              t.conviction_1m, t.conviction_data, t.conviction_sample_size, t.conviction_computed_at, t.pair_created_at,
-             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin
+             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin,
+             c.price_ref_1d, c.price_ref_7d, c.price_ref_30d, c.price_refs_at
       FROM tokens t
       INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
       WHERE t.conviction_1m IS NOT NULL AND t.conviction_1m > 0
@@ -845,7 +856,8 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
              COALESCE(t.logo_uri, NULL) AS logo_uri, t.price, t.market_cap, t.volume_24h, t.price_change_24h,
              COALESCE(t.conviction_1m, 0) AS conviction_1m,
              t.conviction_data, t.conviction_sample_size, t.conviction_computed_at, t.pair_created_at,
-             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin
+             c.mcap_at_added, c.mcap_ath, c.mcap_ath_at, c.is_emerging_cult, c.is_tech_coin,
+             c.price_ref_1d, c.price_ref_7d, c.price_ref_30d, c.price_refs_at
       FROM curated_tokens c
       LEFT JOIN tokens t ON t.mint_address = c.mint_address
       WHERE t.conviction_1m IS NULL OR t.conviction_1m = 0 OR t.mint_address IS NULL
@@ -3407,6 +3419,40 @@ async function updateCuratedTokenATH(mintAddress, mcap) {
   return result.rows[0] || null;
 }
 
+/**
+ * Curated mints whose stored reference prices are missing or older than maxAgeMs,
+ * oldest first, so a capped run works through the list over successive runs.
+ */
+async function getCuratedMintsNeedingPriceRefs(limit, maxAgeMs) {
+  if (!pool) return [];
+  const result = await pool.query(`
+    SELECT mint_address FROM curated_tokens
+    WHERE price_refs_at IS NULL OR price_refs_at < NOW() - ($2::bigint * INTERVAL '1 millisecond')
+    ORDER BY price_refs_at ASC NULLS FIRST
+    LIMIT $1
+  `, [limit, Math.round(maxAgeMs)]);
+  return result.rows.map(r => r.mint_address);
+}
+
+/**
+ * Store a token's prices 1, 7 and 30 days ago (null where the pool is younger). With
+ * refs = null only the timestamp moves: the refresh failed, the old references stay, and
+ * the token goes to the back of the queue instead of being retried first every run.
+ */
+async function setCuratedPriceRefs(mintAddress, refs) {
+  if (!pool) return null;
+  if (refs === null) {
+    await pool.query('UPDATE curated_tokens SET price_refs_at = NOW() WHERE mint_address = $1', [mintAddress]);
+    return;
+  }
+  const { d1 = null, d7 = null, d30 = null } = refs || {};
+  await pool.query(`
+    UPDATE curated_tokens
+    SET price_ref_1d = $2, price_ref_7d = $3, price_ref_30d = $4, price_refs_at = NOW()
+    WHERE mint_address = $1
+  `, [mintAddress, d1, d7, d30]);
+}
+
 async function updateCuratedTokenMcapAtAdded(mintAddress, mcap) {
   if (!pool || mcap == null) return null;
   const result = await pool.query(`
@@ -3793,6 +3839,8 @@ module.exports = {
   updateCuratedTokenDexScreener,
   updateCuratedTokenATH,
   updateCuratedTokenMcapAtAdded,
+  getCuratedMintsNeedingPriceRefs,
+  setCuratedPriceRefs,
   setCuratedTokenMcapAtAdded,
   setCuratedTokenAth,
   setEmergingCult,
