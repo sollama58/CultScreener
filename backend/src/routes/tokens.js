@@ -7,7 +7,7 @@ const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey, canBypassCache } = require('../middleware/validation');
 const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
-const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('../constants');
+const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
 const priceChanges = require('../services/priceChanges');
@@ -51,7 +51,7 @@ const VALID_FILTERS = ['trending', 'new', 'gainers', 'losers', 'most_viewed', 't
 const VALID_SORTS = ['volume', 'price', 'priceChange24h', 'marketCap', 'views'];
 const VALID_ORDERS = ['asc', 'desc'];
 
-// BURN_WALLETS and LP_PROGRAMS imported from ../constants (shared with worker.js)
+// BURN_WALLETS, LP_AUTHORITIES and SYSTEM_PROGRAM_ID imported from ../constants (shared with worker.js)
 const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website'];
 const VALID_SUBMISSION_STATUSES = ['pending', 'approved', 'rejected', 'all'];
 const jobQueue = require('../services/jobQueue');
@@ -2191,7 +2191,7 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
           const walletAccounts = await solanaService.getMultipleAccounts(wallets);
           if (walletAccounts?.value) {
             walletAccounts.value.forEach((acct, wi) => {
-              if ((acct && LP_PROGRAMS.has(acct.owner)) || LP_AUTHORITIES.has(wallets[wi])) {
+              if ((acct && acct.owner && acct.owner !== SYSTEM_PROGRAM_ID) || LP_AUTHORITIES.has(wallets[wi])) {
                 const indices = walletToIndices.get(wallets[wi]);
                 if (indices) for (const idx of indices) lpIndices.add(idx);
               }
@@ -2313,7 +2313,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
   try {
     // If Helius isn't configured, hold times can't be computed — return immediately
     if (!solanaService.isHeliusConfigured()) {
-      return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: true });
+      return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: true });
     }
 
     // Get holder data (likely already cached from the main holders call).
@@ -2322,7 +2322,7 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
     const holdersCache = await cache.get(`holder-analytics:${mint}`);
     if (!holdersCache || !holdersCache.holders || holdersCache.holders.length === 0) {
       console.log(`[HoldTimes] holder-analytics:${mint} cache miss — returning computed: false to trigger re-poll`);
-      return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: false });
+      return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: false });
     }
 
     // Listed holders (skip LP and burn wallets). Hold times come from holder
@@ -2332,13 +2332,14 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       .map(h => h.address);
 
     if (wallets.length === 0) {
-      return res.json({ holdTimes: {}, tokenHoldTimes: {}, computed: true });
+      return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: true });
     }
 
-    const { holdTimes, computed } = await holderPipeline.getHoldTimes(mint, wallets);
+    const { holdTimes, floors, computed } = await holderPipeline.getHoldTimes(mint, wallets);
     // holdTimes and tokenHoldTimes are the same thing (time holding this token);
-    // both keys are kept for the frontend.
-    if (!res.headersSent) res.json({ holdTimes, tokenHoldTimes: holdTimes, computed });
+    // both keys are kept for the frontend. floors: wallets whose time is a lower
+    // bound (the history read stopped before the streak start).
+    if (!res.headersSent) res.json({ holdTimes, tokenHoldTimes: holdTimes, floors, computed });
   } catch (error) {
     console.error('[Tokens] Hold times error:', error.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch hold times' });

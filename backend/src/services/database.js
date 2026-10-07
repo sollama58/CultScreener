@@ -524,7 +524,9 @@ async function initializeDatabase() {
       -- Every current holder of a tracked mint and when its holding streak began.
       -- acquired_source: snapshot (first seen between two close snapshots), backfill
       -- (from transfer history), backfill_capped (history too long; acquired_at is a
-      -- lower bound on hold time), pending (not known yet), failed (backfill gave up).
+      -- lower bound on hold time), pending (not known yet), failed (backfill gave up;
+      -- retried after a day), left (account was empty when the backfill got to it;
+      -- a wallet seen holding again is dated like a newcomer).
       -- Rows for wallets that leave are deleted after a complete snapshot, so a wallet
       -- that comes back starts a new streak.
       CREATE TABLE IF NOT EXISTS holder_positions (
@@ -547,6 +549,13 @@ async function initializeDatabase() {
       );
       CREATE INDEX IF NOT EXISTS idx_holder_positions_mint_seen
         ON holder_positions(mint_address, last_seen_at);
+
+      -- When a later pre-check last confirmed this snapshot still exact (every account
+      -- unchanged). Newcomers at the next snapshot are dated from this, not taken_at.
+      ALTER TABLE holder_snapshots ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP WITH TIME ZONE;
+      -- Finding failed/left rows to retry at snapshot time
+      CREATE INDEX IF NOT EXISTS idx_holder_positions_mint_source
+        ON holder_positions(mint_address, acquired_source);
 
       -- How the stored conviction numbers were sampled (method, strata, snapshot id)
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_meta JSONB;

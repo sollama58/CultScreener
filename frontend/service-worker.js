@@ -49,7 +49,8 @@
 // styles.css v21, tokenTable.js v4, conviction.js v19.
 // v75: token age chip next to token names in the home tables and token page header -
 // styles.css v22, token.css v7, api.js v14, tokenTable.js v5, tokenDetail.js v31.
-const CACHE_VERSION = 'holdex-v75';
+// v76: diamond hands audit fixes (hold-time floors, whole percents, partial render gating) - tokenDetail.js v32.
+const CACHE_VERSION = 'holdex-v76';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;

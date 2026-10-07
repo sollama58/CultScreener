@@ -12,7 +12,6 @@
  * - View count batching
  * - Stats aggregation
  * - compute-holder-behavior: Holder behavior analysis (HB) for a token
- * - warm-conviction: Refresh conviction scores for top-viewed tokens (every 10 min)
  * - warm-curated-conviction: Refresh conviction scores for all curated tokens (every hour)
  *
  * Recurring schedules are listed in services/jobQueue.js (RECURRING_JOBS); this
@@ -28,7 +27,7 @@ const db = require('./services/database');
 const geckoService = require('./services/geckoTerminal');
 const solanaService = require('./services/solana');
 const { cache, TTL, keys } = require('./services/cache');
-const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES } = require('./constants');
+const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('./constants');
 
 // Allowed DEXes for similar-tokens anti-spoofing filter
 const SIMILAR_TOKEN_DEX_PREFIXES = ['raydium', 'pump', 'bonk'];
@@ -384,7 +383,6 @@ const jobProcessors = {
     }
 
     console.log(`[Worker] Classifying ${rawAccounts.length} holder accounts for ${mint}`);
-    // BURN_WALLETS and LP_PROGRAMS imported from ./constants at module level
 
     try {
       // Fetch mint account info + token authorities + Streamflow locks in parallel
@@ -430,13 +428,14 @@ const jobProcessors = {
         }
       }
 
-      // Check wallet on-chain owners to detect LP programs
+      // Check wallet on-chain owners: anything not owned by the System Program is a
+      // program-derived vault (AMM pool, locker, staking contract), not a person
       const wallets = [...walletToIndices.keys()];
       if (wallets.length > 0) {
         const walletAccounts = await solanaService.getMultipleAccounts(wallets);
         if (walletAccounts?.value) {
           walletAccounts.value.forEach((acct, wi) => {
-            if ((acct && LP_PROGRAMS.has(acct.owner)) || LP_AUTHORITIES.has(wallets[wi])) {
+            if ((acct && acct.owner && acct.owner !== SYSTEM_PROGRAM_ID) || LP_AUTHORITIES.has(wallets[wi])) {
               const indices = walletToIndices.get(wallets[wi]);
               if (indices) for (const idx of indices) lpIndices.add(idx);
             }
@@ -557,17 +556,6 @@ const jobProcessors = {
     return require('./services/holderPipeline').runBackfill(mint);
   },
 
-  /**
-   * Retired: per-wallet signature scans, replaced by snapshot-holders. Jobs queued by
-   * an older API process during a deploy are turned into a snapshot request.
-   */
-  'compute-holder-metrics': async (job) => {
-    const { mint } = job.data;
-    await cache.delete(`holder-metrics-pending:${mint}`).catch(() => {});
-    if (mint) await require('./services/holderPipeline').ensureSnapshot(mint);
-    return { redirected: true };
-  },
-
   // ==========================================
   // Holder Behavior Analysis
   // ==========================================
@@ -592,8 +580,9 @@ const jobProcessors = {
   /**
    * Daily safety net for holder count history. Points are written by holder
    * snapshots (every HOLDER_SNAPSHOT_REFRESH_HOURS for curated tokens); any curated
-   * token with no exact point in the last day gets a snapshot queued. No counting
-   * here, so every point in the history means the same thing.
+   * token with no point at all in the last day gets a snapshot queued. A capped
+   * token's points are never "complete", so they are not re-snapshotted for that
+   * alone. No counting here, so every point in the history means the same thing.
    */
   'record-holder-counts': async (job) => {
     const holderPipeline = require('./services/holderPipeline');
@@ -606,7 +595,7 @@ const jobProcessors = {
     let skipped  = 0;
     for (const mint of mints) {
       const p = latest[mint];
-      if (p && p.complete && Date.now() - p.takenAt < 24 * 3600000) { skipped++; continue; }
+      if (p && Date.now() - p.takenAt < 24 * 3600000) { skipped++; continue; }
       if (await holderPipeline.ensureSnapshot(mint).catch(() => false)) recorded++;
     }
 
@@ -761,45 +750,17 @@ const jobProcessors = {
   // ==========================================
 
   /**
-   * Trigger diamond-hands computation for top-viewed tokens that have stale/missing conviction.
-   * Runs every 10 minutes via BullMQ repeating job — replaces setInterval in app.js.
-   */
-  'warm-conviction': async (job) => {
-    const STALE_MS    = 6 * 3600000; // 6 hours
-    const MAX_PER_CYCLE = 3;
-
-    const topTokens = await db.getMostViewedTokens(30).catch(() => []);
-    if (!topTokens || topTokens.length === 0) return { triggered: 0 };
-
-    const allMints = topTokens.map(t => t.token_mint);
-    const holderPipeline = require('./services/holderPipeline');
-    const snapshotTimes = await holderPipeline.getFreshnessTimes(allMints).catch(() => ({}));
-
-    let triggered = 0;
-    for (const mint of allMints) {
-      if (triggered >= MAX_PER_CYCLE) break;
-      // /api/tokens/:mint/* only serves curated tokens; don't snapshot anything else
-      if (!(await db.isTokenAllowed(mint).catch(() => false))) continue;
-      const ts = snapshotTimes[mint];
-      if (ts && Date.now() - ts < STALE_MS) continue;
-      if (await holderPipeline.ensureSnapshot(mint)) triggered++;
-    }
-
-    if (triggered > 0) console.log(`[Worker] warm-conviction: triggered ${triggered} snapshots`);
-    return { triggered };
-  },
-
-  /**
    * Trigger diamond-hands computation for all curated tokens with stale/missing conviction.
    * Runs every hour via BullMQ repeating job — replaces setInterval in app.js.
    */
   'warm-curated-conviction': async (job) => {
     // Holder distributions move slowly, so curated tokens are re-snapshotted every
-    // HOLDER_SNAPSHOT_REFRESH_HOURS (default 4h; the job itself ticks hourly). Under
-    // 6h, new holders' hold times still come straight from consecutive snapshots.
-    // A snapshot whose cheap pre-check found nothing changed counts as fresh too.
+    // HOLDER_SNAPSHOT_REFRESH_HOURS (default 4h; the job itself ticks hourly), each
+    // on its own schedule (holderPipeline.isRefreshDue) so they don't all come due
+    // in the same tick. Under 6h, new holders' hold times still come straight from
+    // consecutive snapshots. A snapshot whose cheap pre-check found nothing changed
+    // counts as fresh too.
     const holderPipeline = require('./services/holderPipeline');
-    const STALE_MS = holderPipeline.CONFIG.refreshMs - 5 * 60 * 1000;
 
     const curatedTokens = await db.getCuratedTokens().catch(() => []);
     if (!curatedTokens || curatedTokens.length === 0) return { triggered: 0 };
@@ -813,8 +774,7 @@ const jobProcessors = {
     let triggered = 0;
     let refreshed = 0;
     for (const mint of allMints) {
-      const ts = snapshotTimes[mint];
-      if (ts && Date.now() - ts < STALE_MS) {
+      if (!holderPipeline.isRefreshDue(mint, snapshotTimes[mint])) {
         // Fresh snapshot: run the backfill pass anyway. It finishes any hold-time
         // backfill that stopped (failed job, Redis restart, a snapshot landing
         // mid-run) and, with nothing left to backfill, re-stores diamond hands so
@@ -882,7 +842,7 @@ function createWorker(queueName, redisConfig) {
     {
       connection: redisConfig,
       concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 2, // Limit concurrency — holder-metrics/behavior jobs are Helius-heavy
-      lockDuration: 300000, // 5 min lock — compute-holder-metrics can take 150-200s for 250 wallets
+      lockDuration: 300000, // 5 min lock (BullMQ renews it while a job runs; a backfill run is up to 4 min plus its slowest wallet)
       stalledInterval: 120000, // Check for stalled jobs every 2 min (must be < lockDuration)
       limiter: {
         max: parseInt(process.env.WORKER_LIMITER_MAX) || 3, // Max 3 jobs/sec — prevents multiple Helius-heavy jobs overlapping

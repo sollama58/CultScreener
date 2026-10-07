@@ -745,6 +745,7 @@ const tokenDetail = {
       apiCache.clearPattern(`tokens:diamond-hands:${this.mint}`);
       this._holdTimesData = null;
       this._tokenHoldTimesData = null;
+      this._holdTimeFloors = null;
       this._holdTimesLoaded = false;
       this._holdTimesAutoRetried = false;
       this._htLastComputedFalse = false;
@@ -1052,6 +1053,11 @@ const tokenDetail = {
         this._renderHoldersTable(holders, this._holdersExpanded ? holders.length : 10);
         // Re-apply any hold times that loaded while we were waiting for metrics
         this._applyHoldTimesToDOM();
+        // The first view of a token lists holders from RPC before any snapshot exists,
+        // and the hold-time poll gives up on them with nothing. Now that the snapshot's
+        // list is in, ask again.
+        const haveHoldTimes = this._tokenHoldTimesData && Object.keys(this._tokenHoldTimesData).length > 0;
+        if (this._holdTimesLoaded && !haveHoldTimes && !this._holdTimesTimer) this._loadHoldTimes(0);
       }
 
       if (typeof config !== 'undefined' && config.app?.debug) console.log('[MetricsPoll] Full metrics received after', attempt + 1, 'poll(s)');
@@ -1087,13 +1093,13 @@ const tokenDetail = {
           : usdVal >= 1e3 ? (usdVal / 1e3).toFixed(2) + 'K'
           : usdVal.toFixed(2))
         : '--';
-      const label = h.isLP ? ' <span class="holder-label lp-label" title="Liquidity Pool">💧LP</span>'
+      const label = h.isLP ? ' <span class="holder-label lp-label" title="Liquidity pool or program vault">💧LP</span>'
         : h.isBurnt ? ' <span class="holder-label burnt-label" title="Burn Wallet">🔥Burn</span>'
         : '';
       const rowClass = h.isLP || h.isBurnt ? ' class="holder-excluded"' : '';
       const tokenHoldStr = (h.isLP || h.isBurnt) ? '--'
         : (this._tokenHoldTimesData && this._tokenHoldTimesData[h.address])
-          ? this._formatHoldTime(this._tokenHoldTimesData[h.address])
+          ? this._formatWalletHoldTime(h.address, this._tokenHoldTimesData[h.address])
           : this._holdTimesLoaded ? '--'
           : `<span class="token-hold-pending" data-wallet="${addr}">...</span>`;
       return `<tr${rowClass}>
@@ -1119,6 +1125,13 @@ const tokenDetail = {
       else if (sec < 3600) el.textContent = `Updated ${Math.floor(sec / 60)}m ago`;
       else el.textContent = `Updated ${Math.floor(sec / 3600)}h ago`;
     }, 10000);
+  },
+
+  // A wallet's hold time, with a "+" when the backend could only establish a floor
+  // (its history read stopped before the streak start, so it has held at least this long)
+  _formatWalletHoldTime(wallet, ms) {
+    const s = this._formatHoldTime(ms);
+    return s !== '--' && this._holdTimeFloors && this._holdTimeFloors.has(wallet) ? s + '+' : s;
   },
 
   // Format hold time from milliseconds to human-readable string
@@ -1203,6 +1216,10 @@ const tokenDetail = {
       if (data.tokenHoldTimes && Object.keys(data.tokenHoldTimes).length > 0) {
         this._tokenHoldTimesData = Object.assign(this._tokenHoldTimesData || {}, data.tokenHoldTimes);
       }
+      if (Array.isArray(data.floors) && data.floors.length > 0) {
+        this._holdTimeFloors = this._holdTimeFloors || new Set();
+        data.floors.forEach(w => this._holdTimeFloors.add(w));
+      }
 
       // Fill in pending placeholders with any data we have so far
       this._applyHoldTimesToDOM();
@@ -1271,7 +1288,7 @@ const tokenDetail = {
       document.querySelectorAll('.hold-time-pending').forEach(el => {
         const wallet = el.getAttribute('data-wallet');
         if (wallet && this._holdTimesData[wallet]) {
-          el.textContent = this._formatHoldTime(this._holdTimesData[wallet]);
+          el.textContent = this._formatWalletHoldTime(wallet, this._holdTimesData[wallet]);
           el.classList.remove('hold-time-pending');
         }
       });
@@ -1280,7 +1297,7 @@ const tokenDetail = {
       document.querySelectorAll('.token-hold-pending').forEach(el => {
         const wallet = el.getAttribute('data-wallet');
         if (wallet && this._tokenHoldTimesData[wallet]) {
-          el.textContent = this._formatHoldTime(this._tokenHoldTimesData[wallet]);
+          el.textContent = this._formatWalletHoldTime(wallet, this._tokenHoldTimesData[wallet]);
           el.classList.remove('token-hold-pending');
         }
       });
@@ -1717,11 +1734,16 @@ const tokenDetail = {
     const sampleEl = document.getElementById('diamond-hands-sample');
     if (sampleEl) {
       if (data.computed) {
+        // resolved: wallets the distribution actually rests on (some of the sample
+        // could not be dated: left since the snapshot, or history unreadable)
+        const measured = typeof data.resolved === 'number' && data.resolved < data.sampleSize
+          ? `${data.resolved} of ${data.sampleSize} sampled`
+          : `Sample of ${data.sampleSize}`;
         sampleEl.textContent = data.holderCount
-          ? `Sample of ${data.sampleSize} across all ${data.holderCount.toLocaleString()} holders`
-          : `${data.analyzed} Analyzed of ${data.sampleSize} Holders`;
+          ? `${measured} across all ${data.holderCount.toLocaleString()} holders`
+          : `${measured} holders measured`;
         sampleEl.title = data.sampleMethod
-          ? 'Top 50 holders plus random samples of the rest, weighted to the whole holder base. Hold time counts from when the wallet last went from zero to holding.'
+          ? 'Top 50 holders plus random samples of the rest, weighted to the whole holder base. Percentages are rounded; a 250-wallet sample is accurate to within several points. Hold time counts from when the wallet last went from zero to holding in this wallet; selling out and buying back starts a new streak.'
           : '';
       } else {
         sampleEl.textContent = `${data.analyzed}/${data.totalCount || data.sampleSize} analyzed...`;
@@ -1770,10 +1792,12 @@ const tokenDetail = {
       if (AGE_GATED[key]) {
         const rowEl = document.getElementById(`dh-row-${key}`);
         if (rowEl) {
+          // Pool creation is the age we have; a migrated token's pool can be younger
+          // than the token, so holders past the mark overrule the age (as the home table does)
           const ageKnown = tokenAgeMs !== null;
           const oldEnough = ageKnown && tokenAgeMs >= AGE_GATED[key];
           const hasData = pct > 0;
-          rowEl.style.display = (oldEnough || (!ageKnown && hasData)) ? '' : 'none';
+          rowEl.style.display = (oldEnough || hasData) ? '' : 'none';
         }
       }
 
@@ -1786,7 +1810,8 @@ const tokenDetail = {
         else fillEl.className = 'diamond-bar-fill dh-low';
       }
       if (pctEl) {
-        pctEl.textContent = pct + '%';
+        // Whole percents: a 250-wallet sample does not support a decimal
+        pctEl.textContent = Math.round(pct) + '%';
         pctEl.classList.remove('dh-text-high', 'dh-text-mid', 'dh-text-low');
         if (pct >= 50) pctEl.classList.add('dh-text-high');
         else if (pct >= 20) pctEl.classList.add('dh-text-mid');

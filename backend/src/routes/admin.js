@@ -74,40 +74,21 @@ router.get('/stats', asyncHandler(async (req, res) => {
 router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res) => {
   const { cache } = require('../services/cache');
 
-  // Scan for wallet cache keys with -1 sentinel values (failed lookups)
-  // and delete them so the next conviction refresh re-attempts with the ATA fallback.
+  // Give wallets whose hold-time backfill gave up another try now (the snapshot
+  // write retries them on its own after a day) and drop the stored distributions
+  // so they are recomputed from the positions.
   let flushed = 0;
   let scanned = 0;
 
   try {
-    // Scan wallet-hold-time, wallet-token-hold, and wallet-age keys
-    const patterns = ['wallet-hold-time:*', 'wallet-token-hold:*', 'wallet-age:*'];
-
-    for (const pattern of patterns) {
-      const keys = await cache.scanKeys(pattern);
-      scanned += keys.length;
-
-      // Batch GET + DELETE: only delete sentinel (-1 or null) values
-      const vals = await Promise.all(keys.map(k => cache.get(k).catch(() => null)));
-      const toDelete = keys.filter((_, i) => vals[i] === -1 || vals[i] === null);
-      await Promise.all(toDelete.map(k => cache.delete(k).catch(() => {})));
-      flushed += toDelete.length;
-    }
-
-    // Also clear diamond-hands distribution caches so they recompute
     const dhKeys = await cache.scanKeys('diamond-hands:*');
+    scanned = dhKeys.length;
     await Promise.all(dhKeys.map(k => cache.delete(k).catch(() => {})));
     flushed += dhKeys.length;
 
-    // Clear holder-metrics-pending flags so recomputation isn't blocked
-    const pendingKeys = await cache.scanKeys('holder-metrics-pending:*');
-    await Promise.all(pendingKeys.map(k => cache.delete(k).catch(() => {})));
-    flushed += pendingKeys.length;
-
-    // Holder snapshots: give wallets whose hold-time backfill gave up another try
     flushed += await require('../services/holderStore').resetFailedBackfills().catch(() => 0);
 
-    console.log(`[Admin] Flushed ${flushed} failed wallet caches (scanned ${scanned} keys)`);
+    console.log(`[Admin] Reset failed backfills and cleared ${dhKeys.length} diamond hands caches`);
     res.json({ success: true, flushed, scanned });
   } catch (err) {
     console.error('[Admin] Flush failed wallet caches error:', err.message);
@@ -301,7 +282,6 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
       ...['24h', '7d', '30d', '90d', 'all'].map(r => `holder-count:${addr}:${r}`),
       `holder-analytics:${addr}`,
       `holder-classify-pending:${addr}`,
-      `holder-metrics-pending:${addr}`,
       `diamond-hands:${addr}`,
       `diamond-hands-wallets:${addr}`,
       `similar:${addr}`,

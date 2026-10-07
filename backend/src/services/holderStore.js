@@ -17,7 +17,7 @@ function pool() {
 /** Latest snapshot header for a mint, or null. */
 async function getLatestSnapshot(mint) {
   const { rows } = await pool().query(
-    `SELECT id, mint_address, taken_at, complete, pages, account_count, holder_count,
+    `SELECT id, mint_address, taken_at, verified_at, complete, pages, account_count, holder_count,
             decimals, supply, sample, sample_meta
        FROM holder_snapshots WHERE mint_address = $1
       ORDER BY taken_at DESC LIMIT 1`,
@@ -27,21 +27,26 @@ async function getLatestSnapshot(mint) {
 }
 
 /**
- * mint → latest taken_at (ms) for a batch of mints. Snapshots without a supply
- * (written before supply/decimals were required) don't count, so the schedulers
- * replace them on their next run.
+ * mint → when the latest snapshot was last known exact (ms): its taken_at, or a
+ * later verified_at. Snapshots without a supply (written before supply/decimals
+ * were required) don't count, so the schedulers replace them on their next run.
  */
 async function getLatestSnapshotTimes(mints) {
   if (!mints || mints.length === 0) return {};
   const { rows } = await pool().query(
-    `SELECT DISTINCT ON (mint_address) mint_address, taken_at, supply
+    `SELECT DISTINCT ON (mint_address) mint_address, GREATEST(taken_at, verified_at) AS fresh_at, supply
        FROM holder_snapshots WHERE mint_address = ANY($1)
       ORDER BY mint_address, taken_at DESC`,
     [mints]
   );
   const out = {};
-  for (const r of rows) if (r.supply != null) out[r.mint_address] = new Date(r.taken_at).getTime();
+  for (const r of rows) if (r.supply != null) out[r.mint_address] = new Date(r.fresh_at).getTime();
   return out;
+}
+
+/** A pre-check that read every account found the snapshot still exact at `at`. */
+async function markVerified(snapshotId, at) {
+  await pool().query('UPDATE holder_snapshots SET verified_at = $2 WHERE id = $1', [snapshotId, new Date(at)]);
 }
 
 /** Top ranked entries of a snapshot. */
@@ -61,8 +66,20 @@ async function getSnapshotEntries(snapshotId, limit = 100) {
  * existing wallets keep their streak. When the snapshot is complete, wallets
  * that weren't seen are deleted (they left).
  *
+ * Only rows whose balance or token account changed are rewritten: every holder
+ * used to get a new row version per snapshot (rank and last_seen_at changed for
+ * all of them), which on a 50k-holder token was 50k dead tuples every few hours.
+ * Departures are found against the current wallet list instead of last_seen_at.
+ *
+ * Wallets whose backfill found the account already empty ('left') and that are
+ * holding again are dated like newcomers; 'failed' rows older than a day get
+ * another go (up to FAILED_RETRY_MAX_ATTEMPTS attempts in total).
+ *
  * @returns {number} the snapshot id
  */
+const FAILED_RETRY_AFTER_HOURS = 24;
+const FAILED_RETRY_MAX_ATTEMPTS = 10;
+
 async function writeSnapshot({ mint, takenAt, complete, pages, accountCount, holders, decimals, supply,
   sample, sampleMeta, topN, newAcquisition }) {
   const client = await pool().connect();
@@ -89,8 +106,11 @@ async function writeSnapshot({ mint, takenAt, complete, pages, accountCount, hol
     }
 
     const acqAt = newAcquisition.acquiredAt != null ? new Date(newAcquisition.acquiredAt) : null;
+    await client.query('CREATE TEMP TABLE snapshot_wallets (wallet VARCHAR(44) PRIMARY KEY) ON COMMIT DROP');
     for (let i = 0; i < holders.length; i += UPSERT_CHUNK) {
       const chunk = holders.slice(i, i + UPSERT_CHUNK);
+      const wallets = chunk.map(h => h.wallet);
+      await client.query('INSERT INTO snapshot_wallets SELECT * FROM unnest($1::varchar[])', [wallets]);
       await client.query(
         `INSERT INTO holder_positions
            (mint_address, wallet, token_account, amount, rank, first_seen_at, last_seen_at, acquired_at, acquired_source)
@@ -99,17 +119,40 @@ async function writeSnapshot({ mint, takenAt, complete, pages, accountCount, hol
          ON CONFLICT (mint_address, wallet) DO UPDATE SET
            token_account = EXCLUDED.token_account,
            amount = EXCLUDED.amount,
-           rank = EXCLUDED.rank,
-           last_seen_at = EXCLUDED.last_seen_at`,
-        [mint, chunk.map(h => h.wallet), chunk.map(h => h.tokenAccount), chunk.map(h => h.amount.toString()),
+           last_seen_at = EXCLUDED.last_seen_at
+         WHERE holder_positions.amount IS DISTINCT FROM EXCLUDED.amount
+            OR holder_positions.token_account IS DISTINCT FROM EXCLUDED.token_account`,
+        [mint, wallets, chunk.map(h => h.tokenAccount), chunk.map(h => h.amount.toString()),
           chunk.map(h => h.rank), takenAtDate, acqAt, newAcquisition.source]
       );
     }
 
+    // Back after leaving: a new streak, dated by the same rule as any newcomer
+    await client.query(
+      `UPDATE holder_positions p SET
+         acquired_at = $2, acquired_source = $3, first_seen_at = $4, last_seen_at = $4,
+         backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL, backfill_pages = 0, backfill_attempts = 0
+       WHERE p.mint_address = $1 AND p.acquired_source = 'left'
+         AND EXISTS (SELECT 1 FROM snapshot_wallets s WHERE s.wallet = p.wallet)`,
+      [mint, acqAt, newAcquisition.source, takenAtDate]
+    );
+    // Gave up a while ago: try again
+    await client.query(
+      `UPDATE holder_positions p SET
+         acquired_source = 'pending',
+         backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL, backfill_pages = 0
+       WHERE p.mint_address = $1 AND p.acquired_source = 'failed'
+         AND p.backfill_attempts < $3
+         AND (p.backfill_updated_at IS NULL OR p.backfill_updated_at < $4::timestamptz - make_interval(hours => $2))
+         AND EXISTS (SELECT 1 FROM snapshot_wallets s WHERE s.wallet = p.wallet)`,
+      [mint, FAILED_RETRY_AFTER_HOURS, FAILED_RETRY_MAX_ATTEMPTS, takenAtDate]
+    );
+
     if (complete) {
       await client.query(
-        'DELETE FROM holder_positions WHERE mint_address = $1 AND last_seen_at < $2',
-        [mint, takenAtDate]
+        `DELETE FROM holder_positions p WHERE p.mint_address = $1
+            AND NOT EXISTS (SELECT 1 FROM snapshot_wallets s WHERE s.wallet = p.wallet)`,
+        [mint]
       );
     }
 
@@ -212,9 +255,11 @@ async function resetFailedBackfills() {
 }
 
 module.exports = {
+  FAILED_RETRY_AFTER_HOURS,
   resetFailedBackfills,
   getLatestSnapshot,
   getLatestSnapshotTimes,
+  markVerified,
   getSnapshotEntries,
   writeSnapshot,
   pruneSnapshots,
