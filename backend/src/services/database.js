@@ -560,14 +560,6 @@ async function initializeDatabase() {
       -- How the stored conviction numbers were sampled (method, strata, snapshot id)
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_meta JSONB;
 
-      -- Logos that no browser can load: GeckoTerminal's "missing.png" placeholder (stored as a
-      -- relative path), ipfs:// and other non-http values. Every logo write COALESCEs with the
-      -- stored value, so these blocked real logos forever; cleared here so the curated price
-      -- refresh can fill them (see normalizeLogoUri in services/tokenImage.js). Idempotent.
-      UPDATE tokens SET logo_uri = NULL
-        WHERE logo_uri IS NOT NULL
-          AND (logo_uri !~* '^https?://' OR logo_uri ~* '/missing(_[a-z]+)?[.]png$');
-
       -- Holder count history: one point per holder snapshot (services/holderCounts.js).
       -- holders = unique wallets with a balance, burn/LP excluded; dust = those under
       -- HOLDER_DUST_USD; legacy_count = token accounts with a balance (the definition
@@ -583,31 +575,6 @@ async function initializeDatabase() {
         PRIMARY KEY (mint_address, taken_at)
       );
 
-      -- Carry over what the older tables already know. Both inserts skip rows that
-      -- exist, so re-running on every boot is a cheap no-op. The old daily table only
-      -- has token-account counts; snapshot headers have the wallet count (LP wallets
-      -- taken out; burn wallets, at most a few, can't be told apart after the fact).
-      INSERT INTO holder_count_points (mint_address, taken_at, legacy_count, complete, source)
-        SELECT mint_address, (recorded_date::timestamp AT TIME ZONE 'UTC'), holder_count, TRUE, 'daily'
-          FROM holder_history WHERE holder_count > 0
-        ON CONFLICT (mint_address, taken_at) DO NOTHING;
-      INSERT INTO holder_count_points (mint_address, taken_at, holders, legacy_count, complete, source)
-        SELECT mint_address, taken_at,
-               GREATEST(holder_count - COALESCE(jsonb_array_length(
-                 CASE WHEN jsonb_typeof(sample_meta->'lpWallets') = 'array' THEN sample_meta->'lpWallets' END), 0), 0),
-               account_count, complete, 'snapshot'
-          FROM holder_snapshots WHERE supply IS NOT NULL
-        ON CONFLICT (mint_address, taken_at) DO NOTHING;
-
-      -- Hold-time backfills that gave up before 2026-10-07 mostly failed on the public-RPC
-      -- failover (removed then), which left diamond hands "Unavailable". Put them back in the
-      -- queue once. Only rows last touched before the cutoff match, so this is a no-op
-      -- after the first boot that runs it.
-      UPDATE holder_positions SET acquired_source = 'pending', backfill_attempts = 0,
-             backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL,
-             backfill_pages = 0, backfill_updated_at = NOW()
-        WHERE acquired_source = 'failed' AND backfill_updated_at < '2026-10-07T00:00:00Z';
-
       -- Generic key-value store for admin-configurable settings
       CREATE TABLE IF NOT EXISTS app_settings (
         key VARCHAR(100) PRIMARY KEY,
@@ -620,6 +587,10 @@ async function initializeDatabase() {
     isConnected = true;
     connectionAttempts = 0;
     console.log('Database initialized successfully');
+
+    // One-off data fixes run after COMMIT, outside the DDL transaction, so their
+    // scans never hold the schema locks or count against the DDL block's timeout.
+    await runDataMigrations(client);
     return true;
 
   } catch (error) {
@@ -642,6 +613,78 @@ async function initializeDatabase() {
     if (client) {
       client.release();
     }
+  }
+}
+
+// One-off data statements, versioned by app_settings.schema_data_version so each
+// runs once per database instead of on every boot of every process. Each step
+// commits on its own; a failure is logged and retried on the next boot.
+const DATA_MIGRATIONS = [
+  {
+    version: 1,
+    name: 'clear unloadable logos, import holder count history, re-queue failed backfills',
+    sql: `
+      -- Logos that no browser can load: GeckoTerminal's "missing.png" placeholder (stored as a
+      -- relative path), ipfs:// and other non-http values. Every logo write COALESCEs with the
+      -- stored value, so these blocked real logos forever; cleared here so the curated price
+      -- refresh can fill them (see normalizeLogoUri in services/tokenImage.js). Idempotent.
+      UPDATE tokens SET logo_uri = NULL
+        WHERE logo_uri IS NOT NULL
+          AND (logo_uri !~* '^https?://' OR logo_uri ~* '/missing(_[a-z]+)?[.]png$');
+
+      -- Holder count history: carry over what the older tables already know. Both inserts
+      -- skip rows that exist. The old daily table only has token-account counts; snapshot
+      -- headers have the wallet count (LP wallets taken out; burn wallets, at most a few,
+      -- can't be told apart after the fact).
+      INSERT INTO holder_count_points (mint_address, taken_at, legacy_count, complete, source)
+        SELECT mint_address, (recorded_date::timestamp AT TIME ZONE 'UTC'), holder_count, TRUE, 'daily'
+          FROM holder_history WHERE holder_count > 0
+        ON CONFLICT (mint_address, taken_at) DO NOTHING;
+      INSERT INTO holder_count_points (mint_address, taken_at, holders, legacy_count, complete, source)
+        SELECT mint_address, taken_at,
+               GREATEST(holder_count - COALESCE(jsonb_array_length(
+                 CASE WHEN jsonb_typeof(sample_meta->'lpWallets') = 'array' THEN sample_meta->'lpWallets' END), 0), 0),
+               account_count, complete, 'snapshot'
+          FROM holder_snapshots WHERE supply IS NOT NULL
+        ON CONFLICT (mint_address, taken_at) DO NOTHING;
+
+      -- Hold-time backfills that gave up before 2026-10-07 mostly failed on the public-RPC
+      -- failover (removed then), which left diamond hands "Unavailable". Put them back in the
+      -- queue once. Only rows last touched before the cutoff match.
+      UPDATE holder_positions SET acquired_source = 'pending', backfill_attempts = 0,
+             backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL,
+             backfill_pages = 0, backfill_updated_at = NOW()
+        WHERE acquired_source = 'failed' AND backfill_updated_at < '2026-10-07T00:00:00Z';
+    `,
+  },
+];
+
+async function runDataMigrations(client) {
+  try {
+    const res = await client.query(
+      "SELECT value FROM app_settings WHERE key = 'schema_data_version'"
+    );
+    let current = parseInt(res.rows[0]?.value, 10) || 0;
+    for (const m of DATA_MIGRATIONS) {
+      if (m.version <= current) continue;
+      await client.query('BEGIN');
+      try {
+        await client.query(m.sql);
+        await client.query(
+          `INSERT INTO app_settings(key, value, updated_at) VALUES ('schema_data_version', $1, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [String(m.version)]
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* ignore rollback errors */ }
+        throw err;
+      }
+      current = m.version;
+      console.log(`[Database] Data migration ${m.version} applied: ${m.name}`);
+    }
+  } catch (err) {
+    console.error('[Database] Data migration failed (will retry on next boot):', err.message);
   }
 }
 
