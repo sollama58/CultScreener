@@ -632,10 +632,12 @@ const api = {
       const query = wallet ? `?wallet=${wallet}` : '';
       return api.request(`/api/sentiment/${mint}${query}`);
     },
-    async cast(mint, sentimentType, wallet) {
+    // auth = { signature, signatureTimestamp } over
+    // `HolDEX Sentiment: <sentiment> on <mint> for <wallet> at <ts>`
+    async cast(mint, sentimentType, wallet, auth = {}) {
       return api.request(`/api/sentiment/${mint}`, {
         method: 'POST',
-        body: JSON.stringify({ wallet, sentimentType })
+        body: JSON.stringify({ voterWallet: wallet, sentiment: sentimentType, ...auth })
       });
     }
   },

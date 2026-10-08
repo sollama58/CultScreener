@@ -211,7 +211,15 @@ const sentiment = {
     this.updateUI();
 
     try {
-      const result = await api.sentiment.cast(this.currentMint, sentimentType, wallet.address);
+      // The server only accepts votes signed by the voting wallet
+      const signatureTimestamp = Date.now();
+      const signed = await wallet.signMessage(
+        `HolDEX Sentiment: ${sentimentType} on ${this.currentMint} for ${wallet.address} at ${signatureTimestamp}`
+      );
+      const result = await api.sentiment.cast(this.currentMint, sentimentType, wallet.address, {
+        signature: signed.signature,
+        signatureTimestamp
+      });
       // Confirm with server values
       this.tally = result.tally || this.tally;
       this.userVote = result.action === 'removed' ? null : sentimentType;
