@@ -21,6 +21,13 @@ const JUPITER_BASE_URL = 'https://api.jup.ag';
 const JUPITER_TOKEN_API = `${JUPITER_BASE_URL}/tokens/v2`;
 const JUPITER_PRICE_API = `${JUPITER_BASE_URL}/price/v3`;
 
+// Per-call progress logs (entry, counts, samples) only when DEBUG_API_LOGS=1; warnings
+// and errors are always logged.
+const DEBUG_API_LOGS = process.env.DEBUG_API_LOGS === '1';
+function debugLog(...args) {
+  if (DEBUG_API_LOGS) console.log(...args);
+}
+
 // Get API key from environment
 function getApiKey() {
   return process.env.JUPITER_API_KEY || '';
@@ -165,7 +172,7 @@ const _cacheCleanupTimer = setInterval(() => {
  * Uses Jupiter V2 search endpoint
  */
 async function searchTokens(query, limit = 50) {
-  console.log(`[Jupiter] searchTokens: query="${query}" limit=${limit}`);
+  debugLog(`[Jupiter] searchTokens: query="${query}" limit=${limit}`);
 
   try {
     // V2 search endpoint - searches by symbol, name, or mint
@@ -177,7 +184,7 @@ async function searchTokens(query, limit = 50) {
     );
 
     const tokens = response.data || [];
-    console.log(`[Jupiter] Search returned ${tokens.length} tokens`);
+    debugLog(`[Jupiter] Search returned ${tokens.length} tokens`);
 
     if (tokens.length === 0) {
       return [];
@@ -321,7 +328,7 @@ async function getVerifiedTokens() {
 async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, offset = 0, interval = '24h' }) {
 
 
-  console.log(`[Jupiter] Fetching trending tokens: interval=${interval}, limit=${limit}, offset=${offset}`);
+  debugLog(`[Jupiter] Fetching trending tokens: interval=${interval}, limit=${limit}, offset=${offset}`);
 
   try {
     // V2 category endpoint uses URL path: /tokens/v2/toptrending/24h
@@ -332,32 +339,32 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
     );
 
     let tokens = response.data || [];
-    console.log(`[Jupiter] Trending endpoint returned ${tokens.length} tokens`);
+    debugLog(`[Jupiter] Trending endpoint returned ${tokens.length} tokens`);
 
     // If no trending data, fall back to top traded
     if (tokens.length === 0) {
-      console.log('[Jupiter] No trending data, trying toptraded endpoint...');
+      debugLog('[Jupiter] No trending data, trying toptraded endpoint...');
       const tradedResponse = await jupiterRequest(() =>
         client.get(`/tokens/v2/toptraded/${interval}`, {
           params: { limit: Math.min(limit + offset, 100) }
         })
       );
       tokens = tradedResponse.data || [];
-      console.log(`[Jupiter] Toptraded endpoint returned ${tokens.length} tokens`);
+      debugLog(`[Jupiter] Toptraded endpoint returned ${tokens.length} tokens`);
     }
 
     if (tokens.length === 0) {
-      console.log('[Jupiter] No tokens from trending/traded endpoints, falling back to verified');
+      debugLog('[Jupiter] No tokens from trending/traded endpoints, falling back to verified');
       const verified = await getVerifiedTokens();
       tokens = verified.slice(0, limit);
     }
 
     // Get prices for the tokens
     const tokenAddresses = tokens.slice(0, 50).map(t => t.address || t.mint).filter(Boolean);
-    console.log(`[Jupiter] Fetching prices for ${tokenAddresses.length} tokens`);
+    debugLog(`[Jupiter] Fetching prices for ${tokenAddresses.length} tokens`);
 
     const prices = await getTokenPrices(tokenAddresses);
-    console.log(`[Jupiter] Got price data for ${Object.keys(prices).length} tokens`);
+    debugLog(`[Jupiter] Got price data for ${Object.keys(prices).length} tokens`);
 
     // Combine token info with prices - include all price data fields
     const withPrices = tokens.map(token => {
@@ -365,7 +372,7 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
       const priceData = prices[address] || {};
 
       // Debug: log first token's data
-      if (tokens.indexOf(token) === 0) {
+      if (DEBUG_API_LOGS && tokens.indexOf(token) === 0) {
         console.log('[Jupiter] Sample token data:', JSON.stringify({ token, priceData }, null, 2));
       }
 
@@ -387,7 +394,7 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
     });
 
     const result = withPrices.slice(offset, offset + limit);
-    console.log(`[Jupiter] Returning ${result.length} tokens`);
+    debugLog(`[Jupiter] Returning ${result.length} tokens`);
     return result;
   } catch (error) {
     console.error('[Jupiter] Error fetching trending tokens:', error.message);
@@ -398,10 +405,10 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
 
     // Fallback to verified tokens if trending fails
     try {
-      console.log('[Jupiter] Trying fallback to verified tokens...');
+      debugLog('[Jupiter] Trying fallback to verified tokens...');
       const verified = await getVerifiedTokens();
       const formatted = verified.slice(0, limit).map(formatToken);
-      console.log(`[Jupiter] Fallback returned ${formatted.length} verified tokens`);
+      debugLog(`[Jupiter] Fallback returned ${formatted.length} verified tokens`);
       return formatted;
     } catch (fallbackError) {
       console.error('[Jupiter] Fallback also failed:', fallbackError.message);
@@ -416,14 +423,14 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
 async function getNewTokens(limit = 50) {
 
 
-  console.log(`[Jupiter] getNewTokens: limit=${limit}`);
+  debugLog(`[Jupiter] getNewTokens: limit=${limit}`);
 
   try {
     const response = await jupiterRequest(() =>
       client.get(`/tokens/v2/recent`)
     );
     const tokens = response.data || [];
-    console.log(`[Jupiter] New tokens returned ${tokens.length} tokens`);
+    debugLog(`[Jupiter] New tokens returned ${tokens.length} tokens`);
 
     if (tokens.length === 0) {
       return [];
@@ -507,7 +514,7 @@ async function getTokenPrice(mintAddress) {
  */
 async function getTokenPrices(mintAddresses) {
   if (!mintAddresses || mintAddresses.length === 0) {
-    console.log('[Jupiter] getTokenPrices called with empty addresses');
+    debugLog('[Jupiter] getTokenPrices called with empty addresses');
     return {};
   }
 
@@ -516,7 +523,7 @@ async function getTokenPrices(mintAddresses) {
   try {
     // Jupiter allows comma-separated mint addresses (max 50)
     const ids = mintAddresses.slice(0, 50).join(',');
-    console.log(`[Jupiter] Fetching prices from /price/v3 for ${mintAddresses.length} tokens`);
+    debugLog(`[Jupiter] Fetching prices from /price/v3 for ${mintAddresses.length} tokens`);
 
     const response = await jupiterRequest(() =>
       client.get(`/price/v3`, {
@@ -526,10 +533,10 @@ async function getTokenPrices(mintAddresses) {
     );
 
     const data = response.data?.data || {};
-    console.log(`[Jupiter] Price API V3 response keys:`, Object.keys(response.data || {}));
+    debugLog(`[Jupiter] Price API V3 response keys:`, Object.keys(response.data || {}));
 
     // Log first price entry for debugging
-    const firstKey = Object.keys(data)[0];
+    const firstKey = DEBUG_API_LOGS && Object.keys(data)[0];
     if (firstKey) {
       console.log(`[Jupiter] Sample price data for ${firstKey}:`, JSON.stringify(data[firstKey], null, 2));
     }
@@ -572,7 +579,7 @@ async function getTokenHolderCount(mintAddress) {
 
 
 
-  console.log(`[Jupiter] Getting holder count for ${mintAddress}`);
+  debugLog(`[Jupiter] Getting holder count for ${mintAddress}`);
 
   try {
     // Search for specific mint address - response includes holderCount
@@ -591,14 +598,14 @@ async function getTokenHolderCount(mintAddress) {
 
     if (token) {
       const holderCount = token.holderCount;
-      console.log(`[Jupiter] Holder count for ${mintAddress}: ${holderCount}`);
+      debugLog(`[Jupiter] Holder count for ${mintAddress}: ${holderCount}`);
 
       if (typeof holderCount === 'number' && holderCount >= 0) {
         return holderCount;
       }
     }
 
-    console.log(`[Jupiter] No holder count found for ${mintAddress}`);
+    debugLog(`[Jupiter] No holder count found for ${mintAddress}`);
     return null;
   } catch (error) {
     console.error('[Jupiter] getTokenHolderCount error:', error.message);

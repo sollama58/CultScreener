@@ -17,6 +17,13 @@ const GECKO_API = COINGECKO_API_KEY
   : 'https://api.geckoterminal.com/api/v2';
 const NETWORK = 'solana';
 
+// Per-call progress logs (entry, counts, samples) only when DEBUG_API_LOGS=1; warnings
+// and errors are always logged.
+const DEBUG_API_LOGS = process.env.DEBUG_API_LOGS === '1';
+function debugLog(...args) {
+  if (DEBUG_API_LOGS) console.log(...args);
+}
+
 /** Ensure no token leaves with null name/symbol — use truncated address as fallback */
 function ensureTokenMetadata(tokens) {
   for (const t of tokens) {
@@ -234,13 +241,13 @@ function getHeaders() {
  * Caches null responses for 1 minute to prevent repeated failed lookups
  */
 async function getTokenInfo(mintAddress) {
-  console.log(`[GeckoTerminal] getTokenInfo: ${mintAddress}`);
+  debugLog(`[GeckoTerminal] getTokenInfo: ${mintAddress}`);
 
   // Check error cache first
   const errorCacheKey = `token:${mintAddress}`;
   const cachedError = errorCache.get(errorCacheKey);
   if (cachedError && Date.now() < cachedError.expiry) {
-    console.log(`[GeckoTerminal] Returning cached null for ${mintAddress} (error cached)`);
+    debugLog(`[GeckoTerminal] Returning cached null for ${mintAddress} (error cached)`);
     return null;
   }
 
@@ -251,7 +258,7 @@ async function getTokenInfo(mintAddress) {
 
     const token = response.data.data;
     if (!token) {
-      console.log('[GeckoTerminal] No token data returned');
+      debugLog('[GeckoTerminal] No token data returned');
       // Cache the null response
       errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
       return null;
@@ -298,7 +305,7 @@ async function getMultiTokenInfo(addresses) {
     return {};
   }
 
-  console.log(`[GeckoTerminal] getMultiTokenInfo: fetching ${addresses.length} tokens`);
+  debugLog(`[GeckoTerminal] getMultiTokenInfo: fetching ${addresses.length} tokens`);
 
   // GeckoTerminal accepts comma-separated addresses (max ~30 per request)
   const addressList = addresses.slice(0, 30).join(',');
@@ -367,7 +374,7 @@ async function getMultiTokenInfo(addresses) {
       );
       const result = parseResponse(response.data);
       const withChange = Object.values(result).filter(r => r.priceChange24h != null).length;
-      console.log(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens, ${withChange} with price change`);
+      debugLog(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens, ${withChange} with price change`);
       return result;
     } catch (includeErr) {
       // Permanent fallback: stop using include=top_pools for this session
@@ -383,7 +390,7 @@ async function getMultiTokenInfo(addresses) {
       'getMultiTokenInfo'
     );
     const result = parseResponse(response.data);
-    console.log(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens`);
+    debugLog(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens`);
     return result;
   } catch (error) {
     console.error('[GeckoTerminal] getMultiTokenInfo error:', error.message);
@@ -402,7 +409,7 @@ async function getMultiTokenInfo(addresses) {
 async function getMultiPoolInfo(poolAddresses) {
   if (!poolAddresses || poolAddresses.length === 0) return {};
 
-  console.log(`[GeckoTerminal] getMultiPoolInfo: fetching ${poolAddresses.length} pools`);
+  debugLog(`[GeckoTerminal] getMultiPoolInfo: fetching ${poolAddresses.length} pools`);
 
   try {
     const addressList = poolAddresses.slice(0, 30).join(',');
@@ -437,7 +444,7 @@ async function getMultiPoolInfo(poolAddresses) {
       };
     }
 
-    console.log(`[GeckoTerminal] multi pool response: ${Object.keys(result).length} pools`);
+    debugLog(`[GeckoTerminal] multi pool response: ${Object.keys(result).length} pools`);
     return result;
   } catch (error) {
     console.error('[GeckoTerminal] getMultiPoolInfo error:', error.message);
@@ -477,7 +484,7 @@ async function getTokenOverview(mintAddress) {
 
     if (pools.length === 0) {
       // No pools found - try token endpoint as fallback
-      console.log(`[GeckoTerminal] No pools found for ${mintAddress}, trying token endpoint`);
+      debugLog(`[GeckoTerminal] No pools found for ${mintAddress}, trying token endpoint`);
       const tokenInfo = await getTokenInfo(mintAddress);
       if (!tokenInfo) {
         // Cache the null response
@@ -491,7 +498,7 @@ async function getTokenOverview(mintAddress) {
     // the token is the quote (e.g. ZEC / TOKEN), whose headline fields describe ZEC.
     const picked = pickGeckoPool(pools, mintAddress);
     if (!picked) {
-      console.log(`[GeckoTerminal] No pool on page 1 names ${mintAddress.slice(0, 8)}..., trying token endpoint`);
+      debugLog(`[GeckoTerminal] No pool on page 1 names ${mintAddress.slice(0, 8)}..., trying token endpoint`);
       return await getTokenInfo(mintAddress);
     }
     const view = geckoPoolView(picked.pool, picked.side);
@@ -577,7 +584,7 @@ async function getTokenOverview(mintAddress) {
  * Makes only 1 GeckoTerminal call instead of 2
  */
 async function getMarketData(mintAddress) {
-  console.log(`[GeckoTerminal] getMarketData: ${mintAddress}`);
+  debugLog(`[GeckoTerminal] getMarketData: ${mintAddress}`);
 
   try {
     // Only fetch single-token info (price change comes from getTokenInfo's pool lookup)
@@ -611,7 +618,7 @@ async function getMarketData(mintAddress) {
 async function getTrendingTokens(options = {}) {
   const { limit = 20, skipEnrichment = false, page = 1 } = options;
 
-  console.log(`[GeckoTerminal] getTrendingTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
+  debugLog(`[GeckoTerminal] getTrendingTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
 
   try {
     const response = await geckoRequest(() =>
@@ -622,7 +629,7 @@ async function getTrendingTokens(options = {}) {
     );
 
     const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] Trending pools returned: ${pools.length}`);
+    debugLog(`[GeckoTerminal] Trending pools returned: ${pools.length}`);
 
     if (pools.length === 0) {
       return [];
@@ -681,10 +688,10 @@ async function getTrendingTokens(options = {}) {
       }
     }
 
-    console.log(`[GeckoTerminal] Returning ${tokens.length} trending tokens`);
+    debugLog(`[GeckoTerminal] Returning ${tokens.length} trending tokens`);
 
     // Log sample token
-    if (tokens.length > 0) {
+    if (DEBUG_API_LOGS && tokens.length > 0) {
       console.log('[GeckoTerminal] Sample trending token:', JSON.stringify(tokens[0], null, 2));
     }
 
@@ -704,7 +711,7 @@ async function getTrendingTokens(options = {}) {
  * Optimized: Set skipEnrichment=true to skip GeckoTerminal enrichment (use Helius batch instead)
  */
 async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
-  console.log(`[GeckoTerminal] getNewTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
+  debugLog(`[GeckoTerminal] getNewTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
 
   try {
     const response = await geckoRequest(() =>
@@ -715,7 +722,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
     );
 
     const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] New pools returned: ${pools.length}`);
+    debugLog(`[GeckoTerminal] New pools returned: ${pools.length}`);
 
     if (pools.length === 0) {
       return [];
@@ -772,7 +779,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
       }
     }
 
-    console.log(`[GeckoTerminal] Returning ${tokens.length} new tokens`);
+    debugLog(`[GeckoTerminal] Returning ${tokens.length} new tokens`);
     return ensureTokenMetadata(tokens);
   } catch (error) {
     console.error('[GeckoTerminal] getNewTokens error:', error.message);
@@ -785,7 +792,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
  * Endpoint: /search/pools?query={query}&network={network}
  */
 async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
-  console.log(`[GeckoTerminal] searchTokens: query="${query}", limit=${limit}, dexFilter=${allowedDexPrefixes ? allowedDexPrefixes.join(',') : 'none'}`);
+  debugLog(`[GeckoTerminal] searchTokens: query="${query}", limit=${limit}, dexFilter=${allowedDexPrefixes ? allowedDexPrefixes.join(',') : 'none'}`);
 
   try {
     const response = await geckoRequest(() =>
@@ -800,7 +807,7 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
     );
 
     const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] Search returned ${pools.length} pools`);
+    debugLog(`[GeckoTerminal] Search returned ${pools.length} pools`);
 
     if (pools.length === 0) {
       return [];
@@ -921,7 +928,7 @@ async function getOHLCV(mintAddress, options = {}) {
   const { interval = '1h' } = options;
   const limit = Math.min(Math.max(1, parseInt(options.limit) || 100), OHLCV_MAX_LIMIT);
 
-  console.log(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}`);
+  debugLog(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}`);
 
   try {
     // Check pool address cache first
@@ -943,7 +950,7 @@ async function getOHLCV(mintAddress, options = {}) {
 
       const pools = poolsResponse.data.data || [];
       if (pools.length === 0) {
-        console.log('[GeckoTerminal] No pools found for token');
+        debugLog('[GeckoTerminal] No pools found for token');
         return { mintAddress, interval, data: [] };
       }
 
@@ -1012,7 +1019,7 @@ async function getOHLCV(mintAddress, options = {}) {
 async function getPriceHistory(mintAddress, options = {}) {
   const { interval = '1h' } = options;
 
-  console.log(`[GeckoTerminal] getPriceHistory: ${mintAddress}, interval=${interval}`);
+  debugLog(`[GeckoTerminal] getPriceHistory: ${mintAddress}, interval=${interval}`);
 
   try {
     const ohlcv = await getOHLCV(mintAddress, { interval });
@@ -1058,7 +1065,7 @@ async function getTokenPools(mintAddress, options = {}) {
     return [];
   }
 
-  console.log(`[GeckoTerminal] getTokenPools: ${mintAddress}, limit=${limit}`);
+  debugLog(`[GeckoTerminal] getTokenPools: ${mintAddress}, limit=${limit}`);
 
   try {
     const response = await geckoRequest(() =>
@@ -1069,7 +1076,7 @@ async function getTokenPools(mintAddress, options = {}) {
     );
 
     const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] Found ${pools.length} pools for token`);
+    debugLog(`[GeckoTerminal] Found ${pools.length} pools for token`);
 
     // Deepest pools first, each priced from the token's own side of the pair
     const ownPools = pools
