@@ -165,7 +165,7 @@ const apiKeysPage = {
   // ── Key operations ────────────────────────────────────────────────────────
 
   async generateKey() {
-    if (!this.currentWallet) { api.toast.error('Wallet not connected'); return; }
+    if (!this.currentWallet) { toast.error('Wallet not connected'); return; }
 
     const btn = document.getElementById('generate-key-btn');
     this._setLoading(btn, true, 'Signing...');
@@ -193,10 +193,18 @@ const apiKeysPage = {
         this._prefillTesterKey(response.key);
         this.hideNoKey();
         this.showKeyDisplay();
-        api.toast.success('API key generated!');
+        toast.success('API key generated!');
       }
     } catch (err) {
-      api.toast.error(err.message || 'Failed to generate API key');
+      if (err.status === 409 && err.code === 'KEY_CREATE_FAILED') {
+        // The wallet already has a key on the server (e.g. made in another
+        // browser). Show the existing-key state so Rotate/Revoke are reachable.
+        this.saveKeyMeta({ prefix: null, created_at: null, is_active: true, request_count: null, last_used_at: null, unknown: true });
+        this.showExistingKey(this.keyMeta);
+        toast.info('This wallet already has an API key. Rotate it to get a new key, or revoke it.');
+      } else {
+        toast.error(err.message || 'Failed to generate API key');
+      }
     } finally {
       this._setLoading(btn, false, 'Generate API Key');
     }
@@ -232,10 +240,15 @@ const apiKeysPage = {
         this._prefillTesterKey(response.key);
         this.hideExistingKey();
         this.showKeyDisplay();
-        api.toast.success('API key rotated!');
+        toast.success('API key rotated!');
       }
     } catch (err) {
-      api.toast.error(err.message || 'Failed to rotate key');
+      if (err.status === 404 && err.code === 'NOT_FOUND') {
+        // The cached key no longer exists on the server (revoked elsewhere).
+        this._showKeyGone();
+        return;
+      }
+      toast.error(err.message || 'Failed to rotate key');
     } finally {
       this._setLoading(btn, false, 'Rotate Key');
     }
@@ -263,16 +276,31 @@ const apiKeysPage = {
         this._prefillTesterKey('');
         this.hideExistingKey();
         this.showNoKey();
-        api.toast.success('API key revoked');
+        toast.success('API key revoked');
       }
     } catch (err) {
-      api.toast.error(err.message || 'Failed to revoke key');
+      if (err.status === 404 && err.code === 'NOT_FOUND') {
+        // The cached key no longer exists on the server (revoked elsewhere).
+        this._showKeyGone();
+        return;
+      }
+      toast.error(err.message || 'Failed to revoke key');
     } finally {
       this._setLoading(btn, false, 'Revoke Key');
     }
   },
 
   // ── UI state helpers ──────────────────────────────────────────────────────
+
+  _showKeyGone() {
+    this.currentKey = null;
+    sessionStorage.removeItem('cultApiKey');
+    this.clearKeyMeta();
+    this._prefillTesterKey('');
+    this.hideExistingKey();
+    this.showNoKey();
+    toast.info('This wallet has no API key on the server. Generate a new one.');
+  },
 
   showExistingKey(meta) {
     document.getElementById('existing-key').style.display = 'block';
@@ -286,8 +314,8 @@ const apiKeysPage = {
 
     set('key-prefix', meta.prefix || '-');
     set('key-created', meta.created_at ? new Date(meta.created_at).toLocaleDateString() : '-');
-    set('key-last-used', meta.last_used_at ? new Date(meta.last_used_at).toLocaleString() : 'Never');
-    set('key-requests', typeof meta.request_count === 'number' ? meta.request_count.toLocaleString() : '0');
+    set('key-last-used', meta.last_used_at ? new Date(meta.last_used_at).toLocaleString() : (meta.unknown ? '-' : 'Never'));
+    set('key-requests', typeof meta.request_count === 'number' ? meta.request_count.toLocaleString() : (meta.unknown ? '-' : '0'));
 
     const statusEl = document.getElementById('key-status');
     if (statusEl) {
@@ -336,7 +364,7 @@ const apiKeysPage = {
         setTimeout(() => { btn.textContent = original; }, 2000);
       }
     }).catch(() => {
-      api.toast.error('Copy failed — select the key text and copy manually');
+      toast.error('Copy failed — select the key text and copy manually');
     });
   },
 
@@ -355,7 +383,7 @@ const apiKeysPage = {
     const input = document.getElementById('tester-api-key');
     const key = (input?.value || '').trim() || this.currentKey;
     if (!key) {
-      api.toast.error('Paste your API key into the field above first');
+      toast.error('Paste your API key into the field above first');
       return null;
     }
     return key;
@@ -443,7 +471,7 @@ const apiKeysPage = {
     if (!key) return;
 
     const mint = document.getElementById('token-mint')?.value?.trim();
-    if (!mint) { api.toast.error('Enter a token mint address'); return; }
+    if (!mint) { toast.error('Enter a token mint address'); return; }
 
     const btn = document.getElementById('test-token-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
