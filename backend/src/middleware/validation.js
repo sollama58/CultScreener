@@ -58,9 +58,13 @@ async function checkAndMarkSignature(signature, ttlMs) {
   // Try Redis first — use SET NX (set-if-not-exists) for atomic check+set
   if (cache.getBackendType() === 'redis') {
     try {
-      const wasSet = await cache.setNX(`sig-replay:${signature}`, 1, ttlMs);
+      const replayKey = `sig-replay:${signature}`;
+      const wasSet = await cache.setNX(replayKey, 1, ttlMs);
       if (wasSet) return false; // Fresh — we just claimed it
-      return true; // Already existed — replay
+      // setNX also answers false (without throwing) when Redis is disconnected or the
+      // command failed. Only call it a replay when the key is really there; otherwise
+      // fall through to the in-memory store instead of rejecting every fresh signature.
+      if ((await cache.get(replayKey)) != null) return true; // Already existed — replay
     } catch { /* fall through to in-memory */ }
   }
   // In-memory fallback: synchronous check+set is atomic in single-threaded Node.js
