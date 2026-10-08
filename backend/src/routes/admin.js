@@ -12,6 +12,15 @@ const { veryStrictLimiter, strictLimiter } = require('../middleware/rateLimit');
 
 router.use(requireDatabase);
 
+// One SCAN pass over the cache's keys, deleting every key `match` accepts with multi-key
+// DELs (not a SCAN per pattern and a DEL per key). Returns how many keys were deleted.
+async function deleteCacheKeysWhere(match) {
+  const found = (await cache.scanKeys('*')).filter(match);
+  let deleted = 0;
+  for (let i = 0; i < found.length; i += 1000) deleted += await cache.deleteMany(found.slice(i, i + 1000));
+  return deleted;
+}
+
 // ==========================================
 // Authentication
 // ==========================================
@@ -259,44 +268,22 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
       `similar-pending:${addr}`,
       `submissions:${addr}`,
       `cultify:dh-progress:${addr}`,
+      `hold-times:${addr}`,
+      `diamond-hands-partial:${addr}`,
+      `holder-total-miss:${addr}`,
     ];
 
-    for (const key of directKeys) {
-      const existed = await cache.get(key);
-      if (existed != null) {
-        await cache.delete(key);
-        deleted++;
-      }
+    // OHLCV candles for every interval and both cached sizes (routes/tokens.js /:mint/ohlcv)
+    for (const interval of Object.keys(geckoService.OHLCV_TIMEFRAMES || {})) {
+      directKeys.push(`ohlcv:${addr}:${interval}:100`, `ohlcv:${addr}:${interval}:1000`);
     }
 
-    // Scan for wildcard patterns containing this mint
-    // wallet-token-hold:{wallet}:{mint} — per-wallet hold times for this token
-    const walletTokenKeys = (await cache.scanKeys(`wallet-token-hold:*:${addr}`)).slice(0, 10000);
-    for (const key of walletTokenKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
+    // One multi-key DEL; it returns how many of the keys existed
+    deleted += await cache.deleteMany(directKeys);
 
-    // Chart data: chart:{mint}:{interval}
-    const chartKeys = await cache.scanKeys(`chart:${addr}:*`);
-    for (const key of chartKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
-
-    // Leaderboard caches (conviction pages reference this token's data)
-    const lbKeys = await cache.scanKeys('leaderboard:conviction:*');
-    for (const key of lbKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
-
-    // List caches (token may appear in list pages)
-    const listKeys = await cache.scanKeys('list:*');
-    for (const key of listKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
+    // Leaderboard caches (conviction pages reference this token's data) and list caches
+    // (token may appear in list pages), in one SCAN pass
+    deleted += await deleteCacheKeysWhere(k => k.startsWith('leaderboard:conviction:') || k.startsWith('list:'));
 
     console.log(`[Admin] Wiped ${deleted} cache entries for token ${addr}`);
     res.json({ success: true, deleted, mint: addr });
@@ -528,14 +515,9 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
 
   // Invalidate all caches that could contain this token
   try {
-    await cache.clearPattern('list:*');
-    await cache.clearPattern('search:*');
-    await cache.delete(`token:${mint}`);
-    await cache.delete(`price:${mint}`);
-    await cache.delete(`pools:${mint}`);
-    await cache.delete(`holders:${mint}`);
-    await cache.delete(`batch:${mint}`);
-    await cache.clearPattern(`*${mint}*`);
+    // list:*, search:* and every key containing the mint (token:, price:, pools:,
+    // holders:, batch: ...) in one SCAN pass
+    await deleteCacheKeysWhere(k => k.startsWith('list:') || k.startsWith('search:') || k.includes(mint));
     console.log(`[Admin] Cache cleared for ${mint.slice(0, 8)}...`);
   } catch (cacheErr) {
     console.error(`[Admin] Cache clear failed:`, cacheErr.message);
