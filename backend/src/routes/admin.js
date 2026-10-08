@@ -806,6 +806,10 @@ router.post('/curated/refresh', strictLimiter, (req, res, next) => {
 // Announcements
 // ==========================================
 
+// The public GET /api/announcements caches its result under this key (app.js); every write
+// below drops it so the change shows up at once rather than after the TTL.
+const ANNOUNCEMENTS_CACHE_KEY = 'announcements:active';
+
 router.get('/announcements', asyncHandler(async (req, res) => {
   try {
     const announcements = await db.getAllAnnouncements();
@@ -836,6 +840,7 @@ router.post('/announcements', strictLimiter, asyncHandler(async (req, res) => {
     type: safeType,
     expiresAt: expiresAt || null
   });
+  await cache.delete(ANNOUNCEMENTS_CACHE_KEY);
   res.status(201).json({ success: true, announcement });
 }));
 
@@ -869,6 +874,7 @@ router.patch('/announcements/:id', strictLimiter, asyncHandler(async (req, res) 
 
   const result = await db.updateAnnouncement(id, updates);
   if (!result) return res.status(404).json({ error: 'Announcement not found' });
+  await cache.delete(ANNOUNCEMENTS_CACHE_KEY);
   res.json({ success: true, announcement: result });
 }));
 
@@ -878,6 +884,7 @@ router.delete('/announcements/:id', strictLimiter, asyncHandler(async (req, res)
 
   const result = await db.deleteAnnouncement(id);
   if (!result) return res.status(404).json({ error: 'Announcement not found' });
+  await cache.delete(ANNOUNCEMENTS_CACHE_KEY);
   res.json({ success: true });
 }));
 
