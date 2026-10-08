@@ -678,6 +678,10 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
 
   try {
     const { contentType, buffer } = await fetchPromise;
+    // A fetch that queued for a slot (withImageProxySlot) can outlast the request-timeout
+    // middleware, which has already sent a 503. Writing headers now would throw, and from the
+    // catch below that becomes an unhandledRejection, which restarts the API.
+    if (res.headersSent) return;
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -689,6 +693,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     cache
       .setBuffer(cacheKey, encodeImageEntry(gone ? IMAGE_PROXY_GONE_MARK : IMAGE_PROXY_FAIL_MARK), gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
       .catch(() => {});
+    if (res.headersSent) return;
     res.status(502).send('Bad Gateway');
   }
 });
