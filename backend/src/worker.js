@@ -359,6 +359,9 @@ const jobProcessors = {
     for (const mint of mints) {
       try {
         if (known[mint] > 0) { skipped++; continue; }
+        // A recent scan found no count: not a scan, so it mustn't use up the cap
+        // below and keep the same first mints of a list ahead of the rest forever
+        if (await cache.get(`holder-total-none:${mint}`).catch(() => null)) { skipped++; continue; }
         // Each scan pages DAS; cap them per job so a long list doesn't hold a
         // worker slot for minutes. The rest are re-queued on their next cache miss.
         if (scanned >= HOLDER_COUNT_SCANS_PER_JOB) break;
@@ -969,8 +972,8 @@ async function start() {
  * Graceful shutdown
  *
  * All queue workers stop taking jobs at once and get `deadlineMs` to finish the
- * active ones. Past the deadline they are force-closed (their jobs are re-run by
- * BullMQ's stalled check). A hard timer exits the process if closing hangs.
+ * active ones. Past the deadline the process exits with them still running
+ * (BullMQ's stalled check re-runs them). A hard timer exits if closing hangs.
  * Render waits maxShutdownDelaySeconds (render.yaml) before SIGKILL, so the
  * signal deadline stays under it.
  */
@@ -1000,8 +1003,9 @@ async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 
     ]);
     clearTimeout(deadlineTimer);
     if (!drained) {
-      console.warn('[Worker] Active jobs still running at the shutdown deadline; force-closing workers');
-      await Promise.all(workers.map(w => w.close(true).catch(() => {})));
+      // close(true) can't help here: once close() has started, BullMQ hands back
+      // that same pending close. Exit anyway; the stalled check re-runs the jobs.
+      console.warn('[Worker] Active jobs still running at the shutdown deadline; exiting without them');
     }
   } catch (err) {
     console.error('[Worker] Error closing workers:', err.message);
