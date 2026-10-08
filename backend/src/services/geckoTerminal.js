@@ -311,13 +311,17 @@ async function getPoolsPage(mintAddress) {
 const POOL_REDIS_TTL = 12 * 60 * 60 * 1000; // 12 hours
 const poolRedisKey = (mintAddress) => `gecko-pool:${mintAddress}`;
 
-function rememberPool(mintAddress, address, side) {
-  if (!address) return;
+function setLocalPool(mintAddress, address, side) {
   // Evict oldest entry if at capacity
   if (!poolAddressCache.has(mintAddress) && poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
     poolAddressCache.delete(poolAddressCache.keys().next().value);
   }
   poolAddressCache.set(mintAddress, { address, side, expiry: Date.now() + POOL_CACHE_TTL });
+}
+
+function rememberPool(mintAddress, address, side) {
+  if (!address) return;
+  setLocalPool(mintAddress, address, side);
   Promise.resolve(redisCache.set(poolRedisKey(mintAddress), { address, side }, POOL_REDIS_TTL)).catch(() => {});
 }
 
@@ -328,7 +332,7 @@ async function lookupPool(mintAddress) {
   }
   const shared = await redisCache.get(poolRedisKey(mintAddress)).catch(() => undefined);
   if (shared?.address) {
-    poolAddressCache.set(mintAddress, { address: shared.address, side: shared.side, expiry: Date.now() + POOL_CACHE_TTL });
+    setLocalPool(mintAddress, shared.address, shared.side);
     return { address: shared.address, side: shared.side || 'base' };
   }
   return null;
