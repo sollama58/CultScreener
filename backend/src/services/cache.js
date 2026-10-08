@@ -606,18 +606,28 @@ class CacheService {
     // 30s timeout ensures the in-flight map entry is always cleaned up even if fetchFn hangs.
     const INFLIGHT_TIMEOUT_MS = 30000;
     const fetchPromise = (async () => {
+      let timer;
       try {
+        const valuePromise = Promise.resolve(fetchFn());
         const value = await Promise.race([
-          fetchFn(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('getOrSet timeout')), INFLIGHT_TIMEOUT_MS)
-          )
+          valuePromise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              // The callers give up, but fetchFn keeps running: let a late result still fill the
+              // cache, so the next request does not start the same fetch over again.
+              valuePromise
+                .then((late) => (late != null ? this.set(key, late, ttlMs) : undefined))
+                .catch(() => {});
+              reject(new Error('getOrSet timeout'));
+            }, INFLIGHT_TIMEOUT_MS);
+          })
         ]);
         if (value != null) {
           await this.set(key, value, ttlMs);
         }
         return value;
       } finally {
+        clearTimeout(timer);
         // Clean up in-flight tracking
         this.inFlightFetches.delete(key);
       }
