@@ -468,6 +468,11 @@ async function initializeDatabase() {
       EXCEPTION WHEN OTHERS THEN NULL;
       END $mca$;
 
+      -- Admin flags read by every curated-token query. db/migrate.js adds them too, but it only
+      -- runs from postinstall when DATABASE_URL is set at install time, so boot must not rely on it.
+      ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_emerging_cult BOOLEAN DEFAULT FALSE;
+      ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_tech_coin BOOLEAN DEFAULT FALSE;
+
       -- Prices 1, 7 and 30 days ago for the home table's 24h/7d/30d columns
       -- (services/priceChanges.js, refreshed by the refresh-curated-price-refs job)
       DO $pref$ BEGIN

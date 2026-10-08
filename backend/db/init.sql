@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS curated_tokens (
     socials JSONB DEFAULT '{}',
     dexscreener_updated_at TIMESTAMP WITH TIME ZONE,
     added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_emerging_cult BOOLEAN DEFAULT FALSE
+    is_emerging_cult BOOLEAN DEFAULT FALSE,
+    is_tech_coin BOOLEAN DEFAULT FALSE
 );
 
 CREATE INDEX IF NOT EXISTS idx_curated_tokens_mint ON curated_tokens(mint_address);
