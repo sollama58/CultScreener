@@ -101,6 +101,18 @@ function generateAccessToken(walletAddress, mint) {
   return token;
 }
 
+// Access tokens issued from the wallet-based checks are remembered per wallet+mint
+// (`<prefix>:access-by:<wallet>:<mint>`) so a repeat check returns the token that is still
+// valid instead of writing a new Redis key every time. prefix is 'cultify' or 'hb'.
+const accessByKey = (prefix, walletAddress, mint) => `${prefix}:access-by:${walletAddress}:${mint}`;
+
+async function findIssuedToken(prefix, walletAddress, mint) {
+  const token = await cache.get(accessByKey(prefix, walletAddress, mint));
+  if (!token) return null;
+  const data = await cache.get(`${prefix}:access:${token}`);
+  return data && data.mint === mint && data.wallet === walletAddress ? token : null;
+}
+
 // POST /api/cultify/verify-burn — verify a burn transaction on-chain
 // Returns a short-lived access token on success (prevents wallet spoofing)
 router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
@@ -191,9 +203,13 @@ router.get('/check-access/:mint', walletLimiter, validateMint, asyncHandler(asyn
   if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     const hasBurn = await db.hasCultifyAccess(walletAddress, mint);
     if (hasBurn) {
-      // Issue a fresh access token so subsequent analyze calls work
+      // Hand back the token issued earlier while it is valid, else issue a fresh one so
+      // subsequent analyze calls work
+      const existing = await findIssuedToken('cultify', walletAddress, mint);
+      if (existing) return res.json({ access: true, reason: 'burned', accessToken: existing });
       const newToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      await cache.set(accessByKey('cultify', walletAddress, mint), newToken, ACCESS_TOKEN_TTL);
       return res.json({ access: true, reason: 'burned', accessToken: newToken });
     }
   }
@@ -515,11 +531,18 @@ const HB_BURN_RAW_AMOUNT = BigInt(HB_BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const HB_ACCESS_TTL = 259200 * 1000;  // 3 days (72 hours)
 // HB_ANALYSIS_CACHE_TTL and HB_PENDING_TTL imported from services/holderBehaviorAnalysis
 
-// Store an HB access token and update the per-wallet index for "My Utilities"
-async function storeHBAccess(walletAddress, mint) {
+// Store an HB access token and update the per-wallet index for "My Utilities".
+// reuse: return the token already issued for this wallet+mint while it is valid (repeat
+// access checks); a new burn always gets a fresh token with the full TTL.
+async function storeHBAccess(walletAddress, mint, { reuse = false } = {}) {
+  if (reuse) {
+    const existing = await findIssuedToken('hb', walletAddress, mint);
+    if (existing) return existing;
+  }
   const accessToken = generateAccessToken(walletAddress, mint);
   const expiresAt = Date.now() + HB_ACCESS_TTL;
   await cache.set(`hb:access:${accessToken}`, { wallet: walletAddress, mint, expiresAt }, HB_ACCESS_TTL);
+  await cache.set(accessByKey('hb', walletAddress, mint), accessToken, HB_ACCESS_TTL);
 
   // Maintain a per-wallet index so "My Utilities" can enumerate active accesses
   const idxKey = `hb:wallet-idx:${walletAddress}`;
@@ -594,7 +617,7 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, a
     const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
     if (isWhitelisted) {
       // Issue a temporary access token so the analyze route can validate normally
-      const accessToken = await storeHBAccess(walletAddress, mint);
+      const accessToken = await storeHBAccess(walletAddress, mint, { reuse: true });
       return res.json({ access: true, reason: 'whitelisted', accessToken });
     }
   }
@@ -610,7 +633,7 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, a
   if (walletForCheck && SOLANA_ADDRESS_REGEX.test(walletForCheck)) {
     const hasBurn = await db.hasHBAccess(walletForCheck, mint);
     if (hasBurn) {
-      const newToken = await storeHBAccess(walletForCheck, mint);
+      const newToken = await storeHBAccess(walletForCheck, mint, { reuse: true });
       return res.json({ access: true, reason: 'burned', accessToken: newToken });
     }
   }
