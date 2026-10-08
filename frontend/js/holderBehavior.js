@@ -227,8 +227,28 @@
   }
 
   // ── Burn gate ─────────────────────────────────────────────────────────
+  // Mint whose burn gate is showing. One page-level walletConnected listener handles it:
+  // per-render listeners piled up, and together with the Connect button's own re-render they
+  // bound two burn handlers to one button (one click, two burn prompts).
+  // Connecting from the gate runs the access check again (a whitelisted wallet, or one that
+  // already burned, should not be asked to burn). An account change on a connected gate
+  // (Phantom accountChanged dispatches walletConnected) re-renders it, so balance and token
+  // account match the new wallet, but never during an in-flight burn.
+  let burnGateMint = null;
+  let burnGateAddress = null; // wallet address the showing gate was rendered for
+  window.addEventListener('walletConnected', () => {
+    if (!burnGateMint) return;
+    if (document.getElementById('hb-connect-btn')) { handleAnalyzeClick(burnGateMint); return; }
+    const accountChanged = document.getElementById('hb-burn-btn') && !burnInProgress &&
+      typeof wallet !== 'undefined' && wallet.address !== burnGateAddress;
+    if (accountChanged) handleAnalyzeClick(burnGateMint);
+  });
+
   async function showBurnGate(mint) {
+    burnGateMint = mint;
     const connected = typeof wallet !== 'undefined' && wallet.connected;
+    const gateAddress = connected ? wallet.address : null;
+    burnGateAddress = gateAddress;
 
     let html = `
       <div class="hb-section-title">Holder Behavior Analysis</div>
@@ -256,11 +276,8 @@
     openModal(html);
 
     if (!connected) {
-      document.getElementById('hb-connect-btn').addEventListener('click', async () => {
-        await wallet.connect();
-        if (wallet.connected) showBurnGate(mint);
-      });
-      window.addEventListener('walletConnected', () => showBurnGate(mint), { once: true });
+      // Connecting dispatches walletConnected, which the listener above handles
+      document.getElementById('hb-connect-btn').addEventListener('click', () => wallet.connect());
       return;
     }
 
@@ -271,6 +288,7 @@
     const balEl  = document.getElementById('hb-balance-line');
     const burnBtn = document.getElementById('hb-burn-btn');
     if (!balEl || !burnBtn) return;
+    if (burnGateAddress !== gateAddress) return; // gate re-rendered for another account meanwhile
 
     const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
     if (balData.balance <= 0 || !balData.tokenAccount) {
@@ -289,7 +307,8 @@
       burnBtn.disabled = false;
     }
 
-    burnBtn.addEventListener('click', () => executeBurn(mint, balData.tokenAccount));
+    // onclick, not addEventListener: a button can only ever hold one burn handler
+    burnBtn.onclick = () => executeBurn(mint, balData.tokenAccount);
   }
 
   async function fetchBalance() {
@@ -304,7 +323,19 @@
   }
 
   // ── Burn transaction ──────────────────────────────────────────────────
+  let burnInProgress = false;
+
   async function executeBurn(mint, tokenAccount) {
+    if (burnInProgress) return; // never build a second burn while one is in flight
+    burnInProgress = true;
+    try {
+      await runBurn(mint, tokenAccount);
+    } finally {
+      burnInProgress = false;
+    }
+  }
+
+  async function runBurn(mint, tokenAccount) {
     // Grab UI elements now — they'll be replaced by setBody() later
     const burnBtn = document.getElementById('hb-burn-btn');
     if (!burnBtn) return;
