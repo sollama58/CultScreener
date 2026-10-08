@@ -306,6 +306,10 @@
       .cultify-hero { padding: 1.25rem 0.5rem 1.25rem; }
       .cultify-hero h1 { font-size: 1.75rem; }
       .cultify-metrics { grid-template-columns: repeat(2, 1fr); }
+      /* styles.css hides the token page's 4th holders column (Value) on phones; here the
+         4th column is the holder's % of supply, so keep it */
+      .cultify-results .holders-table thead th:nth-child(4),
+      .cultify-results .holders-table tbody td:nth-child(4) { display: table-cell; }
     }
   </style>
 
