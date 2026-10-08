@@ -318,6 +318,30 @@
     }
   }
 
+  // ── Solana web3 (loaded on demand) ────────────────
+  // Only the burn needs @solana/web3.js (~106 KB gzip), so it is not a page script:
+  // prefetched when the burn gate opens for a connected wallet, awaited by executeBurn.
+  let web3Promise = null;
+  function loadWeb3() {
+    if (typeof solanaWeb3 !== 'undefined') return Promise.resolve();
+    if (!web3Promise) {
+      web3Promise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js';
+        script.integrity = 'sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ';
+        script.crossOrigin = 'anonymous';
+        script.onload = resolve;
+        script.onerror = () => {
+          web3Promise = null; // allow a retry on the next attempt
+          script.remove();
+          reject(new Error('Failed to load the Solana library. Check your connection and try again.'));
+        };
+        document.head.appendChild(script);
+      });
+    }
+    return web3Promise;
+  }
+
   // ── Burn gate UI ──────────────────────────────────
 
   // Fetch user's ASDFASDFA balance via backend (uses Helius RPC, keeps API key server-side)
@@ -358,6 +382,7 @@
         if (wallet.connected) showBurnGate(mint);
       });
     } else {
+      loadWeb3().catch(() => {}); // prefetch for executeBurn
       // Fetch and display balance
       const balData = await fetchBurnTokenBalance();
       const balEl = document.getElementById('cultify-balance');
@@ -505,6 +530,7 @@
     errorEl.innerHTML = '';
 
     try {
+      await loadWeb3();
       const { PublicKey, Transaction, TransactionInstruction } = solanaWeb3;
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
 
