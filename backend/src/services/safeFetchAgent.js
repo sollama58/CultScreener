@@ -13,6 +13,10 @@
  *     moment later when actually connected. Here the checked answer IS the one connected to.
  *   - Redirects: every hop opens a new connection through the same agent, so a public URL that
  *     302s to http://169.254.169.254/ is stopped at the hop, not merely at the entry point.
+ *
+ * The runtime does NOT call `lookup` for a host that is already an IP literal, so the agents also
+ * judge literals in `createConnection` - otherwise a redirect to a bare private address would
+ * sail straight past the lookup guard.
  */
 const dns = require('dns');
 const http = require('http');
@@ -45,10 +49,13 @@ function isBlockedAddress(ip) {
   if (version === 6) {
     const lower = ip.toLowerCase();
     // IPv4-mapped (::ffff:10.0.0.1) has to be judged as the IPv4 address it carries, or every
-    // rule above is trivially bypassed on a dual-stack host.
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-    if (mapped) return isBlockedAddress(mapped[1]);
-    if (lower === '::' || lower === '::1') return true;   // unspecified, loopback
+    // rule above is trivially bypassed on a dual-stack host. Judge it from the expanded groups so
+    // the hex spelling `new URL()` normalises to (::ffff:7f00:1) is caught too.
+    const g = expandIPv6(lower);
+    if (!g) return true;
+    if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return isBlockedAddress(groupsToIPv4(g));
+    // IPv4-compatible (::a.b.c.d, deprecated) and ::/::1 - nothing public lives in ::/96.
+    if (g.slice(0, 6).every((x) => x === 0)) return true;
     if (lower.startsWith('fe80')) return true;             // link-local
     if (/^f[cd]/.test(lower)) return true;                 // unique-local
     if (lower.startsWith('ff')) return true;               // multicast
@@ -57,6 +64,30 @@ function isBlockedAddress(ip) {
   }
   // Not an address we can reason about - refuse rather than guess.
   return true;
+}
+
+/** Expand an IPv6 address (net.isIP() === 6) into its eight 16-bit groups, or null. */
+function expandIPv6(ip) {
+  let addr = ip.split('%')[0];
+  // A trailing dotted quad stands for the last two groups.
+  const quad = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(addr);
+  if (quad) {
+    const [a, b, c, d] = quad.slice(1).map(Number);
+    addr = addr.slice(0, quad.index) + ((a << 8) | b).toString(16) + ':' + ((c << 8) | d).toString(16);
+  }
+  const halves = addr.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0) return null;
+  const groups = [...head, ...new Array(fill).fill('0'), ...tail].map((h) => parseInt(h, 16));
+  if (groups.length !== 8 || groups.some((n) => !Number.isInteger(n) || n < 0 || n > 0xffff)) return null;
+  return groups;
+}
+
+function groupsToIPv4(g) {
+  return [g[6] >> 8, g[6] & 0xff, g[7] >> 8, g[7] & 0xff].join('.');
 }
 
 /**
@@ -85,8 +116,31 @@ function guardedLookup(hostname, options, callback) {
 // handshake is the expensive part of each one. maxSockets bounds how hard we lean on any single
 // host - a public IPFS gateway answers a stampede with a 429.
 const agentOptions = { lookup: guardedLookup, keepAlive: true, maxSockets: 24, timeout: 8000 };
-const safeHttpAgent = new http.Agent(agentOptions);
-const safeHttpsAgent = new https.Agent(agentOptions);
+const safeHttpAgent = guardLiterals(new http.Agent(agentOptions));
+const safeHttpsAgent = guardLiterals(new https.Agent(agentOptions));
+
+/**
+ * Judge IP-literal hosts at connect time. `lookup` only runs for names, so without this a hop to
+ * http://127.0.0.1/ or http://169.254.169.254/ (e.g. via a redirect) would connect unchecked.
+ * Failing through the callback makes the request emit 'error' as for any other connect failure.
+ */
+function guardLiterals(agent) {
+  const createConnection = agent.createConnection;
+  agent.createConnection = function guardedCreateConnection(options, callback) {
+    const host = String((options && (options.host || options.hostname)) || '');
+    if (isBlockedHostLiteral(host)) {
+      const blocked = new Error(`Refusing to connect to a private address ${host}`);
+      blocked.code = 'EBLOCKEDADDRESS';
+      if (typeof callback === 'function') {
+        callback(blocked);
+        return undefined;
+      }
+      throw blocked;
+    }
+    return createConnection.apply(this, arguments);
+  };
+  return agent;
+}
 
 /**
  * A hostname that is ALREADY a private address, judged without resolving anything.

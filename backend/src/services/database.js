@@ -311,8 +311,8 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS admin_sessions (
         id SERIAL PRIMARY KEY,
         session_token VARCHAR(64) UNIQUE NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         ip_address VARCHAR(45),
         user_agent TEXT
       );
@@ -326,9 +326,9 @@ async function initializeDatabase() {
         session_token VARCHAR(64) UNIQUE NOT NULL,
         wallet_address VARCHAR(44) NOT NULL,
         activated BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        activated_at TIMESTAMP,
-        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        activated_at TIMESTAMP WITH TIME ZONE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         ip_address VARCHAR(45),
         user_agent TEXT
       );
@@ -336,6 +336,23 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_device_sessions_token ON device_sessions(session_token);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_wallet ON device_sessions(wallet_address);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_expires ON device_sessions(expires_at);
+
+      -- Session times used to be TIMESTAMP (no time zone). Expiries are written from JS Dates and
+      -- checked against NOW(), which only agreed when Node's TZ matched the Postgres session's.
+      -- Convert once; existing values are read in the session time zone, as NOW() compared them.
+      DO $sesstz$
+      DECLARE col RECORD;
+      BEGIN
+        FOR col IN
+          SELECT table_name, column_name FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND table_name IN ('admin_sessions', 'device_sessions')
+            AND column_name IN ('created_at', 'activated_at', 'expires_at')
+            AND data_type = 'timestamp without time zone'
+        LOOP
+          EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMP WITH TIME ZONE', col.table_name, col.column_name);
+        END LOOP;
+      END $sesstz$;
 
       -- Token views table for tracking page views
       CREATE TABLE IF NOT EXISTS token_views (
@@ -468,6 +485,11 @@ async function initializeDatabase() {
       EXCEPTION WHEN OTHERS THEN NULL;
       END $mca$;
 
+      -- Admin flags read by every curated-token query. db/migrate.js adds them too, but it only
+      -- runs from postinstall when DATABASE_URL is set at install time, so boot must not rely on it.
+      ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_emerging_cult BOOLEAN DEFAULT FALSE;
+      ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS is_tech_coin BOOLEAN DEFAULT FALSE;
+
       -- Prices 1, 7 and 30 days ago for the home table's 24h/7d/30d columns
       -- (services/priceChanges.js, refreshed by the refresh-curated-price-refs job)
       DO $pref$ BEGIN
@@ -475,6 +497,8 @@ async function initializeDatabase() {
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_ref_7d DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_ref_30d DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_at TIMESTAMP WITH TIME ZONE;
+        -- Last refresh attempt, failed ones included; price_refs_at is when the refs were computed
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_tried_at TIMESTAMP WITH TIME ZONE;
       EXCEPTION WHEN OTHERS THEN NULL;
       END $pref$;
 
@@ -890,15 +914,19 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
 async function getTokenConvictionRank(mintAddress) {
   if (!pool) return null;
   try {
-    // Count curated tokens with strictly higher conviction_1m — that is this token's 0-based rank
+    // Count curated tokens with strictly higher conviction_1m — that is this token's 0-based rank.
+    // Only a curated token with a positive score is ranked (the leaderboard's own rule); any
+    // other token gets no row, or a NULL rank, rather than being compared against the board.
     const result = await pool.query(
-      `SELECT COUNT(*) + 1 AS rank
-       FROM tokens t
-       INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
-       WHERE t.conviction_1m > (
-         SELECT conviction_1m FROM tokens WHERE mint_address = $1
-       )
-       AND t.conviction_1m IS NOT NULL`,
+      `SELECT CASE WHEN s.conviction_1m IS NULL OR s.conviction_1m <= 0 THEN NULL ELSE (
+         SELECT COUNT(*) + 1
+         FROM tokens t
+         INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
+         WHERE t.conviction_1m > s.conviction_1m
+       ) END AS rank
+       FROM tokens s
+       INNER JOIN curated_tokens cs ON cs.mint_address = s.mint_address
+       WHERE s.mint_address = $1`,
       [mintAddress]
     );
     const rank = parseInt(result.rows[0]?.rank);
@@ -2487,14 +2515,19 @@ async function getCallsByWallet(callerWallet, limit = 50, offset = 0) {
 // ==========================================
 
 // Delete all user data associated with a wallet (GDPR right to erasure)
+const GDPR_DELETE_TIMEOUT_MS = 120000;
+
 async function deleteUserData(walletAddress) {
   if (!pool) return null;
 
   const client = await pool.connect();
+  // The pool's client-side query_timeout (30s) would reject a statement long before the
+  // server-side limit below, so every statement here carries the same 2-minute budget.
+  const query = (text, values) => client.query({ text, values, query_timeout: GDPR_DELETE_TIMEOUT_MS });
   try {
-    await client.query('BEGIN');
+    await query('BEGIN');
     // Set a transaction-level timeout for this long-running GDPR deletion
-    await client.query('SET LOCAL statement_timeout = 120000'); // 2 minutes
+    await query(`SET LOCAL statement_timeout = ${GDPR_DELETE_TIMEOUT_MS}`); // 2 minutes
 
     // Count data before deletion for reporting
     const counts = {
@@ -2505,52 +2538,52 @@ async function deleteUserData(walletAddress) {
     };
 
     // Get counts
-    const watchlistCount = await client.query(
+    const watchlistCount = await query(
       'SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1',
       [walletAddress]
     );
     counts.watchlist = parseInt(watchlistCount.rows[0].count);
 
-    const votesCount = await client.query(
+    const votesCount = await query(
       'SELECT COUNT(*) FROM votes WHERE voter_wallet = $1',
       [walletAddress]
     );
     counts.votes = parseInt(votesCount.rows[0].count);
 
-    const submissionsCount = await client.query(
+    const submissionsCount = await query(
       'SELECT COUNT(*) FROM submissions WHERE submitter_wallet = $1',
       [walletAddress]
     );
     counts.submissions = parseInt(submissionsCount.rows[0].count);
 
-    const apiKeysCount = await client.query(
+    const apiKeysCount = await query(
       'SELECT COUNT(*) FROM api_keys WHERE owner_wallet = $1',
       [walletAddress]
     );
     counts.apiKeys = parseInt(apiKeysCount.rows[0].count);
 
     // Delete watchlist entries
-    await client.query(
+    await query(
       'DELETE FROM watchlist WHERE wallet_address = $1',
       [walletAddress]
     );
 
     // Delete votes (and update tallies)
     // Get submission IDs for tally updates
-    const voteSubmissions = await client.query(
+    const voteSubmissions = await query(
       'SELECT DISTINCT submission_id FROM votes WHERE voter_wallet = $1',
       [walletAddress]
     );
     const submissionIds = voteSubmissions.rows.map(r => r.submission_id);
 
-    await client.query(
+    await query(
       'DELETE FROM votes WHERE voter_wallet = $1',
       [walletAddress]
     );
 
     // Update vote tallies for affected submissions in bulk
     if (submissionIds.length > 0) {
-      await client.query(
+      await query(
         `UPDATE vote_tallies vt SET
            upvotes = COALESCE(s.up_count, 0),
            downvotes = COALESCE(s.down_count, 0),
@@ -2574,37 +2607,37 @@ async function deleteUserData(walletAddress) {
 
     // Anonymize submissions (keep content but remove wallet association)
     // We don't delete submissions as they may be approved community content
-    await client.query(
+    await query(
       'UPDATE submissions SET submitter_wallet = NULL WHERE submitter_wallet = $1',
       [walletAddress]
     );
 
     // Delete API keys
-    await client.query(
+    await query(
       'DELETE FROM api_keys WHERE owner_wallet = $1',
       [walletAddress]
     );
 
     // Delete token calls
-    const callsCount = await client.query(
+    const callsCount = await query(
       'SELECT COUNT(*) FROM token_calls WHERE caller_wallet = $1',
       [walletAddress]
     );
     counts.tokenCalls = parseInt(callsCount.rows[0].count);
 
-    await client.query(
+    await query(
       'DELETE FROM token_calls WHERE caller_wallet = $1',
       [walletAddress]
     );
 
     // Delete sentiment votes and update tallies
-    const sentimentTokens = await client.query(
+    const sentimentTokens = await query(
       'SELECT DISTINCT token_mint FROM sentiment_votes WHERE voter_wallet = $1',
       [walletAddress]
     );
     counts.sentimentVotes = sentimentTokens.rows.length;
 
-    await client.query(
+    await query(
       'DELETE FROM sentiment_votes WHERE voter_wallet = $1',
       [walletAddress]
     );
@@ -2612,7 +2645,7 @@ async function deleteUserData(walletAddress) {
     // Recalculate sentiment tallies for affected tokens (batch query)
     if (sentimentTokens.rows.length > 0) {
       const affectedMints = sentimentTokens.rows.map(r => r.token_mint);
-      await client.query(
+      await query(
         `UPDATE sentiment_tallies st SET
            bullish = COALESCE(sub.bullish, 0),
            bearish = COALESCE(sub.bearish, 0),
@@ -2630,7 +2663,7 @@ async function deleteUserData(walletAddress) {
       );
     }
 
-    await client.query('COMMIT');
+    await query('COMMIT');
 
     // Invalidate admin stats cache after data deletion
     invalidateAdminStatsCache();
@@ -2641,7 +2674,7 @@ async function deleteUserData(walletAddress) {
       message: 'All user data has been deleted or anonymized'
     };
   } catch (error) {
-    await client.query('ROLLBACK');
+    await query('ROLLBACK');
     throw error;
   } finally {
     client.release();
@@ -3205,134 +3238,6 @@ async function deleteTokens(mints) {
   return result.rowCount;
 }
 
-// ==========================================
-// Folio operations
-// ==========================================
-
-async function getAllFolios(activeOnly = true) {
-  if (!pool) return [];
-
-  const whereClause = activeOnly ? 'WHERE f.is_active = TRUE' : '';
-  const result = await pool.query(
-    `SELECT f.*, COUNT(ft.id)::int AS token_count
-     FROM folios f
-     LEFT JOIN folio_tokens ft ON ft.folio_id = f.id
-     ${whereClause}
-     GROUP BY f.id
-     ORDER BY f.sort_order ASC, f.created_at DESC`
-  );
-  return result.rows;
-}
-
-async function getFolio(id) {
-  if (!pool) return null;
-
-  const result = await pool.query('SELECT * FROM folios WHERE id = $1', [id]);
-  return result.rows[0] || null;
-}
-
-async function getFolioWithTokens(id) {
-  if (!pool) return null;
-
-  const folio = await getFolio(id);
-  if (!folio) return null;
-
-  const tokens = await pool.query(
-    `SELECT ft.token_mint, ft.note, ft.added_at,
-            t.name, t.symbol, t.logo_uri, t.price, t.market_cap, t.volume_24h,
-            t.price_change_24h, t.pair_created_at
-     FROM folio_tokens ft
-     LEFT JOIN tokens t ON t.mint_address = ft.token_mint
-     WHERE ft.folio_id = $1
-     ORDER BY ft.added_at ASC`,
-    [id]
-  );
-
-  folio.tokens = tokens.rows;
-  return folio;
-}
-
-async function createFolio({ name, description, twitterHandle, twitterAvatar, sortOrder }) {
-  if (!pool) throw new Error('Database not available');
-
-  const result = await pool.query(
-    `INSERT INTO folios (name, description, twitter_handle, twitter_avatar, sort_order)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING *`,
-    [name, description || null, twitterHandle, twitterAvatar || null, sortOrder || 0]
-  );
-  return result.rows[0];
-}
-
-async function updateFolio(id, fields) {
-  if (!pool) throw new Error('Database not available');
-
-  // Build SET clause dynamically so only provided fields are updated
-  // and nullable fields (description, twitterAvatar) can be explicitly cleared
-  const setClauses = [];
-  const values = [id]; // $1 = id
-  let paramIndex = 2;
-
-  const fieldMap = {
-    name: 'name',
-    description: 'description',
-    twitterHandle: 'twitter_handle',
-    twitterAvatar: 'twitter_avatar',
-    isActive: 'is_active',
-    sortOrder: 'sort_order'
-  };
-
-  for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
-    if (fields[jsKey] !== undefined) {
-      setClauses.push(`${dbCol} = $${paramIndex}`);
-      values.push(fields[jsKey]);
-      paramIndex++;
-    }
-  }
-
-  if (setClauses.length === 0) {
-    return await getFolio(id);
-  }
-
-  setClauses.push('updated_at = NOW()');
-
-  const result = await pool.query(
-    `UPDATE folios SET ${setClauses.join(', ')} WHERE id = $1 RETURNING *`,
-    values
-  );
-  return result.rows[0] || null;
-}
-
-async function deleteFolio(id) {
-  if (!pool) throw new Error('Database not available');
-
-  const result = await pool.query('DELETE FROM folios WHERE id = $1 RETURNING id', [id]);
-  return result.rowCount > 0;
-}
-
-async function addFolioToken(folioId, tokenMint, note) {
-  if (!pool) throw new Error('Database not available');
-
-  const result = await pool.query(
-    `INSERT INTO folio_tokens (folio_id, token_mint, note)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (folio_id, token_mint) DO UPDATE SET note = COALESCE($3, folio_tokens.note)
-     RETURNING *`,
-    [folioId, tokenMint, note || null]
-  );
-  return result.rows[0];
-}
-
-async function removeFolioToken(folioId, tokenMint) {
-  if (!pool) throw new Error('Database not available');
-
-  const result = await pool.query(
-    'DELETE FROM folio_tokens WHERE folio_id = $1 AND token_mint = $2 RETURNING id',
-    [folioId, tokenMint]
-  );
-  return result.rowCount > 0;
-}
-
 // =====================================================
 // CURATED TOKENS
 // =====================================================
@@ -3420,15 +3325,17 @@ async function updateCuratedTokenATH(mintAddress, mcap) {
 }
 
 /**
- * Curated mints whose stored reference prices are missing or older than maxAgeMs,
- * oldest first, so a capped run works through the list over successive runs.
+ * Curated mints whose reference prices were last refreshed (or last tried) more than maxAgeMs
+ * ago, or never, oldest first, so a capped run works through the list over successive runs.
  */
 async function getCuratedMintsNeedingPriceRefs(limit, maxAgeMs) {
   if (!pool) return [];
+  // GREATEST ignores NULLs: the later of the last success and the last attempt
   const result = await pool.query(`
     SELECT mint_address FROM curated_tokens
-    WHERE price_refs_at IS NULL OR price_refs_at < NOW() - ($2::bigint * INTERVAL '1 millisecond')
-    ORDER BY price_refs_at ASC NULLS FIRST
+    WHERE GREATEST(price_refs_at, price_refs_tried_at) IS NULL
+       OR GREATEST(price_refs_at, price_refs_tried_at) < NOW() - ($2::bigint * INTERVAL '1 millisecond')
+    ORDER BY GREATEST(price_refs_at, price_refs_tried_at) ASC NULLS FIRST
     LIMIT $1
   `, [limit, Math.round(maxAgeMs)]);
   return result.rows.map(r => r.mint_address);
@@ -3436,19 +3343,21 @@ async function getCuratedMintsNeedingPriceRefs(limit, maxAgeMs) {
 
 /**
  * Store a token's prices 1, 7 and 30 days ago (null where the pool is younger). With
- * refs = null only the timestamp moves: the refresh failed, the old references stay, and
+ * refs = null only the attempt time moves: the refresh failed, the old references stay, and
  * the token goes to the back of the queue instead of being retried first every run.
+ * price_refs_at keeps the time the references were computed, so they still expire
+ * (priceChanges.MAX_REF_AGE_MS) when refreshes keep failing.
  */
 async function setCuratedPriceRefs(mintAddress, refs) {
   if (!pool) return null;
   if (refs === null) {
-    await pool.query('UPDATE curated_tokens SET price_refs_at = NOW() WHERE mint_address = $1', [mintAddress]);
+    await pool.query('UPDATE curated_tokens SET price_refs_tried_at = NOW() WHERE mint_address = $1', [mintAddress]);
     return;
   }
   const { d1 = null, d7 = null, d30 = null } = refs || {};
   await pool.query(`
     UPDATE curated_tokens
-    SET price_ref_1d = $2, price_ref_7d = $3, price_ref_30d = $4, price_refs_at = NOW()
+    SET price_ref_1d = $2, price_ref_7d = $3, price_ref_30d = $4, price_refs_at = NOW(), price_refs_tried_at = NOW()
     WHERE mint_address = $1
   `, [mintAddress, d1, d7, d30]);
 }
@@ -3821,15 +3730,6 @@ module.exports = {
   getUnknownTokenMints,
   updateTokenMetadata,
   deleteTokens,
-  // Folio operations
-  getAllFolios,
-  getFolio,
-  getFolioWithTokens,
-  createFolio,
-  updateFolio,
-  deleteFolio,
-  addFolioToken,
-  removeFolioToken,
   // Curated tokens
   getCuratedTokens,
   getCuratedToken,

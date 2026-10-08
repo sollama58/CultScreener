@@ -6,11 +6,12 @@ const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey, canBypassCache } = require('../middleware/validation');
-const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
+const { searchLimiter, viewLimiter } = require('../middleware/rateLimit');
 const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
 const priceChanges = require('../services/priceChanges');
+const { resolveMintDecimals } = require('../services/mintDecimals');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -50,6 +51,10 @@ const HELIUS_DAS_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key
 const VALID_FILTERS = ['trending', 'new', 'gainers', 'losers', 'most_viewed', 'tech', 'meme'];
 const VALID_SORTS = ['volume', 'price', 'priceChange24h', 'marketCap', 'views'];
 const VALID_ORDERS = ['asc', 'desc'];
+// GeckoTerminal's trending_pools / new_pools endpoints serve pages 1-10 only
+const GECKO_MAX_PAGES = 10;
+// GeckoTerminal returns at most 20 pools per token page
+const POOLS_PAGE_SIZE = 20;
 
 // BURN_WALLETS, LP_AUTHORITIES and SYSTEM_PROGRAM_ID imported from ../constants (shared with worker.js)
 const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website'];
@@ -85,7 +90,9 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
   const sort = VALID_SORTS.includes(rawSort) ? rawSort : 'volume';
   const order = VALID_ORDERS.includes(rawOrder) ? rawOrder : 'desc';
 
-  const cacheKey = keys.tokenList(`${filter}-${sort}-${order}-${limit}`, Math.floor(offset / limit));
+  // Key on the exact offset: bucketing by Math.floor(offset / limit) served offset=25 the
+  // cached offset=0 window (and vice versa).
+  const cacheKey = keys.tokenList(`${filter}-${sort}-${order}-${limit}`, parseInt(offset) || 0);
 
   // Try cache first - use getWithMeta since we store with setWithTimestamp
   // Note: We refresh view counts even for cached responses since they're cheap to fetch
@@ -379,47 +386,73 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
     const geckoPageSize = 20;
     const requestStart = parseInt(offset);
     const requestEnd = requestStart + parseInt(limit);
-    // For gainers/losers, always start from page 1 so each page sorts a consistent
-    // superset of all previous pages' data — prevents duplicate tokens across pages
-    const needsFullSort = (filter === 'gainers' || filter === 'losers');
-    const firstGeckoPage = needsFullSort ? 1 : Math.floor(requestStart / geckoPageSize) + 1;
-    const lastGeckoPage = Math.floor(Math.max(0, requestEnd - 1) / geckoPageSize) + 1;
+    // Always start from page 1: Gecko pages yield fewer than 20 tokens (non-memecoin pools
+    // and in-page repeats are skipped), so offset can't be mapped onto a page number. Fetch
+    // the pages from the start, dedupe across them, then slice [offset, offset + limit).
+    // GeckoTerminal serves at most 10 pages; a window past that falls back to Jupiter below.
+    const firstGeckoPage = 1;
+    const lastGeckoPage = Math.min(GECKO_MAX_PAGES, Math.floor(Math.max(0, requestEnd - 1) / geckoPageSize) + 1);
 
-    try {
-      // Fetch all gecko pages needed to cover the requested window — in parallel
-      const geckoPages = [];
-      for (let gp = firstGeckoPage; gp <= lastGeckoPage; gp++) {
-        geckoPages.push(gp);
-      }
-      const pageResults = await Promise.all(geckoPages.map(gp => {
-        if (filter === 'new') {
-          return geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp).catch(err => {
+    // A window that starts past Gecko's last page can't be served from it: skip straight
+    // to the Jupiter fallback instead of fetching every page and slicing nothing.
+    const windowInGecko = requestStart < GECKO_MAX_PAGES * geckoPageSize;
+    // Set when a page came back empty while a later one had data: the merged list is then
+    // short, so the response isn't cached (a retry may get the full list).
+    let geckoIncomplete = false;
+
+    if (windowInGecko) {
+      try {
+        // Fetch all gecko pages needed to cover the requested window — in parallel. Each page
+        // is cached on its own, so other offsets and limits reuse it instead of refetching.
+        const geckoKind = filter === 'new' ? 'new' : 'trending';
+        const geckoPages = [];
+        for (let gp = firstGeckoPage; gp <= lastGeckoPage; gp++) {
+          geckoPages.push(gp);
+        }
+        const pageResults = await Promise.all(geckoPages.map(async gp => {
+          const pageKey = `gecko-list-page:${geckoKind}:${useHeliusEnrichment ? 1 : 0}:${gp}`;
+          const cachedPage = await cache.get(pageKey);
+          if (Array.isArray(cachedPage) && cachedPage.length > 0) return cachedPage;
+          const fetchPage = geckoKind === 'new'
+            ? geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp)
+            : geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp });
+          const page = await fetchPage.catch(err => {
             if (err.isOverloaded || err.isCircuitBreakerError) throw err;
-            console.warn(`[Tokens] GeckoTerminal new page ${gp} failed: ${err.response?.status || err.message}`);
+            console.warn(`[Tokens] GeckoTerminal ${geckoKind} page ${gp} failed: ${err.response?.status || err.message}`);
             return null;
           });
+          // The service answers [] on errors too, so an empty page is never cached
+          if (Array.isArray(page) && page.length > 0) await cache.set(pageKey, page, TTL.MEDIUM);
+          return page;
+        }));
+        // Stop at the first empty page: pages after a failed one would shift every index
+        const firstEmpty = pageResults.findIndex(p => !Array.isArray(p) || p.length === 0);
+        const usablePages = firstEmpty === -1 ? pageResults : pageResults.slice(0, firstEmpty);
+        if (firstEmpty !== -1 && pageResults.slice(firstEmpty + 1).some(p => Array.isArray(p) && p.length > 0)) {
+          geckoIncomplete = true;
         }
-        return geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp }).catch(err => {
-          if (err.isOverloaded || err.isCircuitBreakerError) throw err;
-          console.warn(`[Tokens] GeckoTerminal trending page ${gp} failed: ${err.response?.status || err.message}`);
-          return null;
+        // The same token can lead pools on two different pages; keep its first appearance
+        const seenListAddresses = new Set();
+        let allTokens = usablePages.flat().filter(t => {
+          const addr = t.address || t.mintAddress;
+          if (seenListAddresses.has(addr)) return false;
+          seenListAddresses.add(addr);
+          return true;
         });
-      }));
-      let allTokens = pageResults.filter(Boolean).flat();
 
-      // Apply filter-specific sorting before slicing
-      if (filter === 'gainers') {
-        allTokens.sort((a, b) => (b.priceChange24h || 0) - (a.priceChange24h || 0));
-      } else if (filter === 'losers') {
-        allTokens.sort((a, b) => (a.priceChange24h || 0) - (b.priceChange24h || 0));
+        // Apply filter-specific sorting before slicing
+        if (filter === 'gainers') {
+          allTokens.sort((a, b) => (b.priceChange24h || 0) - (a.priceChange24h || 0));
+        } else if (filter === 'losers') {
+          allTokens.sort((a, b) => (a.priceChange24h || 0) - (b.priceChange24h || 0));
+        }
+
+        // Slice to the requested window within the fetched data
+        tokens = allTokens.slice(requestStart, requestEnd);
+      } catch (err) {
+        geckoError = err;
+        // Privacy: Don't log error details
       }
-
-      // Slice to the requested window within the fetched data
-      const sliceStart = requestStart - (firstGeckoPage - 1) * geckoPageSize;
-      tokens = allTokens.slice(sliceStart, sliceStart + parseInt(limit));
-    } catch (err) {
-      geckoError = err;
-      // Privacy: Don't log error details
     }
 
     // If GeckoTerminal returns empty or failed, fallback to Jupiter
@@ -495,7 +528,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
     }
 
     // Cache for 5 minutes (rolling cache for list views)
-    await cache.setWithTimestamp(cacheKey, tokens, TTL.PRICE_DATA);
+    if (!geckoIncomplete) await cache.setWithTimestamp(cacheKey, tokens, TTL.PRICE_DATA);
 
     res.json(tokens);
   } catch (error) {
@@ -1063,7 +1096,7 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   if (req.query.minMcap != null) filters.minMcap = Math.max(0, parseFloat(req.query.minMcap) || 0);
   if (req.query.maxMcap != null) filters.maxMcap = Math.max(0, parseFloat(req.query.maxMcap) || 0);
   if (req.query.minSample != null) filters.minSample = Math.max(0, parseInt(req.query.minSample) || 0);
-  if (req.query.search) filters.search = req.query.search.slice(0, 100);
+  if (typeof req.query.search === 'string' && req.query.search) filters.search = req.query.search.slice(0, 100);
 
   const filterKey = JSON.stringify(filters);
   const resultCacheKey = `leaderboard:conviction:${limit}:${offset}:${filterKey}`;
@@ -1555,7 +1588,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         // Price: prefer GeckoTerminal (more accurate), fallback to Helius
         price: usdPrice,
         // Market data: GeckoTerminal only (Helius doesn't provide these)
-        priceChange24h: gecko.priceChange24h ?? jup.priceChange24h ?? 0,
+        priceChange24h: gecko.priceChange24h ?? jup.priceChange24h ?? null,
         volume24h: gecko.volume24h || 0,
         liquidity: gecko.liquidity || 0,
         // A quote-side pool publishes no FDV for the token; fall back to price x supply
@@ -1682,7 +1715,7 @@ router.get('/:mint/chart', validateMint, requireAllowedToken, asyncHandler(async
 
   // Validate interval
   const validIntervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
-  const normalizedInterval = interval.toLowerCase();
+  const normalizedInterval = String(interval).toLowerCase();
 
   if (!validIntervals.includes(normalizedInterval)) {
     return res.status(400).json({
@@ -1771,7 +1804,10 @@ router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async
 // Uses getOrSet for automatic caching with stampede prevention
 router.get('/:mint/pools', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
-  const { limit = 10 } = req.query;
+  // The cache key is per mint only, so always cache the full list (one GeckoTerminal page,
+  // 20 pools) and apply the caller's limit after the read: ?limit=abc|0|1 must not shrink
+  // the list everyone else is served.
+  const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 10), POOLS_PAGE_SIZE);
 
   const cacheKey = keys.pools(mint);
 
@@ -1779,10 +1815,10 @@ router.get('/:mint/pools', validateMint, requireAllowedToken, asyncHandler(async
     // Use getOrSet for caching with stampede prevention
     // Pools data cached for 3 minutes - pool info rarely changes
     const pools = await cache.getOrSet(cacheKey, async () => {
-      return geckoService.getTokenPools(mint, { limit: parseInt(limit) });
+      return geckoService.getTokenPools(mint, { limit: POOLS_PAGE_SIZE });
     }, TTL.POOLS);
 
-    if (!res.headersSent) res.json(pools);
+    if (!res.headersSent) res.json(Array.isArray(pools) ? pools.slice(0, limit) : pools);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
     // Privacy: Don't log error details
@@ -1824,7 +1860,9 @@ router.get('/:mint/submissions', validateMint, requireAllowedToken, asyncHandler
 // POST /api/tokens/:mint/view - Record a page view for a token
 // Called when the token detail page loads
 // Uses job queue to batch view updates for better performance
-router.post('/:mint/view', strictLimiter, validateMint, asyncHandler(async (req, res) => {
+// Curated tokens only: anything else would land in token_views and the most_viewed list.
+// viewLimiter (not the shared write-action strictLimiter) so page loads never see a 429.
+router.post('/:mint/view', validateMint, requireAllowedToken, viewLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   try {
@@ -1915,15 +1953,23 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
 
         if (dasResponse.data?.result?.token_accounts?.length > 0) {
           rpcSuccess = true;
+          let rawTotal = 0;
           for (const ta of dasResponse.data.result.token_accounts) {
-            if (ta.mint === mint) {
-              const rawAmt = parseFloat(ta.amount || 0);
-              // DAS doesn't return decimals per-account; use token info or default
-              if (rawAmt > 0) {
-                // We'll get exact balance from supply calc below; for now mark as holder
-                balance = rawAmt / Math.pow(10, decimals);
-              }
+            if (ta.mint === mint) rawTotal += parseFloat(ta.amount || 0);
+          }
+          if (rawTotal > 0) {
+            // DAS amounts are raw base units with no decimals; scaling by a guessed 9 put
+            // 6-decimal (pump.fun) balances off by 1000x
+            const mintDecimals = await resolveMintDecimals(mint);
+            if (mintDecimals == null) {
+              // Holds the token, but the amount can't be scaled: say so rather than guess
+              return res.json({
+                wallet, mint, balance: null, decimals: null, holdsToken: true,
+                verified: true, totalSupply: null, circulatingSupply: null, percentageHeld: null
+              });
             }
+            decimals = mintDecimals;
+            balance = rawTotal / Math.pow(10, decimals);
           }
         } else if (dasResponse.data?.result) {
           // DAS responded but no accounts — confirmed not holding
@@ -2034,8 +2080,17 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
 
     // If standard RPC failed, try Helius DAS API as fallback (capped at 3s to keep API responsive)
     let largestAccounts = rpcAccounts;
+    // Decimals for the DAS path, whose amounts come back raw. Defaulting to 0 when
+    // getTokenSupply also failed served (and had the worker cache) raw base units.
+    let dasDecimals = null;
     if (!largestAccounts) {
-      const decimals = supplyResult?.value?.decimals || 0;
+      dasDecimals = Number.isInteger(supplyResult?.value?.decimals)
+        ? supplyResult.value.decimals
+        : await resolveMintDecimals(mint);
+      if (dasDecimals == null) {
+        return res.status(503).json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
+      }
+      const decimals = dasDecimals;
       largestAccounts = await Promise.race([
         solanaService.getTokenLargestAccountsDAS(mint, decimals),
         new Promise((_, reject) => setTimeout(() => reject(new Error('DAS timeout')), 10000)),
@@ -2115,12 +2170,13 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
         rawAccounts,
         totalSupply,
         usedDAS: !rpcAccounts,
-        supplyDecimals: supplyResult?.value?.decimals || 0
+        supplyDecimals: dasDecimals ?? (supplyResult?.value?.decimals || 0)
       });
       if (!job) {
         // No worker available — do classification inline as fallback
         await cache.delete(pendingKey);
-        await _classifyHoldersInline(mint, rawAccounts, totalSupply, !rpcAccounts, supplyResult, cacheKey);
+        await _classifyHoldersInline(mint, rawAccounts, totalSupply, !rpcAccounts,
+          supplyResult || (dasDecimals != null ? { value: { decimals: dasDecimals } } : null), cacheKey);
       }
     }
 
@@ -2311,7 +2367,9 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
 // One point per holder snapshot (services/holderCounts.js). Reads Postgres only.
 router.get('/:mint/holder-count', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
-  const range = holderCounts.RANGES[req.query.range] != null ? req.query.range : '30d';
+  // Own keys only: 'constructor', 'toString' etc. are on every object literal
+  const range = typeof req.query.range === 'string' && Object.prototype.hasOwnProperty.call(holderCounts.RANGES, req.query.range)
+    ? req.query.range : '30d';
   const cacheKey = `holder-count:${mint}:${range}`;
   const cached = await cache.get(cacheKey).catch(() => null);
   if (cached) return res.json(cached);

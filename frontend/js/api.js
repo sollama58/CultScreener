@@ -285,8 +285,11 @@ const api = {
         if (error.status >= 400 && error.status < 500 && error.status !== 429) {
           break;
         }
-        // Global 429/503 awareness: suppress background fetches for the retry-after window
-        if (error.status === 429 || error.status === 503) {
+        // Global 429/503 awareness: suppress background fetches for the retry-after window.
+        // A 503 'rpc_unavailable' (holders endpoint) means an upstream RPC failed, not that
+        // our server is overloaded — the caller shows its own retry message.
+        // Fire-and-forget callers (page-view POST) opt out with options.noGlobalBackoff.
+        if ((error.status === 429 || error.status === 503) && error.message !== 'rpc_unavailable' && !options.noGlobalBackoff) {
           const wasAlreadyLimited = isRateLimited();
           const backoff = (error.retryAfter || 60) * 1000;
           _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + backoff);
@@ -530,11 +533,14 @@ const api = {
     // Record a page view for a token (fire-and-forget, non-blocking)
     async recordView(mint) {
       try {
-        return await api.request(`/api/tokens/${mint}/view`, { method: 'POST' });
+        // Single attempt, no global "Server is busy" backoff: a rate-limited view
+        // POST should not pause price refresh or toast the user
+        return await api.request(`/api/tokens/${mint}/view`, { method: 'POST', retries: 1, noGlobalBackoff: true });
       } catch (error) {
-        // Non-critical - silently fail
+        // Non-critical - silently fail. Return null (not { views: 0 }) so the
+        // caller keeps the real count it already shows.
         console.warn('View tracking failed:', error.message);
-        return { views: 0 };
+        return null;
       }
     },
 
@@ -591,17 +597,19 @@ const api = {
       return api.request(`/api/watchlist/${wallet}`);
     },
 
-    async add(wallet, tokenMint) {
+    // auth = { signature, signatureTimestamp } - the server requires a wallet
+    // signature over `HolDEX Watchlist: add|remove <mint> for <wallet> at <ts>`
+    async add(wallet, tokenMint, auth = {}) {
       return api.request('/api/watchlist', {
         method: 'POST',
-        body: JSON.stringify({ wallet, tokenMint })
+        body: JSON.stringify({ wallet, tokenMint, ...auth })
       });
     },
 
-    async remove(wallet, tokenMint) {
+    async remove(wallet, tokenMint, auth = {}) {
       return api.request('/api/watchlist', {
         method: 'DELETE',
-        body: JSON.stringify({ wallet, tokenMint })
+        body: JSON.stringify({ wallet, tokenMint, ...auth })
       });
     },
 
@@ -630,10 +638,12 @@ const api = {
       const query = wallet ? `?wallet=${wallet}` : '';
       return api.request(`/api/sentiment/${mint}${query}`);
     },
-    async cast(mint, sentimentType, wallet) {
+    // auth = { signature, signatureTimestamp } over
+    // `HolDEX Sentiment: <sentiment> on <mint> for <wallet> at <ts>`
+    async cast(mint, sentimentType, wallet, auth = {}) {
       return api.request(`/api/sentiment/${mint}`, {
         method: 'POST',
-        body: JSON.stringify({ wallet, sentimentType })
+        body: JSON.stringify({ voterWallet: wallet, sentiment: sentimentType, ...auth })
       });
     }
   },

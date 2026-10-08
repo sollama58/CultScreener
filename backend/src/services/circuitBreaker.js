@@ -36,6 +36,7 @@ class CircuitBreaker {
     this.successCount = 0;
     this.lastFailureTime = null;
     this.halfOpenAttempts = 0;
+    this.halfOpenGeneration = 0;
 
     // Metrics
     this.metrics = {
@@ -71,7 +72,7 @@ class CircuitBreaker {
       }
     }
 
-    // In HALF_OPEN, limit concurrent attempts
+    // In HALF_OPEN, limit concurrent trial requests
     if (this.state === STATES.HALF_OPEN && this.halfOpenAttempts >= this.halfOpenMaxAttempts) {
       this.metrics.rejectedRequests++;
       throw new CircuitBreakerError(
@@ -82,20 +83,39 @@ class CircuitBreaker {
       );
     }
 
+    // halfOpenAttempts counts trials in flight. A trial that ends without
+    // moving the breaker (a success short of the close threshold, or an error
+    // isFailure() ignores, e.g. a 429) gives its slot back; otherwise five
+    // such trials would leave the breaker rejecting every call forever.
+    let trialGeneration = null;
     if (this.state === STATES.HALF_OPEN) {
       this.halfOpenAttempts++;
+      trialGeneration = this.halfOpenGeneration;
     }
 
     try {
       const result = await fn();
       this.onSuccess();
+      this._releaseTrial(trialGeneration);
       return result;
     } catch (error) {
       // Check if this error should count as a failure
       if (this.isFailure(error)) {
         this.onFailure(error);
       }
+      this._releaseTrial(trialGeneration);
       throw error;
+    }
+  }
+
+  /**
+   * Give back a HALF_OPEN trial slot, if the breaker is still in the same
+   * HALF_OPEN period the trial started in.
+   */
+  _releaseTrial(generation) {
+    if (generation === null) return;
+    if (this.state === STATES.HALF_OPEN && this.halfOpenGeneration === generation && this.halfOpenAttempts > 0) {
+      this.halfOpenAttempts--;
     }
   }
 
@@ -142,6 +162,7 @@ class CircuitBreaker {
     this.metrics.lastStateChange = Date.now();
 
     if (newState === STATES.HALF_OPEN) {
+      this.halfOpenGeneration++;
       this.halfOpenAttempts = 0;
       this.successCount = 0;
     } else if (newState === STATES.CLOSED) {

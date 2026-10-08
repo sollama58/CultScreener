@@ -70,9 +70,12 @@ const tokenChart = (() => {
     if (a >= 1e6) return `${sign}${(a / 1e6).toFixed(2)}M`;
     if (a >= 1e4) return `${sign}${(a / 1e3).toFixed(2)}K`;
     if (a >= 1) return sign + a.toLocaleString(undefined, { maximumFractionDigits: a >= 10 ? 2 : 4 });
-    const zeros = Math.max(0, -Math.floor(Math.log10(a)) - 1);
+    let zeros = Math.max(0, -Math.floor(Math.log10(a)) - 1);
+    let scaled = zeros >= 4 ? Math.round(a * Math.pow(10, zeros + 4)) : 0;
+    // Rounding can carry into a fifth digit (0.0000999997 -> 10000): that is one zero fewer
+    if (scaled >= 10000) { zeros -= 1; scaled = Math.round(scaled / 10); }
     if (zeros >= 4) {
-      const digits = Math.round(a * Math.pow(10, zeros + 4)).toString().slice(0, 4).replace(/0+$/, '') || '0';
+      const digits = scaled.toString().slice(0, 4).replace(/0+$/, '') || '0';
       return `${sign}0.0${toSubscript(zeros)}${digits}`;
     }
     return sign + a.toPrecision(4).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');

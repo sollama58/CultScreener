@@ -211,7 +211,7 @@ function startBot(token) {
       console.error('[TelegramBot] /TryConviction error:', err.message);
       const errText = '❌ Failed to fetch conviction data\\. Please try again in a moment\\.';
       await sendOrEdit(chatId, errText, loadingMsg).catch(() =>
-        bot.sendMessage(chatId, '❌ Failed to fetch conviction data. Please try again.')
+        bot.sendMessage(chatId, '❌ Failed to fetch conviction data. Please try again.').catch(() => {})
       );
     }
   });
@@ -220,9 +220,15 @@ function startBot(token) {
   bot.on('callback_query', async (query) => {
     if (query.data !== 'conviction') return;
 
-    await bot.answerCallbackQuery(query.id, { text: 'Fetching conviction data...' });
+    // Telegram rejects late answers (e.g. a tap queued while the worker was down); a
+    // rejection here would be unhandled and take the worker process down with it.
+    await bot.answerCallbackQuery(query.id, { text: 'Fetching conviction data...' }).catch((err) => {
+      console.warn('[TelegramBot] answerCallbackQuery failed:', err.message);
+    });
 
-    const chatId = query.message.chat.id;
+    // Callbacks from inline-mode messages carry no message/chat to reply into
+    const chatId = query.message?.chat?.id;
+    if (chatId === undefined || chatId === null) return;
     let loadingMsg;
     try {
       loadingMsg = await bot.sendMessage(chatId, '🔍 Fetching top conviction tokens\\.\\.\\.',  MSG_OPTS);

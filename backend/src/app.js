@@ -403,6 +403,20 @@ const IMAGE_PROXY_GONE_TTL_MS = 30 * 60 * 1000;      // 30m — the source reall
 const IMAGE_PROXY_FAIL_TTL_MS = 45 * 1000;           // 45s — a blip; recover quickly
 const IMAGE_PROXY_MAX_BYTES = 3 * 1024 * 1024;       // 3MB — logos/banners only, reject anything larger
 const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — see withTimeout below
+// Largest image body kept in Redis. Resized raster images are tens of KB; what is bigger is a
+// passthrough GIF/SVG (or an image sharp could not decode) of up to IMAGE_PROXY_MAX_BYTES, stored
+// base64 (~4MB). A handful of those fill a small volatile-lru Redis and evict TTL'd keys that
+// matter far more (signature replay markers, access tokens), so they are served but not cached.
+const IMAGE_PROXY_CACHE_MAX_BYTES = 512 * 1024;
+// The per-entry cap alone does not bound the total: resized images are small but their keys are
+// any URL a client names, at 600 requests/min per IP. So everything this proxy writes to Redis in
+// one TTL window is capped too (base64 bytes, this process). Past it, images are still served,
+// just not cached, and the rest of the instance keeps its room. Override with
+// IMAGE_PROXY_CACHE_BUDGET_MB.
+const imageProxyCacheBudget = require('./services/cache').createByteBudget({
+  limitBytes: (Number(process.env.IMAGE_PROXY_CACHE_BUDGET_MB) || 8) * 1024 * 1024,
+  windowMs: IMAGE_PROXY_TTL_MS
+});
 
 // Token artwork arrives at whatever size the creator uploaded - routinely a 1200px+ PNG of
 // several megabytes, for something this UI renders into a 56px avatar or a heavily blurred card
@@ -527,6 +541,12 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // to prevent, instead of a plain, inspectable 403/400.
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  // SVG passes through untouched (see IMAGE_PROXY_PASSTHROUGH), and an SVG is a document that can
+  // carry script. Opened directly, it would run with this API's origin under the app-wide CSP,
+  // which allows scripts from public CDNs. A sandboxed, script-less policy on this route keeps it
+  // an inert picture; <img> rendering ignores a subresource's CSP, so the app's logos are unaffected.
+  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
@@ -612,7 +632,12 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     const { contentType, buffer } = await fetchPromise;
     // Fire-and-forget — the response doesn't need to wait on the cache write, and a
     // slow Redis write must never be able to stall (or fail) the response itself.
-    cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
+    if (buffer.length <= IMAGE_PROXY_CACHE_MAX_BYTES) {
+      const data = buffer.toString('base64');
+      if (imageProxyCacheBudget.tryConsume(data.length)) {
+        cache.set(cacheKey, { contentType, data }, IMAGE_PROXY_TTL_MS).catch(() => {});
+      }
+    }
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');

@@ -200,7 +200,6 @@ class RedisCache {
     this.isConnected = false;
     this.keyPrefix = 'HolDEX:';
     this._reconnectAttempts = 0;
-    this._maxReconnectAttempts = 20;
 
     // Parse Redis URL and configure
     this.client = new Redis(redisUrl, {
@@ -210,14 +209,13 @@ class RedisCache {
         const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT'];
         return targetErrors.some(e => err.message.includes(e));
       },
-      // Cap reconnection attempts to prevent infinite log spam
+      // Never stop reconnecting: returning a non-number ends the client for
+      // good (status 'end'), and nothing recreates it, so the cache — and the
+      // setNX locks job dispatch depends on — would silently no-op until the
+      // next deploy. Log spam is throttled in the 'error' handler instead.
       retryStrategy: (times) => {
         this._reconnectAttempts = times;
-        if (times > this._maxReconnectAttempts) {
-          console.error(`[Redis] Giving up after ${times} reconnection attempts`);
-          return null; // Stop retrying
-        }
-        // Exponential backoff capped at 30s
+        // Linear backoff capped at 30s
         return Math.min(times * 500, 30000);
       },
       lazyConnect: false
@@ -231,6 +229,8 @@ class RedisCache {
 
     this.client.on('ready', () => {
       console.log('[Redis] Ready to accept commands');
+      this._reconnectAttempts = 0;
+      this.isConnected = true;
     });
 
     this.client.on('error', (err) => {
@@ -711,9 +711,40 @@ class CacheService {
 // Singleton instance
 const cache = new CacheService();
 
+/**
+ * A rolling byte allowance for cache writes that callers outside our control can trigger
+ * (e.g. the image proxy, whose keys are attacker-chosen URLs). Writes that would take the last
+ * `windowMs` past `limitBytes` are refused, so with windowMs >= the entries' TTL the bytes such a
+ * caller can hold in Redis stay bounded however many clients or IPs drive it. Counted in
+ * `buckets` slices so old writes age out gradually rather than all at once.
+ */
+function createByteBudget({ limitBytes, windowMs, buckets = 24, now = Date.now }) {
+  const sliceMs = windowMs / buckets;
+  let slices = []; // [{ start, bytes }], oldest first
+  const prune = (t) => { slices = slices.filter((s) => s.start + windowMs > t); };
+  return {
+    tryConsume(bytes) {
+      const t = now();
+      prune(t);
+      const used = slices.reduce((sum, s) => sum + s.bytes, 0);
+      if (used + bytes > limitBytes) return false;
+      const start = Math.floor(t / sliceMs) * sliceMs;
+      const last = slices[slices.length - 1];
+      if (last && last.start === start) last.bytes += bytes;
+      else slices.push({ start, bytes });
+      return true;
+    },
+    used() {
+      prune(now());
+      return slices.reduce((sum, s) => sum + s.bytes, 0);
+    }
+  };
+}
+
 module.exports = {
   cache,
   CacheService,
   TTL,
-  keys
+  keys,
+  createByteBudget
 };

@@ -481,6 +481,8 @@ const tokenDetail = {
     // Price is now always a direct number from the API
     const price = this.token.price || 0;
     const change = this.token.priceChange24h || 0;
+    // null = the provider publishes no 24h change for this token (shown as --, not 0.00%)
+    const changeUnknown = this.token.priceChange24h == null;
     const partial = !!this.token.geckoPartial;
 
     if (typeof config !== 'undefined' && config.app?.debug) console.log('[TokenDetail] Price display:', { price, change, token: this.token });
@@ -490,7 +492,7 @@ const tokenDetail = {
 
     if (priceEl) priceEl.textContent = partial && !price ? '--' : utils.formatPrice(price);
     if (changeEl) {
-      if (partial && !change) {
+      if ((partial && !change) || changeUnknown) {
         changeEl.textContent = '--';
         changeEl.className = 'price-change-badge';
       } else {
@@ -906,6 +908,9 @@ const tokenDetail = {
         const burntEl = document.getElementById('holders-burnt');
         if (lockedEl) lockedEl.textContent = '...';
         if (burntEl) burntEl.textContent = '...';
+        // Poll for the worker result (the poll finishes when supply arrives). Already
+        // started above when metrics are pending; metrics can also be null here.
+        if (!(metrics && metrics.top5Pct == null)) this._pollForFullMetrics();
       } else {
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
@@ -975,6 +980,16 @@ const tokenDetail = {
       if (holders.length > 0) this._loadDiamondHands();
     } catch (error) {
       console.warn('[TokenDetail] Holder analytics failed:', error.message);
+      // 503 rpc_unavailable, timeouts and other errors land here (api.request throws on
+      // non-2xx) — replace the skeleton rows and shimmer with a retry message
+      if (section) section.style.display = '';
+      const tbody = document.getElementById('holders-tbody');
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="6" class="holders-empty">Holder data temporarily unavailable. Click refresh to retry.</td></tr>';
+      }
+      const avgHoldTimeEl = document.getElementById('holders-avg-hold-time');
+      if (avgHoldTimeEl && avgHoldTimeEl.textContent === '...') avgHoldTimeEl.textContent = '--';
+      this._showDiamondHandsUnavailable();
     } finally {
       if (refreshBtn) refreshBtn.classList.remove('spinning');
     }
@@ -1084,7 +1099,7 @@ const tokenDetail = {
         }
       }
 
-      if (metrics.holderCount && metrics.holderCount > 0) {
+      if (metrics && metrics.holderCount > 0) {
         const count = metrics.holderCount.toLocaleString();
         const el1 = document.getElementById('stat-holders');
         if (el1) el1.textContent = count;
@@ -1212,7 +1227,10 @@ const tokenDetail = {
         this._holdTimesTimer = null;
       }
       this._holdTimesLoaded = false;
-      this._holdTimesAutoRetried = false;
+      // Preserve _holdTimesAutoRetried when called from the auto-retry itself, otherwise
+      // the one-shot retry re-arms and polls forever while the backend says computed:false
+      if (!this._htIsAutoRetry) this._holdTimesAutoRetried = false;
+      this._htIsAutoRetry = false;
       this._htLastComputedFalse = false;
     }
 
@@ -1289,7 +1307,10 @@ const tokenDetail = {
         if (this._htLastComputedFalse && !this._holdTimesAutoRetried && totalAvg === 0) {
           this._holdTimesAutoRetried = true;
           if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Still computing — auto-retry in 30s`);
-          this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(0), 30000);
+          this._holdTimesTimer = setTimeout(() => {
+            this._htIsAutoRetry = true; // Prevents attempt=0 reset from clearing _holdTimesAutoRetried
+            this._loadHoldTimes(0);
+          }, 30000);
           return;
         }
 
@@ -1463,7 +1484,7 @@ const tokenDetail = {
             if (wa) params.set('wallet', wa);
             const ac = new AbortController();
             const t = setTimeout(() => ac.abort(), 3000);
-            const r = await fetch(`${apiBase}/api/cultify/holder-behavior/analyze/${encodeURIComponent(this.mint)}?${params}`, { signal: ac.signal });
+            const r = await fetch(`${API_BASE_URL}/api/cultify/holder-behavior/analyze/${encodeURIComponent(this.mint)}?${params}`, { signal: ac.signal });
             clearTimeout(t);
             if (r.ok) { const d = await r.json(); if (d.status === 'done') hbData = d; }
           }
@@ -2067,7 +2088,8 @@ const tokenDetail = {
       }
       const result = await api.tokens.recordView(this.mint);
       // Update display with returned view count
-      if (result && result.views !== undefined) {
+      // Ignore failures and zero counts so a failed POST can't blank the real count
+      if (result && typeof result.views === 'number' && result.views > 0) {
         this.updateViewCount(result.views);
       }
     } catch (error) {

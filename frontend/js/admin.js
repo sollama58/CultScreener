@@ -1006,11 +1006,12 @@ const admin = {
       tbody.innerHTML = submissions.map(s => {
         const mint = s.token_mint || s.tokenMint || '';
         const isPending = (s.status === 'pending');
+        const url = s.content_url || s.contentUrl || s.content || s.url || '';
         return `<tr>
           <td class="mono">${s.id}</td>
           <td class="mono truncate" title="${this.esc(mint)}">${mint ? mint.slice(0, 6) + '...' + mint.slice(-4) : '--'}</td>
           <td>${this.esc(s.type || s.submission_type || '--')}</td>
-          <td class="truncate" title="${this.esc(s.content || s.url || '')}">${this.esc((s.content || s.url || '').slice(0, 40))}</td>
+          <td class="truncate" title="${this.esc(url)}">${this.esc(url.slice(0, 40))}</td>
           <td><span class="badge ${statusBadge[s.status] || 'badge-gray'}">${this.esc(s.status)}</span></td>
           <td>${s.created_at ? new Date(s.created_at).toLocaleDateString() : '--'}</td>
           <td class="actions-cell">

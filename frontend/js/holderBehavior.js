@@ -35,8 +35,8 @@
 
   // ── Pending burn recovery (survives tab close for 10 min) ────────────
   const PENDING_KEY = 'hb_pending_burn';
-  function savePending(sig, mint, walletAddr) {
-    try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ sig, mint, wallet: walletAddr, ts: Date.now() })); } catch {}
+  function savePending(sig, mint, walletAddr, claimSignature) {
+    try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ sig, mint, wallet: walletAddr, claimSignature, ts: Date.now() })); } catch {}
   }
   function clearPending() { try { sessionStorage.removeItem(PENDING_KEY); } catch {} }
   function getPending() {
@@ -45,6 +45,39 @@
       if (!d || Date.now() - d.ts > 10 * 60 * 1000) { clearPending(); return null; }
       return d;
     } catch { return null; }
+  }
+
+  // ── Wallet ownership proofs (messages must match backend/src/routes/cultify.js) ──
+  // A wallet address is public, so the backend only grants whitelist or burn access for one
+  // with a signature.
+
+  const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function base58Encode(bytes) {
+    let n = 0n;
+    for (const b of bytes) n = n * 256n + BigInt(b);
+    let out = '';
+    while (n > 0n) { out = B58_ALPHABET[Number(n % 58n)] + out; n /= 58n; }
+    for (const b of bytes) { if (b !== 0) break; out = '1' + out; }
+    return out;
+  }
+
+  async function signBase64(message) {
+    const { signature } = await wallet.signMessage(message);
+    let binary = '';
+    for (const b of signature) binary += String.fromCharCode(b);
+    return btoa(binary);
+  }
+
+  // Binds a burn to the token it pays for, so nobody else can claim it first
+  function signBurnClaim(burnSignature, mint, walletAddress) {
+    return signBase64(`HolDEX Holder Behavior Burn Claim: ${burnSignature} for ${mint} by ${walletAddress}`);
+  }
+
+  // Proves the connected wallet is ours (whitelisted, or a burn on record); returns query params
+  async function signAccessProof(mint, walletAddress) {
+    const ts = Date.now();
+    const sig = await signBase64(`HolDEX Holder Behavior Access: ${mint} for ${walletAddress} at ${ts}`);
+    return `&sig=${encodeURIComponent(sig)}&sigTs=${ts}`;
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────
@@ -194,8 +227,28 @@
   }
 
   // ── Burn gate ─────────────────────────────────────────────────────────
+  // Mint whose burn gate is showing. One page-level walletConnected listener handles it:
+  // per-render listeners piled up, and together with the Connect button's own re-render they
+  // bound two burn handlers to one button (one click, two burn prompts).
+  // Connecting from the gate runs the access check again (a whitelisted wallet, or one that
+  // already burned, should not be asked to burn). An account change on a connected gate
+  // (Phantom accountChanged dispatches walletConnected) re-renders it, so balance and token
+  // account match the new wallet, but never during an in-flight burn.
+  let burnGateMint = null;
+  let burnGateAddress = null; // wallet address the showing gate was rendered for
+  window.addEventListener('walletConnected', () => {
+    if (!burnGateMint) return;
+    if (document.getElementById('hb-connect-btn')) { handleAnalyzeClick(burnGateMint); return; }
+    const accountChanged = document.getElementById('hb-burn-btn') && !burnInProgress &&
+      typeof wallet !== 'undefined' && wallet.address !== burnGateAddress;
+    if (accountChanged) handleAnalyzeClick(burnGateMint);
+  });
+
   async function showBurnGate(mint) {
+    burnGateMint = mint;
     const connected = typeof wallet !== 'undefined' && wallet.connected;
+    const gateAddress = connected ? wallet.address : null;
+    burnGateAddress = gateAddress;
 
     let html = `
       <div class="hb-section-title">Holder Behavior Analysis</div>
@@ -223,11 +276,8 @@
     openModal(html);
 
     if (!connected) {
-      document.getElementById('hb-connect-btn').addEventListener('click', async () => {
-        await wallet.connect();
-        if (wallet.connected) showBurnGate(mint);
-      });
-      window.addEventListener('walletConnected', () => showBurnGate(mint), { once: true });
+      // Connecting dispatches walletConnected, which the listener above handles
+      document.getElementById('hb-connect-btn').addEventListener('click', () => wallet.connect());
       return;
     }
 
@@ -238,6 +288,7 @@
     const balEl  = document.getElementById('hb-balance-line');
     const burnBtn = document.getElementById('hb-burn-btn');
     if (!balEl || !burnBtn) return;
+    if (burnGateAddress !== gateAddress) return; // gate re-rendered for another account meanwhile
 
     const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
     if (balData.balance <= 0 || !balData.tokenAccount) {
@@ -256,7 +307,8 @@
       burnBtn.disabled = false;
     }
 
-    burnBtn.addEventListener('click', () => executeBurn(mint, balData.tokenAccount));
+    // onclick, not addEventListener: a button can only ever hold one burn handler
+    burnBtn.onclick = () => executeBurn(mint, balData.tokenAccount);
   }
 
   async function fetchBalance() {
@@ -271,7 +323,19 @@
   }
 
   // ── Burn transaction ──────────────────────────────────────────────────
+  let burnInProgress = false;
+
   async function executeBurn(mint, tokenAccount) {
+    if (burnInProgress) return; // never build a second burn while one is in flight
+    burnInProgress = true;
+    try {
+      await runBurn(mint, tokenAccount);
+    } finally {
+      burnInProgress = false;
+    }
+  }
+
+  async function runBurn(mint, tokenAccount) {
     // Grab UI elements now — they'll be replaced by setBody() later
     const burnBtn = document.getElementById('hb-burn-btn');
     if (!burnBtn) return;
@@ -338,6 +402,11 @@
       let binary = '';
       for (let i = 0; i < serialized.length; i++) binary += String.fromCharCode(serialized[i]);
 
+      // Sign the claim for this burn BEFORE sending it (declining burns nothing).
+      // The transaction id is its first signature.
+      setStatus('Sign claim in wallet...');
+      const claimSignature = await signBurnClaim(base58Encode(signed.signatures[0].signature), mint, wallet.address);
+
       // Send
       setStatus('Sending...');
       const sendResp = await fetch(`${baseUrl()}/api/cultify/send-tx`, {
@@ -352,7 +421,7 @@
       const { signature } = await sendResp.json();
 
       // Save pending immediately — protects against tab-close / network failure
-      savePending(signature, mint, wallet.address);
+      savePending(signature, mint, wallet.address, claimSignature);
 
       // Confirm
       setStatus('Confirming...');
@@ -378,7 +447,7 @@
       pollStart = Date.now();
 
       // Verify
-      const ok = await verifyBurnWithRetry(signature, mint, wallet.address);
+      const ok = await verifyBurnWithRetry(signature, mint, wallet.address, claimSignature);
       if (!ok) throw new Error('Verification failed. Reload the page to retry — your burn is safe.');
 
       // Start analysis
@@ -394,14 +463,14 @@
     }
   }
 
-  async function verifyBurnWithRetry(signature, mint, walletAddress) {
+  async function verifyBurnWithRetry(signature, mint, walletAddress, claimSignature) {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
       try {
         const resp = await fetch(`${baseUrl()}/api/cultify/holder-behavior/verify-burn`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ signature, mint, wallet: walletAddress })
+          body: JSON.stringify({ signature, mint, wallet: walletAddress, claimSignature })
         });
         const data = await resp.json();
 
@@ -411,20 +480,27 @@
           return true;
         }
 
-        // 409 = already claimed — the burn is valid, just re-check access to get a token
+        // 409 = claimed by something else. Our own earlier claim (a lost response) is answered
+        // with a fresh token above, so only a token already stored for this mint still counts.
         if (resp.status === 409) {
           clearPending();
-          const checkResp = await fetch(
-            `${baseUrl()}/api/cultify/holder-behavior/check-access/${encodeURIComponent(mint)}` +
-            `?wallet=${encodeURIComponent(walletAddress)}`
-          ).catch(() => null);
-          if (checkResp && checkResp.ok) {
-            const checkData = await checkResp.json();
-            if (checkData.accessToken) saveToken(mint, checkData.accessToken);
-            if (checkData.access) return true;
+          const stored = getToken(mint);
+          if (stored) {
+            const checkResp = await fetch(
+              `${baseUrl()}/api/cultify/holder-behavior/check-access/${encodeURIComponent(mint)}` +
+              `?token=${encodeURIComponent(stored)}`
+            ).catch(() => null);
+            if (checkResp && checkResp.ok) {
+              const checkData = await checkResp.json();
+              if (checkData.access) return true;
+            }
           }
           return false;
         }
+
+        // 401 = claim not signed by the burning wallet — retrying the same claim won't help,
+        // but keep the pending burn so it can be signed and claimed later
+        if (resp.status === 401) return false;
 
         // 400 = bad transaction — don't retry
         if (resp.status === 400) { clearPending(); return false; }
@@ -444,20 +520,16 @@
 
   async function pollOnce(mint) {
     const token = getToken(mint);
-    const wa    = walletAddr();
 
-    if (!token && !wa) {
-      setBody(errorHtml('Access token missing. Please burn again.'));
-      bindErrClose();
+    // Whitelisted wallets get a token from check-access too (after signing), so no token means
+    // access has to be re-established: back through the access check, not straight to a burn
+    if (!token) {
+      showAccessLost(mint, 'Access token missing.');
       return;
     }
 
-    // Build URL — prefer token, fall back to wallet (whitelisted users have no token)
-    let url = `${baseUrl()}/api/cultify/holder-behavior/analyze/${encodeURIComponent(mint)}`;
-    const params = new URLSearchParams();
-    if (token) params.set('token', token);
-    if (wa)    params.set('wallet', wa);
-    url += '?' + params.toString();
+    const url = `${baseUrl()}/api/cultify/holder-behavior/analyze/${encodeURIComponent(mint)}` +
+      `?token=${encodeURIComponent(token)}`;
 
     try {
       const ac = new AbortController();
@@ -467,21 +539,11 @@
       const data = await resp.json();
 
       if (!resp.ok) {
-        // Expired access token — clear it and offer to burn again
+        // Expired access token — clear it and check access again (a whitelisted wallet or a
+        // burn still on record can restore it by signing; otherwise this leads to the burn gate)
         if (resp.status === 403) {
           clearToken(mint);
-          setBody(errorHtml('Access token expired. Please burn again.'));
-          // Add "Burn Again" button after the close button
-          const errState = document.querySelector('.hb-error-state');
-          if (errState) {
-            const reburnBtn = document.createElement('button');
-            reburnBtn.className = 'cultify-burn-btn';
-            reburnBtn.style.marginTop = '0.5rem';
-            reburnBtn.textContent = 'Burn Again';
-            reburnBtn.addEventListener('click', () => showBurnGate(mint));
-            errState.appendChild(reburnBtn);
-          }
-          document.getElementById('hb-err-close')?.addEventListener('click', closeModal);
+          showAccessLost(mint, 'Access token expired.');
         } else {
           setBody(errorHtml(data.error || 'Analysis failed.'));
           bindErrClose();
@@ -699,66 +761,139 @@
     if (notice) notice.style.display = 'flex';
   }
 
-  // ── Main entry points ─────────────────────────────────────────────────
-  async function handleAnalyzeClick(mint) {
-    // 1. Whitelisted wallet path — no token needed, just confirm and go
-    const wa = walletAddr();
-    if (wa) {
-      try {
-        const resp = await fetch(
-          `${baseUrl()}/api/cultify/holder-behavior/check-access/${encodeURIComponent(mint)}` +
-          `?wallet=${encodeURIComponent(wa)}`
-        );
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.access) {
-            // If backend issued a token, save it; otherwise we'll pass wallet param
-            if (data.accessToken) saveToken(mint, data.accessToken);
-            if (!isOpen()) openModal(computingHtml('Checking for results...', null));
-            else setBody(computingHtml('Checking for results...', null));
-            pollStart = Date.now();
-            startPolling(mint);
-            return;
-          }
-        }
-      } catch {}
+  // Error screen with a button that runs the access check again (signing if needed, then the
+  // burn gate only when the wallet has no whitelist entry or burn on record)
+  function showAccessLost(mint, msg, label = 'Try Again') {
+    setBody(errorHtml(msg));
+    const errState = document.querySelector('.hb-error-state');
+    if (errState) {
+      const retryBtn = document.createElement('button');
+      retryBtn.className = 'cultify-burn-btn';
+      retryBtn.style.marginTop = '0.5rem';
+      retryBtn.textContent = label;
+      retryBtn.addEventListener('click', () => handleAnalyzeClick(mint));
+      errState.appendChild(retryBtn);
     }
+    bindErrClose();
+  }
 
-    // 2. Already have a valid access token — go straight to poll/results
+  // Why a signed access check failed, in words (detail comes from check-access). No burn is
+  // needed: the wallet has access, so every message points back to signing.
+  function signFailureText(data) {
+    const tail = ' This wallet has access already: sign the message to use it.';
+    if (!data) return 'Could not check your signature.' + tail;
+    switch (data.detail) {
+      case 'expired': return 'The signature took too long and expired.' + tail;
+      case 'future': return 'The signature was refused because your device clock is ahead. Check your clock, then sign again.';
+      case 'replayed': return 'That signature was already used.' + tail;
+      case 'bad_signature': return 'The signature did not match this wallet.' + tail;
+      default: return 'Your signature was not accepted.' + tail;
+    }
+  }
+
+  // ── Main entry points ─────────────────────────────────────────────────
+  function showChecking(text) {
+    if (!isOpen()) openModal(computingHtml(text, null));
+    else setBody(computingHtml(text, null));
+  }
+
+  function startResults(mint) {
+    showChecking('Checking for results...');
+    pollStart = Date.now();
+    startPolling(mint);
+  }
+
+  let accessCheckInFlight = false;
+
+  async function handleAnalyzeClick(mint) {
+    if (accessCheckInFlight) return; // a double click must not ask for two signatures
+    accessCheckInFlight = true;
+    try {
+      await checkAccessAndOpen(mint);
+    } finally {
+      accessCheckInFlight = false;
+    }
+  }
+
+  async function checkAccessAndOpen(mint) {
+    // 1. One access check: a stored token is enough; otherwise a whitelisted wallet, or one with
+    //    a burn on record, gets a token once it proves it is ours by signing
     const token = getToken(mint);
-    if (token) {
+    const wa = walletAddr();
+    if (token || wa) {
+      const params = new URLSearchParams();
+      if (token) params.set('token', token);
+      if (wa) params.set('wallet', wa);
+      const checkUrl = `${baseUrl()}/api/cultify/holder-behavior/check-access/${encodeURIComponent(mint)}?${params}`;
       try {
-        const resp = await fetch(
-          `${baseUrl()}/api/cultify/holder-behavior/check-access/${encodeURIComponent(mint)}` +
-          `?token=${encodeURIComponent(token)}`
-        );
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.access) {
-            openModal(computingHtml('Checking for results...', null));
-            pollStart = Date.now();
-            startPolling(mint);
+        let resp = await fetch(checkUrl);
+        let data = resp.ok ? await resp.json() : null;
+
+        if (data && !data.access && data.reason === 'signature_required' && wa) {
+          showChecking('Sign the message in your wallet to confirm it is yours...');
+          let proof;
+          try {
+            proof = await signAccessProof(mint, wa);
+          } catch {
+            showAccessLost(mint, 'Signature declined. This wallet has access already: sign the message to use it.', 'Sign again');
             return;
           }
+          // Signed: this wallet has access (whitelist or burn on record), so a refused or failed
+          // check offers to sign again; falling through would show it the burn gate
+          let signedData = null;
+          try {
+            const signedResp = await fetch(`${checkUrl}${proof}`);
+            signedData = signedResp.ok ? await signedResp.json() : null;
+          } catch {}
+          // 'none' / 'expired': the whitelist entry or burn is gone meanwhile, so the burn gate
+          const noAccessOnRecord = signedData && (signedData.reason === 'none' || signedData.reason === 'expired');
+          if (!signedData || (!signedData.access && !noAccessOnRecord)) {
+            showAccessLost(mint, signFailureText(signedData), 'Sign again');
+            return;
+          }
+          data = signedData;
+        }
+
+        if (data && data.access) {
+          if (data.accessToken) saveToken(mint, data.accessToken);
+          startResults(mint);
+          return;
         }
       } catch {}
       // Token didn't work — fall through to burn gate (don't discard token yet,
       // the poll handler will clear it on 403)
     }
 
-    // 3. Pending burn recovery
+    // 2. Pending burn recovery
     const pending = getPending();
     if (pending && pending.mint === mint) {
-      openModal(computingHtml('Recovering previous burn...', null));
-      const ok = await verifyBurnWithRetry(pending.sig, pending.mint, pending.wallet);
+      showChecking('Recovering previous burn...');
+      // A burn saved before claims were signed: sign now if the burning wallet is connected
+      let claimSignature = pending.claimSignature;
+      if (!claimSignature && wa && wa === pending.wallet) {
+        try { claimSignature = await signBurnClaim(pending.sig, pending.mint, pending.wallet); } catch {}
+      }
+      const ok = claimSignature
+        ? await verifyBurnWithRetry(pending.sig, pending.mint, pending.wallet, claimSignature)
+        : false;
       if (ok) {
         setBody(computingHtml('Burn recovered! Starting analysis...', null));
         pollStart = Date.now();
         startPolling(mint);
       } else {
-        setBody(errorHtml('Could not verify your previous burn.'));
+        setBody(errorHtml(claimSignature
+          ? 'Could not verify your previous burn.'
+          : 'Could not verify your previous burn. Connect the wallet that made it, then retry.'));
         const errState = document.querySelector('.hb-error-state');
         if (errState) {
+          if (getPending()) {
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'cultify-burn-btn';
+            retryBtn.style.marginTop = '0.5rem';
+            retryBtn.textContent = 'Retry Verification';
+            retryBtn.addEventListener('click', () => handleAnalyzeClick(mint));
+            errState.appendChild(retryBtn);
+          }
           const reburnBtn = document.createElement('button');
           reburnBtn.className = 'cultify-burn-btn';
           reburnBtn.style.marginTop = '0.5rem';
@@ -766,12 +901,12 @@
           reburnBtn.addEventListener('click', () => showBurnGate(mint));
           errState.appendChild(reburnBtn);
         }
-        document.getElementById('hb-err-close')?.addEventListener('click', closeModal);
+        bindErrClose();
       }
       return;
     }
 
-    // 4. No access — show burn gate
+    // 3. No access — show burn gate
     showBurnGate(mint);
   }
 
@@ -795,6 +930,7 @@
       const mint = getMint();
       if (!mint) return;
       if (isOpen()) return; // already open
+      if (!getToken(mint)) { handleAnalyzeClick(mint); return; }
       openModal(computingHtml('Loading results...', null));
       pollStart = Date.now();
       startPolling(mint);

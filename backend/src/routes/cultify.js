@@ -4,7 +4,10 @@ const crypto = require('crypto');
 const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
-const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache } = require('../middleware/validation');
+const {
+  validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache,
+  verifyWalletSignature, checkAndMarkSignature, validateDeviceSession
+} = require('../middleware/validation');
 const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
 const jobQueue = require('../services/jobQueue');
 const { checkBurnTransaction } = require('../services/burnTxPolicy');
@@ -14,6 +17,7 @@ const {
   runHolderBehaviorAnalysis
 } = require('../services/holderBehaviorAnalysis');
 const holderPipeline = require('../services/holderPipeline');
+const { resolveMintDecimals } = require('../services/mintDecimals');
 
 const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
 const BURN_AMOUNT = 5_000;
@@ -89,10 +93,99 @@ function generateAccessToken(walletAddress, mint) {
   return token;
 }
 
+// ── Wallet ownership proofs ──
+// A wallet address is public (and so is every burn of BURN_MINT), so naming one proves nothing.
+// Anything that grants Cultify access on the strength of a wallet needs one of these instead.
+
+// Signed by the burner before the burn is sent: binds that burn to the token it pays for, so
+// nobody who sees the burn on-chain can claim it first (for another token, or just to make the
+// burner's own claim fail). No timestamp: the burn signature already makes it single-purpose,
+// and the frontend keeps it with the pending burn so a reload can still claim without a prompt.
+function createCultifyBurnClaimMessage(burnSignature, mint, walletAddress) {
+  return `HolDEX Cultify Burn Claim: ${burnSignature} for ${mint} by ${walletAddress}`;
+}
+
+// Signed by a returning user whose access token was lost: proves the burn on record is theirs.
+function createCultifyAccessMessage(mint, walletAddress, timestamp) {
+  return `HolDEX Cultify Access: ${mint} for ${walletAddress} at ${timestamp}`;
+}
+
+// Wallet signatures travel base64-encoded (64 bytes); returns the byte array or null.
+function decodeWalletSignature(b64) {
+  if (typeof b64 !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(b64)) return null;
+  return Array.from(Buffer.from(b64, 'base64'));
+}
+
+// Holder Behavior has its own prefixes, so a signature given for one utility never counts for the other.
+function createHBBurnClaimMessage(burnSignature, mint, walletAddress) {
+  return `HolDEX Holder Behavior Burn Claim: ${burnSignature} for ${mint} by ${walletAddress}`;
+}
+
+function createHBAccessMessage(mint, walletAddress, timestamp) {
+  return `HolDEX Holder Behavior Access: ${mint} for ${walletAddress} at ${timestamp}`;
+}
+
+// How long a signed access proof (?sig=&sigTs=) stays good, measured from its timestamp to the
+// moment it is checked. sigTs is taken before the wallet prompt opens, so the window has to cover
+// a slow approval (hardware wallet, reading the message) as well as the round trip; 2 minutes
+// turned a slow approval into "burn again". A clock running ahead is allowed a minute of skew.
+// The replay marker lives for the whole window, so a proof is still accepted only once.
+const ACCESS_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
+const ACCESS_PROOF_FUTURE_SKEW_MS = 60 * 1000;
+const ACCESS_PROOF_REPLAY_TTL_MS = ACCESS_PROOF_MAX_AGE_MS + ACCESS_PROOF_FUTURE_SKEW_MS;
+
+// Proof that the caller controls `walletAddress`: an activated device session for that wallet, or
+// a fresh signature (?sig=&sigTs=) of createMessage(mint, wallet, ts), burned on use (no replay).
+// Defaults to the Cultify access message; Holder Behavior passes createHBAccessMessage.
+// Returns { ok: true } or { ok: false, reason } where reason is 'missing' (no proof supplied) or,
+// for a proof that was supplied and refused, 'expired' | 'future' | 'bad_signature' | 'replayed'.
+async function hasAccessProof(req, walletAddress, mint, createMessage = createCultifyAccessMessage) {
+  if (req.deviceWallet && req.deviceWallet === walletAddress) return { ok: true };
+  if (req.query.sig == null && req.query.sigTs == null) return { ok: false, reason: 'missing' };
+  const signature = decodeWalletSignature(req.query.sig);
+  const timestamp = /^\d+$/.test(String(req.query.sigTs ?? '')) ? parseInt(req.query.sigTs, 10) : NaN;
+  if (!signature || !Number.isFinite(timestamp)) return { ok: false, reason: 'bad_signature' };
+  const now = Date.now();
+  if (timestamp > now + ACCESS_PROOF_FUTURE_SKEW_MS) return { ok: false, reason: 'future' };
+  if (now - timestamp > ACCESS_PROOF_MAX_AGE_MS) return { ok: false, reason: 'expired' };
+  if (!verifyWalletSignature(createMessage(mint, walletAddress, timestamp), signature, walletAddress)) {
+    return { ok: false, reason: 'bad_signature' };
+  }
+  if (await checkAndMarkSignature(req.query.sig, ACCESS_PROOF_REPLAY_TTL_MS)) {
+    return { ok: false, reason: 'replayed' };
+  }
+  return { ok: true };
+}
+
+// check-access answer for a refused proof: 'signature_required' only when none was supplied, so
+// the page asks for one; a supplied proof that failed is 'signature_invalid' with the reason, so
+// the page can offer to sign again instead of showing the burn gate to a wallet that has access.
+function accessProofRefusal(proof) {
+  return proof.reason === 'missing'
+    ? { access: false, reason: 'signature_required' }
+    : { access: false, reason: 'signature_invalid', detail: proof.reason };
+}
+
+// Whether the recorded burn for `signature` is this exact claim (same wallet, mint and utility).
+// A duplicate-signature insert is only an idempotent retry when it is; otherwise a second request
+// racing the first with the same burn could buy access to another mint (or the other utility).
+async function isSameBurnClaim(signature, walletAddress, mint, utilityType) {
+  if (!db.pool) return false;
+  const { rows } = await db.pool.query(
+    'SELECT wallet_address, token_mint, utility_type FROM cultify_burns WHERE burn_signature = $1',
+    [signature]
+  );
+  const row = rows[0];
+  return !!row && row.wallet_address === walletAddress && row.token_mint === mint &&
+    (row.utility_type || 'cultify') === utilityType;
+}
+
 // POST /api/cultify/verify-burn — verify a burn transaction on-chain
+// Body: { signature, mint, wallet, claimSignature } where claimSignature is the wallet's base64
+// signature of createCultifyBurnClaimMessage(signature, mint, wallet).
 // Returns a short-lived access token on success (prevents wallet spoofing)
 router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
-  const { signature, mint, wallet: walletAddress } = req.body;
+  const { signature, mint, wallet: walletAddress, claimSignature } = req.body;
 
   // Validate inputs
   if (!signature || typeof signature !== 'string' || signature.length < 80 || signature.length > 90) {
@@ -105,9 +198,23 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid wallet address' });
   }
 
+  // The claim must be signed by the wallet it names (the burn authority is checked below)
+  const claimBytes = decodeWalletSignature(claimSignature);
+  if (!claimBytes || !verifyWalletSignature(createCultifyBurnClaimMessage(signature, mint, walletAddress), claimBytes, walletAddress)) {
+    return res.status(401).json({ error: 'Sign the claim with the wallet that made the burn.', code: 'CLAIM_SIGNATURE_REQUIRED' });
+  }
+
   // Check if signature already used (throws on DB failure — no permissive fallback)
   const alreadyUsed = await db.isCultifySignatureUsed(signature);
   if (alreadyUsed) {
+    // The burner's own retry after a lost response: re-issue for the claim that was recorded,
+    // while it is still inside the access window.
+    if (await isSameBurnClaim(signature, walletAddress, mint, 'cultify') &&
+        await db.hasCultifyAccess(walletAddress, mint)) {
+      const accessToken = generateAccessToken(walletAddress, mint);
+      await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      return res.json({ success: true, accessToken, note: 'Burn already recorded' });
+    }
     return res.status(409).json({ error: 'This burn transaction has already been claimed' });
   }
 
@@ -135,8 +242,12 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   try {
     await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString());
   } catch (err) {
-    // Handle duplicate signature — idempotent: still grant access so retries work
+    // Handle duplicate signature — idempotent: still grant access so retries work, but only
+    // for the claim that was recorded
     if (err.code === '23505') { // PostgreSQL unique violation
+      if (!(await isSameBurnClaim(signature, walletAddress, mint, 'cultify'))) {
+        return res.status(409).json({ error: 'This burn transaction has already been claimed' });
+      }
       const accessToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
@@ -155,8 +266,12 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
 
 // GET /api/cultify/check-access/:mint — check if a wallet/token pair has access
 // For curated tokens this is unauthenticated (free). For burned tokens, the
-// frontend passes the access token it received from verify-burn.
-router.get('/check-access/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+// frontend passes the access token it received from verify-burn. Without a valid token,
+// ?wallet= with a burn on record yields a new token only with proof of that wallet
+// (?sig=&sigTs= signing createCultifyAccessMessage, or its device session). With no proof the
+// answer is { access: false, reason: 'signature_required' }; with a proof that was refused it is
+// { access: false, reason: 'signature_invalid', detail } (see accessProofRefusal).
+router.get('/check-access/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   // Curated tokens are free for everyone
@@ -179,6 +294,9 @@ router.get('/check-access/:mint', walletLimiter, validateMint, asyncHandler(asyn
   if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     const hasBurn = await db.hasCultifyAccess(walletAddress, mint);
     if (hasBurn) {
+      // The burn record is public; only the wallet's owner gets a token from it
+      const proof = await hasAccessProof(req, walletAddress, mint);
+      if (!proof.ok) return res.json(accessProofRefusal(proof));
       // Issue a fresh access token so subsequent analyze calls work
       const newToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
@@ -226,9 +344,18 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     ]);
 
     let largestAccounts = rpcAccounts;
+    // Decimals for the DAS path, whose amounts come back raw. Defaulting to 0 when
+    // getTokenSupply also failed cached raw base units in the holder-analytics cache that the
+    // token page's /holders serves too. Same handling as that route: no guessing.
+    let dasDecimals = null;
     if (!largestAccounts && solanaService.isHeliusConfigured()) {
-      const decimals = supplyResult?.value?.decimals || 0;
-      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, decimals);
+      dasDecimals = Number.isInteger(supplyResult?.value?.decimals)
+        ? supplyResult.value.decimals
+        : await resolveMintDecimals(mint);
+      if (dasDecimals == null) {
+        return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
+      }
+      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, dasDecimals);
     }
 
     if (!largestAccounts || largestAccounts.length === 0) {
@@ -295,7 +422,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
         rawAccounts,
         totalSupply,
         usedDAS: !rpcAccounts,
-        supplyDecimals: supplyResult?.value?.decimals || 0
+        supplyDecimals: dasDecimals ?? (supplyResult?.value?.decimals || 0)
       });
       if (!job) {
         await cache.delete(pendingKey);
@@ -311,7 +438,6 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
 
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
 // Uses the SAME cache keys and worker flow as the main tokens endpoint.
-// Includes queue position info so the frontend can show "You are #N in queue".
 router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -341,23 +467,13 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     // ── Fast path: cached final result ──
     if (!fresh) {
       const cached = await cache.get(resultCacheKey);
-      if (cached) {
-        dequeueMint(mint).catch(() => {});
-        return res.json(cached);
-      }
+      if (cached) return res.json(cached);
     }
-
-    // ── Enqueue early: every token that doesn't have a final result gets a slot ──
-    // ensureEnqueued is idempotent — safe to call on every poll.
-    const queueInfo = await ensureEnqueued(mint);
 
     // ── Snapshot → sample → hold times, same pipeline as the tokens endpoint ──
+    // getDiamondHands dispatches the snapshot/backfill jobs itself; the frontend polls.
     const result = await holderPipeline.getDiamondHands(mint);
-    if (result.computed) {
-      dequeueMint(mint).catch(() => {});
-      return res.json(result);
-    }
-    res.json({ ...result, queue: queueInfo });
+    res.json(result);
   } catch (err) {
     console.error('[Cultify] Diamond hands error:', err.message);
     res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
@@ -518,8 +634,10 @@ async function storeHBAccess(walletAddress, mint) {
 
 // POST /api/cultify/holder-behavior/verify-burn
 // Same on-chain verification pattern as /verify-burn but requires 10,000 ASDFASDFA.
+// Body: { signature, mint, wallet, claimSignature } where claimSignature is the wallet's base64
+// signature of createHBBurnClaimMessage(signature, mint, wallet), made before the burn was sent.
 router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
-  const { signature, mint, wallet: walletAddress } = req.body;
+  const { signature, mint, wallet: walletAddress, claimSignature } = req.body;
 
   if (!signature || typeof signature !== 'string' || signature.length < 80 || signature.length > 90) {
     return res.status(400).json({ error: 'Invalid transaction signature' });
@@ -531,8 +649,22 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
     return res.status(400).json({ error: 'Invalid wallet address' });
   }
 
+  // The claim must be signed by the wallet it names (the burn authority is checked below), so
+  // nobody who sees the burn on-chain can claim it first
+  const claimBytes = decodeWalletSignature(claimSignature);
+  if (!claimBytes || !verifyWalletSignature(createHBBurnClaimMessage(signature, mint, walletAddress), claimBytes, walletAddress)) {
+    return res.status(401).json({ error: 'Sign the claim with the wallet that made the burn.', code: 'CLAIM_SIGNATURE_REQUIRED' });
+  }
+
   const alreadyUsed = await db.isCultifySignatureUsed(signature);
   if (alreadyUsed) {
+    // The burner's own retry after a lost response: re-issue for the claim that was recorded,
+    // while it is still inside the access window.
+    if (await isSameBurnClaim(signature, walletAddress, mint, 'holder_behavior') &&
+        await db.hasHBAccess(walletAddress, mint)) {
+      const accessToken = await storeHBAccess(walletAddress, mint);
+      return res.json({ success: true, accessToken, note: 'Burn already recorded' });
+    }
     return res.status(409).json({ error: 'This burn transaction has already been claimed' });
   }
 
@@ -557,6 +689,9 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
     await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString(), 'holder_behavior');
   } catch (err) {
     if (err.code === '23505') {
+      if (!(await isSameBurnClaim(signature, walletAddress, mint, 'holder_behavior'))) {
+        return res.status(409).json({ error: 'This burn transaction has already been claimed' });
+      }
       const accessToken = await storeHBAccess(walletAddress, mint);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
@@ -567,20 +702,13 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
   res.json({ success: true, accessToken });
 }));
 
-// GET /api/cultify/holder-behavior/check-access/:mint
-router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+// GET /api/cultify/holder-behavior/check-access/:mint?token=&wallet=
+// A valid access token is enough. Otherwise a whitelisted ?wallet= (free access) or one with a
+// Holder Behavior burn on record gets a new token only with proof of that wallet: ?sig=&sigTs=
+// signing createHBAccessMessage, or an activated device session for it. Without proof the answer
+// is { access: false, reason: 'signature_required' }; a refused proof gets 'signature_invalid'.
+router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
-
-  // Whitelisted wallets get free access — no burn needed
-  const walletAddress = req.query.wallet;
-  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
-    const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
-    if (isWhitelisted) {
-      // Issue a temporary access token so the analyze route can validate normally
-      const accessToken = await storeHBAccess(walletAddress, mint);
-      return res.json({ access: true, reason: 'whitelisted', accessToken });
-    }
-  }
 
   const accessToken = req.query.token;
   if (accessToken) {
@@ -588,36 +716,48 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, a
     if (accessData && accessData.mint === mint) return res.json({ access: true, reason: 'burned' });
   }
 
-  // Cache miss (e.g. server restart) — fall back to DB
-  const walletForCheck = req.query.wallet;
-  if (walletForCheck && SOLANA_ADDRESS_REGEX.test(walletForCheck)) {
-    const hasBurn = await db.hasHBAccess(walletForCheck, mint);
-    if (hasBurn) {
-      const newToken = await storeHBAccess(walletForCheck, mint);
-      return res.json({ access: true, reason: 'burned', accessToken: newToken });
+  // Whitelisted wallets get free access, and a burn on record survives a lost token (or a
+  // server restart) - but a wallet address is public, so only its owner gets either
+  const walletAddress = req.query.wallet;
+  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
+    const hasBurn = !isWhitelisted && await db.hasHBAccess(walletAddress, mint);
+    if (isWhitelisted || hasBurn) {
+      const proof = await hasAccessProof(req, walletAddress, mint, createHBAccessMessage);
+      if (!proof.ok) return res.json(accessProofRefusal(proof));
+      // Issue an access token so the analyze route can validate normally
+      const newToken = await storeHBAccess(walletAddress, mint);
+      return res.json({ access: true, reason: isWhitelisted ? 'whitelisted' : 'burned', accessToken: newToken });
     }
   }
 
   res.json({ access: false, reason: accessToken ? 'expired' : 'none' });
 }));
 
-// GET /api/cultify/holder-behavior/analyze/:mint
+// GET /api/cultify/holder-behavior/analyze/:mint?token=
 // Returns { status: 'computing' } immediately; caches final result for polling.
-router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+// Needs an access token from verify-burn or check-access. A whitelisted ?wallet= is accepted
+// in its place only with proof of that wallet (an activated device session, or ?sig=&sigTs= as
+// for check-access).
+router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
-  // Whitelisted wallets bypass the burn gate entirely
-  const walletAddress = req.query.wallet;
-  let isWhitelisted = false;
-  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
-    isWhitelisted = await db.isWalletWhitelisted(walletAddress);
-  }
-
-  if (!isWhitelisted) {
-    const accessToken = req.query.token;
-    if (!accessToken) return res.status(403).json({ error: 'Access token required' });
-    const accessData = await cache.get(`hb:access:${accessToken}`);
-    if (!accessData || accessData.mint !== mint) {
+  const accessToken = req.query.token;
+  const accessData = accessToken ? await cache.get(`hb:access:${accessToken}`) : null;
+  if (!accessData || accessData.mint !== mint) {
+    const walletAddress = req.query.wallet;
+    const isWhitelisted = !!walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress) &&
+      await db.isWalletWhitelisted(walletAddress);
+    if (isWhitelisted) {
+      const proof = await hasAccessProof(req, walletAddress, mint, createHBAccessMessage);
+      if (!proof.ok) {
+        return res.status(403).json(proof.reason === 'missing'
+          ? { error: 'Sign with your wallet to confirm it is yours.', code: 'SIGNATURE_REQUIRED' }
+          : { error: 'Your wallet signature was not accepted. Sign again.', code: 'SIGNATURE_INVALID', detail: proof.reason });
+      }
+    } else if (!accessToken) {
+      return res.status(403).json({ error: 'Access token required' });
+    } else {
       return res.status(403).json({ error: 'Invalid or expired access token. Please burn again.' });
     }
   }
@@ -637,11 +777,17 @@ router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, asyncH
   const pending = await cache.get(pendingKey);
   if (pending) return res.json({ status: 'computing' });
 
+  // Claim the pending flag atomically so concurrent requests that raced past the check above
+  // don't enqueue a second run. If the claim fails only because the cache is unreachable (no
+  // flag is set), carry on rather than answering 'computing' while nothing runs.
+  const claimed = await cache.setNX(pendingKey, Date.now(), HB_PENDING_TTL);
+  if (!claimed && await cache.get(pendingKey)) return res.json({ status: 'computing' });
+
   // Enqueue analysis in worker process (replaces setImmediate + in-process semaphore).
-  // jobId deduplicates at the BullMQ level — prevents duplicate jobs when concurrent
-  // requests race past the pending-flag check above.
-  await cache.set(pendingKey, Date.now(), HB_PENDING_TTL);
-  const queued = await jobQueue.addAnalyticsJob('compute-holder-behavior', { mint }, { jobId: `hb:${mint}` });
+  // A fresh jobId per run: BullMQ answers a reused id with the existing job, even a completed
+  // one it is still retaining, so a fixed id would silently skip the retry after a failed run.
+  // (Custom ids also may not contain ':' - BullMQ rejects them.)
+  const queued = await jobQueue.addAnalyticsJob('compute-holder-behavior', { mint }, { jobId: `hb-${mint}-${Date.now()}` });
   if (!queued) {
     // Queue unavailable — fall back to in-process execution so the feature still works
     setImmediate(() => runHolderBehaviorAnalysis(mint));
@@ -681,3 +827,7 @@ module.exports = router;
 // Exposed for tests only - lets the burn verification be exercised against captured transaction
 // fixtures without standing up the whole route (and its DB/cache/RPC dependencies).
 module.exports._verifyBurnTransaction = verifyBurnTransaction;
+module.exports._createCultifyBurnClaimMessage = createCultifyBurnClaimMessage;
+module.exports._createCultifyAccessMessage = createCultifyAccessMessage;
+module.exports._createHBBurnClaimMessage = createHBBurnClaimMessage;
+module.exports._createHBAccessMessage = createHBAccessMessage;

@@ -117,6 +117,9 @@ async function addCuratedTokenFully(mintAddress) {
   } catch { /* non-critical */ }
 
   const token = await db.getCuratedToken(mintAddress).catch(() => null);
+  // The home table's conviction leaderboard is cached; drop it so the new token shows up now.
+  await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
+
   return { token, dexScreenerEnriched: !!dexData };
 }
 

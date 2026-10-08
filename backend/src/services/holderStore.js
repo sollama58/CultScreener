@@ -219,18 +219,22 @@ async function saveBackfill(mint, wallet, { acquiredAt = null, source = null, cu
   );
 }
 
-/** Forget snapshots/positions for mints nobody has snapshotted in a month (e.g. one-off Cultify runs). */
+/**
+ * Forget snapshots/positions for mints nobody has snapshotted in a month (e.g.
+ * one-off Cultify runs). A snapshot the pre-check keeps confirming (verified_at)
+ * is current however old its taken_at, so it counts as recent.
+ */
 async function pruneAbandonedMints() {
   const { rowCount } = await pool().query(
     `DELETE FROM holder_positions p
       WHERE NOT EXISTS (
         SELECT 1 FROM holder_snapshots s
          WHERE s.mint_address = p.mint_address
-           AND s.taken_at > NOW() - make_interval(days => $1))`,
+           AND GREATEST(s.taken_at, s.verified_at) > NOW() - make_interval(days => $1))`,
     [SNAPSHOT_RETENTION_DAYS]
   );
   await pool().query(
-    `DELETE FROM holder_snapshots WHERE taken_at < NOW() - make_interval(days => $1)`,
+    `DELETE FROM holder_snapshots WHERE GREATEST(taken_at, verified_at) < NOW() - make_interval(days => $1)`,
     [SNAPSHOT_RETENTION_DAYS]
   );
   // Holder count history is kept for good while a token is still snapshotted

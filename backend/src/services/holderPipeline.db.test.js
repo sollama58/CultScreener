@@ -157,6 +157,8 @@ if (!DB_URL) {
       const dh = await pipeline.getDiamondHands(MINT, { dispatch: false });
       assert.strictEqual(dh.computed, true);
       assert.strictEqual(dh.analyzed, 250);
+      // the displayed holder count (POOL left out), not every wallet in the snapshot
+      assert.strictEqual(dh.holderCount, 300);
       // W000 bought at T0 (hold 0 → unresolved), everyone else 1..299 days
       assert.ok(dh.distribution['1w'] > 90, JSON.stringify(dh.distribution));
       assert.ok(dh.distribution['1yr'] === 0);
@@ -403,6 +405,33 @@ if (!DB_URL) {
       assert.strictEqual(back.backfill_attempts, 0);
     });
 
+    test('only a closed or empty account marks a wallet left; a failed balance read leaves it pending', async () => {
+      const w = 'GONE';
+      const saved = await position(w);
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending' WHERE mint_address = $1 AND wallet = $2`, [MINT, w]);
+      const realBalance = solana.getTokenAccountBalance;
+      try {
+        for (const make of [
+          () => Object.assign(new Error('Request failed with status code 429'), { response: { status: 429 } }),
+          () => Object.assign(new Error('Breaker is open'), { name: 'CircuitBreakerError' }),
+          () => Object.assign(new Error('timeout of 15000ms exceeded'), { code: 'ECONNABORTED' }),
+        ]) {
+          solana.getTokenAccountBalance = async () => { throw make(); };
+          await assert.rejects(pipeline.backfillWallet(MINT, await position(w), 6));
+          assert.strictEqual((await position(w)).acquired_source, 'pending');
+        }
+        solana.getTokenAccountBalance = async () => {
+          throw Object.assign(new Error('Invalid param: could not find account'), { rpcCode: -32602 });
+        };
+        assert.strictEqual(await pipeline.backfillWallet(MINT, await position(w), 6), true);
+        assert.strictEqual((await position(w)).acquired_source, 'left');
+      } finally {
+        solana.getTokenAccountBalance = realBalance;
+        await db.pool.query(`UPDATE holder_positions SET acquired_source = $3, acquired_at = $4, backfill_attempts = $5
+          WHERE mint_address = $1 AND wallet = $2`, [MINT, w, saved.acquired_source, saved.acquired_at, saved.backfill_attempts]);
+      }
+    });
+
     test('hold times flag lower bounds, and wait for wallets a snapshot in flight will bring', async () => {
       await db.pool.query(`UPDATE holder_positions SET acquired_source = 'backfill_capped' WHERE mint_address = $1 AND wallet = 'W007'`, [MINT]);
       try {
@@ -499,6 +528,34 @@ if (!DB_URL) {
       const r = await pipeline.runBackfill(MINT);
       assert.notStrictEqual(r.status, 'waiting');
       assert.strictEqual(await cache.get('holder-backfill-slot:0'), undefined);
+    });
+
+    test('a backfill run that fails keeps its lock for the retry, so a poll queues no second run', async () => {
+      const realEntries = store.getSnapshotEntries;
+      store.getSnapshotEntries = async () => { throw new Error('canceling statement due to statement timeout'); };
+      const before = queued.length;
+      const realSet = cache.set;
+      const lockWrites = [];
+      cache.set = async (k, v, ttl) => {
+        if (k === `holder-backfill-pending:${MINT}`) lockWrites.push(ttl);
+        return realSet.call(cache, k, v, ttl);
+      };
+      try {
+        await assert.rejects(pipeline.runBackfill(MINT), /statement timeout/);
+        assert.ok(await cache.get(`holder-backfill-pending:${MINT}`), 'lock kept as a cooldown');
+        // the last write is the failure cooldown (short, but longer than BullMQ's retry backoff)
+        assert.strictEqual(lockWrites[lockWrites.length - 1], pipeline.CONFIG.backfillFailCooldown);
+        assert.strictEqual(await pipeline.ensureBackfill(MINT), false);
+        assert.strictEqual(queued.length, before);
+        assert.strictEqual(await cache.get('holder-backfill-slot:0'), undefined, 'slot released');
+      } finally {
+        store.getSnapshotEntries = realEntries;
+        cache.set = realSet;
+      }
+      // the retry runs and releases the lock
+      const r = await pipeline.runBackfill(MINT);
+      assert.strictEqual(r.status, 'ok');
+      assert.strictEqual(await cache.get(`holder-backfill-pending:${MINT}`), undefined);
     });
 
     test('backfill order interleaves the strata so partial results cover all of them', () => {
@@ -611,6 +668,21 @@ if (!DB_URL) {
       assert.strictEqual((await position('WHALE3')).acquired_source, 'backfill');
     });
 
+    test('no snapshot is written when the LP wallet check gets no answer', async () => {
+      const before = await store.getLatestSnapshot(MINT);
+      const realMulti = solana.getMultipleAccounts;
+      solana.getMultipleAccounts = async () => { throw Object.assign(new Error('Request failed with status code 429'), { response: { status: 429 } }); };
+      chain.W001.amount += 1n; // so the pre-check sees a change
+      try {
+        await assert.rejects(pipeline.takeSnapshot(MINT), /LP wallet check failed/);
+        assert.strictEqual((await store.getLatestSnapshot(MINT)).id, before.id);
+      } finally {
+        solana.getMultipleAccounts = realMulti;
+        chain.W001.amount -= 1n;
+        await cache.delete(`holder-snapshot-pending:${MINT}`);
+      }
+    });
+
     test('newcomers after a verified-unchanged check are dated from the check, not the old snapshot', async () => {
       // latest snapshot at T0+30h; nothing changes, so the 34h check keeps it and marks it verified
       now = T0 + 34 * HOUR;
@@ -623,6 +695,40 @@ if (!DB_URL) {
       const p = await position('VERIFIEDNEW');
       assert.strictEqual(p.acquired_source, 'snapshot');
       assert.strictEqual(new Date(p.acquired_at).getTime(), now);
+    });
+  });
+
+  describe('abandoned mint pruning (Postgres)', () => {
+    const QUIET = 'TestMintQuiet11111111111111111111111111111';
+    const GONE = 'TestMintGone111111111111111111111111111111';
+    const cleanup = async () => {
+      for (const m of [QUIET, GONE]) {
+        await db.pool.query('DELETE FROM holder_snapshots WHERE mint_address = $1', [m]);
+        await db.pool.query('DELETE FROM holder_positions WHERE mint_address = $1', [m]);
+      }
+    };
+
+    test('a snapshot kept current by the pre-check is not pruned with abandoned mints', async () => {
+      await cleanup();
+      try {
+        const old = new Date(realNow() - 40 * DAY);
+        for (const [m, verified] of [[QUIET, new Date(realNow() - HOUR)], [GONE, null]]) {
+          await db.pool.query(
+            `INSERT INTO holder_snapshots (mint_address, taken_at, verified_at, complete, pages, account_count, holder_count)
+             VALUES ($1, $2, $3, true, 1, 1, 1)`, [m, old, verified]);
+          await db.pool.query(
+            `INSERT INTO holder_positions (mint_address, wallet, amount, first_seen_at, last_seen_at, acquired_at, acquired_source)
+             VALUES ($1, 'W', 1, $2, $2, $2, 'backfill')`, [m, old]);
+        }
+        await store.pruneAbandonedMints();
+        const count = async (table, m) => (await db.pool.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE mint_address = $1`, [m])).rows[0].n;
+        assert.strictEqual(await count('holder_snapshots', QUIET), 1);
+        assert.strictEqual(await count('holder_positions', QUIET), 1);
+        assert.strictEqual(await count('holder_snapshots', GONE), 0);
+        assert.strictEqual(await count('holder_positions', GONE), 0);
+      } finally {
+        await cleanup();
+      }
     });
   });
 

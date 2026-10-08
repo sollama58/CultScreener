@@ -555,6 +555,8 @@ const jobProcessors = {
   'backfill-holder-acquisitions': async (job) => {
     const { mint } = job.data;
     if (!mint) return { error: 'No mint provided' };
+    // runBackfill owns the per-mint pending lock: on a failure it keeps it as a
+    // short cooldown (CONFIG.backfillFailCooldown) that covers BullMQ's retry
     return require('./services/holderPipeline').runBackfill(mint);
   },
 
@@ -971,6 +973,8 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
+// Only when run as the worker process; tests require this file for jobProcessors.
+if (require.main === module) {
 // Handle shutdown signals
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
@@ -991,3 +995,6 @@ start().catch((err) => {
   console.error('[Worker] Failed to start:', err);
   process.exit(1);
 });
+}
+
+module.exports = { jobProcessors };

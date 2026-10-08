@@ -75,6 +75,7 @@ const CONFIG = {
   snapshotLockTtl: 10 * 60 * 1000,
   snapshotFailCooldown: 5 * 60 * 1000,
   backfillLockTtl: 10 * 60 * 1000,                           // > backfillRunMs plus the slowest wallet
+  backfillFailCooldown: 60 * 1000,                           // > BullMQ's retry backoff
   staleSnapshotMs: 24 * 3_600_000,                           // routes ask for a fresh one past this
 };
 
@@ -157,7 +158,11 @@ async function detectLpWallets(holders) {
   for (const w of candidates) if (LP_AUTHORITIES.has(w) || LP_PROGRAMS.has(w)) lp.add(w);
   for (let i = 0; i < candidates.length; i += 100) {
     const batch = candidates.slice(i, i + 100);
-    const res = await solanaService.getMultipleAccounts(batch).catch(() => null);
+    // No answer means vaults would go unflagged: into the sample and the holder
+    // count. Fail the snapshot instead (the job retries) of writing it that way.
+    const res = await solanaService.getMultipleAccounts(batch).catch(err => {
+      throw new Error(`LP wallet check failed: ${err.message}`);
+    });
     (res?.value || []).forEach((acct, j) => {
       if (isProgramOwned(acct)) lp.add(batch[j]);
     });
@@ -286,6 +291,9 @@ async function takeSnapshot(mint) {
     const exclude = new Set([...BURN_WALLETS, ...LP_PROGRAMS, ...LP_AUTHORITIES, ...lpWallets]);
     const { sample, meta } = selectSample(mint, holders, { exclude });
     meta.lpWallets = [...lpWallets];
+    // holder_count is every wallet; the count shown elsewhere leaves out burn,
+    // LP and program-owned wallets (recordSnapshotPoint), and so does this one
+    meta.holderCount = holderCounts.countHolders(holders, { exclude }).holders;
     meta.complete = complete;
     meta.fingerprint = fingerprint;
 
@@ -411,7 +419,13 @@ async function backfillWallet(mint, pos, decimals, { boundBeforeMs = null } = {}
     cursor = null;
     const pagePromise = readPage(null);
     pagePromise.catch(() => {});
-    const bal = await solanaService.getTokenAccountBalance(tokenAccount).catch(() => null);
+    // Only a real answer counts: a closed account (RPC "could not find account")
+    // or a zero balance. Rate limiting, timeouts and an open breaker go to the
+    // caller's retry and pushback handling instead of marking a holder 'left'.
+    const bal = await solanaService.getTokenAccountBalance(tokenAccount).catch(err => {
+      if (isAccountMissing(err)) return null;
+      throw err;
+    });
     balance = toBigInt(bal?.value?.amount);
     if (balance <= 0n) {
       // Account emptied or closed since the snapshot: the wallet left. The next
@@ -469,6 +483,11 @@ async function backfillWallet(mint, pos, decimals, { boundBeforeMs = null } = {}
   return false;
 }
 
+// The JSON-RPC answer for a token account that no longer exists (closed)
+function isAccountMissing(err) {
+  return err?.rpcCode === -32602 || /could not find account/i.test(String(err?.message || ''));
+}
+
 // A failure that says nothing about the wallet itself: Helius rate limiting or
 // erroring, our own queue or circuit breaker refusing, or the request timing out.
 // Helius or our own queue pushing back (as opposed to one slow request).
@@ -510,8 +529,12 @@ async function runBackfill(mint) {
   let remaining = 0;
   let retryDelay = 2000;
   let slot = null;
+  let failed = false;
   const startedAt = Date.now();
   try {
+    // Hold the dedupe lock for this run, also when this is BullMQ retrying a
+    // failed run whose lock was kept only as a short cooldown
+    await cache.set(keys.backfillPending(mint), Date.now(), CONFIG.backfillLockTtl).catch(() => {});
     const snap = await store.getLatestSnapshot(mint);
     if (!snap) return { status: 'no-snapshot' };
     slot = await acquireBackfillSlot(mint);
@@ -551,8 +574,17 @@ async function runBackfill(mint) {
     };
 
     const runOne = async wallet => {
-      // Re-read the row: an earlier pass in this run may have saved a cursor for it
-      const pos = (await store.getPositions(mint, [wallet])).get(wallet);
+      // Re-read the row: an earlier pass in this run may have saved a cursor for it.
+      // A failed read must not reject the pool and leave its other slots running
+      // on after this run has released its lock.
+      let pos;
+      try {
+        pos = (await store.getPositions(mint, [wallet])).get(wallet);
+      } catch (err) {
+        stats.errors++;
+        console.warn(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} could not read its position:`, err.message);
+        return null;
+      }
       if (!pos || pos.acquired_source !== 'pending') return true;
       const t0 = Date.now();
       try {
@@ -630,9 +662,15 @@ async function runBackfill(mint) {
       }
     }
     return { status: 'ok', settled: stats.settled, remaining, ms: elapsed };
+  } catch (err) {
+    // BullMQ retries the job: keep the lock as a cooldown so an API poll does
+    // not queue a second run alongside the retry
+    failed = true;
+    await cache.set(keys.backfillPending(mint), Date.now(), CONFIG.backfillFailCooldown).catch(() => {});
+    throw err;
   } finally {
     await releaseBackfillSlot(slot, mint);
-    await cache.delete(keys.backfillPending(mint)).catch(() => {});
+    if (!failed) await cache.delete(keys.backfillPending(mint)).catch(() => {});
     if (remaining > 0) await ensureBackfill(mint, { delay: retryDelay }).catch(() => {});
   }
 }
@@ -700,8 +738,9 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
     resolved,
     computed: pending === 0,
     sampleMethod: meta.method || null,
-    // Same meaning as the holder count shown elsewhere (token accounts with a balance)
-    holderCount: snap.holder_count,
+    // Same meaning as the holder count shown elsewhere (burn, LP and program-owned
+    // wallets left out); snapshots written before that was stored fall back to all
+    holderCount: meta.holderCount ?? snap.holder_count,
     snapshotAt,
   };
 
@@ -714,7 +753,7 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
   await cache.set(keys.result(mint), result, CONFIG.resultTtl).catch(() => {});
   if (distribution) {
     const convictionMeta = {
-      method: meta.method, snapshotId: snap.id, snapshotAt, holderCount: snap.holder_count,
+      method: meta.method, snapshotId: snap.id, snapshotAt, holderCount: result.holderCount,
       eligible: meta.eligible, strata: meta.strata, supplyDistribution,
     };
     await require('./database').upsertConviction(mint, distribution, sample.length, result.analyzed, convictionMeta)

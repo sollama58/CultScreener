@@ -58,9 +58,13 @@ async function checkAndMarkSignature(signature, ttlMs) {
   // Try Redis first — use SET NX (set-if-not-exists) for atomic check+set
   if (cache.getBackendType() === 'redis') {
     try {
-      const wasSet = await cache.setNX(`sig-replay:${signature}`, 1, ttlMs);
+      const replayKey = `sig-replay:${signature}`;
+      const wasSet = await cache.setNX(replayKey, 1, ttlMs);
       if (wasSet) return false; // Fresh — we just claimed it
-      return true; // Already existed — replay
+      // setNX also answers false (without throwing) when Redis is disconnected or the
+      // command failed. Only call it a replay when the key is really there; otherwise
+      // fall through to the in-memory store instead of rejecting every fresh signature.
+      if ((await cache.get(replayKey)) != null) return true; // Already existed — replay
     } catch { /* fall through to in-memory */ }
   }
   // In-memory fallback: synchronous check+set is atomic in single-threaded Node.js
@@ -395,7 +399,9 @@ function validatePagination(req, res, next) {
 function validateSearch(req, res, next) {
   const { q } = req.query;
 
-  if (!q || q.length < 2) {
+  // ?q[]=ab&q[]=cd (array) or ?q[a]=b (object) would pass the length checks and then
+  // sanitize to '', running an unbounded empty search
+  if (typeof q !== 'string' || q.length < 2) {
     return res.status(400).json({ error: 'Search query must be at least 2 characters' });
   }
 
@@ -405,6 +411,10 @@ function validateSearch(req, res, next) {
 
   // Sanitize search query (don't HTML-encode — parameterized queries handle SQL safety)
   req.query.q = sanitizeSearchString(q, 100);
+  // Whitespace-only input trims down below the minimum
+  if (req.query.q.length < 2) {
+    return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+  }
 
   next();
 }
@@ -784,6 +794,13 @@ async function validateWalletSignature(req, res, next) {
       message: 'Wallet signature verification failed',
       code: 'INVALID_SIGNATURE'
     });
+  }
+
+  // Replay protection: burn the signature like every other signed route, so a captured
+  // deletion request can't be re-run inside its expiry window
+  const alreadyUsed = await checkAndMarkSignature(signature.join(','), SIGNATURE_EXPIRY_MS);
+  if (alreadyUsed) {
+    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
   }
 
   // Signature is valid - proceed

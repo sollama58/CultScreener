@@ -94,10 +94,13 @@ router.get('/leaderboard/:mint', asyncHandler(async (req, res) => {
   const rankCacheKey = `api:token:rank:${mint}`;
   let rank = null;
 
+  // cache.get answers undefined (never null) on a miss
   const cachedRank = await cache.get(rankCacheKey);
-  if (cachedRank !== null) {
+  if (cachedRank != null) {
     rank = cachedRank;
-  } else {
+  } else if (tokenData.conviction_1m != null && await db.getCuratedToken(mint)) {
+    // Only scored, curated tokens are on the leaderboard; the COUNT query
+    // would otherwise answer 1 for a NULL score and rank non-curated tokens.
     rank = await db.getTokenConvictionRank(mint);
     if (rank !== null) {
       // Cache rank for 30 minutes (conviction scores are stable)

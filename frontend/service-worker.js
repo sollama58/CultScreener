@@ -59,7 +59,14 @@
 // trading activity - styles.css v24, tokenTable.js v7, conviction.js v20, kotp.js v6.
 // v81: the Score column is gone again (the order stays) - styles.css v25, tokenTable.js v8, conviction.js v21.
 // v82: the King of the Pill tooltip mentions price momentum - kotp.js v7.
-const CACHE_VERSION = 'holdex-v82';
+// v83: HTML pages are cached in the dynamic cache, and cache trimming never evicts the precached
+// app shell (each page view used to trim the static cache to 50, deleting the shell). Bug-audit
+// fixes: signed watchlist and sentiment calls, holder and view-count fixes, chart label carry,
+// Cultify and Holder Behavior burn gate proof, API key lookup, admin submissions column - api.js v16, watchlist.js v3,
+// tokenDetail.js v34, tokenChart.js v6, cultify.js v19, admin.js v20, apiKeys.js v4,
+// communityPage.js v9, holderBehavior.js v9. A refused access signature offers "Sign again"
+// instead of the burn gate - cultify.js v20, holderBehavior.js v10.
+const CACHE_VERSION = 'holdex-v83';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -71,7 +78,7 @@ const APP_SHELL = [
   '/css/styles.css?v=25',
   '/css/token.css?v=8',
   '/js/config.js?v=4',
-  '/js/api.js?v=15',
+  '/js/api.js?v=16',
   '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
   '/js/tokenTable.js?v=8',
@@ -81,21 +88,20 @@ const APP_SHELL = [
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
   '/js/kotp.js?v=7',
-  '/js/tokenDetail.js?v=33',
+  '/js/tokenDetail.js?v=34',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
-  '/js/tokenChart.js?v=5',
+  '/js/tokenChart.js?v=6',
   '/js/holderChart.js?v=3',
-  '/js/watchlist.js?v=2',
-  '/js/communityPage.js?v=7',
-  '/js/holderBehavior.js?v=7',
+  '/js/watchlist.js?v=3',
+  '/js/communityPage.js?v=9',
+  '/js/holderBehavior.js?v=10',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
-  '/js/cultify.js?v=17',
-  '/js/admin.js?v=18',
-  '/js/apiKeys.js?v=2',
-  '/icons/icon.svg',
+  '/js/cultify.js?v=20',
+  '/js/admin.js?v=20',
+  '/js/apiKeys.js?v=4',
   '/icons/icon.svg',
   '/CultScreenerBanner.jpg',
 ];
@@ -215,7 +221,8 @@ self.addEventListener('fetch', (event) => {
   // Fresh HTML references versioned assets (?v=N), ensuring JS/CSS is also fresh
   // after a deployment. Falls back to cache when offline.
   if (request.destination === 'document') {
-    event.respondWith(networkFirstWithCache(request, STATIC_CACHE));
+    // Pages go in DYNAMIC_CACHE: trimming STATIC_CACHE would evict the precached app shell.
+    event.respondWith(networkFirstWithCache(request, DYNAMIC_CACHE, null, MAX_DYNAMIC_ENTRIES));
     return;
   }
 
@@ -266,7 +273,7 @@ async function cacheFirstWithNetwork(request, cacheName) {
   }
 }
 
-async function networkFirstWithCache(request, cacheName, ttl) {
+async function networkFirstWithCache(request, cacheName, ttl, maxEntries = MAX_API_ENTRIES) {
   try {
     const response = await fetch(request);
     if (response.ok) {
@@ -280,7 +287,7 @@ async function networkFirstWithCache(request, cacheName, ttl) {
         headers,
       });
       cache.put(request, timedResponse);
-      await trimCache(cacheName, MAX_API_ENTRIES);
+      await trimCache(cacheName, maxEntries);
     }
     return response;
   } catch {
@@ -296,7 +303,7 @@ async function networkFirstWithCache(request, cacheName, ttl) {
         }
       }
       // Trim cache even on fallback path to prevent unbounded growth
-      trimCache(cacheName, MAX_API_ENTRIES).catch(() => {});
+      trimCache(cacheName, maxEntries).catch(() => {});
       return cached;
     }
     return offlineFallback(request);
@@ -387,9 +394,15 @@ function offlineFallback(request) {
 
 // ─── Cache Management ────────────────────────────────────
 
+const APP_SHELL_PATHS = new Set(APP_SHELL);
+
 async function trimCache(cacheName, maxEntries) {
   const cache = await caches.open(cacheName);
-  const keys = await cache.keys();
+  // The precached app shell is never trimmed: offline pages need it.
+  const keys = (await cache.keys()).filter((key) => {
+    const url = new URL(key.url);
+    return !APP_SHELL_PATHS.has(url.pathname + url.search);
+  });
   if (keys.length > maxEntries) {
     // Remove oldest entries
     const toDelete = keys.slice(0, keys.length - maxEntries);

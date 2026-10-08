@@ -358,7 +358,8 @@ const _holderCountInFlight = new Map();
 
 // opts.maxPages  — cap pagination (default 100 = 100k holders). Pass 500 for curated daily job.
 // opts.skipCache — bypass Redis read; used by record-holder-counts to always get a fresh count.
-// Only caches when the count is exact (last page was partial, not a cap hit).
+// Caches exact and maxPages-capped counts. A DAS error part-way through returns
+// null (and caches nothing), so an undercount is never stored or shown.
 async function getTokenHolderCount(mintAddress, opts = {}) {
   if (!HELIUS_DAS_URL) return null;
   const { maxPages = 100, skipCache = false } = opts;
@@ -423,8 +424,10 @@ async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
         );
 
         if (response.data.error) {
-          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — returning partial count (${owners.size})`);
-          break;
+          // A partial count is an undercount: returning it would cache it for
+          // TTL.HOLDER_COUNT and make the daily job skip this mint as "known".
+          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — discarding partial count (${owners.size})`);
+          return { count: null, isExact: false };
         }
 
         const accounts = response.data.result?.token_accounts;
@@ -467,6 +470,12 @@ function isHeliusConfigured() {
  * @param {string} mintAddress - Token mint address
  * @returns {Promise<Object|null>} - Token info or null if unavailable
  */
+// DAS token_info.decimals, defaulting to 9 only when absent: 0 is a real value
+// (`decimals || 9` turned 0-decimal tokens into 9 and their supply off by 1e9).
+function dasDecimals(tokenInfo) {
+  return Number.isInteger(tokenInfo?.decimals) ? tokenInfo.decimals : 9;
+}
+
 async function getTokenMetadata(mintAddress) {
   if (!HELIUS_DAS_URL) {
     return null;
@@ -571,8 +580,8 @@ async function getTokenMetadata(mintAddress) {
       address: mintAddress,
       name: metadata.name || content.json_uri || null,
       symbol: tokenInfo.symbol || metadata.symbol || null,
-      decimals: tokenInfo.decimals || 9,
-      supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, tokenInfo.decimals || 9) : null,
+      decimals: dasDecimals(tokenInfo),
+      supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, dasDecimals(tokenInfo)) : null,
       // Price only available for top 10k tokens by volume
       price: price,
       hasPriceData: price !== null,
@@ -722,8 +731,8 @@ async function getTokenMetadataBatch(mintAddresses) {
         address: asset.id,
         name: metadata.name || content.json_uri || null,
         symbol: tokenInfo.symbol || metadata.symbol || null,
-        decimals: tokenInfo.decimals || 9,
-        supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, tokenInfo.decimals || 9) : null,
+        decimals: dasDecimals(tokenInfo),
+        supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, dasDecimals(tokenInfo)) : null,
         price: priceInfo.price_per_token || null,
         hasPriceData: !!priceInfo.price_per_token,
         logoUri: normalizeLogoUri(logoUri)
@@ -1017,19 +1026,23 @@ async function parseTransactions(signatures) {
 // Helius' getTransactionsForAddress (full mode: 10 credits per 100 transactions
 // returned) replaces getSignaturesForAddress + the 100-credit-per-100 Enhanced
 // Transactions parse for the hold-time backfill and holder behavior. Latched off
-// for the process when Helius refuses the method itself (not served, or not on
-// this plan) so callers use the legacy path instead of failing every wallet.
-let gtfaUnavailable = false;
+// for the process when Helius says the method does not exist (-32601), so callers
+// use the legacy path instead of failing every wallet. Softer refusals (401/403,
+// "not on this plan" wording) can be transient (credit cap, edge/WAF), so they
+// only switch it off for GTFA_REFUSAL_COOLDOWN_MS and the method is then retried.
+const GTFA_REFUSAL_COOLDOWN_MS = 30 * 60 * 1000;
+let gtfaUnavailableUntil = 0;
 
-function isMethodRefusal(error) {
-  if (error.rpcCode === -32601) return true;
+// Returns how long to switch the method off for (Infinity = for good), or 0.
+function methodRefusalCooldown(error) {
+  if (error.rpcCode === -32601) return Infinity;
   const status = error.response?.status;
-  if (status === 401 || status === 403) return true;
-  return /not (available|supported|allowed)|\bupgrade\b|\bplan\b/i.test(String(error.message || ''));
+  if (status === 401 || status === 403) return GTFA_REFUSAL_COOLDOWN_MS;
+  return /not (available|supported|allowed)|\bupgrade\b|\bplan\b/i.test(String(error.message || '')) ? GTFA_REFUSAL_COOLDOWN_MS : 0;
 }
 
 function isTransactionHistoryAvailable() {
-  return !!HELIUS_API_KEY && !gtfaUnavailable;
+  return !!HELIUS_API_KEY && Date.now() >= gtfaUnavailableUntil;
 }
 
 /**
@@ -1059,9 +1072,10 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
     if (extra > 0) countCredits('getTransactionsForAddress', extra * 10, 0);
     return { txs: result.data, paginationToken: result.paginationToken || null };
   } catch (error) {
-    if (isMethodRefusal(error)) {
-      gtfaUnavailable = true;
-      console.warn(`[Solana] getTransactionsForAddress refused (${error.rpcCode || error.response?.status || ''} ${error.message}); falling back to signatures + Enhanced API`);
+    const cooldown = methodRefusalCooldown(error);
+    if (cooldown > 0) {
+      gtfaUnavailableUntil = Math.max(gtfaUnavailableUntil, Date.now() + cooldown);
+      console.warn(`[Solana] getTransactionsForAddress refused (${error.rpcCode || error.response?.status || ''} ${error.message}); falling back to signatures + Enhanced API${cooldown === Infinity ? '' : ` for ${Math.round(cooldown / 60000)} min`}`);
     }
     throw error;
   }

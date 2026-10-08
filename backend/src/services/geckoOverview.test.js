@@ -34,6 +34,15 @@ const POOLS = [
   })
 ];
 
+// A token that only ever trades as the quote: GeckoTerminal publishes no 24h change for it
+const QUOTE_ONLY = 'Bar1111111111111111111111111111111111111111';
+const QUOTE_ONLY_POOLS = [
+  pool('PoolZecBar', ZEC, QUOTE_ONLY, 'ZEC / BAR', {
+    base_token_price_usd: '45.1', quote_token_price_usd: '0.5', reserve_in_usd: '250000',
+    volume_usd: { h24: '40000' }, price_change_percentage: { h24: '3.2' }, fdv_usd: '730000000', market_cap_usd: '650000000'
+  })
+];
+
 const calls = [];
 let gecko;
 
@@ -44,6 +53,13 @@ before(() => {
     inst.get = async (url, opts = {}) => {
       calls.push({ url, params: opts.params });
       if (url.endsWith(`/tokens/${TOKEN}/pools`)) return { data: { data: POOLS } };
+      if (url.endsWith(`/tokens/${QUOTE_ONLY}/pools`)) return { data: { data: QUOTE_ONLY_POOLS } };
+      if (url.endsWith(`/tokens/${QUOTE_ONLY}`)) {
+        return { data: { data: { id: `solana_${QUOTE_ONLY}`, type: 'token', attributes: {
+          address: QUOTE_ONLY, name: 'Bar', symbol: 'BAR', decimals: 6, price_usd: '0.5',
+          fdv_usd: '500000', market_cap_usd: null, total_supply: '1000000000000', volume_usd: { h24: '40000' }
+        } } } };
+      }
       if (url.endsWith(`/tokens/${TOKEN}`)) {
         return { data: { data: { id: `solana_${TOKEN}`, type: 'token', attributes: {
           address: TOKEN, name: 'Foo', symbol: 'FOO', decimals: 6, price_usd: '0.0021',
@@ -91,5 +107,14 @@ describe('token whose deepest pool is ZEC / TOKEN', () => {
     assert.strictEqual(pools[0].side, 'quote');
     assert.strictEqual(pools[0].priceChange24h, null);
     assert.strictEqual(pools[1].priceUsd, 0.00209);
+  });
+});
+
+describe('token that only trades as the quote', () => {
+  test('overview reports an unknown 24h change, not 0% and not ZEC\'s change', async () => {
+    const o = await gecko.getTokenOverview(QUOTE_ONLY);
+    assert.strictEqual(o.price, 0.5);
+    assert.strictEqual(o.poolSide, 'quote');
+    assert.strictEqual(o.priceChange24h, null);
   });
 });

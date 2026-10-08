@@ -292,8 +292,12 @@ function rewindToStreakStart(balance, txs, { exhausted = false } = {}) {
     const at = tx.timestamp ? tx.timestamp * 1000 : null;
     if (at) oldestAt = at;
     const before = bal - (tx.delta || 0n);
-    if (at && before <= 0n && (tx.delta || 0n) > 0n) {
-      return { done: true, acquiredAt: at, balance: before, oldestAt };
+    if (before <= 0n && (tx.delta || 0n) > 0n) {
+      // The streak started here. Without a block time, the newest timed
+      // transaction after it is the closest date (null: the caller falls back
+      // to one from a newer page, or gives up); reading on would reach into
+      // the previous streak.
+      return { done: true, acquiredAt: at || oldestAt, balance: before, oldestAt };
     }
     bal = before;
   }
