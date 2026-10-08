@@ -1227,7 +1227,10 @@ const tokenDetail = {
         this._holdTimesTimer = null;
       }
       this._holdTimesLoaded = false;
-      this._holdTimesAutoRetried = false;
+      // Preserve _holdTimesAutoRetried when called from the auto-retry itself, otherwise
+      // the one-shot retry re-arms and polls forever while the backend says computed:false
+      if (!this._htIsAutoRetry) this._holdTimesAutoRetried = false;
+      this._htIsAutoRetry = false;
       this._htLastComputedFalse = false;
     }
 
@@ -1304,7 +1307,10 @@ const tokenDetail = {
         if (this._htLastComputedFalse && !this._holdTimesAutoRetried && totalAvg === 0) {
           this._holdTimesAutoRetried = true;
           if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Still computing — auto-retry in 30s`);
-          this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(0), 30000);
+          this._holdTimesTimer = setTimeout(() => {
+            this._htIsAutoRetry = true; // Prevents attempt=0 reset from clearing _holdTimesAutoRetried
+            this._loadHoldTimes(0);
+          }, 30000);
           return;
         }
 
