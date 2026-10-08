@@ -120,6 +120,13 @@ async function addAnalyticsJob(jobName, data = {}, options = {}) {
     return null;
   }
 
+  // One holder-count scan per mint at a time: the token page, /holders and
+  // cultify all queue it on a cache miss. Removed once done, so the id only
+  // dedupes waiting/active jobs and never hides a later request.
+  if (jobName === 'fetch-holder-counts-batch' && !options.jobId && Array.isArray(data.mints) && data.mints.length === 1) {
+    options = { ...options, jobId: `holder-count:${data.mints[0]}`, removeOnComplete: true, removeOnFail: true };
+  }
+
   try {
     const job = await queues[QUEUE_NAMES.ANALYTICS].add(jobName, data, options);
     return job;

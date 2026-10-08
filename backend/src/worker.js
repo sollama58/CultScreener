@@ -56,6 +56,9 @@ function getRedisConfig() {
   }
 }
 
+// Most mints fetch-holder-counts-batch pages DAS for in one job
+const HOLDER_COUNT_SCANS_PER_JOB = 20;
+
 // Worker instances
 const workers = [];
 
@@ -352,9 +355,14 @@ const jobProcessors = {
 
     // Redis or the latest holder snapshot's count first; DAS pagination only for the rest
     const known = await require('./services/holderCounts').getDisplayCounts(mints).catch(() => ({}));
+    let scanned = 0;
     for (const mint of mints) {
       try {
         if (known[mint] > 0) { skipped++; continue; }
+        // Each scan pages DAS; cap them per job so a long list doesn't hold a
+        // worker slot for minutes. The rest are re-queued on their next cache miss.
+        if (scanned >= HOLDER_COUNT_SCANS_PER_JOB) break;
+        scanned++;
 
         const count = await solanaService.getTokenHolderCount(mint);
         // getTokenHolderCount caches exact counts internally (TTL.HOLDER_COUNT)

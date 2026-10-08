@@ -367,6 +367,8 @@ async function getTokenHolderCount(mintAddress, opts = {}) {
     try {
       const cached = await cache.get(`holder-total:${mintAddress}`);
       if (cached && cached > 0) return cached;
+      // No count last time (no holders, or DAS failing): don't page again for a while
+      if (await cache.get(`holder-total-none:${mintAddress}`)) return null;
     } catch (_) {}
 
     if (_holderCountInFlight.has(mintAddress)) {
@@ -380,6 +382,9 @@ async function getTokenHolderCount(mintAddress, opts = {}) {
     // so capped values don't persist for curated tokens that need accurate counts.
     if (count && count > 0) {
       await cache.set(`holder-total:${mintAddress}`, count, TTL.HOLDER_COUNT).catch(() => {});
+    } else {
+      // Remember the miss so every token-page cache miss doesn't re-queue the scan
+      await cache.set(`holder-total-none:${mintAddress}`, 1, TTL.HOUR).catch(() => {});
     }
     return count;
   }).finally(() => {
@@ -391,61 +396,28 @@ async function getTokenHolderCount(mintAddress, opts = {}) {
 }
 
 // Returns { count, isExact }.
-// isExact=false when we hit maxPages — used for logging; count is cached regardless.
+// isExact=false when we hit maxPages or a page kept failing (partial count) —
+// used for logging; count is cached regardless.
 async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
   try {
-    return await circuitBreakers.heliusDas.execute(async () => {
-      // Unique owner wallets, burn and known LP authorities excluded: the same
-      // definition holder snapshots use (services/holderCounts.js).
-      const { BURN_WALLETS, LP_AUTHORITIES, LP_PROGRAMS } = require('../constants');
-      const owners = new Set();
-      let page = 1;
-      let isExact = false;
+    // Unique owner wallets, burn and known LP authorities excluded: the same
+    // definition holder snapshots use (services/holderCounts.js).
+    const { BURN_WALLETS, LP_AUTHORITIES, LP_PROGRAMS } = require('../constants');
+    // Same paged reader as holder snapshots (several pages at a time); a page
+    // that keeps failing ends the read with the pages before it, as a partial count
+    const { accounts, pages, complete: isExact } = await getAllTokenAccounts(mintAddress, { maxPages, partial: true });
+    const owners = new Set();
+    for (const a of accounts) {
+      if (!a?.owner || BURN_WALLETS.has(a.owner) || LP_AUTHORITIES.has(a.owner) || LP_PROGRAMS.has(a.owner)) continue;
+      if (a.amount != null && Number(a.amount) <= 0) continue;
+      owners.add(a.owner);
+    }
 
-      while (page <= maxPages) {
-        countCredits('getTokenAccounts', DAS_CREDITS);
-        const response = await rateLimitedRequest('helius', () =>
-          axios.post(HELIUS_DAS_URL, {
-            jsonrpc: '2.0',
-            id: `holder-count-p${page}`,
-            method: 'getTokenAccounts',
-            params: {
-              mint: mintAddress,
-              page,
-              limit: 1000,
-              options: { showZeroBalance: false }
-            }
-          }, {
-            timeout: 15000,
-            headers: HELIUS_HEADERS,
-            httpsAgent
-          })
-        );
-
-        if (response.data.error) {
-          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — returning partial count (${owners.size})`);
-          break;
-        }
-
-        const accounts = response.data.result?.token_accounts;
-        if (!accounts || accounts.length === 0) { isExact = true; break; }
-
-        for (const a of accounts) {
-          if (!a?.owner || BURN_WALLETS.has(a.owner) || LP_AUTHORITIES.has(a.owner) || LP_PROGRAMS.has(a.owner)) continue;
-          if (a.amount != null && Number(a.amount) <= 0) continue;
-          owners.add(a.owner);
-        }
-
-        if (accounts.length < 1000) { isExact = true; break; }
-        page++;
-      }
-
-      const totalCount = owners.size;
-      if (totalCount > 0) {
-        console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} wallets (${page} pages${isExact ? '' : ', capped at maxPages'})`);
-      }
-      return { count: totalCount > 0 ? totalCount : null, isExact };
-    }); // end circuitBreakers.heliusDas.execute
+    const totalCount = owners.size;
+    if (totalCount > 0) {
+      console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} wallets (${pages} pages${isExact ? '' : ', capped or partial'})`);
+    }
+    return { count: totalCount > 0 ? totalCount : null, isExact };
   } catch (error) {
     console.error('[Solana] Helius holder count error:', error.message);
     return { count: null, isExact: false };
