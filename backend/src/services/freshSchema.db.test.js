@@ -189,4 +189,31 @@ if (!DB_URL) {
       assert.deepStrictEqual(seen.filter(t => t !== 120000), []);
     });
   });
+
+  // Last: it drops every table in the schema
+  describe('db:reset', () => {
+    test('drops every table, so submissions work again after the app recreates them', async () => {
+      const submit = (n) => db.createSubmission({
+        tokenMint: 'FreshReset111111111111111111111111111111111',
+        submissionType: 'website',
+        contentUrl: `https://example.com/${n}`,
+      });
+      await submit(1);
+      await submit(2);
+
+      const migrate = require('../../db/migrate');
+      try {
+        assert.strictEqual(await migrate.resetDatabase(), true);
+      } finally {
+        await migrate.pool.end();
+      }
+      const { rows } = await db.pool.query('SELECT tablename FROM pg_tables WHERE schemaname = current_schema()');
+      assert.deepStrictEqual(rows, []);
+
+      // App boot recreates the schema; the first new submission reuses id 1
+      assert.strictEqual(await db.initializeDatabase(), true);
+      const created = await submit(1);
+      assert.strictEqual(created.id, 1);
+    });
+  });
 }

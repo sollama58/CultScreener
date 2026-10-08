@@ -124,19 +124,15 @@ async function resetDatabase() {
   try {
     log('\nResetting database (dropping all tables)...', 'red');
 
+    // Every table in the schema, not a hand-kept list: a table left behind keeps its rows
+    // (CASCADE only drops its foreign keys), and the app then recreates the ones around it
+    // empty. Stale vote_tallies rows, for one, made every new submission fail on its primary key.
+    const { rows } = await client.query('SELECT tablename FROM pg_tables WHERE schemaname = current_schema()');
+    if (rows.length > 0) {
+      const tables = rows.map(r => client.escapeIdentifier(r.tablename)).join(', ');
+      await client.query(`DROP TABLE IF EXISTS ${tables} CASCADE`);
+    }
     await client.query(`
-      DROP TABLE IF EXISTS curated_tokens CASCADE;
-      DROP TABLE IF EXISTS sentiment_votes CASCADE;
-      DROP TABLE IF EXISTS sentiment_tallies CASCADE;
-      DROP TABLE IF EXISTS watchlist CASCADE;
-      DROP TABLE IF EXISTS token_views CASCADE;
-      DROP TABLE IF EXISTS announcements CASCADE;
-      DROP TABLE IF EXISTS device_sessions CASCADE;
-      DROP TABLE IF EXISTS admin_sessions CASCADE;
-      DROP TABLE IF EXISTS api_keys CASCADE;
-      DROP TABLE IF EXISTS watchlist CASCADE;
-      DROP TABLE IF EXISTS submissions CASCADE;
-      DROP TABLE IF EXISTS tokens CASCADE;
       DROP FUNCTION IF EXISTS update_updated_at_column CASCADE;
       DROP FUNCTION IF EXISTS recalculate_vote_tally CASCADE;
       DROP FUNCTION IF EXISTS auto_moderate_submission CASCADE;
@@ -241,8 +237,12 @@ async function main() {
   process.exit(0);
 }
 
-// Run
-main().catch(error => {
-  console.error('Unexpected error:', error);
-  process.exit(1);
-});
+// Run when invoked as a script (tests require it for resetDatabase)
+if (require.main === module) {
+  main().catch(error => {
+    console.error('Unexpected error:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { pool, runMigrations, resetDatabase };
