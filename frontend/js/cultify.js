@@ -620,6 +620,15 @@
   }
 
   function updateEnrichedMetrics(data) {
+    // Fill the holders table's % column, which the fast response leaves as '--'
+    if (Array.isArray(data.holders)) {
+      data.holders.forEach(h => {
+        if (h.percentage == null || !h.address) return;
+        resultsEl.querySelectorAll('[data-holder-pct]').forEach(td => {
+          if (td.dataset.holderPct === h.address) td.textContent = h.percentage.toFixed(2) + '%';
+        });
+      });
+    }
     if (!data.metrics) return;
     // Update holder count by ID (fast and reliable)
     if (data.metrics.holderCount && data.metrics.holderCount > 0) {
@@ -750,12 +759,13 @@
           : h.balance >= 1e6 ? (h.balance / 1e6).toFixed(2) + 'M'
           : h.balance >= 1e3 ? (h.balance / 1e3).toFixed(2) + 'K'
           : h.balance.toFixed(2);
-        const pct = h.percentage.toFixed(2) + '%';
+        // The fast (not yet enriched) response has percentage: null; updateEnrichedMetrics fills it in
+        const pct = h.percentage != null ? h.percentage.toFixed(2) + '%' : '--';
         html += `<tr>
           <td>${h.rank}</td>
           <td><a href="https://solscan.io/account/${addr}" target="_blank" rel="noopener" class="holder-address" title="${addr}">${short}</a></td>
           <td class="text-right mono">${bal}</td>
-          <td class="text-right mono">${pct}</td>
+          <td class="text-right mono" data-holder-pct="${addr}">${pct}</td>
         </tr>`;
       });
       html += '</tbody></table></div></section>';
