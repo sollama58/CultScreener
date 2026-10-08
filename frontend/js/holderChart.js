@@ -162,7 +162,7 @@ const holderChart = (() => {
       lastValueVisible: false, priceLineVisible: false, crosshairMarkerRadius: 3,
     });
     const actual = chart.addSeries(LWC.AreaSeries, {
-      lineColor: brandB, topColor: hexA(brandA, 0.38), bottomColor: hexA(brandA, 0.02), lineWidth: 2, title: 'Holders',
+      lineColor: brandB, topColor: hexA(brandA, 0.38), bottomColor: hexA(brandA, 0.02), lineWidth: 2,
       priceFormat: fmt, priceLineVisible: false, crosshairMarkerRadius: 4,
     });
     chart.subscribeCrosshairMove(renderLegend);

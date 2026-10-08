@@ -530,7 +530,6 @@ const tokenChart = (() => {
       if (data.length) {
         const h = chart.addSeries(LWC.LineSeries, {
           priceScaleId: holderAxis ? 'left' : 'holders', color: HOLDERS_COLOR, lineWidth: 2, lineType: 1, lastValueVisible: true, priceLineVisible: false,
-          title: 'Holders',
           crosshairMarkerVisible: false, priceFormat: { type: 'custom', formatter: fmtVolume, minMove: 1 }
         });
         if (!holderAxis) h.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
