@@ -399,7 +399,9 @@ function validatePagination(req, res, next) {
 function validateSearch(req, res, next) {
   const { q } = req.query;
 
-  if (!q || q.length < 2) {
+  // ?q[]=ab&q[]=cd (array) or ?q[a]=b (object) would pass the length checks and then
+  // sanitize to '', running an unbounded empty search
+  if (typeof q !== 'string' || q.length < 2) {
     return res.status(400).json({ error: 'Search query must be at least 2 characters' });
   }
 
@@ -409,6 +411,10 @@ function validateSearch(req, res, next) {
 
   // Sanitize search query (don't HTML-encode — parameterized queries handle SQL safety)
   req.query.q = sanitizeSearchString(q, 100);
+  // Whitespace-only input trims down below the minimum
+  if (req.query.q.length < 2) {
+    return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+  }
 
   next();
 }
