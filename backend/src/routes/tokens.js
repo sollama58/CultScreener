@@ -1067,92 +1067,94 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
 
   const filterKey = JSON.stringify(filters);
   const resultCacheKey = `leaderboard:conviction:${limit}:${offset}:${filterKey}`;
-  const cached = await cache.get(resultCacheKey);
-  if (cached) {
-    // Enrich cached result with any holder counts fetched since this result was cached
-    if (cached.tokens && cached.tokens.length > 0) {
-      const need = cached.tokens.filter(t => !t.holders);
-      const counts = need.length ? await holderCounts.getDisplayCounts(need.map(t => t.mintAddress)).catch(() => ({})) : {};
-      for (const t of need) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+  // A search result is a one-off subset of the unfiltered page: keep it only briefly
+  const resultTtl = filters.search ? TTL.MEDIUM : TTL.LONG;
+  let computed = false;
+  // getOrSet: concurrent misses (several viewers at expiry) share one computation
+  const result = await cache.getOrSet(resultCacheKey, async () => {
+    computed = true;
+    // Primary source: DB (persistent, survives cache expiry)
+    const { tokens: dbRows, total } = await db.getTopConvictionTokens(limit, offset, filters).catch(() => ({ tokens: [], total: 0 }));
+
+    const tokens = dbRows.map(row => {
+      let distribution = {};
+      try {
+        distribution = typeof row.conviction_data === 'string'
+          ? JSON.parse(row.conviction_data)
+          : row.conviction_data || {};
+      } catch { /* malformed JSON — use empty */ }
+      return {
+        mintAddress: row.mint_address,
+        address: row.mint_address,
+        name: row.name || `${row.mint_address.slice(0, 4)}...${row.mint_address.slice(-4)}`,
+        symbol: row.symbol || row.mint_address.slice(0, 5).toUpperCase(),
+        price: parseFloat(row.price) || 0,
+        // 24h, 7d and 30d change against stored reference prices (services/priceChanges.js)
+        ...priceChanges.changesForRow(row),
+        volume24h: parseFloat(row.volume_24h) || 0,
+        marketCap: parseFloat(row.market_cap) || null,
+        logoUri: row.logo_uri || null,
+        logoURI: row.logo_uri || null,
+        conviction: distribution,
+        conviction1m: parseFloat(row.conviction_1m) || 0,
+        sampleSize: row.conviction_sample_size || 0,
+        analyzed: row.conviction_sample_size || 0,
+        convictionUpdatedAt: row.conviction_computed_at || null,
+        // Token age for the home tables: under 3 months there are no 3-month holders to count
+        pairCreatedAt: row.pair_created_at || null,
+        mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
+        mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
+        emergingCult: row.is_emerging_cult || false,
+        techCoin: row.is_tech_coin || false,
+        holders: null,
+        holderVelocity: null,
+        // Latest daily Diamond Hands score (services/kingOfPill.js); the table's default order
+        diamondHandsScore: null,
+        diamondHandsScoreDate: null
+      };
+    });
+
+    if (tokens.length > 0 && db.pool) {
+      const scores = await require('../services/kingOfPill').getLatestScores(tokens.map(t => t.mintAddress)).catch(() => ({}));
+      for (const t of tokens) {
+        const s = scores[t.mintAddress];
+        if (s) { t.diamondHandsScore = s.score; t.diamondHandsScoreDate = s.date; }
+      }
     }
-    return res.json(cached);
-  }
 
-  // Primary source: DB (persistent, survives cache expiry)
-  const { tokens: dbRows, total } = await db.getTopConvictionTokens(limit, offset, filters).catch(() => ({ tokens: [], total: 0 }));
-
-  const tokens = dbRows.map(row => {
-    let distribution = {};
-    try {
-      distribution = typeof row.conviction_data === 'string'
-        ? JSON.parse(row.conviction_data)
-        : row.conviction_data || {};
-    } catch { /* malformed JSON — use empty */ }
-    return {
-      mintAddress: row.mint_address,
-      address: row.mint_address,
-      name: row.name || `${row.mint_address.slice(0, 4)}...${row.mint_address.slice(-4)}`,
-      symbol: row.symbol || row.mint_address.slice(0, 5).toUpperCase(),
-      price: parseFloat(row.price) || 0,
-      // 24h, 7d and 30d change against stored reference prices (services/priceChanges.js)
-      ...priceChanges.changesForRow(row),
-      volume24h: parseFloat(row.volume_24h) || 0,
-      marketCap: parseFloat(row.market_cap) || null,
-      logoUri: row.logo_uri || null,
-      logoURI: row.logo_uri || null,
-      conviction: distribution,
-      conviction1m: parseFloat(row.conviction_1m) || 0,
-      sampleSize: row.conviction_sample_size || 0,
-      analyzed: row.conviction_sample_size || 0,
-      convictionUpdatedAt: row.conviction_computed_at || null,
-      // Token age for the home tables: under 3 months there are no 3-month holders to count
-      pairCreatedAt: row.pair_created_at || null,
-      mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
-      mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
-      emergingCult: row.is_emerging_cult || false,
-      techCoin: row.is_tech_coin || false,
-      holders: null,
-      holderVelocity: null,
-      // Latest daily Diamond Hands score (services/kingOfPill.js); the table's default order
-      diamondHandsScore: null,
-      diamondHandsScoreDate: null
-    };
-  });
-
-  if (tokens.length > 0 && db.pool) {
-    const scores = await require('../services/kingOfPill').getLatestScores(tokens.map(t => t.mintAddress)).catch(() => ({}));
-    for (const t of tokens) {
-      const s = scores[t.mintAddress];
-      if (s) { t.diamondHandsScore = s.score; t.diamondHandsScoreDate = s.date; }
+    // Holder counts: Redis, else the latest holder snapshot's count from Postgres.
+    // Velocity: 24h change between holder snapshots (holderCounts.holderVelocity).
+    if (tokens.length > 0) {
+      const mints = tokens.map(t => t.mintAddress);
+      const [counts, velocity] = await Promise.all([
+        holderCounts.getDisplayCounts(mints).catch(() => ({})),
+        db.pool ? holderCounts.getHolderVelocity(mints).catch(() => ({})) : {},
+      ]);
+      for (const t of tokens) {
+        if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+        t.holderVelocity = velocity[t.mintAddress] || { level: null };
+      }
     }
-  }
 
-  // Holder counts: Redis, else the latest holder snapshot's count from Postgres.
-  // Velocity: 24h change between holder snapshots (holderCounts.holderVelocity).
-  if (tokens.length > 0) {
-    const mints = tokens.map(t => t.mintAddress);
-    const [counts, velocity] = await Promise.all([
-      holderCounts.getDisplayCounts(mints).catch(() => ({})),
-      db.pool ? holderCounts.getHolderVelocity(mints).catch(() => ({})) : {},
-    ]);
-    for (const t of tokens) {
-      if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
-      t.holderVelocity = velocity[t.mintAddress] || { level: null };
+    // Queue background Helius fetches for any tokens still missing holder counts
+    if (solanaService.isHeliusConfigured()) {
+      const missing = tokens.filter(t => !t.holders);
+      if (missing.length > 0) {
+        jobQueue.addAnalyticsJob('fetch-holder-counts-batch', {
+          mints: missing.map(t => t.mintAddress)
+        }).catch(() => {});
+      }
     }
-  }
 
-  // Queue background Helius fetches for any tokens still missing holder counts
-  if (solanaService.isHeliusConfigured()) {
-    const missing = tokens.filter(t => !t.holders);
-    if (missing.length > 0) {
-      jobQueue.addAnalyticsJob('fetch-holder-counts-batch', {
-        mints: missing.map(t => t.mintAddress)
-      }).catch(() => {});
-    }
-  }
+    return { tokens, total };
+  }, resultTtl);
 
-  const result = { tokens, total };
-  await cache.set(resultCacheKey, result, TTL.LONG);
+  // Enrich cached result with any holder counts fetched since this result was cached
+  if (!computed && result.tokens && result.tokens.length > 0) {
+    const need = result.tokens.filter(t => !t.holders);
+    const counts = need.length ? await holderCounts.getDisplayCounts(need.map(t => t.mintAddress)).catch(() => ({})) : {};
+    for (const t of need) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+  }
   res.json(result);
 }));
 
