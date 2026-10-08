@@ -238,32 +238,36 @@ async function incrementViewCount(tokenMint) {
   viewCountBuffer.set(tokenMint, current + 1);
 
   // Schedule a flush if not already scheduled
-  if (!viewFlushScheduled) {
-    viewFlushScheduled = true;
-
-    // Flush after interval
-    viewFlushTimer = setTimeout(async () => {
-      await flushViewCounts();
-      viewFlushScheduled = false;
-      viewFlushTimer = null;
-    }, VIEW_FLUSH_INTERVAL_MS);
-  }
+  scheduleViewFlush();
 
   return current + 1;
+}
+
+/**
+ * Arm the flush timer unless one is pending. The flag is cleared before the
+ * flush runs, so views recorded during it arm a new timer; and anything still
+ * buffered afterwards (e.g. entries put back after a failed DB write) re-arms
+ * it too, instead of waiting for the next unrelated view.
+ */
+function scheduleViewFlush() {
+  if (viewFlushScheduled) return;
+  viewFlushScheduled = true;
+  viewFlushTimer = setTimeout(async () => {
+    viewFlushScheduled = false;
+    viewFlushTimer = null;
+    try {
+      await flushViewCounts();
+    } finally {
+      if (viewCountBuffer.size > 0) scheduleViewFlush();
+    }
+  }, VIEW_FLUSH_INTERVAL_MS);
 }
 
 async function flushViewCounts() {
   if (viewCountBuffer.size === 0) return;
   if (isFlushing) {
     // A flush is already in progress — schedule a re-flush after it completes
-    if (!viewFlushScheduled) {
-      viewFlushScheduled = true;
-      viewFlushTimer = setTimeout(async () => {
-        await flushViewCounts();
-        viewFlushScheduled = false;
-        viewFlushTimer = null;
-      }, VIEW_FLUSH_INTERVAL_MS);
-    }
+    scheduleViewFlush();
     return;
   }
   isFlushing = true;
