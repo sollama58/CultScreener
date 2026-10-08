@@ -1076,7 +1076,7 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   if (req.query.minMcap != null) filters.minMcap = Math.max(0, parseFloat(req.query.minMcap) || 0);
   if (req.query.maxMcap != null) filters.maxMcap = Math.max(0, parseFloat(req.query.maxMcap) || 0);
   if (req.query.minSample != null) filters.minSample = Math.max(0, parseInt(req.query.minSample) || 0);
-  if (req.query.search) filters.search = req.query.search.slice(0, 100);
+  if (typeof req.query.search === 'string' && req.query.search) filters.search = req.query.search.slice(0, 100);
 
   const filterKey = JSON.stringify(filters);
   const resultCacheKey = `leaderboard:conviction:${limit}:${offset}:${filterKey}`;
@@ -1695,7 +1695,7 @@ router.get('/:mint/chart', validateMint, requireAllowedToken, asyncHandler(async
 
   // Validate interval
   const validIntervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
-  const normalizedInterval = interval.toLowerCase();
+  const normalizedInterval = String(interval).toLowerCase();
 
   if (!validIntervals.includes(normalizedInterval)) {
     return res.status(400).json({
@@ -2329,7 +2329,9 @@ function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintDat
 // One point per holder snapshot (services/holderCounts.js). Reads Postgres only.
 router.get('/:mint/holder-count', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
-  const range = holderCounts.RANGES[req.query.range] != null ? req.query.range : '30d';
+  // Own keys only: 'constructor', 'toString' etc. are on every object literal
+  const range = typeof req.query.range === 'string' && Object.prototype.hasOwnProperty.call(holderCounts.RANGES, req.query.range)
+    ? req.query.range : '30d';
   const cacheKey = `holder-count:${mint}:${range}`;
   const cached = await cache.get(cacheKey).catch(() => null);
   if (cached) return res.json(cached);
