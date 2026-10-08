@@ -59,7 +59,11 @@
 // trading activity - styles.css v24, tokenTable.js v7, conviction.js v20, kotp.js v6.
 // v81: the Score column is gone again (the order stays) - styles.css v25, tokenTable.js v8, conviction.js v21.
 // v82: the King of the Pill tooltip mentions price momentum - kotp.js v7.
-const CACHE_VERSION = 'holdex-v82';
+// v83: precache only what index.html and token.html load (no admin/cultify/apiKeys/
+// communityPage, no OG banner, no duplicate icon - a duplicate made cache.addAll reject and
+// every install fetched the list twice); API responses go to the page before the cache write;
+// polled endpoints are not stored - api.js v16, conviction.js v22, styles.css v26, new css/home.css.
+const CACHE_VERSION = 'holdex-v83';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -68,7 +72,8 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=25',
+  '/css/styles.css?v=26',
+  '/css/home.css?v=1',
   '/css/token.css?v=8',
   '/js/config.js?v=4',
   '/js/api.js?v=16',
@@ -87,17 +92,11 @@ const APP_SHELL = [
   '/js/tokenChart.js?v=5',
   '/js/holderChart.js?v=3',
   '/js/watchlist.js?v=2',
-  '/js/communityPage.js?v=7',
   '/js/holderBehavior.js?v=7',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
-  '/js/cultify.js?v=17',
-  '/js/admin.js?v=18',
-  '/js/apiKeys.js?v=2',
   '/icons/icon.svg',
-  '/icons/icon.svg',
-  '/CultScreenerBanner.jpg',
 ];
 
 // API patterns that should use network-first strategy
@@ -126,6 +125,15 @@ const NEVER_CACHE_HOSTS = [
 const NEVER_CACHE_PATHS = [
   '/api/admin/',
   '/api/device/',
+];
+
+// API endpoints the pages poll. A stored copy is useless offline and every poll would cost a
+// Cache Storage write, so they go straight to the network like NEVER_CACHE_PATHS.
+const NO_STORE_API_PATTERNS = [
+  /^\/api\/tokens\/[^/]+\/holders(\/|$)/,
+  /^\/api\/tokens\/[^/]+\/ohlcv/,
+  /^\/api\/tokens\/[^/]+\/price$/,
+  /^\/api\/cultify\//,
 ];
 
 // Font CDN patterns — cache long-term
@@ -194,9 +202,12 @@ self.addEventListener('fetch', (event) => {
   // Checked before API_PATTERNS, which would otherwise cache them. See NEVER_CACHE_PATHS.
   if (NEVER_CACHE_PATHS.some((prefix) => url.pathname.startsWith(prefix))) return;
 
+  // Polled API endpoints — same pass-through, nothing worth keeping. See NO_STORE_API_PATTERNS.
+  if (NO_STORE_API_PATTERNS.some((p) => p.test(url.pathname))) return;
+
   // API requests â†’ Network First with cache fallback
   if (API_PATTERNS.some((p) => p.test(url.pathname))) {
-    event.respondWith(networkFirstWithCache(request, API_CACHE, API_CACHE_TTL));
+    event.respondWith(networkFirstWithCache(event, request, API_CACHE, API_CACHE_TTL));
     return;
   }
 
@@ -215,7 +226,7 @@ self.addEventListener('fetch', (event) => {
   // Fresh HTML references versioned assets (?v=N), ensuring JS/CSS is also fresh
   // after a deployment. Falls back to cache when offline.
   if (request.destination === 'document') {
-    event.respondWith(networkFirstWithCache(request, STATIC_CACHE));
+    event.respondWith(networkFirstWithCache(event, request, STATIC_CACHE));
     return;
   }
 
@@ -223,7 +234,7 @@ self.addEventListener('fetch', (event) => {
   // Assets use ?v=N versioning in their URLs, so cache-first is safe:
   // a new deployment bumps the version â†’ new URL â†’ fresh cache miss â†’ network fetch.
   if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirstWithNetwork(request, STATIC_CACHE));
+    event.respondWith(cacheFirstWithNetwork(event, request, STATIC_CACHE));
     return;
   }
 
@@ -249,16 +260,22 @@ self.addEventListener('fetch', (event) => {
 
 // ─── Caching Strategies ──────────────────────────────────
 
-async function cacheFirstWithNetwork(request, cacheName) {
+// Cache writes run in event.waitUntil() after the response is handed to the page, so the
+// page never waits on Cache Storage. trimCache (a full cache.keys() listing) runs only when
+// the put added a new key; overwriting an existing entry cannot grow the cache.
+async function cacheFirstWithNetwork(event, request, cacheName) {
   const cached = await caches.match(request);
   if (cached) return cached;
 
   try {
     const response = await fetch(request);
     if (response.ok) {
-      const cache = await caches.open(cacheName);
-      cache.put(request, response.clone());
-      await trimCache(cacheName, MAX_DYNAMIC_ENTRIES);
+      const copy = response.clone();
+      event.waitUntil((async () => {
+        const cache = await caches.open(cacheName);
+        await cache.put(request, copy);
+        await trimCache(cacheName, MAX_DYNAMIC_ENTRIES);
+      })().catch(() => {}));
     }
     return response;
   } catch {
@@ -266,21 +283,25 @@ async function cacheFirstWithNetwork(request, cacheName) {
   }
 }
 
-async function networkFirstWithCache(request, cacheName, ttl) {
+async function networkFirstWithCache(event, request, cacheName, ttl) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      const cache = await caches.open(cacheName);
-      // Store with timestamp for TTL checking
-      const headers = new Headers(response.headers);
-      headers.set('sw-cached-at', Date.now().toString());
-      const timedResponse = new Response(await response.clone().blob(), {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-      });
-      cache.put(request, timedResponse);
-      await trimCache(cacheName, MAX_API_ENTRIES);
+      const copy = response.clone();
+      event.waitUntil((async () => {
+        const cache = await caches.open(cacheName);
+        const isNew = !(await cache.match(request));
+        // Store with timestamp for TTL checking
+        const headers = new Headers(copy.headers);
+        headers.set('sw-cached-at', Date.now().toString());
+        const timedResponse = new Response(await copy.blob(), {
+          status: copy.status,
+          statusText: copy.statusText,
+          headers,
+        });
+        await cache.put(request, timedResponse);
+        if (isNew) await trimCache(cacheName, MAX_API_ENTRIES);
+      })().catch(() => {}));
     }
     return response;
   } catch {
