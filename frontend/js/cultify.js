@@ -16,15 +16,21 @@
 
   // Access token from verify-burn (prevents wallet spoofing on analyze endpoint)
   // Persisted to localStorage so page reloads don't force a re-burn within the 12h window.
+  // Tokens are per mint: currentAccessToken is always the one for the mint being viewed.
   let currentAccessToken = null;
+  const memoryAccessTokens = {}; // per-mint copy for when localStorage is unavailable
 
   function _saveAccessToken(mint, token) {
+    if (token && mint) memoryAccessTokens[mint] = token;
     try { if (token && mint) localStorage.setItem(`cultify-access-${mint}`, token); } catch (_) {}
   }
   function _loadAccessToken(mint) {
-    try { return (mint && localStorage.getItem(`cultify-access-${mint}`)) || null; } catch (_) { return null; }
+    let stored = null;
+    try { stored = mint ? localStorage.getItem(`cultify-access-${mint}`) : null; } catch (_) {}
+    return stored || (mint && memoryAccessTokens[mint]) || null;
   }
   function _clearAccessToken(mint) {
+    if (mint) delete memoryAccessTokens[mint];
     try { if (mint) localStorage.removeItem(`cultify-access-${mint}`); } catch (_) {}
   }
 
@@ -275,8 +281,9 @@
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
 
       // Step 1: Check access (pass both cache token and wallet for DB lookup)
-      // Load persisted token if in-memory token was lost (e.g. page reload)
-      if (!currentAccessToken) currentAccessToken = _loadAccessToken(mint);
+      // Use this mint's token: a token left over from the previously viewed mint is useless here
+      // and used to hide this mint's own stored token
+      currentAccessToken = _loadAccessToken(mint);
       const walletAddr = (typeof wallet !== 'undefined' && wallet.connected) ? wallet.address : '';
       const tokenParam = currentAccessToken ? `&token=${currentAccessToken}` : '';
       const walletParam = walletAddr ? `&wallet=${walletAddr}` : '';
