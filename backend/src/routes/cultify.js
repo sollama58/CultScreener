@@ -332,7 +332,9 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     }
 
     const resultCacheKey = `diamond-hands:${mint}`;
-    const fresh = req.query.fresh === 'true';
+    // ?fresh=true evicts the result the token page also reads, so like /analyze it is
+    // honoured only for admin sessions and API-key callers
+    const fresh = req.query.fresh === 'true' && await canBypassCache(req);
 
     if (fresh) {
       await cache.delete(resultCacheKey);
