@@ -63,9 +63,10 @@ function expandSwap(c, walletAddress) {
 // Results are cached per-wallet for 1 day — the same whale wallets appear as top
 // holders across many different tokens, so the cache hit rate is high after the
 // first analysis of any given token.
-async function fetchSwapHistory(walletAddress, maxCount) {
+// `cached`: the wallet's cache entry when the caller already read it (undefined: read it here).
+async function fetchSwapHistory(walletAddress, maxCount, cached) {
   const swapCacheKey = `${HB_SWAPS_KEY_PREFIX}${walletAddress}`;
-  const cached = await cache.get(swapCacheKey);
+  if (cached === undefined) cached = await cache.get(swapCacheKey);
   if (cached) return cached.map(c => expandSwap(c, walletAddress));
 
   if (solanaService.isTransactionHistoryAvailable()) {
@@ -174,12 +175,12 @@ async function runHolderBehaviorAnalysis(mint) {
     const tokenAgg = {};
     let totalSwaps = 0;
 
-    const processHolder = async (holder) => {
+    const processHolder = async (holder, cachedSwaps) => {
       try {
         // 45s timeout per holder — prevents one slow/hung Helius call from stalling the entire analysis
         let timeoutId;
         const txns = await Promise.race([
-          fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER),
+          fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER, cachedSwaps),
           new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('holder timeout')), 45000); })
         ]);
         clearTimeout(timeoutId);
@@ -220,13 +221,13 @@ async function runHolderBehaviorAnalysis(mint) {
     const swapCacheEntries = await Promise.all(
       eligible.map(h => cache.get(`${HB_SWAPS_KEY_PREFIX}${h.address}`).then(v => [h, v]))
     );
-    const cachedHolders   = swapCacheEntries.filter(([, v]) => v != null).map(([h]) => h);
+    const cachedEntries   = swapCacheEntries.filter(([, v]) => v != null);
     const uncachedHolders = swapCacheEntries.filter(([, v]) => v == null).map(([h]) => h);
-    console.log(`[HB] ${mint.slice(0, 8)}: ${cachedHolders.length} cached, ${uncachedHolders.length} need Helius`);
+    console.log(`[HB] ${mint.slice(0, 8)}: ${cachedEntries.length} cached, ${uncachedHolders.length} need Helius`);
 
-    for (const holder of cachedHolders) {
-      accumulateResult(await processHolder(holder));
-    }
+    // The values just read are handed over, so nothing is fetched or parsed twice
+    const cachedRes = await Promise.all(cachedEntries.map(([h, v]) => processHolder(h, v)));
+    for (const r of cachedRes) accumulateResult(r);
 
     // BATCH=6: 6 wallets at once, up to 4 history calls each. The Helius queue
     // (rateLimiter.js) still caps the request rate and the calls in flight.
@@ -235,7 +236,7 @@ async function runHolderBehaviorAnalysis(mint) {
     for (let i = 0; i < uncachedHolders.length; i += BATCH) {
       if (i > 0) await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
       const batch = uncachedHolders.slice(i, i + BATCH);
-      const batchRes = await Promise.all(batch.map(processHolder));
+      const batchRes = await Promise.all(batch.map(h => processHolder(h)));
       for (const r of batchRes) accumulateResult(r);
     }
 
