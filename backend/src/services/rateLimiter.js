@@ -114,6 +114,26 @@ const RATE_LIMITS = {
   }
 };
 
+// GeckoTerminal's free API (no COINGECKO_API_KEY, or after the key was rejected with a
+// 401) allows 30 requests/minute, a tenth of the Basic plan the defaults above are sized
+// for. geckoTerminal.js switches to this pacing whenever it talks to the free API. The API
+// and worker processes each run their own limiter, so GECKO_FREE_RPM (default 30) can
+// split the budget between them.
+function geckoFreeTierLimits(rpm = parseInt(process.env.GECKO_FREE_RPM, 10) || 30) {
+  const perMinute = Math.max(1, rpm);
+  return {
+    minInterval: Math.ceil((60000 / perMinute) * 1.05), // 5% margin: 2100ms at 30/min
+    maxJitter: 100,
+    burstLimit: Math.max(1, Math.floor(perMinute / 6)),  // per 10s window
+    burstWindow: 10000,
+    queueTimeout: 30000
+  };
+}
+
+function useGeckoFreeTierLimits() {
+  Object.assign(RATE_LIMITS.geckoTerminal, geckoFreeTierLimits());
+}
+
 // Requests currently running per queued API, and the queue loops waiting for a free slot
 const inFlight = new Map();
 const slotWaiters = new Map();
@@ -510,5 +530,7 @@ module.exports = {
   queueMetrics,
   sleep,
   RATE_LIMITS,
+  geckoFreeTierLimits,
+  useGeckoFreeTierLimits,
   stopCleanup
 };

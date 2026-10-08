@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { normalizeLogoUri } = require('./tokenImage');
-const { rateLimitedRequest, sleep } = require('./rateLimiter');
+const { rateLimitedRequest, sleep, useGeckoFreeTierLimits } = require('./rateLimiter');
 const { circuitBreakers } = require('./circuitBreaker');
 const { httpsAgent } = require('./httpAgent');
 const { cache: redisCache, TTL } = require('./cache');
@@ -40,6 +40,15 @@ if (COINGECKO_API_KEY) {
   console.log('[GeckoTerminal] Using free GeckoTerminal API (30 req/min) — set COINGECKO_API_KEY for Basic plan (300 req/min)');
 }
 
+// True while requests go to the free API (30 req/min): no key, or the key was rejected.
+// The rate limiter and 429 retries are paced for the free tier then.
+let geckoFreeTier = false;
+function switchToFreeTier() {
+  geckoFreeTier = true;
+  useGeckoFreeTierLimits();
+}
+if (!COINGECKO_API_KEY) switchToFreeTier();
+
 // Create axios instance with connection pooling for GeckoTerminal
 const geckoHeaders = { 'Accept': 'application/json' };
 if (COINGECKO_API_KEY) {
@@ -65,6 +74,7 @@ if (COINGECKO_API_KEY) {
         geckoAxios.defaults.baseURL = 'https://api.geckoterminal.com/api/v2';
         delete geckoAxios.defaults.headers.common['x-cg-pro-api-key'];
         geckoAxios.interceptors.response.eject(authInterceptorId);
+        switchToFreeTier();
       }
       return Promise.reject(error);
     }
@@ -79,41 +89,62 @@ const RETRY_CONFIG = {
   maxDelay: 5000,       // 5 seconds max delay
   backoffMultiplier: 2  // Exponential backoff: 1s → 2s → give up
 };
+// The free API's window is a minute: wait at least this long before retrying a 429 there,
+// and retry once.
+const FREE_TIER_RETRY_FLOOR_MS = 15000;
+const FREE_TIER_MAX_RETRIES = 1;
+// Give up rather than sleep when the server asks for a longer wait than this
+const RETRY_AFTER_MAX_MS = 30000;
+
+/**
+ * Milliseconds a 429 response asks us to wait (Retry-After as seconds or an HTTP date),
+ * or null when it does not say.
+ */
+function retryAfterMs(error) {
+  const headers = error?.response?.headers;
+  const value = headers && (typeof headers.get === 'function' ? headers.get('retry-after') : headers['retry-after']);
+  if (value == null || value === '') return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
+}
 
 /**
  * Execute request with retry logic for 429 (rate limit) errors
  * Uses exponential backoff with jitter
  */
 async function withRetry(requestFn, context = 'request') {
-  let lastError;
-
-  for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       return await requestFn();
     } catch (error) {
-      lastError = error;
-
       // Only retry on 429 (rate limit) errors
       if (error.response?.status !== 429) {
         throw error;
       }
 
-      if (attempt === RETRY_CONFIG.maxRetries) {
-        console.error(`[GeckoTerminal] ${context}: Max retries (${RETRY_CONFIG.maxRetries}) exceeded for 429 error`);
+      const maxRetries = geckoFreeTier ? FREE_TIER_MAX_RETRIES : RETRY_CONFIG.maxRetries;
+      if (attempt >= maxRetries) {
+        console.error(`[GeckoTerminal] ${context}: Max retries (${maxRetries}) exceeded for 429 error`);
         throw error;
       }
 
-      // Calculate delay with exponential backoff and jitter
+      // Calculate delay with exponential backoff and jitter, but never sooner than the
+      // server's Retry-After or, on the free tier, the floor for its one-minute window
       const baseDelay = RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt);
       const jitter = Math.random() * 1000; // 0-1s jitter
-      const delay = Math.min(baseDelay + jitter, RETRY_CONFIG.maxDelay);
+      const backoff = Math.min(baseDelay + jitter, RETRY_CONFIG.maxDelay);
+      const delay = Math.max(backoff, retryAfterMs(error) ?? 0, geckoFreeTier ? FREE_TIER_RETRY_FLOOR_MS : 0);
+      if (delay > RETRY_AFTER_MAX_MS) {
+        console.error(`[GeckoTerminal] ${context}: 429 asks for a ${Math.round(delay / 1000)}s wait, not retrying`);
+        throw error;
+      }
 
-      console.log(`[GeckoTerminal] ${context}: Rate limited (429), retry ${attempt + 1}/${RETRY_CONFIG.maxRetries} after ${Math.round(delay)}ms`);
+      console.log(`[GeckoTerminal] ${context}: Rate limited (429), retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms`);
       await sleep(delay);
     }
   }
-
-  throw lastError;
 }
 
 /**
@@ -1440,5 +1471,6 @@ module.exports = {
   getTokenPools,
   getCoinSocialLinks,
   getTokenHoldersChart,
+  retryAfterMs,
   stopCleanup
 };
