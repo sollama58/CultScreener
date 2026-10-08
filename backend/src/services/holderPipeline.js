@@ -155,13 +155,16 @@ async function detectLpWallets(holders) {
   const lp = new Set();
   const candidates = holders.slice(0, CONFIG.lpCheckN).map(h => h.wallet).filter(w => !BURN_WALLETS.has(w));
   for (const w of candidates) if (LP_AUTHORITIES.has(w) || LP_PROGRAMS.has(w)) lp.add(w);
-  for (let i = 0; i < candidates.length; i += 100) {
+  // The batches (100 wallets each) are independent: read them at once
+  const starts = [];
+  for (let i = 0; i < candidates.length; i += 100) starts.push(i);
+  await Promise.all(starts.map(async i => {
     const batch = candidates.slice(i, i + 100);
     const res = await solanaService.getMultipleAccounts(batch).catch(() => null);
     (res?.value || []).forEach((acct, j) => {
       if (isProgramOwned(acct)) lp.add(batch[j]);
     });
-  }
+  }));
   return lp;
 }
 
@@ -236,7 +239,11 @@ async function takeSnapshot(mint) {
     // and percentage is derived from these two; a snapshot written with decimals
     // defaulted to 0 and no supply showed raw balances as tokens and holder shares
     // in the millions of percent.
-    const supplyRes = await solanaService.getTokenSupply(mint);
+    // Supply and the pre-check's first DAS page (below) are independent: read both at once
+    const [supplyRes, first] = await Promise.all([
+      solanaService.getTokenSupply(mint),
+      solanaService.getAllTokenAccounts(mint, { maxPages: 1 }),
+    ]);
     const decimals = supplyRes?.value?.decimals;
     const supply = supplyRes?.value?.amount ?? null;
     if (!Number.isInteger(decimals) || supply == null) {
@@ -249,7 +256,6 @@ async function takeSnapshot(mint) {
     // than one page that only proves the first page is unchanged, so a multi-page
     // token still gets a full snapshot at least once a day.
     const prevFingerprint = prev?.sample_meta?.fingerprint;
-    const first = await solanaService.getAllTokenAccounts(mint, { maxPages: 1 });
     const fingerprint = holderFingerprint(supply, first.accounts);
     const prevUsable = prev && prev.supply != null && prev.decimals === decimals
       && (first.complete || Date.now() - new Date(prev.taken_at).getTime() < CONFIG.staleSnapshotMs);
