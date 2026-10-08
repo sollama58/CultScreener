@@ -39,6 +39,17 @@ const requireAllowedToken = asyncHandler(async (req, res, next) => {
   next();
 });
 
+// Mint decimals for scaling raw DAS amounts when the RPC answer that normally carries them
+// is missing. Helius metadata is cached for an hour; getTokenSupply is the second source.
+// null when neither knows: callers must not guess (a wrong guess is off by 10^n).
+async function resolveMintDecimals(mint) {
+  const meta = await solanaService.getTokenMetadata(mint).catch(() => null);
+  if (Number.isInteger(meta?.decimals)) return meta.decimals;
+  const supply = await solanaService.getTokenSupply(mint).catch(() => null);
+  if (Number.isInteger(supply?.value?.decimals)) return supply.value.decimals;
+  return null;
+}
+
 // Names that indicate missing/placeholder metadata
 const PLACEHOLDER_NAMES = new Set(['unknown token', 'unknown', '']);
 
@@ -1933,15 +1944,23 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
 
         if (dasResponse.data?.result?.token_accounts?.length > 0) {
           rpcSuccess = true;
+          let rawTotal = 0;
           for (const ta of dasResponse.data.result.token_accounts) {
-            if (ta.mint === mint) {
-              const rawAmt = parseFloat(ta.amount || 0);
-              // DAS doesn't return decimals per-account; use token info or default
-              if (rawAmt > 0) {
-                // We'll get exact balance from supply calc below; for now mark as holder
-                balance = rawAmt / Math.pow(10, decimals);
-              }
+            if (ta.mint === mint) rawTotal += parseFloat(ta.amount || 0);
+          }
+          if (rawTotal > 0) {
+            // DAS amounts are raw base units with no decimals; scaling by a guessed 9 put
+            // 6-decimal (pump.fun) balances off by 1000x
+            const mintDecimals = await resolveMintDecimals(mint);
+            if (mintDecimals == null) {
+              // Holds the token, but the amount can't be scaled: say so rather than guess
+              return res.json({
+                wallet, mint, balance: null, decimals: null, holdsToken: true,
+                verified: true, totalSupply: null, circulatingSupply: null, percentageHeld: null
+              });
             }
+            decimals = mintDecimals;
+            balance = rawTotal / Math.pow(10, decimals);
           }
         } else if (dasResponse.data?.result) {
           // DAS responded but no accounts — confirmed not holding
@@ -2052,8 +2071,17 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
 
     // If standard RPC failed, try Helius DAS API as fallback (capped at 3s to keep API responsive)
     let largestAccounts = rpcAccounts;
+    // Decimals for the DAS path, whose amounts come back raw. Defaulting to 0 when
+    // getTokenSupply also failed served (and had the worker cache) raw base units.
+    let dasDecimals = null;
     if (!largestAccounts) {
-      const decimals = supplyResult?.value?.decimals || 0;
+      dasDecimals = Number.isInteger(supplyResult?.value?.decimals)
+        ? supplyResult.value.decimals
+        : await resolveMintDecimals(mint);
+      if (dasDecimals == null) {
+        return res.status(503).json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
+      }
+      const decimals = dasDecimals;
       largestAccounts = await Promise.race([
         solanaService.getTokenLargestAccountsDAS(mint, decimals),
         new Promise((_, reject) => setTimeout(() => reject(new Error('DAS timeout')), 10000)),
@@ -2133,12 +2161,13 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
         rawAccounts,
         totalSupply,
         usedDAS: !rpcAccounts,
-        supplyDecimals: supplyResult?.value?.decimals || 0
+        supplyDecimals: dasDecimals ?? (supplyResult?.value?.decimals || 0)
       });
       if (!job) {
         // No worker available — do classification inline as fallback
         await cache.delete(pendingKey);
-        await _classifyHoldersInline(mint, rawAccounts, totalSupply, !rpcAccounts, supplyResult, cacheKey);
+        await _classifyHoldersInline(mint, rawAccounts, totalSupply, !rpcAccounts,
+          supplyResult || (dasDecimals != null ? { value: { decimals: dasDecimals } } : null), cacheKey);
       }
     }
 
