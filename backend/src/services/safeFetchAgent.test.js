@@ -74,3 +74,55 @@ test('judges a hostname that is already a literal address, brackets included', (
   assert.strictEqual(isBlockedHostLiteral('localhost'), false);
   assert.strictEqual(isBlockedHostLiteral('ipfs.io'), false);
 });
+
+test('judges IPv4-mapped IPv6 in the hex spelling URL() normalises to (audit #15)', () => {
+  assert.strictEqual(new URL('https://[::ffff:127.0.0.1]/').hostname, '[::ffff:7f00:1]');
+  for (const ip of ['::ffff:7f00:1', '::ffff:a9fe:a9fe', '::ffff:a00:1', '0:0:0:0:0:ffff:7f00:1', '::7f00:1', '::127.0.0.1']) {
+    assert.strictEqual(isBlockedAddress(ip), true, `${ip} should be blocked`);
+  }
+  assert.strictEqual(isBlockedHostLiteral('[::ffff:7f00:1]'), true);
+  assert.strictEqual(isBlockedHostLiteral('[::ffff:a9fe:a9fe]'), true);
+  // A mapped PUBLIC address is still judged as that address.
+  assert.strictEqual(isBlockedAddress('::ffff:808:808'), false);
+  assert.strictEqual(isBlockedAddress('::ffff:8.8.8.8'), false);
+});
+
+test('the safe agents refuse IP-literal private hosts, which never reach lookup (audit #15)', async () => {
+  const http = require('http');
+  const axios = require('axios');
+  const { safeHttpAgent } = require('./safeFetchAgent');
+
+  let hits = 0;
+  const server = http.createServer((req, res) => { hits++; res.end('internal'); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  try {
+    // Direct literal.
+    await assert.rejects(
+      axios.get(`http://127.0.0.1:${port}/`, { httpAgent: safeHttpAgent, proxy: false, timeout: 3000 }),
+      (err) => err.code === 'EBLOCKEDADDRESS'
+    );
+    // A redirect hop to a literal goes through the same agent.
+    const redirector = http.createServer((req, res) => {
+      res.writeHead(302, { Location: `http://127.0.0.1:${port}/latest/meta-data/` });
+      res.end();
+    });
+    await new Promise((r) => redirector.listen(0, '127.0.0.1', r));
+    try {
+      // Reach the redirector with a plain agent; the hop must still be refused by the safe one.
+      const hop = await axios.get(`http://127.0.0.1:${redirector.address().port}/`, {
+        maxRedirects: 0, validateStatus: () => true, proxy: false, timeout: 3000,
+      });
+      assert.strictEqual(hop.status, 302);
+      await assert.rejects(
+        axios.get(hop.headers.location, { httpAgent: safeHttpAgent, proxy: false, timeout: 3000 }),
+        (err) => err.code === 'EBLOCKEDADDRESS'
+      );
+    } finally {
+      redirector.close();
+    }
+    assert.strictEqual(hits, 0, 'the internal server must never be reached');
+  } finally {
+    server.close();
+  }
+});
