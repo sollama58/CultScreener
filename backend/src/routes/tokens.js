@@ -1716,60 +1716,6 @@ router.get('/:mint/price', validateMint, requireAllowedToken, asyncHandler(async
   }
 }));
 
-// GET /api/tokens/:mint/chart - Get price history for charts
-// Uses getOrSet for automatic caching with stampede prevention
-router.get('/:mint/chart', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
-  const { mint } = req.params;
-  const { interval = '1h', limit = 100 } = req.query;
-
-  // Validate interval
-  const validIntervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
-  const normalizedInterval = interval.toLowerCase();
-
-  if (!validIntervals.includes(normalizedInterval)) {
-    return res.status(400).json({
-      error: 'Invalid interval',
-      validIntervals
-    });
-  }
-
-  const normalizedLimit = Math.min(Math.max(1, parseInt(limit) || 100), 500);
-  const cacheKey = keys.tokenChart(mint, normalizedInterval, normalizedLimit);
-  // Use longer TTL for chart data - minute intervals cache 1min, others cache 2min
-  const cacheTTL = normalizedInterval.includes('m') ? TTL.MEDIUM : TTL.OHLCV;
-
-  try {
-    // Use getOrSet for caching with stampede prevention
-    const chartData = await cache.getOrSet(cacheKey, async () => {
-      // Try GeckoTerminal with 4s timeout, fall back to Jupiter on failure/empty
-      let data = null;
-      try {
-        data = await Promise.race([
-          geckoService.getPriceHistory(mint, { interval: normalizedInterval }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Chart timeout')), 4000))
-        ]);
-      } catch (err) {
-        if (err.isOverloaded || err.isCircuitBreakerError) throw err;
-        // GeckoTerminal failed or timed out — fall through to Jupiter
-      }
-
-      if (!data || !data.data || data.data.length === 0) {
-        data = await jupiterService.getPriceHistory(mint, {
-          interval: normalizedInterval,
-          limit: normalizedLimit
-        });
-      }
-
-      return data;
-    }, cacheTTL);
-
-    if (!res.headersSent) res.json(chartData);
-  } catch (error) {
-    if (error.isOverloaded || error.isCircuitBreakerError) throw error;
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch chart data' });
-  }
-}));
-
 // GET /api/tokens/:mint/ohlcv - Get OHLCV data for candlestick charts
 // Feeds the token page's chart modal. ?interval=1m|5m|15m|1h|4h|12h|1d, ?limit=1..1000.
 // Uses getOrSet for automatic caching with stampede prevention
@@ -1787,8 +1733,10 @@ router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async
   const limit = parseInt(req.query.limit) > 100 ? 1000 : 100;
 
   const cacheKey = `ohlcv:${mint}:${normalizedInterval}:${limit}`;
-  // Minute candles go stale quickly; hour/day candles can sit for the full OHLCV TTL
-  const cacheTTL = normalizedInterval.endsWith('m') ? TTL.MEDIUM : TTL.OHLCV;
+  // Minute candles go stale quickly; hour/day candles can sit for the full OHLCV TTL.
+  // 2 minutes, not 1: the chart modal polls every 60s, so a 60s TTL made nearly every
+  // poll an upstream GeckoTerminal request per (mint, interval).
+  const cacheTTL = normalizedInterval.endsWith('m') ? 2 * TTL.MEDIUM : TTL.OHLCV;
 
   try {
     const ohlcvData = await cache.getOrSet(cacheKey, async () => {
