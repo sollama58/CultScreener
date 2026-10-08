@@ -54,8 +54,8 @@ router.get('/leaderboard', asyncHandler(async (req, res) => {
 
   const result = await db.getTopConvictionTokens(limit, offset, filters);
 
-  // Cache for 2 minutes
-  await cache.set(cacheKey, { data: result.tokens, total: result.total }, TTL.LONG);
+  // Cache for 5 minutes; a search result is a one-off subset, so only for 1 minute
+  await cache.set(cacheKey, { data: result.tokens, total: result.total }, search ? TTL.MEDIUM : TTL.LONG);
 
   res.json({
     success: true,
