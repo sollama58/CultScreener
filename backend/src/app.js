@@ -331,10 +331,13 @@ app.get('/api/utilities/my-access', publicEndpointLimiter, async (req, res) => {
   }
 });
 
-// Public announcements endpoint (no auth required)
+// Public announcements endpoint (no auth required). Every page view asks for this, and it only
+// changes when an admin edits it, so it is cached for 60s; the admin announcement routes delete
+// the key on every write (routes/admin.js, ANNOUNCEMENTS_CACHE_KEY).
 app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
   try {
-    const announcements = await db.getActiveAnnouncements();
+    const { cache } = require('./services/cache');
+    const announcements = await cache.getOrSet('announcements:active', () => db.getActiveAnnouncements(), 60000);
     res.json({ announcements });
   } catch (err) {
     console.warn('[API] /api/announcements error:', err.message);
