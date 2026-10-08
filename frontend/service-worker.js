@@ -62,9 +62,9 @@
 // v83: HTML pages are cached in the dynamic cache, and cache trimming never evicts the precached
 // app shell (each page view used to trim the static cache to 50, deleting the shell). Bug-audit
 // fixes: signed watchlist and sentiment calls, holder and view-count fixes, chart label carry,
-// Cultify burn gate proof, API key lookup, admin submissions column - api.js v16, watchlist.js v3,
+// Cultify and Holder Behavior burn gate proof, API key lookup, admin submissions column - api.js v16, watchlist.js v3,
 // tokenDetail.js v34, tokenChart.js v6, cultify.js v19, admin.js v20, apiKeys.js v4,
-// communityPage.js v9.
+// communityPage.js v9, holderBehavior.js v9.
 const CACHE_VERSION = 'holdex-v83';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -94,7 +94,7 @@ const APP_SHELL = [
   '/js/holderChart.js?v=3',
   '/js/watchlist.js?v=3',
   '/js/communityPage.js?v=9',
-  '/js/holderBehavior.js?v=7',
+  '/js/holderBehavior.js?v=9',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
