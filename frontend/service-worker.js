@@ -60,8 +60,11 @@
 // v81: the Score column is gone again (the order stays) - styles.css v25, tokenTable.js v8, conviction.js v21.
 // v82: the King of the Pill tooltip mentions price momentum - kotp.js v7.
 // v83: HTML pages are cached in the dynamic cache, and cache trimming never evicts the precached
-// app shell (each page view used to trim the static cache to 50, deleting the shell) - apiKeys.js v3;
-// a linked phone gets no Remove buttons on its read-only watchlist - communityPage.js v8.
+// app shell (each page view used to trim the static cache to 50, deleting the shell). Bug-audit
+// fixes: signed watchlist and sentiment calls, holder and view-count fixes, chart label carry,
+// Cultify burn gate proof, API key lookup, admin submissions column - api.js v16, watchlist.js v3,
+// tokenDetail.js v34, tokenChart.js v6, cultify.js v19, admin.js v20, apiKeys.js v4,
+// communityPage.js v9.
 const CACHE_VERSION = 'holdex-v83';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -74,7 +77,7 @@ const APP_SHELL = [
   '/css/styles.css?v=25',
   '/css/token.css?v=8',
   '/js/config.js?v=4',
-  '/js/api.js?v=15',
+  '/js/api.js?v=16',
   '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
   '/js/tokenTable.js?v=8',
@@ -84,20 +87,20 @@ const APP_SHELL = [
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
   '/js/kotp.js?v=7',
-  '/js/tokenDetail.js?v=33',
+  '/js/tokenDetail.js?v=34',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
-  '/js/tokenChart.js?v=5',
+  '/js/tokenChart.js?v=6',
   '/js/holderChart.js?v=3',
-  '/js/watchlist.js?v=2',
-  '/js/communityPage.js?v=8',
+  '/js/watchlist.js?v=3',
+  '/js/communityPage.js?v=9',
   '/js/holderBehavior.js?v=7',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
-  '/js/cultify.js?v=17',
-  '/js/admin.js?v=18',
-  '/js/apiKeys.js?v=3',
+  '/js/cultify.js?v=19',
+  '/js/admin.js?v=20',
+  '/js/apiKeys.js?v=4',
   '/icons/icon.svg',
   '/CultScreenerBanner.jpg',
 ];
