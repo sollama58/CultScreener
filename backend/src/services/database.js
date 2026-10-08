@@ -666,6 +666,9 @@ const DATA_MIGRATIONS = [
   },
 ];
 
+// API and worker boot together; this lock keeps them from running the same step at once.
+const DATA_MIGRATION_LOCK_KEY = 0x484d4947; // arbitrary constant ('HMIG')
+
 async function runDataMigrations(client) {
   try {
     const res = await client.query(
@@ -676,6 +679,21 @@ async function runDataMigrations(client) {
       if (m.version <= current) continue;
       await client.query('BEGIN');
       try {
+        const lock = await client.query('SELECT pg_try_advisory_xact_lock($1) AS ok', [DATA_MIGRATION_LOCK_KEY]);
+        if (!lock.rows[0].ok) {
+          // The other process is applying it now
+          await client.query('ROLLBACK');
+          return;
+        }
+        // Re-read under the lock: the other process may have just applied it
+        const again = await client.query(
+          "SELECT value FROM app_settings WHERE key = 'schema_data_version'"
+        );
+        current = parseInt(again.rows[0]?.value, 10) || 0;
+        if (m.version <= current) {
+          await client.query('COMMIT');
+          continue;
+        }
         await client.query(m.sql);
         await client.query(
           `INSERT INTO app_settings(key, value, updated_at) VALUES ('schema_data_version', $1, NOW())
