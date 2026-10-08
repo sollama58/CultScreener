@@ -638,6 +638,7 @@ router.patch('/curated/:mint/mcap', strictLimiter, asyncHandler(async (req, res)
   if (!updated) {
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, token: updated });
 }));
@@ -659,6 +660,7 @@ router.patch('/curated/:mint/ath', strictLimiter, asyncHandler(async (req, res) 
   if (!updated) {
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, token: updated });
 }));
