@@ -290,6 +290,9 @@ async function takeSnapshot(mint) {
     const exclude = new Set([...BURN_WALLETS, ...LP_PROGRAMS, ...LP_AUTHORITIES, ...lpWallets]);
     const { sample, meta } = selectSample(mint, holders, { exclude });
     meta.lpWallets = [...lpWallets];
+    // holder_count is every wallet; the count shown elsewhere leaves out burn,
+    // LP and program-owned wallets (recordSnapshotPoint), and so does this one
+    meta.holderCount = holderCounts.countHolders(holders, { exclude }).holders;
     meta.complete = complete;
     meta.fingerprint = fingerprint;
 
@@ -715,8 +718,9 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
     resolved,
     computed: pending === 0,
     sampleMethod: meta.method || null,
-    // Same meaning as the holder count shown elsewhere (token accounts with a balance)
-    holderCount: snap.holder_count,
+    // Same meaning as the holder count shown elsewhere (burn, LP and program-owned
+    // wallets left out); snapshots written before that was stored fall back to all
+    holderCount: meta.holderCount ?? snap.holder_count,
     snapshotAt,
   };
 
@@ -729,7 +733,7 @@ async function getDiamondHands(mint, { dispatch = true } = {}) {
   await cache.set(keys.result(mint), result, CONFIG.resultTtl).catch(() => {});
   if (distribution) {
     const convictionMeta = {
-      method: meta.method, snapshotId: snap.id, snapshotAt, holderCount: snap.holder_count,
+      method: meta.method, snapshotId: snap.id, snapshotAt, holderCount: result.holderCount,
       eligible: meta.eligible, strata: meta.strata, supplyDistribution,
     };
     await require('./database').upsertConviction(mint, distribution, sample.length, result.analyzed, convictionMeta)

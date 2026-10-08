@@ -157,6 +157,8 @@ if (!DB_URL) {
       const dh = await pipeline.getDiamondHands(MINT, { dispatch: false });
       assert.strictEqual(dh.computed, true);
       assert.strictEqual(dh.analyzed, 250);
+      // the displayed holder count (POOL left out), not every wallet in the snapshot
+      assert.strictEqual(dh.holderCount, 300);
       // W000 bought at T0 (hold 0 → unresolved), everyone else 1..299 days
       assert.ok(dh.distribution['1w'] > 90, JSON.stringify(dh.distribution));
       assert.ok(dh.distribution['1yr'] === 0);
