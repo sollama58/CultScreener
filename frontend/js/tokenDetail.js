@@ -247,6 +247,7 @@ const tokenDetail = {
           this.updateFreshnessDisplay();
           this.startFreshnessTimer();
         }
+        this._resumePausedPolls();
       }
     };
     document.addEventListener('visibilitychange', this.visibilityHandler);
@@ -965,6 +966,27 @@ const tokenDetail = {
     }
   },
 
+  // Holder poll loops (full metrics, hold times, diamond hands) do not run while the
+  // tab is hidden. A poll that comes due while hidden is parked here, keyed by its
+  // timer, and runs as soon as the tab is visible again. Returns true when parked.
+  _deferPollWhileHidden(timerKey, resume) {
+    if (document.visibilityState !== 'hidden') return false;
+    // A newer call supersedes any poll of the same loop still waiting on a timer
+    if (this[timerKey]) clearTimeout(this[timerKey]);
+    if (!this._pausedPolls) this._pausedPolls = {};
+    this._pausedPolls[timerKey] = { mint: this.mint, resume };
+    return true;
+  },
+
+  _resumePausedPolls() {
+    const paused = this._pausedPolls;
+    this._pausedPolls = {};
+    if (!paused) return;
+    for (const { mint, resume } of Object.values(paused)) {
+      if (mint === this.mint) resume();
+    }
+  },
+
   // Poll for full holder analytics once the fast-path returns null metrics.
   // The compute-holder-analytics worker enriches metrics (LP/burn exclusion) within
   // ~5-30s of the first request. Polls every few seconds until metrics populate,
@@ -972,6 +994,7 @@ const tokenDetail = {
   // with real percentages and LP/burn flags.
   async _pollForFullMetrics(attempt = 0) {
     const DELAYS = [4000, 6000, 8000, 10000, 12000, 15000, 15000, 15000]; // ~85s total
+    if (this._deferPollWhileHidden('_metricsTimer', () => this._pollForFullMetrics(attempt))) return;
     if (attempt === 0) {
       if (this._metricsTimer) { clearTimeout(this._metricsTimer); this._metricsTimer = null; }
     }
@@ -1189,6 +1212,7 @@ const tokenDetail = {
     const EXTENDED_DELAY = 30000;  // 30s between extended polls
     // First delay is longer to give backend inline computation time to complete
     const POLL_DELAYS = [2000, 2000, 3000, 4000, 6000, 10000, 15000, 20000];
+    if (this._deferPollWhileHidden('_holdTimesTimer', () => this._loadHoldTimes(attempt))) return;
 
     // Cancel any in-flight polling from a previous load (e.g. refresh clicked while polling)
     if (attempt === 0) {
@@ -1615,6 +1639,7 @@ const tokenDetail = {
     const EXTENDED_POLLS = 6;      // Extra polls at slow cadence after MAX_POLLS
     const EXTENDED_DELAY = 25000;  // 25s between extended polls
     const POLL_DELAYS = [2000, 3000, 4000, 5000, 6000, 8000, 10000, 14000, 18000, 22000];
+    if (this._deferPollWhileHidden('_diamondHandsTimer', () => this._loadDiamondHands(attempt))) return;
 
     // Cancel any in-flight polling from a previous load
     if (attempt === 0) {
@@ -1711,7 +1736,7 @@ const tokenDetail = {
       const canContinue = !data.computed && canPoll;
 
       if (canContinue) {
-        const nextDelay = isExtended ? (progressing ? 6000 : EXTENDED_DELAY) : POLL_DELAYS[attempt];
+        const nextDelay = isExtended ? (progressing ? 10000 : EXTENDED_DELAY) : POLL_DELAYS[attempt];
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] ${analyzed}/${total} analyzed, re-polling in ${nextDelay}ms`);
         this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(attempt + 1), nextDelay);
       } else {
@@ -2090,6 +2115,7 @@ const tokenDetail = {
     // Clear polling timers
     if (this._holdTimesTimer) { clearTimeout(this._holdTimesTimer); this._holdTimesTimer = null; }
     if (this._diamondHandsTimer) { clearTimeout(this._diamondHandsTimer); this._diamondHandsTimer = null; }
+    this._pausedPolls = {};
 
     // Remove window-level listeners to prevent accumulation on bfcache restore
     if (this._walletConnectedHandler) {
