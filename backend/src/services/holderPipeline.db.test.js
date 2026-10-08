@@ -670,6 +670,40 @@ if (!DB_URL) {
     });
   });
 
+  describe('abandoned mint pruning (Postgres)', () => {
+    const QUIET = 'TestMintQuiet11111111111111111111111111111';
+    const GONE = 'TestMintGone111111111111111111111111111111';
+    const cleanup = async () => {
+      for (const m of [QUIET, GONE]) {
+        await db.pool.query('DELETE FROM holder_snapshots WHERE mint_address = $1', [m]);
+        await db.pool.query('DELETE FROM holder_positions WHERE mint_address = $1', [m]);
+      }
+    };
+
+    test('a snapshot kept current by the pre-check is not pruned with abandoned mints', async () => {
+      await cleanup();
+      try {
+        const old = new Date(realNow() - 40 * DAY);
+        for (const [m, verified] of [[QUIET, new Date(realNow() - HOUR)], [GONE, null]]) {
+          await db.pool.query(
+            `INSERT INTO holder_snapshots (mint_address, taken_at, verified_at, complete, pages, account_count, holder_count)
+             VALUES ($1, $2, $3, true, 1, 1, 1)`, [m, old, verified]);
+          await db.pool.query(
+            `INSERT INTO holder_positions (mint_address, wallet, amount, first_seen_at, last_seen_at, acquired_at, acquired_source)
+             VALUES ($1, 'W', 1, $2, $2, $2, 'backfill')`, [m, old]);
+        }
+        await store.pruneAbandonedMints();
+        const count = async (table, m) => (await db.pool.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE mint_address = $1`, [m])).rows[0].n;
+        assert.strictEqual(await count('holder_snapshots', QUIET), 1);
+        assert.strictEqual(await count('holder_positions', QUIET), 1);
+        assert.strictEqual(await count('holder_snapshots', GONE), 0);
+        assert.strictEqual(await count('holder_positions', GONE), 0);
+      } finally {
+        await cleanup();
+      }
+    });
+  });
+
   describe('holder count history (Postgres)', () => {
     const holderCounts = require('./holderCounts');
 
