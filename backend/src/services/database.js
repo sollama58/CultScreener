@@ -480,6 +480,8 @@ async function initializeDatabase() {
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_ref_7d DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_ref_30d DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_at TIMESTAMP WITH TIME ZONE;
+        -- Last refresh attempt, failed ones included; price_refs_at is when the refs were computed
+        ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_tried_at TIMESTAMP WITH TIME ZONE;
       EXCEPTION WHEN OTHERS THEN NULL;
       END $pref$;
 
@@ -3429,15 +3431,17 @@ async function updateCuratedTokenATH(mintAddress, mcap) {
 }
 
 /**
- * Curated mints whose stored reference prices are missing or older than maxAgeMs,
- * oldest first, so a capped run works through the list over successive runs.
+ * Curated mints whose reference prices were last refreshed (or last tried) more than maxAgeMs
+ * ago, or never, oldest first, so a capped run works through the list over successive runs.
  */
 async function getCuratedMintsNeedingPriceRefs(limit, maxAgeMs) {
   if (!pool) return [];
+  // GREATEST ignores NULLs: the later of the last success and the last attempt
   const result = await pool.query(`
     SELECT mint_address FROM curated_tokens
-    WHERE price_refs_at IS NULL OR price_refs_at < NOW() - ($2::bigint * INTERVAL '1 millisecond')
-    ORDER BY price_refs_at ASC NULLS FIRST
+    WHERE GREATEST(price_refs_at, price_refs_tried_at) IS NULL
+       OR GREATEST(price_refs_at, price_refs_tried_at) < NOW() - ($2::bigint * INTERVAL '1 millisecond')
+    ORDER BY GREATEST(price_refs_at, price_refs_tried_at) ASC NULLS FIRST
     LIMIT $1
   `, [limit, Math.round(maxAgeMs)]);
   return result.rows.map(r => r.mint_address);
@@ -3445,19 +3449,21 @@ async function getCuratedMintsNeedingPriceRefs(limit, maxAgeMs) {
 
 /**
  * Store a token's prices 1, 7 and 30 days ago (null where the pool is younger). With
- * refs = null only the timestamp moves: the refresh failed, the old references stay, and
+ * refs = null only the attempt time moves: the refresh failed, the old references stay, and
  * the token goes to the back of the queue instead of being retried first every run.
+ * price_refs_at keeps the time the references were computed, so they still expire
+ * (priceChanges.MAX_REF_AGE_MS) when refreshes keep failing.
  */
 async function setCuratedPriceRefs(mintAddress, refs) {
   if (!pool) return null;
   if (refs === null) {
-    await pool.query('UPDATE curated_tokens SET price_refs_at = NOW() WHERE mint_address = $1', [mintAddress]);
+    await pool.query('UPDATE curated_tokens SET price_refs_tried_at = NOW() WHERE mint_address = $1', [mintAddress]);
     return;
   }
   const { d1 = null, d7 = null, d30 = null } = refs || {};
   await pool.query(`
     UPDATE curated_tokens
-    SET price_ref_1d = $2, price_ref_7d = $3, price_ref_30d = $4, price_refs_at = NOW()
+    SET price_ref_1d = $2, price_ref_7d = $3, price_ref_30d = $4, price_refs_at = NOW(), price_refs_tried_at = NOW()
     WHERE mint_address = $1
   `, [mintAddress, d1, d7, d30]);
 }

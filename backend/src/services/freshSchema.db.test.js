@@ -82,4 +82,35 @@ if (!DB_URL) {
       assert.strictEqual(await db.getTokenConvictionRank(mint('Missing')), null);
     });
   });
+
+  describe('reference prices', () => {
+    const MINT = 'FreshRefs11111111111111111111111111111111111';
+    const priceChanges = require('./priceChanges');
+    const needing = () => db.getCuratedMintsNeedingPriceRefs(50, priceChanges.REFRESH_AFTER_MS);
+    const row = async () => (await db.getTopConvictionTokens(100, 0, { search: 'FreshRefs' }))
+      .tokens.find(r => r.mint_address === MINT);
+
+    test('failed refreshes leave the queue alone but do not keep old references fresh', async () => {
+      await db.pool.query(
+        `INSERT INTO tokens (mint_address, name, symbol, price, price_change_24h) VALUES ($1, 'R', 'R', 2, 5)`, [MINT]);
+      await db.addCuratedToken(MINT);
+      await db.setCuratedPriceRefs(MINT, { d1: 1, d7: 4, d30: 1 });
+      assert.strictEqual(priceChanges.changesForRow(await row()).priceChange7d, -50);
+
+      // Two days of failing refreshes: the refs were computed two days ago...
+      await db.pool.query(
+        `UPDATE curated_tokens SET price_refs_at = NOW() - INTERVAL '2 days', price_refs_tried_at = NOW() - INTERVAL '2 days'
+         WHERE mint_address = $1`, [MINT]);
+      assert.ok((await needing()).includes(MINT));
+      // ...and the latest attempt just failed again
+      await db.setCuratedPriceRefs(MINT, null);
+
+      // To the back of the queue, as before
+      assert.ok(!(await needing()).includes(MINT));
+      // but the two-day-old references are no longer shown as 7d/30d changes
+      const changes = priceChanges.changesForRow(await row());
+      assert.strictEqual(changes.priceChange7d, null);
+      assert.strictEqual(changes.priceChange30d, null);
+    });
+  });
 }
