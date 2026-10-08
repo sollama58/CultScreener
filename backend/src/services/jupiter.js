@@ -56,16 +56,26 @@ function createClient() {
 // Shared client instance (created once at module load)
 const client = createClient();
 
-const RETRY_CONFIG = {
+const DEFAULT_RETRY_CONFIG = {
   maxRetries: 3,
   baseDelay: 5000,
   maxDelay: 30000,
   backoffMultiplier: 2
 };
 
-async function withRetry(requestFn, context = 'request') {
+// A user is waiting on these requests (search): one short retry, so a throttled Jupiter
+// costs seconds rather than the 35s+ of the default schedule.
+const USER_FACING_RETRY_CONFIG = {
+  maxRetries: 1,
+  baseDelay: 2000,
+  maxDelay: 5000,
+  backoffMultiplier: 2
+};
+const USER_FACING_TIMEOUT_MS = 5000;
+
+async function withRetry(requestFn, context = 'request', config = DEFAULT_RETRY_CONFIG) {
   let lastError;
-  for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
     try {
       return await requestFn();
     } catch (error) {
@@ -73,14 +83,14 @@ async function withRetry(requestFn, context = 'request') {
       if (error.response?.status !== 429) {
         throw error;
       }
-      if (attempt === RETRY_CONFIG.maxRetries) {
-        console.error(`[Jupiter] ${context}: Max retries (${RETRY_CONFIG.maxRetries}) exceeded for 429 error`);
+      if (attempt === config.maxRetries) {
+        console.error(`[Jupiter] ${context}: Max retries (${config.maxRetries}) exceeded for 429 error`);
         throw error;
       }
-      const baseDelay = RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt);
+      const baseDelay = config.baseDelay * Math.pow(config.backoffMultiplier, attempt);
       const jitter = Math.random() * 1000;
-      const delay = Math.min(baseDelay + jitter, RETRY_CONFIG.maxDelay);
-      console.log(`[Jupiter] ${context}: Rate limited (429), retry ${attempt + 1}/${RETRY_CONFIG.maxRetries} after ${Math.round(delay)}ms`);
+      const delay = Math.min(baseDelay + jitter, config.maxDelay);
+      console.log(`[Jupiter] ${context}: Rate limited (429), retry ${attempt + 1}/${config.maxRetries} after ${Math.round(delay)}ms`);
       await sleep(delay);
     }
   }
@@ -110,15 +120,16 @@ if (_inFlightSweepTimer.unref) _inFlightSweepTimer.unref();
  * Make a rate-limited, deduplicated request to Jupiter API
  * @param {Function} requestFn - Function that returns an axios promise
  * @param {string} [dedupeKey] - Optional key for deduplication
+ * @param {Object} [retryConfig] - 429 retry schedule (defaults to DEFAULT_RETRY_CONFIG)
  * @returns {Promise<any>}
  */
-async function jupiterRequest(requestFn, dedupeKey) {
+async function jupiterRequest(requestFn, dedupeKey, retryConfig) {
   if (dedupeKey && inFlightRequests.has(dedupeKey)) {
     return inFlightRequests.get(dedupeKey).promise;
   }
 
   const promise = circuitBreakers.jupiter.execute(() =>
-    withRetry(() => rateLimitedRequest('jupiter', requestFn), dedupeKey || 'jupiterRequest')
+    withRetry(() => rateLimitedRequest('jupiter', requestFn), dedupeKey || 'jupiterRequest', retryConfig)
   ).finally(() => {
     if (dedupeKey) inFlightRequests.delete(dedupeKey);
   });
@@ -178,9 +189,11 @@ async function searchTokens(query, limit = 50) {
     // V2 search endpoint - searches by symbol, name, or mint
     const response = await jupiterRequest(() =>
       client.get(`/tokens/v2/search`, {
-        params: { query }
+        params: { query },
+        timeout: USER_FACING_TIMEOUT_MS
       }),
-      `search:${query}`
+      `search:${query}`,
+      USER_FACING_RETRY_CONFIG
     );
 
     const tokens = response.data || [];
@@ -193,21 +206,16 @@ async function searchTokens(query, limit = 50) {
     // Cap results to requested limit
     const capped = tokens.slice(0, limit);
 
-    // Get prices for the tokens
-    const tokenAddresses = capped.map(t => t.address || t.mint).filter(Boolean);
-    const prices = await getTokenPrices(tokenAddresses);
-
-    // Combine token info with prices
+    // The V2 search rows already carry price and market data; no /price/v3 call needed
     return capped.map(token => {
-      const address = token.address || token.mint;
-      const priceData = prices[address] || {};
+      const stats = token.stats24h || {};
       return {
         ...formatToken(token),
-        price: priceData.price || 0,
-        priceChange24h: priceData.priceChange24h || 0,
-        volume24h: priceData.volume24h || 0,
-        marketCap: priceData.marketCap || 0,
-        liquidity: priceData.liquidity || 0
+        price: token.usdPrice || 0,
+        priceChange24h: stats.priceChange || 0,
+        volume24h: (Number(stats.buyVolume) || 0) + (Number(stats.sellVolume) || 0),
+        marketCap: token.mcap || token.fdv || 0,
+        liquidity: token.liquidity || 0
       };
     });
   } catch (error) {
