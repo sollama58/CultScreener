@@ -460,6 +460,60 @@ function generateApiKey() {
   return { key, prefix, hash: hashApiKey(key) };
 }
 
+// API key usage (last_used_at, request_count) is buffered per key hash and
+// written once per key every USAGE_FLUSH_MS instead of one UPDATE per request.
+// Usage stats lag by up to that window; counts buffered at a crash are lost.
+const API_KEY_USAGE_FLUSH_MS = 60 * 1000;
+const apiKeyUsageBuffer = new Map(); // keyHash -> { count, lastUsedAt }
+let apiKeyUsageTimer = null;
+
+function recordApiKeyUsage(keyHash) {
+  const entry = apiKeyUsageBuffer.get(keyHash);
+  if (entry) {
+    entry.count++;
+    entry.lastUsedAt = new Date();
+  } else {
+    apiKeyUsageBuffer.set(keyHash, { count: 1, lastUsedAt: new Date() });
+  }
+  if (!apiKeyUsageTimer) {
+    apiKeyUsageTimer = setTimeout(() => {
+      flushApiKeyUsage().catch(err => console.error('Failed to flush API key usage:', err.message));
+    }, API_KEY_USAGE_FLUSH_MS);
+    apiKeyUsageTimer.unref();
+  }
+}
+
+async function flushApiKeyUsage() {
+  if (apiKeyUsageTimer) {
+    clearTimeout(apiKeyUsageTimer);
+    apiKeyUsageTimer = null;
+  }
+  if (apiKeyUsageBuffer.size === 0) return;
+  const db = require('../services/database');
+  const entries = [...apiKeyUsageBuffer];
+  apiKeyUsageBuffer.clear();
+  for (const [keyHash, { count, lastUsedAt }] of entries) {
+    try {
+      await db.updateApiKeyUsage(keyHash, count, lastUsedAt);
+    } catch (err) {
+      console.error('Failed to update API key usage:', err.message);
+      // Put it back for the next flush, merged with anything recorded meanwhile
+      const pending = apiKeyUsageBuffer.get(keyHash);
+      if (pending) {
+        pending.count += count;
+      } else {
+        apiKeyUsageBuffer.set(keyHash, { count, lastUsedAt });
+      }
+      if (!apiKeyUsageTimer) {
+        apiKeyUsageTimer = setTimeout(() => {
+          flushApiKeyUsage().catch(e => console.error('Failed to flush API key usage:', e.message));
+        }, API_KEY_USAGE_FLUSH_MS);
+        apiKeyUsageTimer.unref();
+      }
+    }
+  }
+}
+
 // Middleware to validate API key from header
 // API key should be passed in X-API-Key header
 async function validateApiKey(req, res, next) {
@@ -497,10 +551,8 @@ async function validateApiKey(req, res, next) {
       });
     }
 
-    // Update usage stats (fire and forget)
-    db.updateApiKeyUsage(keyHash).catch(err =>
-      console.error('Failed to update API key usage:', err.message)
-    );
+    // Update usage stats (buffered, flushed periodically)
+    recordApiKeyUsage(keyHash);
 
     // Attach key info to request for use in routes
     req.apiKey = {
@@ -1848,6 +1900,7 @@ module.exports = {
   hashApiKey,
   generateApiKey,
   validateApiKey,
+  flushApiKeyUsage,
   // Wallet Signature functions
   verifyWalletSignature,
   validateVoteSignature,

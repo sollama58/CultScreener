@@ -616,6 +616,18 @@ if (!DB_URL) {
       assert.strictEqual(rows[0].n, 3);
     });
 
+    test('only the newest snapshot keeps its sample; older headers keep their meta', async () => {
+      const { rows } = await db.pool.query(
+        `SELECT sample IS NOT NULL AS has_sample, sample_meta IS NOT NULL AS has_meta
+           FROM holder_snapshots WHERE mint_address = $1 ORDER BY taken_at DESC`, [MINT]);
+      assert.ok(rows.length > 1);
+      assert.strictEqual(rows[0].has_sample, true);
+      assert.ok(rows.slice(1).every(r => !r.has_sample));
+      assert.ok(rows.every(r => r.has_meta));
+      const snap = await store.getLatestSnapshot(MINT);
+      assert.strictEqual(snap.sample.length, 250);
+    });
+
     test('conviction is persisted with its sample method', async () => {
       await db.pool.query(
         `INSERT INTO tokens (mint_address, name, symbol) VALUES ($1, 'T', 'T') ON CONFLICT (mint_address) DO NOTHING`, [MINT]);

@@ -53,6 +53,12 @@ services:
       - key: DB_SSL_REJECT_UNAUTHORIZED
         value: "false"
 
+      # PostgreSQL pool size (basic-256mb DB is shared with the worker; keep the sum low)
+      - key: DB_POOL_MAX
+        value: "20"
+      - key: DB_POOL_MIN
+        value: "2"
+
       # Application settings
       - key: NODE_ENV
         value: production
@@ -184,6 +190,12 @@ services:
       # SSL certificate verification for PostgreSQL (set to 'false' for Render's self-signed certs)
       - key: DB_SSL_REJECT_UNAUTHORIZED
         value: "false"
+
+      # PostgreSQL pool size (basic-256mb DB is shared with the API; keep the sum low)
+      - key: DB_POOL_MAX
+        value: "15"
+      - key: DB_POOL_MIN
+        value: "1"
 
       # Application settings
       - key: NODE_ENV

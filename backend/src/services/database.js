@@ -77,11 +77,11 @@ function createPool() {
     return null;
   }
 
-  // Scale connection pool based on environment
-  // Production: Higher pool for concurrent users
-  // Development: Lower pool to avoid exhausting local DB
+  // Pool size. The API and the worker each have their own pool against one small
+  // Postgres, so keep the default modest; pg queues checkouts beyond max.
+  // Override per service with DB_POOL_MAX / DB_POOL_MIN (see render.yaml).
   const isProduction = process.env.NODE_ENV === 'production';
-  const maxConnections = parseInt(process.env.DB_POOL_MAX) || (isProduction ? 60 : 10);
+  const maxConnections = parseInt(process.env.DB_POOL_MAX) || (isProduction ? 20 : 10);
 
   return new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -89,7 +89,7 @@ function createPool() {
     // Set DB_SSL_REJECT_UNAUTHORIZED=true only if you have proper CA certs.
     ssl: isProduction ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true' } : false,
     max: maxConnections,                    // Maximum connections in pool
-    min: parseInt(process.env.DB_POOL_MIN) || (isProduction ? 5 : 2), // Warm pool for faster response under load
+    min: parseInt(process.env.DB_POOL_MIN) || 2, // Small warm pool
     idleTimeoutMillis: 60000,               // Close idle connections after 60s
     connectionTimeoutMillis: 5000,          // Timeout for new connections (fail fast under load)
     statement_timeout: 30000,               // Kill queries running > 30s
@@ -262,7 +262,6 @@ async function initializeDatabase() {
       ALTER TABLE api_keys DROP COLUMN IF EXISTS full_key;
 
       -- Submission indexes
-      CREATE INDEX IF NOT EXISTS idx_submissions_token ON submissions(token_mint);
       CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
       CREATE INDEX IF NOT EXISTS idx_submissions_wallet ON submissions(submitter_wallet);
       CREATE INDEX IF NOT EXISTS idx_submissions_created ON submissions(created_at DESC);
@@ -275,8 +274,6 @@ async function initializeDatabase() {
         WHERE status != 'rejected';
 
       -- Vote indexes (optimized for concurrent load)
-      CREATE INDEX IF NOT EXISTS idx_votes_submission ON votes(submission_id);
-      CREATE INDEX IF NOT EXISTS idx_votes_wallet ON votes(voter_wallet);
       CREATE INDEX IF NOT EXISTS idx_votes_voter_submission ON votes(voter_wallet, submission_id);
       CREATE INDEX IF NOT EXISTS idx_votes_submission_type ON votes(submission_id, vote_type);
       CREATE INDEX IF NOT EXISTS idx_votes_created ON votes(created_at DESC);
@@ -284,11 +281,15 @@ async function initializeDatabase() {
       -- Token indexes (optimized for search queries that use LOWER())
       CREATE INDEX IF NOT EXISTS idx_tokens_name_symbol ON tokens(LOWER(name), LOWER(symbol));
       -- Separate GIN trigram indexes for fast LIKE %pattern% searches (if pg_trgm extension is available)
-      -- These dramatically speed up wildcard searches
+      -- These dramatically speed up wildcard searches. db/init.sql used to create
+      -- idx_tokens_name_trgm / idx_tokens_symbol_trgm on the raw columns, which took these
+      -- names and left no LOWER() index; drop those (whichever definition they have).
+      DROP INDEX IF EXISTS idx_tokens_name_trgm;
+      DROP INDEX IF EXISTS idx_tokens_symbol_trgm;
       DO $$ BEGIN
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
-        CREATE INDEX IF NOT EXISTS idx_tokens_name_trgm ON tokens USING gin (LOWER(name) gin_trgm_ops);
-        CREATE INDEX IF NOT EXISTS idx_tokens_symbol_trgm ON tokens USING gin (LOWER(symbol) gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_tokens_name_lower_trgm ON tokens USING gin (LOWER(name) gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_tokens_symbol_lower_trgm ON tokens USING gin (LOWER(symbol) gin_trgm_ops);
       EXCEPTION WHEN OTHERS THEN
         -- pg_trgm might not be available on some hosts, fall back to btree indexes
         CREATE INDEX IF NOT EXISTS idx_tokens_name_lower ON tokens(LOWER(name) varchar_pattern_ops);
@@ -296,16 +297,13 @@ async function initializeDatabase() {
       END $$;
 
       -- Watchlist indexes
-      CREATE INDEX IF NOT EXISTS idx_watchlist_wallet ON watchlist(wallet_address);
       CREATE INDEX IF NOT EXISTS idx_watchlist_token ON watchlist(token_mint);
 
       -- Vote tally indexes
       CREATE INDEX IF NOT EXISTS idx_vote_tallies_score ON vote_tallies(weighted_score DESC);
       CREATE INDEX IF NOT EXISTS idx_vote_tallies_updated ON vote_tallies(updated_at DESC);
 
-      -- API key indexes
-      CREATE INDEX IF NOT EXISTS idx_api_keys_wallet ON api_keys(owner_wallet);
-      CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+      -- API key lookups use the UNIQUE(key_hash) and UNIQUE(owner_wallet) indexes
 
       -- Admin sessions table for admin panel authentication
       CREATE TABLE IF NOT EXISTS admin_sessions (
@@ -317,7 +315,6 @@ async function initializeDatabase() {
         user_agent TEXT
       );
 
-      CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(session_token);
       CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
 
       -- Device sessions table for mobile device linking
@@ -333,7 +330,6 @@ async function initializeDatabase() {
         user_agent TEXT
       );
 
-      CREATE INDEX IF NOT EXISTS idx_device_sessions_token ON device_sessions(session_token);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_wallet ON device_sessions(wallet_address);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_expires ON device_sessions(expires_at);
 
@@ -363,7 +359,6 @@ async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT NOW()
       );
 
-      CREATE INDEX IF NOT EXISTS idx_token_views_mint ON token_views(token_mint);
       CREATE INDEX IF NOT EXISTS idx_token_views_count ON token_views(view_count DESC);
 
       -- Announcements table for admin-broadcast site-wide messages
@@ -400,8 +395,6 @@ async function initializeDatabase() {
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
 
-      CREATE INDEX IF NOT EXISTS idx_sentiment_votes_mint ON sentiment_votes(token_mint);
-
       -- Token calls table (rolling 24h endorsements)
       CREATE TABLE IF NOT EXISTS token_calls (
         id SERIAL PRIMARY KEY,
@@ -430,8 +423,6 @@ async function initializeDatabase() {
         dexscreener_updated_at TIMESTAMP WITH TIME ZONE,
         added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-
-      CREATE INDEX IF NOT EXISTS idx_curated_tokens_mint ON curated_tokens(mint_address);
 
       -- Bug reports table
       CREATE TABLE IF NOT EXISTS bug_reports (
@@ -462,7 +453,6 @@ async function initializeDatabase() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_cultify_burns_wallet_mint ON cultify_burns(wallet_address, token_mint);
-      CREATE INDEX IF NOT EXISTS idx_cultify_burns_sig ON cultify_burns(burn_signature);
 
       -- utility_type distinguishes Cultify burns from Holder Behavior burns
       ALTER TABLE cultify_burns ADD COLUMN IF NOT EXISTS utility_type VARCHAR(32) DEFAULT 'cultify';
@@ -474,8 +464,6 @@ async function initializeDatabase() {
         note TEXT,
         added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-
-      CREATE INDEX IF NOT EXISTS idx_utility_whitelist_wallet ON utility_whitelist(wallet_address);
 
       -- Market cap tracking for curated tokens
       DO $mca$ BEGIN
@@ -511,9 +499,6 @@ async function initializeDatabase() {
         recorded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
         UNIQUE(mint_address, recorded_date)
       );
-
-      CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
-        ON holder_history(mint_address, recorded_date DESC);
 
       -- Full holder snapshots, written by the worker's snapshot-holders job.
       -- One header row per run; sample/sample_meta hold the conviction sample drawn
@@ -571,8 +556,9 @@ async function initializeDatabase() {
         backfill_updated_at TIMESTAMP WITH TIME ZONE,
         PRIMARY KEY (mint_address, wallet)
       );
-      CREATE INDEX IF NOT EXISTS idx_holder_positions_mint_seen
-        ON holder_positions(mint_address, last_seen_at);
+      -- Nothing filters or orders on last_seen_at; indexing it only made every
+      -- amount-change update in writeSnapshot non-HOT.
+      DROP INDEX IF EXISTS idx_holder_positions_mint_seen;
 
       -- When a later pre-check last confirmed this snapshot still exact (every account
       -- unchanged). Newcomers at the next snapshot are dated from this, not taken_at.
@@ -583,14 +569,6 @@ async function initializeDatabase() {
 
       -- How the stored conviction numbers were sampled (method, strata, snapshot id)
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_meta JSONB;
-
-      -- Logos that no browser can load: GeckoTerminal's "missing.png" placeholder (stored as a
-      -- relative path), ipfs:// and other non-http values. Every logo write COALESCEs with the
-      -- stored value, so these blocked real logos forever; cleared here so the curated price
-      -- refresh can fill them (see normalizeLogoUri in services/tokenImage.js). Idempotent.
-      UPDATE tokens SET logo_uri = NULL
-        WHERE logo_uri IS NOT NULL
-          AND (logo_uri !~* '^https?://' OR logo_uri ~* '/missing(_[a-z]+)?[.]png$');
 
       -- Holder count history: one point per holder snapshot (services/holderCounts.js).
       -- holders = unique wallets with a balance, burn/LP excluded; dust = those under
@@ -607,30 +585,26 @@ async function initializeDatabase() {
         PRIMARY KEY (mint_address, taken_at)
       );
 
-      -- Carry over what the older tables already know. Both inserts skip rows that
-      -- exist, so re-running on every boot is a cheap no-op. The old daily table only
-      -- has token-account counts; snapshot headers have the wallet count (LP wallets
-      -- taken out; burn wallets, at most a few, can't be told apart after the fact).
-      INSERT INTO holder_count_points (mint_address, taken_at, legacy_count, complete, source)
-        SELECT mint_address, (recorded_date::timestamp AT TIME ZONE 'UTC'), holder_count, TRUE, 'daily'
-          FROM holder_history WHERE holder_count > 0
-        ON CONFLICT (mint_address, taken_at) DO NOTHING;
-      INSERT INTO holder_count_points (mint_address, taken_at, holders, legacy_count, complete, source)
-        SELECT mint_address, taken_at,
-               GREATEST(holder_count - COALESCE(jsonb_array_length(
-                 CASE WHEN jsonb_typeof(sample_meta->'lpWallets') = 'array' THEN sample_meta->'lpWallets' END), 0), 0),
-               account_count, complete, 'snapshot'
-          FROM holder_snapshots WHERE supply IS NOT NULL
-        ON CONFLICT (mint_address, taken_at) DO NOTHING;
-
-      -- Hold-time backfills that gave up before 2026-10-07 mostly failed on the public-RPC
-      -- failover (removed then), which left diamond hands "Unavailable". Put them back in the
-      -- queue once. Only rows last touched before the cutoff match, so this is a no-op
-      -- after the first boot that runs it.
-      UPDATE holder_positions SET acquired_source = 'pending', backfill_attempts = 0,
-             backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL,
-             backfill_pages = 0, backfill_updated_at = NOW()
-        WHERE acquired_source = 'failed' AND backfill_updated_at < '2026-10-07T00:00:00Z';
+      -- Indexes that duplicate a UNIQUE constraint or another index's leading columns
+      -- (some created by older versions of this block or by db/init.sql). They only
+      -- add write cost; the remaining index serves every lookup they did.
+      DROP INDEX IF EXISTS idx_tokens_mint;               -- tokens UNIQUE(mint_address)
+      DROP INDEX IF EXISTS idx_tokens_symbol;             -- unused raw-symbol btree (init.sql)
+      DROP INDEX IF EXISTS idx_token_views_mint;          -- token_views UNIQUE(token_mint)
+      DROP INDEX IF EXISTS idx_curated_tokens_mint;       -- curated_tokens UNIQUE(mint_address)
+      DROP INDEX IF EXISTS idx_api_keys_hash;             -- api_keys UNIQUE(key_hash)
+      DROP INDEX IF EXISTS idx_api_keys_wallet;           -- api_keys UNIQUE(owner_wallet)
+      DROP INDEX IF EXISTS idx_admin_sessions_token;      -- admin_sessions UNIQUE(session_token)
+      DROP INDEX IF EXISTS idx_device_sessions_token;     -- device_sessions UNIQUE(session_token)
+      DROP INDEX IF EXISTS idx_cultify_burns_sig;         -- cultify_burns UNIQUE(burn_signature)
+      DROP INDEX IF EXISTS idx_utility_whitelist_wallet;  -- utility_whitelist UNIQUE(wallet_address)
+      DROP INDEX IF EXISTS idx_sentiment_votes_mint;      -- UNIQUE(token_mint, voter_wallet)
+      DROP INDEX IF EXISTS idx_votes_submission;          -- UNIQUE(submission_id, voter_wallet)
+      DROP INDEX IF EXISTS idx_votes_wallet;              -- idx_votes_voter_submission
+      DROP INDEX IF EXISTS idx_submissions_token;         -- idx_submissions_token_status
+      DROP INDEX IF EXISTS idx_watchlist_wallet;          -- UNIQUE(wallet_address, token_mint)
+      DROP INDEX IF EXISTS idx_watchlist_mint;            -- same as idx_watchlist_token (init.sql)
+      DROP INDEX IF EXISTS idx_holder_history_mint_date;  -- UNIQUE(mint_address, recorded_date)
 
       -- Generic key-value store for admin-configurable settings
       CREATE TABLE IF NOT EXISTS app_settings (
@@ -644,6 +618,10 @@ async function initializeDatabase() {
     isConnected = true;
     connectionAttempts = 0;
     console.log('Database initialized successfully');
+
+    // One-off data fixes run after COMMIT, outside the DDL transaction, so their
+    // scans never hold the schema locks or count against the DDL block's timeout.
+    await runDataMigrations(client);
     return true;
 
   } catch (error) {
@@ -666,6 +644,96 @@ async function initializeDatabase() {
     if (client) {
       client.release();
     }
+  }
+}
+
+// One-off data statements, versioned by app_settings.schema_data_version so each
+// runs once per database instead of on every boot of every process. Each step
+// commits on its own; a failure is logged and retried on the next boot.
+const DATA_MIGRATIONS = [
+  {
+    version: 1,
+    name: 'clear unloadable logos, import holder count history, re-queue failed backfills',
+    sql: `
+      -- Logos that no browser can load: GeckoTerminal's "missing.png" placeholder (stored as a
+      -- relative path), ipfs:// and other non-http values. Every logo write COALESCEs with the
+      -- stored value, so these blocked real logos forever; cleared here so the curated price
+      -- refresh can fill them (see normalizeLogoUri in services/tokenImage.js). Idempotent.
+      UPDATE tokens SET logo_uri = NULL
+        WHERE logo_uri IS NOT NULL
+          AND (logo_uri !~* '^https?://' OR logo_uri ~* '/missing(_[a-z]+)?[.]png$');
+
+      -- Holder count history: carry over what the older tables already know. Both inserts
+      -- skip rows that exist. The old daily table only has token-account counts; snapshot
+      -- headers have the wallet count (LP wallets taken out; burn wallets, at most a few,
+      -- can't be told apart after the fact).
+      INSERT INTO holder_count_points (mint_address, taken_at, legacy_count, complete, source)
+        SELECT mint_address, (recorded_date::timestamp AT TIME ZONE 'UTC'), holder_count, TRUE, 'daily'
+          FROM holder_history WHERE holder_count > 0
+        ON CONFLICT (mint_address, taken_at) DO NOTHING;
+      INSERT INTO holder_count_points (mint_address, taken_at, holders, legacy_count, complete, source)
+        SELECT mint_address, taken_at,
+               GREATEST(holder_count - COALESCE(jsonb_array_length(
+                 CASE WHEN jsonb_typeof(sample_meta->'lpWallets') = 'array' THEN sample_meta->'lpWallets' END), 0), 0),
+               account_count, complete, 'snapshot'
+          FROM holder_snapshots WHERE supply IS NOT NULL
+        ON CONFLICT (mint_address, taken_at) DO NOTHING;
+
+      -- Hold-time backfills that gave up before 2026-10-07 mostly failed on the public-RPC
+      -- failover (removed then), which left diamond hands "Unavailable". Put them back in the
+      -- queue once. Only rows last touched before the cutoff match.
+      UPDATE holder_positions SET acquired_source = 'pending', backfill_attempts = 0,
+             backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL,
+             backfill_pages = 0, backfill_updated_at = NOW()
+        WHERE acquired_source = 'failed' AND backfill_updated_at < '2026-10-07T00:00:00Z';
+    `,
+  },
+];
+
+// API and worker boot together; this lock keeps them from running the same step at once.
+const DATA_MIGRATION_LOCK_KEY = 0x484d4947; // arbitrary constant ('HMIG')
+
+async function runDataMigrations(client) {
+  try {
+    const res = await client.query(
+      "SELECT value FROM app_settings WHERE key = 'schema_data_version'"
+    );
+    let current = parseInt(res.rows[0]?.value, 10) || 0;
+    for (const m of DATA_MIGRATIONS) {
+      if (m.version <= current) continue;
+      await client.query('BEGIN');
+      try {
+        const lock = await client.query('SELECT pg_try_advisory_xact_lock($1) AS ok', [DATA_MIGRATION_LOCK_KEY]);
+        if (!lock.rows[0].ok) {
+          // The other process is applying it now
+          await client.query('ROLLBACK');
+          return;
+        }
+        // Re-read under the lock: the other process may have just applied it
+        const again = await client.query(
+          "SELECT value FROM app_settings WHERE key = 'schema_data_version'"
+        );
+        current = parseInt(again.rows[0]?.value, 10) || 0;
+        if (m.version <= current) {
+          await client.query('COMMIT');
+          continue;
+        }
+        await client.query(m.sql);
+        await client.query(
+          `INSERT INTO app_settings(key, value, updated_at) VALUES ('schema_data_version', $1, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [String(m.version)]
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* ignore rollback errors */ }
+        throw err;
+      }
+      current = m.version;
+      console.log(`[Database] Data migration ${m.version} applied: ${m.name}`);
+    }
+  } catch (err) {
+    console.error('[Database] Data migration failed (will retry on next boot):', err.message);
   }
 }
 
@@ -891,21 +959,31 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     ? 'WHERE ' + filterConditions.join(' AND ')
     : '';
 
-  const countResult = await pool.query(
-    `${baseCte} SELECT COUNT(*) FROM combined ${outerConditions}`,
-    params
-  );
-  const total = parseInt(countResult.rows[0].count) || 0;
-
+  // One pass over the CTE: the window count is the total before LIMIT/OFFSET.
   const result = await pool.query(
     `${baseCte}
-     SELECT * FROM combined
+     SELECT *, COUNT(*) OVER() AS total_count_ FROM combined
      ${outerConditions}
      ORDER BY conviction_1m DESC NULLS LAST
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     [...params, limit, offset]
   );
-  return { tokens: result.rows, total };
+
+  let total;
+  if (result.rows.length > 0) {
+    total = parseInt(result.rows[0].total_count_) || 0;
+  } else if (offset > 0) {
+    // Page past the end returns no rows to carry the window count; count separately.
+    const countResult = await pool.query(
+      `${baseCte} SELECT COUNT(*) FROM combined ${outerConditions}`,
+      params
+    );
+    total = parseInt(countResult.rows[0].count) || 0;
+  } else {
+    total = 0;
+  }
+  const tokens = result.rows.map(({ total_count_, ...row }) => row);
+  return { tokens, total };
 }
 
 // Get conviction leaderboard rank for a single token.
@@ -991,19 +1069,35 @@ async function findSimilarTokens(mintAddress, name, symbol, limit = 5) {
   const safeName = (name || '').slice(0, 100).toLowerCase();
 
   // Search by token name similarity only (not ticker/symbol)
-  // Minimum threshold of 0.15 prevents irrelevant noise
-  const result = await pool.query(
-    `SELECT
-       mint_address, name, symbol, decimals, logo_uri, pair_created_at,
-       price, market_cap, volume_24h,
-       similarity(LOWER(name), $1) AS name_sim
-     FROM tokens
-     WHERE mint_address != $2
-       AND similarity(LOWER(name), $1) > 0.15
-     ORDER BY name_sim DESC
-     LIMIT $3`,
-    [safeName, mintAddress, limit]
-  );
+  // Minimum threshold of 0.15 prevents irrelevant noise.
+  // The % operator (similarity >= pg_trgm.similarity_threshold) can use the
+  // LOWER(name) trigram GIN index; similarity() alone in WHERE cannot. SET LOCAL
+  // only lasts inside a transaction, so this runs on a checked-out client.
+  const client = await pool.connect();
+  let result;
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL pg_trgm.similarity_threshold = 0.15');
+    result = await client.query(
+      `SELECT
+         mint_address, name, symbol, decimals, logo_uri, pair_created_at,
+         price, market_cap, volume_24h,
+         similarity(LOWER(name), $1) AS name_sim
+       FROM tokens
+       WHERE mint_address != $2
+         AND LOWER(name) % $1
+         AND similarity(LOWER(name), $1) > 0.15
+       ORDER BY name_sim DESC
+       LIMIT $3`,
+      [safeName, mintAddress, limit]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return result.rows.map(row => ({
     address: row.mint_address,
@@ -1623,15 +1717,16 @@ async function getApiKeyByWallet(ownerWallet) {
   return result.rows[0];
 }
 
-// Update last used timestamp and increment request count
-async function updateApiKeyUsage(keyHash) {
+// Update last used timestamp and add to the request count
+// (validateApiKey buffers usage and passes the count and last use time per flush)
+async function updateApiKeyUsage(keyHash, count = 1, lastUsedAt = null) {
   if (!pool) return;
 
   await pool.query(
     `UPDATE api_keys
-     SET last_used_at = NOW(), request_count = request_count + 1
+     SET last_used_at = COALESCE($3, NOW()), request_count = request_count + $2
      WHERE key_hash = $1`,
-    [keyHash]
+    [keyHash, count, lastUsedAt]
   );
 }
 
