@@ -483,8 +483,19 @@ if (!DB_URL) {
         assert.ok(await cache.setNX(key, `OtherMint${i}`, 60_000));
         held.push(key);
       }
-      const before = queued.length;
       try {
+        // nothing pending: the database-only refresh needs no slot and runs anyway
+        const idle = await pipeline.runBackfill(MINT);
+        assert.strictEqual(idle.status, 'ok');
+        assert.strictEqual(idle.remaining, 0);
+        // a wallet to backfill: that run needs a slot, so it waits
+        const snap = await store.getLatestSnapshot(MINT);
+        const lp = new Set(snap.sample_meta.lpWallets || []);
+        const w = snap.sample.map(x => x.wallet).find(x => !lp.has(x) && chain[x] && chain[x].amount > 0n && chain[x].history.length > 0);
+        assert.ok(w, 'a sampled wallet with history');
+        await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = NULL,
+          backfill_balance = NULL, backfill_attempts = 0 WHERE mint_address = $1 AND wallet = $2`, [MINT, w]);
+        const before = queued.length;
         const r = await pipeline.runBackfill(MINT);
         assert.strictEqual(r.status, 'waiting');
         const job = queued[queued.length - 1];

@@ -514,18 +514,22 @@ async function runBackfill(mint) {
   try {
     const snap = await store.getLatestSnapshot(mint);
     if (!snap) return { status: 'no-snapshot' };
-    slot = await acquireBackfillSlot(mint);
-    if (!slot) {
-      // Other tokens hold every slot: wait a few seconds rather than share the
-      // Helius concurrency so thinly that every token slows down
-      remaining = 1;
-      retryDelay = CONFIG.backfillSlotWaitMs;
-      return { status: 'waiting' };
-    }
     const entries = await store.getSnapshotEntries(snap.id, CONFIG.listN);
     const wallets = walletsOfInterest(snap, entries);
     const positions = await store.getPositions(mint, wallets);
     const pendingAtStart = wallets.filter(w => positions.get(w)?.acquired_source === 'pending');
+    // A slot only for runs that read history: with nothing pending the run just
+    // re-stores diamond hands (database only) and must not wait behind real backfills
+    if (pendingAtStart.length > 0) {
+      slot = await acquireBackfillSlot(mint);
+      if (!slot) {
+        // Other tokens hold every slot: wait a few seconds rather than share the
+        // Helius concurrency so thinly that every token slows down
+        remaining = 1;
+        retryDelay = CONFIG.backfillSlotWaitMs;
+        return { status: 'waiting' };
+      }
+    }
 
     // Listed top holders show their exact hold time, so only sample-only wallets
     // stop reading once their history is older than the oldest bucket.
