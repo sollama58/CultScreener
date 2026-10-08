@@ -622,15 +622,25 @@ const tokenChart = (() => {
   // Background refreshes fetch only the newest TAIL_LIMIT candles and fold them into the
   // ones we have (newer values win, same FULL_LIMIT window). Returns null when the tail
   // does not reach back to our newest candle, so the caller reloads the full window.
+  // The tail is served from its own server cache entry, which can be older than the one
+  // the full window came from (hour/day TTL is 5 min): a tail that ends before our newest
+  // candle is ignored, and a tail candle with less volume than ours is an earlier snapshot
+  // of the same bucket, so ours is kept.
   function mergeTail(raw, tail) {
     if (!tail.length) return raw;
     const ts = (c) => Number(c.timestamp);
     const newest = raw.reduce((m, c) => Math.max(m, ts(c) || 0), 0);
     const oldestTail = tail.reduce((m, c) => Math.min(m, ts(c) || Infinity), Infinity);
+    const newestTail = tail.reduce((m, c) => Math.max(m, ts(c) || 0), 0);
     if (!(oldestTail <= newest)) return null;
+    if (newestTail < newest) return raw;
     const byTime = new Map();
     for (const c of raw) byTime.set(ts(c), c);
-    for (const c of tail) byTime.set(ts(c), c);
+    for (const c of tail) {
+      const have = byTime.get(ts(c));
+      if (have && (Number(c.volume) || 0) < (Number(have.volume) || 0)) continue;
+      byTime.set(ts(c), c);
+    }
     return [...byTime.values()].sort((a, b) => ts(a) - ts(b)).slice(-FULL_LIMIT);
   }
 
