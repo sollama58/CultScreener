@@ -5,7 +5,7 @@ const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache } = require('../middleware/validation');
-const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
+const { strictLimiter, walletLimiter, pollLimiter } = require('../middleware/rateLimit');
 const jobQueue = require('../services/jobQueue');
 const { checkBurnTransaction } = require('../services/burnTxPolicy');
 const {
@@ -340,7 +340,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
 // Uses the SAME cache keys and worker flow as the main tokens endpoint.
 // Includes queue position info so the frontend can show "You are #N in queue".
-router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+router.get('/diamond-hands/:mint', pollLimiter, validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   // Verify access
@@ -493,7 +493,7 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
 }));
 
 // GET /api/cultify/tx-status/:signature — check transaction confirmation status
-router.get('/tx-status/:signature', walletLimiter, asyncHandler(async (req, res) => {
+router.get('/tx-status/:signature', pollLimiter, asyncHandler(async (req, res) => {
   const { signature } = req.params;
   if (!signature || signature.length < 80 || signature.length > 90) {
     return res.status(400).json({ error: 'Invalid signature' });
