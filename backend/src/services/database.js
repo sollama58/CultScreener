@@ -311,8 +311,8 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS admin_sessions (
         id SERIAL PRIMARY KEY,
         session_token VARCHAR(64) UNIQUE NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         ip_address VARCHAR(45),
         user_agent TEXT
       );
@@ -326,9 +326,9 @@ async function initializeDatabase() {
         session_token VARCHAR(64) UNIQUE NOT NULL,
         wallet_address VARCHAR(44) NOT NULL,
         activated BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        activated_at TIMESTAMP,
-        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        activated_at TIMESTAMP WITH TIME ZONE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         ip_address VARCHAR(45),
         user_agent TEXT
       );
@@ -336,6 +336,23 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_device_sessions_token ON device_sessions(session_token);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_wallet ON device_sessions(wallet_address);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_expires ON device_sessions(expires_at);
+
+      -- Session times used to be TIMESTAMP (no time zone). Expiries are written from JS Dates and
+      -- checked against NOW(), which only agreed when Node's TZ matched the Postgres session's.
+      -- Convert once; existing values are read in the session time zone, as NOW() compared them.
+      DO $sesstz$
+      DECLARE col RECORD;
+      BEGIN
+        FOR col IN
+          SELECT table_name, column_name FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND table_name IN ('admin_sessions', 'device_sessions')
+            AND column_name IN ('created_at', 'activated_at', 'expires_at')
+            AND data_type = 'timestamp without time zone'
+        LOOP
+          EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMP WITH TIME ZONE', col.table_name, col.column_name);
+        END LOOP;
+      END $sesstz$;
 
       -- Token views table for tracking page views
       CREATE TABLE IF NOT EXISTS token_views (

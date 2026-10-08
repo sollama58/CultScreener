@@ -113,4 +113,45 @@ if (!DB_URL) {
       assert.strictEqual(changes.priceChange30d, null);
     });
   });
+
+  describe('session expiry', () => {
+    const MINUTE = 60_000;
+    const WALLET = 'FreshWallet111111111111111111111111111111111';
+
+    test('a two-minute pairing code is valid when Node and Postgres disagree on the time zone', async () => {
+      await db.createDeviceSession('fresh-pairing', WALLET, new Date(Date.now() + 2 * MINUTE));
+      // Used to be 9 hours stale on arrival: the +00:00 offset was dropped and the wall-clock
+      // time read back as Tokyo time
+      assert.ok(await db.getDeviceSession('fresh-pairing'));
+      const activated = await db.activateDeviceSession('fresh-pairing', 'fresh-session');
+      assert.ok(activated);
+      assert.ok(await db.getDeviceSession('fresh-session'));
+    });
+
+    test('an expired pairing code is not valid', async () => {
+      await db.createDeviceSession('fresh-expired', WALLET, new Date(Date.now() - MINUTE));
+      assert.strictEqual(await db.getDeviceSession('fresh-expired'), undefined);
+    });
+
+    test('admin sessions last as long as asked, no more', async () => {
+      await db.createAdminSession('fresh-admin', new Date(Date.now() + MINUTE));
+      assert.ok(await db.getAdminSession('fresh-admin'));
+      await db.createAdminSession('fresh-admin-old', new Date(Date.now() - MINUTE));
+      assert.strictEqual(await db.getAdminSession('fresh-admin-old'), undefined);
+    });
+
+    test('boot converts session columns left as TIMESTAMP by older versions', async () => {
+      await db.pool.query('ALTER TABLE device_sessions ALTER COLUMN expires_at TYPE TIMESTAMP');
+      await db.pool.query('ALTER TABLE admin_sessions ALTER COLUMN expires_at TYPE TIMESTAMP');
+      assert.strictEqual(await db.initializeDatabase(), true);
+      const { rows } = await db.pool.query(
+        `SELECT table_name, column_name, data_type FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name IN ('admin_sessions', 'device_sessions')
+           AND column_name IN ('created_at', 'activated_at', 'expires_at')`);
+      assert.strictEqual(rows.length, 5);
+      for (const r of rows) assert.strictEqual(r.data_type, 'timestamp with time zone', `${r.table_name}.${r.column_name}`);
+      // Still valid after the conversion
+      assert.ok(await db.getDeviceSession('fresh-session'));
+    });
+  });
 }
