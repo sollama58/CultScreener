@@ -102,15 +102,21 @@ function generateAccessToken(walletAddress, mint) {
 }
 
 // Access tokens issued from the wallet-based checks are remembered per wallet+mint
-// (`<prefix>:access-by:<wallet>:<mint>`) so a repeat check returns the token that is still
-// valid instead of writing a new Redis key every time. prefix is 'cultify' or 'hb'.
+// (`<prefix>:access-by:<wallet>:<mint>` -> { token, expiresAt }) so a repeat check returns
+// the token that is still valid instead of writing a new Redis key every time. prefix is
+// 'cultify' or 'hb'. A token is handed back only while more than half its lifetime remains,
+// so the client never gets one that is about to expire mid-session.
 const accessByKey = (prefix, walletAddress, mint) => `${prefix}:access-by:${walletAddress}:${mint}`;
 
-async function findIssuedToken(prefix, walletAddress, mint) {
-  const token = await cache.get(accessByKey(prefix, walletAddress, mint));
-  if (!token) return null;
-  const data = await cache.get(`${prefix}:access:${token}`);
-  return data && data.mint === mint && data.wallet === walletAddress ? token : null;
+async function rememberIssuedToken(prefix, walletAddress, mint, token, ttlMs) {
+  await cache.set(accessByKey(prefix, walletAddress, mint), { token, expiresAt: Date.now() + ttlMs }, ttlMs);
+}
+
+async function findIssuedToken(prefix, walletAddress, mint, ttlMs) {
+  const issued = await cache.get(accessByKey(prefix, walletAddress, mint));
+  if (!issued || !issued.token || !(issued.expiresAt - Date.now() > ttlMs / 2)) return null;
+  const data = await cache.get(`${prefix}:access:${issued.token}`);
+  return data && data.mint === mint && data.wallet === walletAddress ? issued.token : null;
 }
 
 // POST /api/cultify/verify-burn — verify a burn transaction on-chain
@@ -205,11 +211,11 @@ router.get('/check-access/:mint', walletLimiter, validateMint, asyncHandler(asyn
     if (hasBurn) {
       // Hand back the token issued earlier while it is valid, else issue a fresh one so
       // subsequent analyze calls work
-      const existing = await findIssuedToken('cultify', walletAddress, mint);
+      const existing = await findIssuedToken('cultify', walletAddress, mint, ACCESS_TOKEN_TTL);
       if (existing) return res.json({ access: true, reason: 'burned', accessToken: existing });
       const newToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
-      await cache.set(accessByKey('cultify', walletAddress, mint), newToken, ACCESS_TOKEN_TTL);
+      await rememberIssuedToken('cultify', walletAddress, mint, newToken, ACCESS_TOKEN_TTL);
       return res.json({ access: true, reason: 'burned', accessToken: newToken });
     }
   }
@@ -537,17 +543,18 @@ const HB_ACCESS_TTL = 259200 * 1000;  // 3 days (72 hours)
 // HB_ANALYSIS_CACHE_TTL and HB_PENDING_TTL imported from services/holderBehaviorAnalysis
 
 // Store an HB access token and update the per-wallet index for "My Utilities".
-// reuse: return the token already issued for this wallet+mint while it is valid (repeat
-// access checks); a new burn always gets a fresh token with the full TTL.
+// reuse: return the token already issued for this wallet+mint while more than half its
+// lifetime remains (repeat access checks); a new burn always gets a fresh token with the
+// full TTL.
 async function storeHBAccess(walletAddress, mint, { reuse = false } = {}) {
   if (reuse) {
-    const existing = await findIssuedToken('hb', walletAddress, mint);
+    const existing = await findIssuedToken('hb', walletAddress, mint, HB_ACCESS_TTL);
     if (existing) return existing;
   }
   const accessToken = generateAccessToken(walletAddress, mint);
   const expiresAt = Date.now() + HB_ACCESS_TTL;
   await cache.set(`hb:access:${accessToken}`, { wallet: walletAddress, mint, expiresAt }, HB_ACCESS_TTL);
-  await cache.set(accessByKey('hb', walletAddress, mint), accessToken, HB_ACCESS_TTL);
+  await rememberIssuedToken('hb', walletAddress, mint, accessToken, HB_ACCESS_TTL);
 
   // Maintain a per-wallet index so "My Utilities" can enumerate active accesses
   const idxKey = `hb:wallet-idx:${walletAddress}`;
