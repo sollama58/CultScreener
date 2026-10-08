@@ -2,6 +2,7 @@
 const router = express.Router();
 const db = require('../services/database');
 const { cache, TTL } = require('../services/cache');
+const { asyncHandler } = require('../middleware/validation');
 
 // Frontend URL for redirects
 const FRONTEND_URL = process.env.CORS_ORIGIN
@@ -21,6 +22,15 @@ function esc(str) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Numeric value or null. Postgres DECIMAL columns arrive as strings ('0.00123').
+ */
+function num(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -50,7 +60,7 @@ function fmtMcap(mcap) {
  * Serves a minimal HTML page with dynamic OG meta tags for social media crawlers.
  * Browsers get redirected to the real token page on the frontend.
  */
-router.get('/:mint', async (req, res) => {
+router.get('/:mint', asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   if (!MINT_RE.test(mint)) {
@@ -70,10 +80,10 @@ router.get('/:mint', async (req, res) => {
 
   const name = token?.name || token?.symbol || 'Unknown Token';
   const symbol = token?.symbol || '';
-  const price = fmtPrice(token?.price);
-  const mcap = fmtMcap(token?.market_cap || token?.marketCap);
-  const change = token?.price_change_24h ?? token?.priceChange24h ?? null;
-  const conviction = token?.conviction_1m ?? token?.conviction1m ?? null;
+  const price = fmtPrice(num(token?.price));
+  const mcap = fmtMcap(num(token?.market_cap || token?.marketCap));
+  const change = num(token?.price_change_24h ?? token?.priceChange24h);
+  const conviction = num(token?.conviction_1m ?? token?.conviction1m);
 
   // Build title
   let title = symbol ? `${name} (${symbol})` : name;
@@ -135,7 +145,7 @@ router.get('/:mint', async (req, res) => {
 <script>window.location.replace(${JSON.stringify(tokenPageUrl)});</script>
 </body>
 </html>`);
-});
+}));
 
 /**
  * GET /share/:mint/og-image
@@ -143,7 +153,7 @@ router.get('/:mint', async (req, res) => {
  * Returns SVG with Content-Type image/svg+xml (works on Discord, Telegram, Facebook).
  * Twitter doesn't support SVG natively, but many proxy services convert it.
  */
-router.get('/:mint/og-image', async (req, res) => {
+router.get('/:mint/og-image', asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   if (!MINT_RE.test(mint)) {
@@ -163,11 +173,11 @@ router.get('/:mint/og-image', async (req, res) => {
 
   const name = esc(token?.name || token?.symbol || 'Unknown Token');
   const symbol = esc(token?.symbol || '');
-  const price = fmtPrice(token?.price) || '--';
-  const mcap = fmtMcap(token?.market_cap || token?.marketCap) || '--';
-  const change = token?.price_change_24h ?? token?.priceChange24h ?? null;
-  const conviction = token?.conviction_1m ?? token?.conviction1m ?? null;
-  const holders = token?.holder_count || token?.holders || null;
+  const price = fmtPrice(num(token?.price)) || '--';
+  const mcap = fmtMcap(num(token?.market_cap || token?.marketCap)) || '--';
+  const change = num(token?.price_change_24h ?? token?.priceChange24h);
+  const conviction = num(token?.conviction_1m ?? token?.conviction1m);
+  const holders = num(token?.holder_count || token?.holders) || null;
 
   const changeStr = change !== null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '--';
   const changeColor = change !== null ? (change >= 0 ? '#10b981' : '#ef4444') : '#a0a0a8';
@@ -263,7 +273,7 @@ router.get('/:mint/og-image', async (req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=600'); // 10 min cache
   res.send(svg);
-});
+}));
 
 module.exports = router;
 
