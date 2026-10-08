@@ -267,6 +267,7 @@
     }
 
     goBtn.disabled = true;
+    burnGateMint = null;
     hideResults();
     showStatus('<div class="cultify-gate"><p class="cultify-loading">Checking token...</p></div>');
 
@@ -325,7 +326,16 @@
     }
   }
 
+  // Mint whose burn gate is showing. One page-level walletConnected listener re-renders it:
+  // per-render listeners piled up, and together with the Connect button's own re-render they
+  // bound two burn handlers to one button (one click, two burn prompts).
+  let burnGateMint = null;
+  window.addEventListener('walletConnected', () => {
+    if (burnGateMint && document.getElementById('cultify-connect-btn')) showBurnGate(burnGateMint);
+  });
+
   async function showBurnGate(mint) {
+    burnGateMint = mint;
     const connected = typeof wallet !== 'undefined' && wallet.connected;
 
     let html = '<div class="cultify-gate">';
@@ -345,10 +355,8 @@
     showStatus(html);
 
     if (!connected) {
-      document.getElementById('cultify-connect-btn').addEventListener('click', async () => {
-        await wallet.connect();
-        if (wallet.connected) showBurnGate(mint);
-      });
+      // Connecting dispatches walletConnected, which re-renders the gate (listener above)
+      document.getElementById('cultify-connect-btn').addEventListener('click', () => wallet.connect());
     } else {
       // Fetch and display balance
       const balData = await fetchBurnTokenBalance();
@@ -376,11 +384,9 @@
         burnBtn.disabled = false;
       }
 
-      burnBtn.addEventListener('click', () => executeBurn(mint, balData.tokenAccount));
+      // onclick, not addEventListener: a button can only ever hold one burn handler
+      burnBtn.onclick = () => executeBurn(mint, balData.tokenAccount);
     }
-
-    // Listen for wallet connection events
-    window.addEventListener('walletConnected', () => showBurnGate(mint), { once: true });
   }
 
   // ── Pending burn recovery ──────────────────────────
@@ -505,7 +511,19 @@
 
   // ── Burn transaction ──────────────────────────────
 
+  let burnInProgress = false;
+
   async function executeBurn(mint, tokenAccount) {
+    if (burnInProgress) return; // never build a second burn while one is in flight
+    burnInProgress = true;
+    try {
+      await runBurn(mint, tokenAccount);
+    } finally {
+      burnInProgress = false;
+    }
+  }
+
+  async function runBurn(mint, tokenAccount) {
     const burnBtn = document.getElementById('cultify-burn-btn');
     const errorEl = document.getElementById('cultify-burn-error');
     burnBtn.disabled = true;
