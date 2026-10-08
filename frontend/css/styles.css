@@ -1256,7 +1256,9 @@ img {
   height: 14px;
 }
 
-.terminal-search {
+/* Scoped under the wrap so it outranks the generic input[type="text"] base rule,
+   which would otherwise reset padding-left and put the icon over the typed text. */
+.terminal-search-wrap .terminal-search {
   width: 100%;
   padding: 0.5rem 0.85rem 0.5rem 2.5rem;
   -webkit-appearance: none;
@@ -5352,7 +5354,7 @@ select:focus {
   /* Controls stack */
   .terminal-toolbar { gap: 0.4rem; }
   .terminal-search-wrap { flex: 1 1 120px; min-width: 100px; max-width: none; }
-  .terminal-search { padding-left: 2.2rem; }
+  .terminal-search-wrap .terminal-search { padding-left: 2.2rem; }
   .terminal-search-icon { left: 0.7rem; }
   .terminal-filters-toggle { padding: 0.4rem 0.65rem; font-size: 0.74rem; }
   .terminal-status-inline { padding: 0.25rem 0.55rem; font-size: 0.6rem; }
@@ -5499,7 +5501,7 @@ select:focus {
 
   .terminal-toolbar { gap: 0.3rem; }
   .terminal-search-wrap { flex: 1 1 80px; min-width: 80px; }
-  .terminal-search { font-size: 0.78rem; padding: 0.35rem 0.5rem 0.35rem 2rem; }
+  .terminal-search-wrap .terminal-search { font-size: 0.78rem; padding: 0.35rem 0.5rem 0.35rem 2rem; }
   .terminal-search-icon { left: 0.65rem; width: 12px; height: 12px; }
   .terminal-filters-toggle { padding: 0.35rem 0.55rem; font-size: 0.68rem; gap: 0.25rem; }
   .terminal-filters-toggle svg { width: 12px; height: 12px; }
