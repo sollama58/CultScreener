@@ -337,6 +337,15 @@ describe('rewindToStreakStart', () => {
     assert.strictEqual(r.acquiredAt, 10_000);
   });
 
+  test('a streak start without a block time is dated by the next newer transaction, not the previous streak', () => {
+    // newest first: sell 20 @2000, re-buy 100 (no block time), sell 50 @1000, buy 50 @500
+    const r = rewindToStreakStart(80n, [tx(2000, -20), { timestamp: 0, delta: 100n }, tx(1000, -50), tx(500, 50)], { exhausted: true });
+    assert.deepStrictEqual(r, { done: true, acquiredAt: 2_000_000, balance: 0n, oldestAt: 2_000_000 });
+    // first on its page: no date here, the caller uses a newer page's or gives up
+    const first = rewindToStreakStart(100n, [{ timestamp: 0, delta: 100n }, tx(1000, -50), tx(500, 50)], { exhausted: true });
+    assert.deepStrictEqual(first, { done: true, acquiredAt: null, balance: 0n, oldestAt: null });
+  });
+
   test('zero-delta transactions (e.g. unrelated instructions) are stepped over', () => {
     const r = rewindToStreakStart(100n, [tx(3000, 0), tx(2000, 0), tx(1000, 100)]);
     assert.strictEqual(r.acquiredAt, 1_000_000);
