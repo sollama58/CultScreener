@@ -8,28 +8,40 @@ const path = require('path');
 delete process.env.REDIS_URL;
 
 const pipelinePath = path.join(__dirname, 'services', 'holderPipeline.js');
-const stubPipeline = { CONFIG: { snapshotFailCooldown: 5 * 60 * 1000 }, runBackfill: null };
+const stubPipeline = { CONFIG: {}, runBackfill: null };
 require.cache[pipelinePath] = { id: pipelinePath, filename: pipelinePath, loaded: true, exports: stubPipeline };
 
 const { cache } = require('./services/cache');
 const { jobProcessors } = require('./worker');
 
-test('a failed backfill run keeps the per-mint lock so its retry is the only runner (audit #52)', async () => {
+// The pending lock's cooldown after a failure is runBackfill's job (holderPipeline.db.test.js
+// checks it keeps the lock for CONFIG.backfillFailCooldown); the processor must leave it alone.
+test('a failed backfill run is rethrown for BullMQ, and the lock runBackfill left is untouched', async () => {
   const mint = 'BackfillMint1111111111111111111111111111111';
   const lockKey = `holder-backfill-pending:${mint}`;
+  const writes = [];
+  const realSet = cache.set;
+  cache.set = async (k, v, ttl) => { writes.push({ k, ttl }); return realSet.call(cache, k, v, ttl); };
   stubPipeline.runBackfill = async (m) => {
-    // What runBackfill's finally does on the way out.
-    await cache.delete(`holder-backfill-pending:${m}`);
+    // What runBackfill's catch does on the way out: keep the lock as its own cooldown
+    await realSet.call(cache, `holder-backfill-pending:${m}`, 'runBackfill', 60 * 1000);
     throw new Error('connection terminated');
   };
-
-  await assert.rejects(jobProcessors['backfill-holder-acquisitions']({ data: { mint } }), /connection terminated/);
-  assert.ok(await cache.get(lockKey), 'pending lock is held after the failure');
-  // An API-triggered ensureBackfill (setNX on the same key) is refused.
-  assert.strictEqual(await cache.setNX(lockKey, Date.now(), 60000), false);
+  try {
+    await assert.rejects(jobProcessors['backfill-holder-acquisitions']({ data: { mint } }), /connection terminated/);
+    assert.deepStrictEqual(writes, [], 'the processor sets no lock of its own');
+    assert.strictEqual(await cache.get(lockKey), 'runBackfill');
+  } finally {
+    cache.set = realSet;
+  }
 });
 
 test('a successful backfill run returns its result unchanged', async () => {
   stubPipeline.runBackfill = async () => ({ status: 'ok', settled: 3 });
   assert.deepStrictEqual(await jobProcessors['backfill-holder-acquisitions']({ data: { mint: 'M2' } }), { status: 'ok', settled: 3 });
+});
+
+test('a job without a mint does not run a backfill', async () => {
+  stubPipeline.runBackfill = async () => { throw new Error('should not run'); };
+  assert.deepStrictEqual(await jobProcessors['backfill-holder-acquisitions']({ data: {} }), { error: 'No mint provided' });
 });

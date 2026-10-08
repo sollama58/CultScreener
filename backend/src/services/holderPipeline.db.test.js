@@ -534,14 +534,23 @@ if (!DB_URL) {
       const realEntries = store.getSnapshotEntries;
       store.getSnapshotEntries = async () => { throw new Error('canceling statement due to statement timeout'); };
       const before = queued.length;
+      const realSet = cache.set;
+      const lockWrites = [];
+      cache.set = async (k, v, ttl) => {
+        if (k === `holder-backfill-pending:${MINT}`) lockWrites.push(ttl);
+        return realSet.call(cache, k, v, ttl);
+      };
       try {
         await assert.rejects(pipeline.runBackfill(MINT), /statement timeout/);
         assert.ok(await cache.get(`holder-backfill-pending:${MINT}`), 'lock kept as a cooldown');
+        // the last write is the failure cooldown (short, but longer than BullMQ's retry backoff)
+        assert.strictEqual(lockWrites[lockWrites.length - 1], pipeline.CONFIG.backfillFailCooldown);
         assert.strictEqual(await pipeline.ensureBackfill(MINT), false);
         assert.strictEqual(queued.length, before);
         assert.strictEqual(await cache.get('holder-backfill-slot:0'), undefined, 'slot released');
       } finally {
         store.getSnapshotEntries = realEntries;
+        cache.set = realSet;
       }
       // the retry runs and releases the lock
       const r = await pipeline.runBackfill(MINT);

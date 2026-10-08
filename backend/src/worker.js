@@ -555,16 +555,9 @@ const jobProcessors = {
   'backfill-holder-acquisitions': async (job) => {
     const { mint } = job.data;
     if (!mint) return { error: 'No mint provided' };
-    const holderPipeline = require('./services/holderPipeline');
-    try {
-      return await holderPipeline.runBackfill(mint);
-    } catch (err) {
-      // runBackfill released the per-mint pending lock on its way out. Put it
-      // back as a cooldown so an API poll can't queue a second backfill that
-      // runs alongside BullMQ's retry of this one (the retry clears it).
-      await cache.set(`holder-backfill-pending:${mint}`, Date.now(), holderPipeline.CONFIG.snapshotFailCooldown).catch(() => {});
-      throw err;
-    }
+    // runBackfill owns the per-mint pending lock: on a failure it keeps it as a
+    // short cooldown (CONFIG.backfillFailCooldown) that covers BullMQ's retry
+    return require('./services/holderPipeline').runBackfill(mint);
   },
 
   // ==========================================
