@@ -50,6 +50,9 @@ const queueMetrics = {
 };
 
 // Rate limit configurations per API (requests per second)
+// Helius requests per second this process may start (see RATE_LIMITS.helius).
+const HELIUS_RPS = Math.max(1, parseInt(process.env.HELIUS_RPS, 10) || 40);
+
 const RATE_LIMITS = {
   geckoTerminal: {
     // CoinGecko Basic plan: 300 requests/minute = 1 request every 200ms
@@ -83,12 +86,14 @@ const RATE_LIMITS = {
     // must add up to under 50: the worker keeps the default 40, the API (which makes
     // few Helius calls now that holder data comes from snapshots) is set to 10 in
     // render.yaml.
-    minInterval: Math.round(1000 / Math.max(1, parseInt(process.env.HELIUS_RPS, 10) || 40)),
+    minInterval: Math.round(1000 / HELIUS_RPS),
     maxJitter: 10,
-    burstLimit: 20,      // Allow short bursts up to 20 in a 1s window
+    // Per-1s-window cap from the same HELIUS_RPS, so it can't silently hold the
+    // rate below what was configured (a fixed 20 capped HELIUS_RPS=40 at ~20/s).
+    burstLimit: HELIUS_RPS,
     burstWindow: 1000,
     useQueue: true,
-    // Requests in flight at once. Starts stay spaced by minInterval/burstLimit, so
+    // Requests in flight at once. Starts stay spaced by minInterval and capped by burstLimit, so
     // this doesn't raise the request rate; it stops one slow call (a page of full
     // transactions, a big DAS page) from holding every other Helius call behind it.
     maxConcurrent: Math.max(1, parseInt(process.env.HELIUS_MAX_CONCURRENT, 10) || 24),
