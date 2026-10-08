@@ -638,6 +638,21 @@ if (!DB_URL) {
       assert.strictEqual((await position('WHALE3')).acquired_source, 'backfill');
     });
 
+    test('no snapshot is written when the LP wallet check gets no answer', async () => {
+      const before = await store.getLatestSnapshot(MINT);
+      const realMulti = solana.getMultipleAccounts;
+      solana.getMultipleAccounts = async () => { throw Object.assign(new Error('Request failed with status code 429'), { response: { status: 429 } }); };
+      chain.W001.amount += 1n; // so the pre-check sees a change
+      try {
+        await assert.rejects(pipeline.takeSnapshot(MINT), /LP wallet check failed/);
+        assert.strictEqual((await store.getLatestSnapshot(MINT)).id, before.id);
+      } finally {
+        solana.getMultipleAccounts = realMulti;
+        chain.W001.amount -= 1n;
+        await cache.delete(`holder-snapshot-pending:${MINT}`);
+      }
+    });
+
     test('newcomers after a verified-unchanged check are dated from the check, not the old snapshot', async () => {
       // latest snapshot at T0+30h; nothing changes, so the 34h check keeps it and marks it verified
       now = T0 + 34 * HOUR;

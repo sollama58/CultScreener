@@ -157,7 +157,11 @@ async function detectLpWallets(holders) {
   for (const w of candidates) if (LP_AUTHORITIES.has(w) || LP_PROGRAMS.has(w)) lp.add(w);
   for (let i = 0; i < candidates.length; i += 100) {
     const batch = candidates.slice(i, i + 100);
-    const res = await solanaService.getMultipleAccounts(batch).catch(() => null);
+    // No answer means vaults would go unflagged: into the sample and the holder
+    // count. Fail the snapshot instead (the job retries) of writing it that way.
+    const res = await solanaService.getMultipleAccounts(batch).catch(err => {
+      throw new Error(`LP wallet check failed: ${err.message}`);
+    });
     (res?.value || []).forEach((acct, j) => {
       if (isProgramOwned(acct)) lp.add(batch[j]);
     });
