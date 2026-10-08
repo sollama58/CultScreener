@@ -58,4 +58,28 @@ if (!DB_URL) {
       assert.ok(board.tokens.some(t => t.mint_address === MINT));
     });
   });
+
+  describe('conviction rank', () => {
+    const mint = (tag) => `Rank${tag}`.padEnd(44, '1');
+    const token = (m, conviction) => db.pool.query(
+      'INSERT INTO tokens (mint_address, conviction_1m) VALUES ($1, $2)', [m, conviction]);
+
+    test('ranks curated tokens with a score, and nothing else', async () => {
+      await token(mint('Top'), 90);
+      await token(mint('Mid'), 50);
+      await token(mint('NoScore'), null);
+      await token(mint('Zero'), 0);
+      await token(mint('Outsider'), 99);
+      for (const tag of ['Top', 'Mid', 'NoScore', 'Zero']) await db.addCuratedToken(mint(tag));
+
+      assert.strictEqual(await db.getTokenConvictionRank(mint('Top')), 1);
+      assert.strictEqual(await db.getTokenConvictionRank(mint('Mid')), 2);
+      // Used to be rank 1: NULL compared with every row, so nothing counted as above it
+      assert.strictEqual(await db.getTokenConvictionRank(mint('NoScore')), null);
+      assert.strictEqual(await db.getTokenConvictionRank(mint('Zero')), null);
+      // Not curated, so not on the leaderboard however high its score
+      assert.strictEqual(await db.getTokenConvictionRank(mint('Outsider')), null);
+      assert.strictEqual(await db.getTokenConvictionRank(mint('Missing')), null);
+    });
+  });
 }

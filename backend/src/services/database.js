@@ -895,15 +895,19 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
 async function getTokenConvictionRank(mintAddress) {
   if (!pool) return null;
   try {
-    // Count curated tokens with strictly higher conviction_1m — that is this token's 0-based rank
+    // Count curated tokens with strictly higher conviction_1m — that is this token's 0-based rank.
+    // Only a curated token with a positive score is ranked (the leaderboard's own rule); any
+    // other token gets no row, or a NULL rank, rather than being compared against the board.
     const result = await pool.query(
-      `SELECT COUNT(*) + 1 AS rank
-       FROM tokens t
-       INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
-       WHERE t.conviction_1m > (
-         SELECT conviction_1m FROM tokens WHERE mint_address = $1
-       )
-       AND t.conviction_1m IS NOT NULL`,
+      `SELECT CASE WHEN s.conviction_1m IS NULL OR s.conviction_1m <= 0 THEN NULL ELSE (
+         SELECT COUNT(*) + 1
+         FROM tokens t
+         INNER JOIN curated_tokens c ON c.mint_address = t.mint_address
+         WHERE t.conviction_1m > s.conviction_1m
+       ) END AS rank
+       FROM tokens s
+       INNER JOIN curated_tokens cs ON cs.mint_address = s.mint_address
+       WHERE s.mint_address = $1`,
       [mintAddress]
     );
     const rank = parseInt(result.rows[0]?.rank);
