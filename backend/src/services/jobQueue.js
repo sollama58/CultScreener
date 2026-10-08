@@ -158,14 +158,16 @@ async function addSearchJob(jobName, data = {}, options = {}) {
  * Recurring jobs. The worker runs them; these schedules make them fire.
  * Each is a BullMQ job scheduler keyed by its id, so upserting one that already
  * exists keeps its next run time and only re-creates what is missing.
+ * An `every` schedule is anchored to when it is created, so each gets its own
+ * phaseMs (start date offset): created together they would otherwise fire together.
  */
 const RECURRING_JOBS = [
   // Curated tokens: holder snapshots (every HOLDER_SNAPSHOT_REFRESH_HOURS) and stored diamond hands
-  { id: 'warm-curated-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 60 * 60 * 1000 } },
+  { id: 'warm-curated-conviction', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 60 * 60 * 1000 }, phaseMs: 0 },
   // Curated market cap and ATH from GeckoTerminal
-  { id: 'refresh-curated-prices', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 } },
+  { id: 'refresh-curated-prices', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 }, phaseMs: 97_000 },
   // Curated prices 1, 7 and 30 days ago, for the home table's 7d/30d change (a few tokens per run)
-  { id: 'refresh-curated-price-refs', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 15 * 60 * 1000 } },
+  { id: 'refresh-curated-price-refs', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 15 * 60 * 1000 }, phaseMs: 194_000 },
   // Daily holder counts, 00:05 UTC
   { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' } },
   // Daily Diamond Hands scores and the King of the Pill, 00:20 UTC
@@ -196,14 +198,22 @@ async function ensureRecurringJobs() {
       for (const j of (await queue.getRepeatableJobs()).filter(j => j.name === id)) await queue.removeRepeatableByKey(j.key);
     } catch (_) { /* nothing to remove */ }
   }
-  for (const { id, queue: queueName, repeat } of RECURRING_JOBS) {
+  for (const { id, queue: queueName, repeat, phaseMs } of RECURRING_JOBS) {
     const queue = queues[queueName];
     try {
       // Drop schedules made by the older queue.add({ repeat }) API, which stored
       // them under a composite key instead of the scheduler id.
       const legacy = (await queue.getRepeatableJobs()).filter(j => j.name === id && j.key !== id);
       for (const j of legacy) await queue.removeRepeatableByKey(j.key);
-      await queue.upsertJobScheduler(id, repeat, { name: id, data: {} });
+      let opts = repeat;
+      if (repeat.every) {
+        // Only used when the scheduler is (re)created; an existing one keeps its phase
+        opts = { ...repeat, startDate: Date.now() + (phaseMs || 0) };
+        // Schedulers created before they had a start date all share one phase: re-create once
+        const existing = await queue.getJobScheduler(id).catch(() => null);
+        if (existing && existing.every && !existing.startDate) await queue.removeJobScheduler(id);
+      }
+      await queue.upsertJobScheduler(id, opts, { name: id, data: {} });
       scheduled++;
     } catch (err) {
       console.error(`[JobQueue] Failed to schedule ${id}:`, err.message);
