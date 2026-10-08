@@ -72,7 +72,8 @@
 // chart builds when scrolled into view, chart refreshes fetch a 100-candle tail, polls pause in
 // hidden tabs - api.js v17, conviction.js v22, styles.css v26, new css/home.css, tokenDetail.js v35,
 // tokenChart.js v7, holderChart.js v4, holderBehavior.js v11, cultify.js v21, communityPage.js v10.
-const CACHE_VERSION = 'holdex-v84';
+// v85: holders line color, opacity and own-pane option in the chart modal - token.css v9, tokenChart.js v8.
+const CACHE_VERSION = 'holdex-v85';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -83,7 +84,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 const APP_SHELL = [
   '/css/styles.css?v=26',
   '/css/home.css?v=1',
-  '/css/token.css?v=8',
+  '/css/token.css?v=9',
   '/js/config.js?v=4',
   '/js/api.js?v=17',
   '/js/deviceLink.js?v=3',
@@ -98,7 +99,7 @@ const APP_SHELL = [
   '/js/tokenDetail.js?v=35',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
-  '/js/tokenChart.js?v=7',
+  '/js/tokenChart.js?v=8',
   '/js/holderChart.js?v=4',
   '/js/watchlist.js?v=3',
   '/js/holderBehavior.js?v=11',

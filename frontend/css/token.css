@@ -1690,6 +1690,47 @@ body.tc-open { overflow: hidden; }
 .tc-legend .tc-lg-rsi { color: #b9a6ff; }
 .tc-legend .tc-lg-holders { color: #22d3ee; display: inline-flex; align-items: center; gap: 5px; }
 .tc-legend .tc-lg-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; background: #22d3ee; }
+/* Holders line style: a small chip after Holders opens a row of color, opacity and placement */
+.tc-hstyle-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; }
+.tc-hstyle-btn[hidden] { display: none; }
+.tc-hstyle-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 1px rgba(255,255,255,0.18); }
+.tc-hstyle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 22px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+}
+.tc-hstyle[hidden] { display: none; }
+.tc-hstyle-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tc-hstyle-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.tc-hstyle-val { font-size: 12px; color: var(--ink-2); min-width: 34px; text-align: right; }
+.tc-swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tc-swatch {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--sw);
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+  cursor: pointer;
+}
+.tc-swatch.on { border-color: var(--ink); }
+.tc-swatch-custom {
+  display: inline-block;
+  overflow: hidden;
+  background: conic-gradient(#f87171, #facc15, #4ade80, #22d3ee, #60a5fa, #a78bfa, #f472b6, #f87171);
+}
+.tc-swatch-custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; }
+.tc-swatch-custom:focus-within { outline: 2px solid var(--brand-b); outline-offset: 2px; }
+.tc-hrange { width: 140px; accent-color: var(--brand-b); }
+.tc-overlay .tc-swatch:focus-visible,
+.tc-overlay .tc-hrange:focus-visible { outline: 2px solid var(--brand-b); outline-offset: 2px; }
 .tc-overlay .is-good { color: var(--good-ink); }
 .tc-overlay .is-bad { color: var(--bad-ink); }
 .tc-body { flex: 1; min-height: 0; display: flex; gap: 8px; }
@@ -1813,6 +1854,11 @@ body.tc-open { overflow: hidden; }
   .tc-toolbar-more .tp-seg button { padding: 6px 10px; font-size: 13px; }
   .tc-toggles { margin-left: 0; flex-wrap: nowrap; }
   .tc-chip { padding: 6px 11px; font-size: 12.5px; white-space: nowrap; }
+  .tc-hstyle { gap: 10px 16px; padding: 10px; }
+  .tc-hstyle-row { flex: 1 1 100%; }
+  .tc-hstyle-label { flex: none; width: 64px; }
+  .tc-hrange { flex: 1; width: auto; }
+  .tc-swatch { width: 26px; height: 26px; }
   .tc-legend { font-size: 10.5px; min-height: 30px; align-content: flex-start; }
   .tc-legend .tc-lg-time { display: none; }
   .tc-legend .tc-lg-gap { width: 8px; }
