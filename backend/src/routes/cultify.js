@@ -6,7 +6,7 @@ const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const {
   validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache,
-  verifyWalletSignature, checkAndMarkSignature, SIGNATURE_EXPIRY_MS, validateDeviceSession
+  verifyWalletSignature, checkAndMarkSignature, validateDeviceSession
 } = require('../middleware/validation');
 const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
 const jobQueue = require('../services/jobQueue');
@@ -124,20 +124,45 @@ function createHBAccessMessage(mint, walletAddress, timestamp) {
   return `HolDEX Holder Behavior Access: ${mint} for ${walletAddress} at ${timestamp}`;
 }
 
+// How long a signed access proof (?sig=&sigTs=) stays good, measured from its timestamp to the
+// moment it is checked. sigTs is taken before the wallet prompt opens, so the window has to cover
+// a slow approval (hardware wallet, reading the message) as well as the round trip; 2 minutes
+// turned a slow approval into "burn again". A clock running ahead is allowed a minute of skew.
+// The replay marker lives for the whole window, so a proof is still accepted only once.
+const ACCESS_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
+const ACCESS_PROOF_FUTURE_SKEW_MS = 60 * 1000;
+const ACCESS_PROOF_REPLAY_TTL_MS = ACCESS_PROOF_MAX_AGE_MS + ACCESS_PROOF_FUTURE_SKEW_MS;
+
 // Proof that the caller controls `walletAddress`: an activated device session for that wallet, or
 // a fresh signature (?sig=&sigTs=) of createMessage(mint, wallet, ts), burned on use (no replay).
 // Defaults to the Cultify access message; Holder Behavior passes createHBAccessMessage.
+// Returns { ok: true } or { ok: false, reason } where reason is 'missing' (no proof supplied) or,
+// for a proof that was supplied and refused, 'expired' | 'future' | 'bad_signature' | 'replayed'.
 async function hasAccessProof(req, walletAddress, mint, createMessage = createCultifyAccessMessage) {
-  if (req.deviceWallet && req.deviceWallet === walletAddress) return true;
+  if (req.deviceWallet && req.deviceWallet === walletAddress) return { ok: true };
+  if (req.query.sig == null && req.query.sigTs == null) return { ok: false, reason: 'missing' };
   const signature = decodeWalletSignature(req.query.sig);
-  const timestamp = parseInt(req.query.sigTs, 10);
-  if (!signature || !Number.isFinite(timestamp)) return false;
+  const timestamp = /^\d+$/.test(String(req.query.sigTs ?? '')) ? parseInt(req.query.sigTs, 10) : NaN;
+  if (!signature || !Number.isFinite(timestamp)) return { ok: false, reason: 'bad_signature' };
   const now = Date.now();
-  if (now - timestamp > SIGNATURE_EXPIRY_MS || timestamp > now + 10000) return false;
+  if (timestamp > now + ACCESS_PROOF_FUTURE_SKEW_MS) return { ok: false, reason: 'future' };
+  if (now - timestamp > ACCESS_PROOF_MAX_AGE_MS) return { ok: false, reason: 'expired' };
   if (!verifyWalletSignature(createMessage(mint, walletAddress, timestamp), signature, walletAddress)) {
-    return false;
+    return { ok: false, reason: 'bad_signature' };
   }
-  return !(await checkAndMarkSignature(req.query.sig, SIGNATURE_EXPIRY_MS));
+  if (await checkAndMarkSignature(req.query.sig, ACCESS_PROOF_REPLAY_TTL_MS)) {
+    return { ok: false, reason: 'replayed' };
+  }
+  return { ok: true };
+}
+
+// check-access answer for a refused proof: 'signature_required' only when none was supplied, so
+// the page asks for one; a supplied proof that failed is 'signature_invalid' with the reason, so
+// the page can offer to sign again instead of showing the burn gate to a wallet that has access.
+function accessProofRefusal(proof) {
+  return proof.reason === 'missing'
+    ? { access: false, reason: 'signature_required' }
+    : { access: false, reason: 'signature_invalid', detail: proof.reason };
 }
 
 // Whether the recorded burn for `signature` is this exact claim (same wallet, mint and utility).
@@ -242,8 +267,9 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
 // For curated tokens this is unauthenticated (free). For burned tokens, the
 // frontend passes the access token it received from verify-burn. Without a valid token,
 // ?wallet= with a burn on record yields a new token only with proof of that wallet
-// (?sig=&sigTs= signing createCultifyAccessMessage, or its device session); otherwise
-// the answer is { access: false, reason: 'signature_required' }.
+// (?sig=&sigTs= signing createCultifyAccessMessage, or its device session). With no proof the
+// answer is { access: false, reason: 'signature_required' }; with a proof that was refused it is
+// { access: false, reason: 'signature_invalid', detail } (see accessProofRefusal).
 router.get('/check-access/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -268,9 +294,8 @@ router.get('/check-access/:mint', walletLimiter, validateMint, validateDeviceSes
     const hasBurn = await db.hasCultifyAccess(walletAddress, mint);
     if (hasBurn) {
       // The burn record is public; only the wallet's owner gets a token from it
-      if (!(await hasAccessProof(req, walletAddress, mint))) {
-        return res.json({ access: false, reason: 'signature_required' });
-      }
+      const proof = await hasAccessProof(req, walletAddress, mint);
+      if (!proof.ok) return res.json(accessProofRefusal(proof));
       // Issue a fresh access token so subsequent analyze calls work
       const newToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
@@ -671,7 +696,7 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
 // A valid access token is enough. Otherwise a whitelisted ?wallet= (free access) or one with a
 // Holder Behavior burn on record gets a new token only with proof of that wallet: ?sig=&sigTs=
 // signing createHBAccessMessage, or an activated device session for it. Without proof the answer
-// is { access: false, reason: 'signature_required' }.
+// is { access: false, reason: 'signature_required' }; a refused proof gets 'signature_invalid'.
 router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -688,9 +713,8 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, v
     const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
     const hasBurn = !isWhitelisted && await db.hasHBAccess(walletAddress, mint);
     if (isWhitelisted || hasBurn) {
-      if (!(await hasAccessProof(req, walletAddress, mint, createHBAccessMessage))) {
-        return res.json({ access: false, reason: 'signature_required' });
-      }
+      const proof = await hasAccessProof(req, walletAddress, mint, createHBAccessMessage);
+      if (!proof.ok) return res.json(accessProofRefusal(proof));
       // Issue an access token so the analyze route can validate normally
       const newToken = await storeHBAccess(walletAddress, mint);
       return res.json({ access: true, reason: isWhitelisted ? 'whitelisted' : 'burned', accessToken: newToken });
@@ -715,8 +739,11 @@ router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, valida
     const isWhitelisted = !!walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress) &&
       await db.isWalletWhitelisted(walletAddress);
     if (isWhitelisted) {
-      if (!(await hasAccessProof(req, walletAddress, mint, createHBAccessMessage))) {
-        return res.status(403).json({ error: 'Sign with your wallet to confirm it is yours.', code: 'SIGNATURE_REQUIRED' });
+      const proof = await hasAccessProof(req, walletAddress, mint, createHBAccessMessage);
+      if (!proof.ok) {
+        return res.status(403).json(proof.reason === 'missing'
+          ? { error: 'Sign with your wallet to confirm it is yours.', code: 'SIGNATURE_REQUIRED' }
+          : { error: 'Your wallet signature was not accepted. Sign again.', code: 'SIGNATURE_INVALID', detail: proof.reason });
       }
     } else if (!accessToken) {
       return res.status(403).json({ error: 'Access token required' });

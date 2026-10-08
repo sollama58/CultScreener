@@ -777,6 +777,20 @@
     bindErrClose();
   }
 
+  // Why a signed access check failed, in words (detail comes from check-access). No burn is
+  // needed: the wallet has access, so every message points back to signing.
+  function signFailureText(data) {
+    const tail = ' This wallet has access already: sign the message to use it.';
+    if (!data) return 'Could not check your signature.' + tail;
+    switch (data.detail) {
+      case 'expired': return 'The signature took too long and expired.' + tail;
+      case 'future': return 'The signature was refused because your device clock is ahead. Check your clock, then sign again.';
+      case 'replayed': return 'That signature was already used.' + tail;
+      case 'bad_signature': return 'The signature did not match this wallet.' + tail;
+      default: return 'Your signature was not accepted.' + tail;
+    }
+  }
+
   // ── Main entry points ─────────────────────────────────────────────────
   function showChecking(text) {
     if (!isOpen()) openModal(computingHtml(text, null));
@@ -821,11 +835,23 @@
           try {
             proof = await signAccessProof(mint, wa);
           } catch {
-            showAccessLost(mint, 'Signature declined. This wallet has access already: sign the message to use it.', 'Sign Again');
+            showAccessLost(mint, 'Signature declined. This wallet has access already: sign the message to use it.', 'Sign again');
             return;
           }
-          resp = await fetch(`${checkUrl}${proof}`);
-          data = resp.ok ? await resp.json() : null;
+          // Signed: this wallet has access (whitelist or burn on record), so a refused or failed
+          // check offers to sign again; falling through would show it the burn gate
+          let signedData = null;
+          try {
+            const signedResp = await fetch(`${checkUrl}${proof}`);
+            signedData = signedResp.ok ? await signedResp.json() : null;
+          } catch {}
+          // 'none' / 'expired': the whitelist entry or burn is gone meanwhile, so the burn gate
+          const noAccessOnRecord = signedData && (signedData.reason === 'none' || signedData.reason === 'expired');
+          if (!signedData || (!signedData.access && !noAccessOnRecord)) {
+            showAccessLost(mint, signFailureText(signedData), 'Sign again');
+            return;
+          }
+          data = signedData;
         }
 
         if (data && data.access) {

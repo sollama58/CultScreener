@@ -64,7 +64,8 @@
 // fixes: signed watchlist and sentiment calls, holder and view-count fixes, chart label carry,
 // Cultify and Holder Behavior burn gate proof, API key lookup, admin submissions column - api.js v16, watchlist.js v3,
 // tokenDetail.js v34, tokenChart.js v6, cultify.js v19, admin.js v20, apiKeys.js v4,
-// communityPage.js v9, holderBehavior.js v9.
+// communityPage.js v9, holderBehavior.js v9. A refused access signature offers "Sign again"
+// instead of the burn gate - cultify.js v20, holderBehavior.js v10.
 const CACHE_VERSION = 'holdex-v83';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -94,11 +95,11 @@ const APP_SHELL = [
   '/js/holderChart.js?v=3',
   '/js/watchlist.js?v=3',
   '/js/communityPage.js?v=9',
-  '/js/holderBehavior.js?v=9',
+  '/js/holderBehavior.js?v=10',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',
-  '/js/cultify.js?v=19',
+  '/js/cultify.js?v=20',
   '/js/admin.js?v=20',
   '/js/apiKeys.js?v=4',
   '/icons/icon.svg',

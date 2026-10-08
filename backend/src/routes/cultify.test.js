@@ -284,14 +284,26 @@ describe('GET /check-access/:mint with ?wallet=', () => {
     assert.strictEqual(store.get(`cultify:access:${r.body.accessToken}`).mint, MINT);
 
     const replay = await get(`/check-access/${MINT}?wallet=${BURNER}${proof}`);
-    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_required' });
+    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_invalid', detail: 'replayed' });
   });
 
-  test("someone else's signature or a stale one is refused", async () => {
+  test("a refused signature says why, instead of asking for one again", async () => {
     const other = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof(stranger)}`);
-    assert.strictEqual(other.body.access, false);
+    assert.deepStrictEqual(other.body, { access: false, reason: 'signature_invalid', detail: 'bad_signature' });
     const stale = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof(burner, Date.now() - 10 * 60 * 1000)}`);
-    assert.strictEqual(stale.body.access, false);
+    assert.deepStrictEqual(stale.body, { access: false, reason: 'signature_invalid', detail: 'expired' });
+    const ahead = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof(burner, Date.now() + 5 * 60 * 1000)}`);
+    assert.deepStrictEqual(ahead.body, { access: false, reason: 'signature_invalid', detail: 'future' });
+    const garbled = await get(`/check-access/${MINT}?wallet=${BURNER}&sig=nope&sigTs=${Date.now()}`);
+    assert.deepStrictEqual(garbled.body, { access: false, reason: 'signature_invalid', detail: 'bad_signature' });
+    assert.ok(![...store.keys()].some(k => k.startsWith('cultify:access:')), 'no token stored');
+  });
+
+  test('a signature from a slow wallet prompt (3 minutes) or a clock 30s ahead still counts', async () => {
+    const slow = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof(burner, Date.now() - 3 * 60 * 1000)}`);
+    assert.strictEqual(slow.body.access, true);
+    const ahead = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof(burner, Date.now() + 30 * 1000)}`);
+    assert.strictEqual(ahead.body.access, true);
   });
 
   test('a wallet with no burn on record is told to burn', async () => {
@@ -398,18 +410,27 @@ describe('GET /holder-behavior/check-access/:mint with ?wallet=', () => {
     assert.strictEqual(store.get(`hb:access:${r.body.accessToken}`).mint, MINT);
 
     const replay = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${proof}`);
-    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_required' });
+    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_invalid', detail: 'replayed' });
   });
 
-  test("someone else's signature, a stale one or a Cultify one is refused", async () => {
+  test("someone else's signature, a stale one or a Cultify one is refused, saying why", async () => {
     const other = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof(stranger)}`);
-    assert.strictEqual(other.body.access, false);
+    assert.deepStrictEqual(other.body, { access: false, reason: 'signature_invalid', detail: 'bad_signature' });
     const stale = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof(burner, Date.now() - 10 * 60 * 1000)}`);
-    assert.strictEqual(stale.body.access, false);
+    assert.deepStrictEqual(stale.body, { access: false, reason: 'signature_invalid', detail: 'expired' });
     const ts = Date.now();
     const cultifySig = signB64(burner, cultifyRoutes._createCultifyAccessMessage(MINT, BURNER, ts));
     const cross = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}&sig=${encodeURIComponent(cultifySig)}&sigTs=${ts}`);
-    assert.strictEqual(cross.body.access, false);
+    assert.deepStrictEqual(cross.body, { access: false, reason: 'signature_invalid', detail: 'bad_signature' });
+  });
+
+  test("a whitelisted wallet's refused signature is reported, not sent to the burn gate", async () => {
+    whitelisted = true;
+    db.hasHBAccess = async () => false;
+    const ahead = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof(burner, Date.now() + 2 * 60 * 1000)}`);
+    assert.deepStrictEqual(ahead.body, { access: false, reason: 'signature_invalid', detail: 'future' });
+    const slow = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof(burner, Date.now() - 4 * 60 * 1000)}`);
+    assert.strictEqual(slow.body.access, true);
   });
 
   test('a valid access token still works without a signature', async () => {
@@ -435,6 +456,14 @@ describe('GET /holder-behavior/analyze/:mint for a whitelisted wallet', () => {
   test('naming a whitelisted wallet does not start an analysis', async () => {
     const r = await get(`/holder-behavior/analyze/${MINT}?wallet=${BURNER}`);
     assert.strictEqual(r.status, 403);
+    assert.strictEqual(added.length, 0);
+  });
+
+  test('a refused signature is reported as invalid, not as missing', async () => {
+    const r = await get(`/holder-behavior/analyze/${MINT}?wallet=${BURNER}${hbAccessProof(stranger)}`);
+    assert.strictEqual(r.status, 403);
+    assert.strictEqual(r.body.code, 'SIGNATURE_INVALID');
+    assert.strictEqual(r.body.detail, 'bad_signature');
     assert.strictEqual(added.length, 0);
   });
 

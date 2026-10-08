@@ -294,9 +294,26 @@
       // This wallet has a burn on record for the token but our token is gone: sign to restore it
       if (!checkData.access && checkData.reason === 'signature_required' && walletAddr) {
         showStatus('<div class="cultify-gate"><p class="cultify-loading">You already burned for this token. Sign the message in your wallet to restore access...</p></div>');
-        const proof = await signAccessProof(mint, walletAddr);
-        const proofResp = await fetch(`${checkUrl}${proof}`);
-        checkData = await proofResp.json();
+        // The wallet has access; if signing or the signed check fails, offer to sign again
+        // rather than falling through to the burn gate (which would ask for a second burn)
+        let signedData = null;
+        let failure = 'Signature declined.';
+        let signed = false;
+        try {
+          const proof = await signAccessProof(mint, walletAddr);
+          signed = true;
+          const proofResp = await fetch(`${checkUrl}${proof}`);
+          signedData = await proofResp.json();
+          if (!signedData.access) failure = signFailureText(signedData);
+        } catch {
+          if (signed) failure = 'Could not reach the server to check your signature.';
+        }
+        // A plain 'none' means the burn's window closed meanwhile: that one is the burn gate
+        if (!signedData || (!signedData.access && signedData.reason !== 'none')) {
+          showSignAgain(failure);
+          return;
+        }
+        checkData = signedData;
       }
 
       if (checkData.access) {
@@ -316,6 +333,30 @@
     } finally {
       goBtn.disabled = false;
     }
+  }
+
+  // Why a signed access check was refused, in words (detail comes from check-access)
+  function signFailureText(data) {
+    switch (data && data.detail) {
+      case 'expired': return 'The signature took too long and expired.';
+      case 'future': return 'The signature was refused because your device clock is ahead. Check your clock.';
+      case 'replayed': return 'That signature was already used.';
+      case 'bad_signature': return 'The signature did not match this wallet.';
+      default: return 'Your signature could not be checked.';
+    }
+  }
+
+  // Shown when a wallet with a burn on record could not prove it is ours: never the burn gate,
+  // which would charge a second burn for access the wallet already has
+  function showSignAgain(reasonText) {
+    let html = '<div class="cultify-gate">';
+    html += '<h3>Signature Needed</h3>';
+    html += `<p class="cultify-error">${escapeHtml(reasonText)}</p>`;
+    html += '<p>This wallet already has access to this token. Sign the message in your wallet to restore it; no new burn is needed.</p>';
+    html += '<button class="cultify-burn-btn" id="cultify-sign-again-btn">Sign again</button>';
+    html += '</div>';
+    showStatus(html);
+    document.getElementById('cultify-sign-again-btn').addEventListener('click', () => handleCultify());
   }
 
   // ── Burn gate UI ──────────────────────────────────
