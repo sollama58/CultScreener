@@ -30,6 +30,7 @@ function resetStubs() {
   Object.assign(S, {
     allowed: new Set([CURATED]),
     trendingPages: {},
+    geckoCalls: [],
     pools: [],
     poolCalls: [],
     viewIncrements: [],
@@ -60,8 +61,8 @@ stub('../services/database', new Proxy(dbStub, {
   get: (t, p) => (p in t ? t[p] : (p === 'then' ? undefined : async () => ({})))
 }));
 stub('../services/geckoTerminal', {
-  getTrendingTokens: async ({ page }) => S.trendingPages[page] || [],
-  getNewTokens: async (_l, _s, page) => S.trendingPages[page] || [],
+  getTrendingTokens: async ({ page }) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
+  getNewTokens: async (_l, _s, page) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
   getTokenPools: async (mint, { limit }) => { S.poolCalls.push(limit); return S.pools.slice(0, limit); }
 });
 stub('../services/jupiter', { getTrendingTokens: async () => [] });
@@ -129,6 +130,33 @@ describe('GET /api/tokens (trending)', () => {
     assert.strictEqual(addrs.length, 36);
     const second = await get('/api/tokens?limit=20&offset=20');
     assert.deepStrictEqual(second.body.map(t => t.address), addrs.slice(20, 36));
+  });
+
+  test('Gecko pages are fetched once and reused across offsets', async () => {
+    S.trendingPages = {
+      1: Array.from({ length: 20 }, (_, i) => tok(10 + i)),
+      2: Array.from({ length: 20 }, (_, i) => tok(40 + i))
+    };
+    await get('/api/tokens?limit=20&offset=0');
+    await get('/api/tokens?limit=20&offset=7');
+    await get('/api/tokens?limit=20&offset=13');
+    assert.deepStrictEqual(S.geckoCalls.sort(), [1, 2]);
+  });
+
+  test('a window past the last Gecko page makes no Gecko calls', async () => {
+    S.trendingPages = { 1: [tok(10)] };
+    await get('/api/tokens?limit=20&offset=200');
+    assert.deepStrictEqual(S.geckoCalls, []);
+  });
+
+  test('an empty page before a full one neither shifts the window nor gets cached', async () => {
+    S.trendingPages = { 1: Array.from({ length: 20 }, (_, i) => tok(10 + i)), 3: [tok(70)] };
+    const first = await get('/api/tokens?limit=40&offset=20');
+    // Page 2 failed: indices 20+ are unknown, so no tokens from page 3 at offset 20
+    assert.ok(!first.body.some(t => t.address === addr(70)));
+    S.trendingPages[2] = Array.from({ length: 20 }, (_, i) => tok(40 + i));
+    const retry = await get('/api/tokens?limit=40&offset=20');
+    assert.strictEqual(retry.body[0].address, addr(40));
   });
 });
 

@@ -403,47 +403,66 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
     const firstGeckoPage = 1;
     const lastGeckoPage = Math.min(GECKO_MAX_PAGES, Math.floor(Math.max(0, requestEnd - 1) / geckoPageSize) + 1);
 
-    try {
-      // Fetch all gecko pages needed to cover the requested window — in parallel
-      const geckoPages = [];
-      for (let gp = firstGeckoPage; gp <= lastGeckoPage; gp++) {
-        geckoPages.push(gp);
-      }
-      const pageResults = await Promise.all(geckoPages.map(gp => {
-        if (filter === 'new') {
-          return geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp).catch(err => {
+    // A window that starts past Gecko's last page can't be served from it: skip straight
+    // to the Jupiter fallback instead of fetching every page and slicing nothing.
+    const windowInGecko = requestStart < GECKO_MAX_PAGES * geckoPageSize;
+    // Set when a page came back empty while a later one had data: the merged list is then
+    // short, so the response isn't cached (a retry may get the full list).
+    let geckoIncomplete = false;
+
+    if (windowInGecko) {
+      try {
+        // Fetch all gecko pages needed to cover the requested window — in parallel. Each page
+        // is cached on its own, so other offsets and limits reuse it instead of refetching.
+        const geckoKind = filter === 'new' ? 'new' : 'trending';
+        const geckoPages = [];
+        for (let gp = firstGeckoPage; gp <= lastGeckoPage; gp++) {
+          geckoPages.push(gp);
+        }
+        const pageResults = await Promise.all(geckoPages.map(async gp => {
+          const pageKey = `gecko-list-page:${geckoKind}:${useHeliusEnrichment ? 1 : 0}:${gp}`;
+          const cachedPage = await cache.get(pageKey);
+          if (Array.isArray(cachedPage) && cachedPage.length > 0) return cachedPage;
+          const fetchPage = geckoKind === 'new'
+            ? geckoService.getNewTokens(geckoPageSize, useHeliusEnrichment, gp)
+            : geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp });
+          const page = await fetchPage.catch(err => {
             if (err.isOverloaded || err.isCircuitBreakerError) throw err;
-            console.warn(`[Tokens] GeckoTerminal new page ${gp} failed: ${err.response?.status || err.message}`);
+            console.warn(`[Tokens] GeckoTerminal ${geckoKind} page ${gp} failed: ${err.response?.status || err.message}`);
             return null;
           });
+          // The service answers [] on errors too, so an empty page is never cached
+          if (Array.isArray(page) && page.length > 0) await cache.set(pageKey, page, TTL.MEDIUM);
+          return page;
+        }));
+        // Stop at the first empty page: pages after a failed one would shift every index
+        const firstEmpty = pageResults.findIndex(p => !Array.isArray(p) || p.length === 0);
+        const usablePages = firstEmpty === -1 ? pageResults : pageResults.slice(0, firstEmpty);
+        if (firstEmpty !== -1 && pageResults.slice(firstEmpty + 1).some(p => Array.isArray(p) && p.length > 0)) {
+          geckoIncomplete = true;
         }
-        return geckoService.getTrendingTokens({ limit: geckoPageSize, skipEnrichment: useHeliusEnrichment, page: gp }).catch(err => {
-          if (err.isOverloaded || err.isCircuitBreakerError) throw err;
-          console.warn(`[Tokens] GeckoTerminal trending page ${gp} failed: ${err.response?.status || err.message}`);
-          return null;
+        // The same token can lead pools on two different pages; keep its first appearance
+        const seenListAddresses = new Set();
+        let allTokens = usablePages.flat().filter(t => {
+          const addr = t.address || t.mintAddress;
+          if (seenListAddresses.has(addr)) return false;
+          seenListAddresses.add(addr);
+          return true;
         });
-      }));
-      // The same token can lead pools on two different pages; keep its first appearance
-      const seenListAddresses = new Set();
-      let allTokens = pageResults.filter(Boolean).flat().filter(t => {
-        const addr = t.address || t.mintAddress;
-        if (seenListAddresses.has(addr)) return false;
-        seenListAddresses.add(addr);
-        return true;
-      });
 
-      // Apply filter-specific sorting before slicing
-      if (filter === 'gainers') {
-        allTokens.sort((a, b) => (b.priceChange24h || 0) - (a.priceChange24h || 0));
-      } else if (filter === 'losers') {
-        allTokens.sort((a, b) => (a.priceChange24h || 0) - (b.priceChange24h || 0));
+        // Apply filter-specific sorting before slicing
+        if (filter === 'gainers') {
+          allTokens.sort((a, b) => (b.priceChange24h || 0) - (a.priceChange24h || 0));
+        } else if (filter === 'losers') {
+          allTokens.sort((a, b) => (a.priceChange24h || 0) - (b.priceChange24h || 0));
+        }
+
+        // Slice to the requested window within the fetched data
+        tokens = allTokens.slice(requestStart, requestEnd);
+      } catch (err) {
+        geckoError = err;
+        // Privacy: Don't log error details
       }
-
-      // Slice to the requested window within the fetched data
-      tokens = allTokens.slice(requestStart, requestEnd);
-    } catch (err) {
-      geckoError = err;
-      // Privacy: Don't log error details
     }
 
     // If GeckoTerminal returns empty or failed, fallback to Jupiter
@@ -519,7 +538,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
     }
 
     // Cache for 5 minutes (rolling cache for list views)
-    await cache.setWithTimestamp(cacheKey, tokens, TTL.PRICE_DATA);
+    if (!geckoIncomplete) await cache.setWithTimestamp(cacheKey, tokens, TTL.PRICE_DATA);
 
     res.json(tokens);
   } catch (error) {
