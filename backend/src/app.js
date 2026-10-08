@@ -817,6 +817,14 @@ async function gracefulShutdown(signal) {
   const isError = signal === 'uncaughtException' || signal === 'unhandledRejection';
   const exitCode = isError ? 1 : 0;
 
+  // Force exit after 35 seconds if shutdown takes too long. Started before the drain so it bounds
+  // that too: admin routes raise their response timeout to 5-10 minutes.
+  const forceTimer = setTimeout(() => {
+    console.error('[Shutdown] Forced exit after timeout');
+    process.exit(exitCode);
+  }, 35000);
+  forceTimer.unref();
+
   // Stop accepting new connections and await in-flight request drain
   if (httpServer) {
     await new Promise(resolve => {
@@ -826,13 +834,6 @@ async function gracefulShutdown(signal) {
       });
     }).catch(() => {});
   }
-
-  // Force exit after 35 seconds if cleanup takes too long
-  const forceTimer = setTimeout(() => {
-    console.error('[Shutdown] Forced exit after timeout');
-    process.exit(exitCode);
-  }, 35000);
-  forceTimer.unref();
 
   // Clear cleanup interval (fallback mode)
   if (cleanupIntervalId) {
