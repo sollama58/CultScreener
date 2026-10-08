@@ -180,6 +180,9 @@ function signB64(keyPair, message) {
 function claimFor(mint, keyPair = burner, sig = BURN_SIG) {
   return signB64(keyPair, cultifyRoutes._createCultifyBurnClaimMessage(sig, mint, BURNER));
 }
+function hbClaimFor(mint, keyPair = burner, sig = BURN_SIG) {
+  return signB64(keyPair, cultifyRoutes._createHBBurnClaimMessage(sig, mint, BURNER));
+}
 
 describe('POST /verify-burn duplicate signature', () => {
   beforeEach(() => {
@@ -197,14 +200,14 @@ describe('POST /verify-burn duplicate signature', () => {
 
   test('a racing claim of the same burn for the other utility is refused', async () => {
     burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'cultify' });
-    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER });
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: hbClaimFor(MINT) });
     assert.strictEqual(r.status, 409);
     assert.ok(!r.body.accessToken);
   });
 
   test('a retry of the recorded claim still gets a token', async () => {
     burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'holder_behavior' });
-    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER });
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: hbClaimFor(MINT) });
     assert.strictEqual(r.status, 200);
     assert.ok(r.body.accessToken);
     assert.strictEqual(store.get(`hb:access:${r.body.accessToken}`).mint, MINT);
@@ -294,5 +297,158 @@ describe('GET /check-access/:mint with ?wallet=', () => {
   test('a wallet with no burn on record is told to burn', async () => {
     const r = await get(`/check-access/${MINT}?wallet=${bs58.encode(stranger.publicKey)}`);
     assert.deepStrictEqual(r.body, { access: false, reason: 'none' });
+  });
+});
+
+// ── Holder Behavior: the same wallet proofs ─────────────────────────────
+
+describe('POST /holder-behavior/verify-burn requires the burner to sign the claim', () => {
+  beforeEach(() => {
+    useFakeBurnTable();
+    db.hasHBAccess = async (wallet, mint) =>
+      [...burns.values()].some(b => b.wallet_address === wallet && b.token_mint === mint && b.utility_type === 'holder_behavior');
+    solanaService.getTransaction = async () => fakeBurnTx(BURNER, 10_000);
+  });
+
+  test('an unsigned claim (someone who saw the burn on-chain) is refused and records nothing', async () => {
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: OTHER_MINT, wallet: BURNER });
+    assert.strictEqual(r.status, 401);
+    assert.strictEqual(burns.size, 0);
+  });
+
+  test('a claim signed by another wallet is refused', async () => {
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: hbClaimFor(MINT, stranger) });
+    assert.strictEqual(r.status, 401);
+    assert.strictEqual(burns.size, 0);
+  });
+
+  test("the burner's claim for one token cannot be replayed for another", async () => {
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: OTHER_MINT, wallet: BURNER, claimSignature: hbClaimFor(MINT) });
+    assert.strictEqual(r.status, 401);
+  });
+
+  test('a Cultify claim does not count for Holder Behavior', async () => {
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: claimFor(MINT) });
+    assert.strictEqual(r.status, 401);
+    assert.strictEqual(burns.size, 0);
+  });
+
+  test('a signed claim records the burn and returns a token', async () => {
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: hbClaimFor(MINT) });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(burns.get(BURN_SIG), { wallet_address: BURNER, token_mint: MINT, utility_type: 'holder_behavior' });
+    assert.strictEqual(store.get(`hb:access:${r.body.accessToken}`).mint, MINT);
+  });
+
+  test("the burner's retry after a lost response gets a token instead of 409", async () => {
+    burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'holder_behavior' });
+    db.isCultifySignatureUsed = async (sig) => burns.has(sig);
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: hbClaimFor(MINT) });
+    assert.strictEqual(r.status, 200);
+    assert.ok(r.body.accessToken);
+  });
+
+  test('a retry outside the access window is not renewed', async () => {
+    burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'holder_behavior' });
+    db.isCultifySignatureUsed = async (sig) => burns.has(sig);
+    db.hasHBAccess = async () => false;
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: hbClaimFor(MINT) });
+    assert.strictEqual(r.status, 409);
+  });
+});
+
+function hbAccessProof(keyPair = burner, ts = Date.now(), wallet = BURNER) {
+  return `&sig=${encodeURIComponent(signB64(keyPair, cultifyRoutes._createHBAccessMessage(MINT, wallet, ts)))}&sigTs=${ts}`;
+}
+
+describe('GET /holder-behavior/check-access/:mint with ?wallet=', () => {
+  let whitelisted;
+  beforeEach(() => {
+    whitelisted = false;
+    db.isWalletWhitelisted = async (wallet) => whitelisted && wallet === BURNER;
+    db.hasHBAccess = async (wallet, mint) => wallet === BURNER && mint === MINT;
+  });
+
+  test("naming a burner's wallet is not enough for a token", async () => {
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}`);
+    assert.deepStrictEqual(r.body, { access: false, reason: 'signature_required' });
+    assert.ok(![...store.keys()].some(k => k.startsWith('hb:access:')), 'no token stored');
+  });
+
+  test("naming a whitelisted wallet is not enough for a token", async () => {
+    whitelisted = true;
+    db.hasHBAccess = async () => false;
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}`);
+    assert.deepStrictEqual(r.body, { access: false, reason: 'signature_required' });
+  });
+
+  test("the whitelisted wallet's signature gets a token", async () => {
+    whitelisted = true;
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof()}`);
+    assert.strictEqual(r.body.access, true);
+    assert.strictEqual(r.body.reason, 'whitelisted');
+    assert.strictEqual(store.get(`hb:access:${r.body.accessToken}`).mint, MINT);
+  });
+
+  test("the burner's signature gets a token, once", async () => {
+    const proof = hbAccessProof();
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${proof}`);
+    assert.strictEqual(r.body.access, true);
+    assert.strictEqual(r.body.reason, 'burned');
+    assert.strictEqual(store.get(`hb:access:${r.body.accessToken}`).mint, MINT);
+
+    const replay = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${proof}`);
+    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_required' });
+  });
+
+  test("someone else's signature, a stale one or a Cultify one is refused", async () => {
+    const other = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof(stranger)}`);
+    assert.strictEqual(other.body.access, false);
+    const stale = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof(burner, Date.now() - 10 * 60 * 1000)}`);
+    assert.strictEqual(stale.body.access, false);
+    const ts = Date.now();
+    const cultifySig = signB64(burner, cultifyRoutes._createCultifyAccessMessage(MINT, BURNER, ts));
+    const cross = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}&sig=${encodeURIComponent(cultifySig)}&sigTs=${ts}`);
+    assert.strictEqual(cross.body.access, false);
+  });
+
+  test('a valid access token still works without a signature', async () => {
+    store.set('hb:access:hbtok', { wallet: BURNER, mint: MINT, expiresAt: Date.now() + 60000 });
+    const r = await get(`/holder-behavior/check-access/${MINT}?token=hbtok&wallet=${BURNER}`);
+    assert.deepStrictEqual(r.body, { access: true, reason: 'burned' });
+  });
+
+  test('a wallet with no burn on record is told to burn', async () => {
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${bs58.encode(stranger.publicKey)}`);
+    assert.deepStrictEqual(r.body, { access: false, reason: 'none' });
+  });
+});
+
+describe('GET /holder-behavior/analyze/:mint for a whitelisted wallet', () => {
+  let added;
+  beforeEach(() => {
+    added = [];
+    db.isWalletWhitelisted = async (wallet) => wallet === BURNER;
+    jobQueue.addAnalyticsJob = async (name, data, opts) => { added.push(opts); return { id: opts.jobId }; };
+  });
+
+  test('naming a whitelisted wallet does not start an analysis', async () => {
+    const r = await get(`/holder-behavior/analyze/${MINT}?wallet=${BURNER}`);
+    assert.strictEqual(r.status, 403);
+    assert.strictEqual(added.length, 0);
+  });
+
+  test("the whitelisted wallet's signature does", async () => {
+    const r = await get(`/holder-behavior/analyze/${MINT}?wallet=${BURNER}${hbAccessProof()}`);
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.body, { status: 'computing' });
+    assert.strictEqual(added.length, 1);
+  });
+
+  test('an access token for another mint does not count', async () => {
+    store.set('hb:access:other', { wallet: BURNER, mint: OTHER_MINT, expiresAt: Date.now() + 60000 });
+    const r = await get(`/holder-behavior/analyze/${MINT}?token=other`);
+    assert.strictEqual(r.status, 403);
+    assert.strictEqual(added.length, 0);
   });
 });

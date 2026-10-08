@@ -115,16 +115,26 @@ function decodeWalletSignature(b64) {
   return Array.from(Buffer.from(b64, 'base64'));
 }
 
-// Proof that the caller controls `walletAddress` for check-access: an activated device session for
-// that wallet, or a fresh signature of createCultifyAccessMessage (burned on use, no replay).
-async function hasAccessProof(req, walletAddress, mint) {
+// Holder Behavior has its own prefixes, so a signature given for one utility never counts for the other.
+function createHBBurnClaimMessage(burnSignature, mint, walletAddress) {
+  return `HolDEX Holder Behavior Burn Claim: ${burnSignature} for ${mint} by ${walletAddress}`;
+}
+
+function createHBAccessMessage(mint, walletAddress, timestamp) {
+  return `HolDEX Holder Behavior Access: ${mint} for ${walletAddress} at ${timestamp}`;
+}
+
+// Proof that the caller controls `walletAddress`: an activated device session for that wallet, or
+// a fresh signature (?sig=&sigTs=) of createMessage(mint, wallet, ts), burned on use (no replay).
+// Defaults to the Cultify access message; Holder Behavior passes createHBAccessMessage.
+async function hasAccessProof(req, walletAddress, mint, createMessage = createCultifyAccessMessage) {
   if (req.deviceWallet && req.deviceWallet === walletAddress) return true;
   const signature = decodeWalletSignature(req.query.sig);
   const timestamp = parseInt(req.query.sigTs, 10);
   if (!signature || !Number.isFinite(timestamp)) return false;
   const now = Date.now();
   if (now - timestamp > SIGNATURE_EXPIRY_MS || timestamp > now + 10000) return false;
-  if (!verifyWalletSignature(createCultifyAccessMessage(mint, walletAddress, timestamp), signature, walletAddress)) {
+  if (!verifyWalletSignature(createMessage(mint, walletAddress, timestamp), signature, walletAddress)) {
     return false;
   }
   return !(await checkAndMarkSignature(req.query.sig, SIGNATURE_EXPIRY_MS));
@@ -589,8 +599,10 @@ async function storeHBAccess(walletAddress, mint) {
 
 // POST /api/cultify/holder-behavior/verify-burn
 // Same on-chain verification pattern as /verify-burn but requires 10,000 ASDFASDFA.
+// Body: { signature, mint, wallet, claimSignature } where claimSignature is the wallet's base64
+// signature of createHBBurnClaimMessage(signature, mint, wallet), made before the burn was sent.
 router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
-  const { signature, mint, wallet: walletAddress } = req.body;
+  const { signature, mint, wallet: walletAddress, claimSignature } = req.body;
 
   if (!signature || typeof signature !== 'string' || signature.length < 80 || signature.length > 90) {
     return res.status(400).json({ error: 'Invalid transaction signature' });
@@ -602,8 +614,22 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
     return res.status(400).json({ error: 'Invalid wallet address' });
   }
 
+  // The claim must be signed by the wallet it names (the burn authority is checked below), so
+  // nobody who sees the burn on-chain can claim it first
+  const claimBytes = decodeWalletSignature(claimSignature);
+  if (!claimBytes || !verifyWalletSignature(createHBBurnClaimMessage(signature, mint, walletAddress), claimBytes, walletAddress)) {
+    return res.status(401).json({ error: 'Sign the claim with the wallet that made the burn.', code: 'CLAIM_SIGNATURE_REQUIRED' });
+  }
+
   const alreadyUsed = await db.isCultifySignatureUsed(signature);
   if (alreadyUsed) {
+    // The burner's own retry after a lost response: re-issue for the claim that was recorded,
+    // while it is still inside the access window.
+    if (await isSameBurnClaim(signature, walletAddress, mint, 'holder_behavior') &&
+        await db.hasHBAccess(walletAddress, mint)) {
+      const accessToken = await storeHBAccess(walletAddress, mint);
+      return res.json({ success: true, accessToken, note: 'Burn already recorded' });
+    }
     return res.status(409).json({ error: 'This burn transaction has already been claimed' });
   }
 
@@ -641,20 +667,13 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
   res.json({ success: true, accessToken });
 }));
 
-// GET /api/cultify/holder-behavior/check-access/:mint
-router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+// GET /api/cultify/holder-behavior/check-access/:mint?token=&wallet=
+// A valid access token is enough. Otherwise a whitelisted ?wallet= (free access) or one with a
+// Holder Behavior burn on record gets a new token only with proof of that wallet: ?sig=&sigTs=
+// signing createHBAccessMessage, or an activated device session for it. Without proof the answer
+// is { access: false, reason: 'signature_required' }.
+router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
-
-  // Whitelisted wallets get free access — no burn needed
-  const walletAddress = req.query.wallet;
-  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
-    const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
-    if (isWhitelisted) {
-      // Issue a temporary access token so the analyze route can validate normally
-      const accessToken = await storeHBAccess(walletAddress, mint);
-      return res.json({ access: true, reason: 'whitelisted', accessToken });
-    }
-  }
 
   const accessToken = req.query.token;
   if (accessToken) {
@@ -662,36 +681,46 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, a
     if (accessData && accessData.mint === mint) return res.json({ access: true, reason: 'burned' });
   }
 
-  // Cache miss (e.g. server restart) — fall back to DB
-  const walletForCheck = req.query.wallet;
-  if (walletForCheck && SOLANA_ADDRESS_REGEX.test(walletForCheck)) {
-    const hasBurn = await db.hasHBAccess(walletForCheck, mint);
-    if (hasBurn) {
-      const newToken = await storeHBAccess(walletForCheck, mint);
-      return res.json({ access: true, reason: 'burned', accessToken: newToken });
+  // Whitelisted wallets get free access, and a burn on record survives a lost token (or a
+  // server restart) - but a wallet address is public, so only its owner gets either
+  const walletAddress = req.query.wallet;
+  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
+    const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
+    const hasBurn = !isWhitelisted && await db.hasHBAccess(walletAddress, mint);
+    if (isWhitelisted || hasBurn) {
+      if (!(await hasAccessProof(req, walletAddress, mint, createHBAccessMessage))) {
+        return res.json({ access: false, reason: 'signature_required' });
+      }
+      // Issue an access token so the analyze route can validate normally
+      const newToken = await storeHBAccess(walletAddress, mint);
+      return res.json({ access: true, reason: isWhitelisted ? 'whitelisted' : 'burned', accessToken: newToken });
     }
   }
 
   res.json({ access: false, reason: accessToken ? 'expired' : 'none' });
 }));
 
-// GET /api/cultify/holder-behavior/analyze/:mint
+// GET /api/cultify/holder-behavior/analyze/:mint?token=
 // Returns { status: 'computing' } immediately; caches final result for polling.
-router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+// Needs an access token from verify-burn or check-access. A whitelisted ?wallet= is accepted
+// in its place only with proof of that wallet (an activated device session, or ?sig=&sigTs= as
+// for check-access).
+router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
-  // Whitelisted wallets bypass the burn gate entirely
-  const walletAddress = req.query.wallet;
-  let isWhitelisted = false;
-  if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
-    isWhitelisted = await db.isWalletWhitelisted(walletAddress);
-  }
-
-  if (!isWhitelisted) {
-    const accessToken = req.query.token;
-    if (!accessToken) return res.status(403).json({ error: 'Access token required' });
-    const accessData = await cache.get(`hb:access:${accessToken}`);
-    if (!accessData || accessData.mint !== mint) {
+  const accessToken = req.query.token;
+  const accessData = accessToken ? await cache.get(`hb:access:${accessToken}`) : null;
+  if (!accessData || accessData.mint !== mint) {
+    const walletAddress = req.query.wallet;
+    const isWhitelisted = !!walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress) &&
+      await db.isWalletWhitelisted(walletAddress);
+    if (isWhitelisted) {
+      if (!(await hasAccessProof(req, walletAddress, mint, createHBAccessMessage))) {
+        return res.status(403).json({ error: 'Sign with your wallet to confirm it is yours.', code: 'SIGNATURE_REQUIRED' });
+      }
+    } else if (!accessToken) {
+      return res.status(403).json({ error: 'Access token required' });
+    } else {
       return res.status(403).json({ error: 'Invalid or expired access token. Please burn again.' });
     }
   }
@@ -763,3 +792,5 @@ module.exports = router;
 module.exports._verifyBurnTransaction = verifyBurnTransaction;
 module.exports._createCultifyBurnClaimMessage = createCultifyBurnClaimMessage;
 module.exports._createCultifyAccessMessage = createCultifyAccessMessage;
+module.exports._createHBBurnClaimMessage = createHBBurnClaimMessage;
+module.exports._createHBAccessMessage = createHBAccessMessage;
