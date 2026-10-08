@@ -50,6 +50,10 @@ const HELIUS_DAS_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key
 const VALID_FILTERS = ['trending', 'new', 'gainers', 'losers', 'most_viewed', 'tech', 'meme'];
 const VALID_SORTS = ['volume', 'price', 'priceChange24h', 'marketCap', 'views'];
 const VALID_ORDERS = ['asc', 'desc'];
+// GeckoTerminal's trending_pools / new_pools endpoints serve pages 1-10 only
+const GECKO_MAX_PAGES = 10;
+// GeckoTerminal returns at most 20 pools per token page
+const POOLS_PAGE_SIZE = 20;
 
 // BURN_WALLETS, LP_AUTHORITIES and SYSTEM_PROGRAM_ID imported from ../constants (shared with worker.js)
 const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website'];
@@ -85,7 +89,9 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
   const sort = VALID_SORTS.includes(rawSort) ? rawSort : 'volume';
   const order = VALID_ORDERS.includes(rawOrder) ? rawOrder : 'desc';
 
-  const cacheKey = keys.tokenList(`${filter}-${sort}-${order}-${limit}`, Math.floor(offset / limit));
+  // Key on the exact offset: bucketing by Math.floor(offset / limit) served offset=25 the
+  // cached offset=0 window (and vice versa).
+  const cacheKey = keys.tokenList(`${filter}-${sort}-${order}-${limit}`, parseInt(offset) || 0);
 
   // Try cache first - use getWithMeta since we store with setWithTimestamp
   // Note: We refresh view counts even for cached responses since they're cheap to fetch
@@ -379,11 +385,12 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
     const geckoPageSize = 20;
     const requestStart = parseInt(offset);
     const requestEnd = requestStart + parseInt(limit);
-    // For gainers/losers, always start from page 1 so each page sorts a consistent
-    // superset of all previous pages' data — prevents duplicate tokens across pages
-    const needsFullSort = (filter === 'gainers' || filter === 'losers');
-    const firstGeckoPage = needsFullSort ? 1 : Math.floor(requestStart / geckoPageSize) + 1;
-    const lastGeckoPage = Math.floor(Math.max(0, requestEnd - 1) / geckoPageSize) + 1;
+    // Always start from page 1: Gecko pages yield fewer than 20 tokens (non-memecoin pools
+    // and in-page repeats are skipped), so offset can't be mapped onto a page number. Fetch
+    // the pages from the start, dedupe across them, then slice [offset, offset + limit).
+    // GeckoTerminal serves at most 10 pages; a window past that falls back to Jupiter below.
+    const firstGeckoPage = 1;
+    const lastGeckoPage = Math.min(GECKO_MAX_PAGES, Math.floor(Math.max(0, requestEnd - 1) / geckoPageSize) + 1);
 
     try {
       // Fetch all gecko pages needed to cover the requested window — in parallel
@@ -405,7 +412,14 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
           return null;
         });
       }));
-      let allTokens = pageResults.filter(Boolean).flat();
+      // The same token can lead pools on two different pages; keep its first appearance
+      const seenListAddresses = new Set();
+      let allTokens = pageResults.filter(Boolean).flat().filter(t => {
+        const addr = t.address || t.mintAddress;
+        if (seenListAddresses.has(addr)) return false;
+        seenListAddresses.add(addr);
+        return true;
+      });
 
       // Apply filter-specific sorting before slicing
       if (filter === 'gainers') {
@@ -415,8 +429,7 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
       }
 
       // Slice to the requested window within the fetched data
-      const sliceStart = requestStart - (firstGeckoPage - 1) * geckoPageSize;
-      tokens = allTokens.slice(sliceStart, sliceStart + parseInt(limit));
+      tokens = allTokens.slice(requestStart, requestEnd);
     } catch (err) {
       geckoError = err;
       // Privacy: Don't log error details
