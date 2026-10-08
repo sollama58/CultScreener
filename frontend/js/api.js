@@ -566,9 +566,16 @@ const api = {
       );
     },
 
-    async leaderboardConviction(params = {}) {
+    async leaderboardConviction(params = {}, options = {}) {
       const query = new URLSearchParams(params).toString();
       const cacheKey = `tokens:leaderboard:conviction:${query}`;
+      // fresh: bypass the client cache for this one request (and refill it),
+      // without evicting the entry the other home tabs share.
+      if (options.fresh === true) {
+        const data = await api.request(`/api/tokens/leaderboard/conviction?${query}`);
+        if (data) apiCache.set(cacheKey, data, apiCache.TTL.tokenList);
+        return data;
+      }
       return apiCache.getOrFetch(
         cacheKey,
         () => api.request(`/api/tokens/leaderboard/conviction?${query}`),
