@@ -627,7 +627,15 @@
               break;
             }
           }
-        } catch { /* retry */ }
+        } catch (e) {
+          // A failed transaction burned nothing: say so now and drop the pending burn,
+          // rather than polling the same answer and reporting a slow confirmation
+          if (e.message.includes('failed on-chain')) {
+            clearPendingBurn();
+            throw new Error('Burn transaction failed on-chain. No tokens were burned — please try again.');
+          }
+          /* network error — retry */
+        }
       }
       if (!confirmed) {
         throw new Error('Confirmation is taking longer than expected. Your burn is saved — reload the page to retry verification.');
