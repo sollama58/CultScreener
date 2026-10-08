@@ -109,12 +109,42 @@ function sampleKey(mint, wallet) {
   return crypto.createHash('sha256').update(`${mint}:${wallet}`).digest('hex').slice(0, 13);
 }
 
+// The k entries with the lowest keys, lowest first (ties in list order, as a
+// stable sort would give). A bounded max-heap of k entries instead of sorting
+// the whole population: the tail stratum can be ~100k wallets for ~100 picks.
 function bottomK(mint, holders, k) {
   if (k >= holders.length) return holders.slice();
-  return holders
-    .map(h => ({ h, key: sampleKey(mint, h.wallet) }))
-    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-    .slice(0, k)
+  if (k <= 0) return [];
+  const greater = (a, b) => (a.key > b.key || (a.key === b.key && a.i > b.i));
+  const heap = []; // max-heap: heap[0] is the largest kept entry
+  const siftDown = (j) => {
+    for (;;) {
+      const l = 2 * j + 1, r = l + 1;
+      let m = j;
+      if (l < heap.length && greater(heap[l], heap[m])) m = l;
+      if (r < heap.length && greater(heap[r], heap[m])) m = r;
+      if (m === j) return;
+      [heap[j], heap[m]] = [heap[m], heap[j]];
+      j = m;
+    }
+  };
+  for (let i = 0; i < holders.length; i++) {
+    const e = { h: holders[i], key: sampleKey(mint, holders[i].wallet), i };
+    if (heap.length < k) {
+      heap.push(e);
+      for (let j = heap.length - 1; j > 0;) {
+        const p = (j - 1) >> 1;
+        if (!greater(heap[j], heap[p])) break;
+        [heap[j], heap[p]] = [heap[p], heap[j]];
+        j = p;
+      }
+    } else if (greater(heap[0], e)) {
+      heap[0] = e;
+      siftDown(0);
+    }
+  }
+  return heap
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.i - b.i))
     .map(x => x.h);
 }
 

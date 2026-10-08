@@ -56,6 +56,9 @@ function getRedisConfig() {
   }
 }
 
+// Most mints fetch-holder-counts-batch pages DAS for in one job
+const HOLDER_COUNT_SCANS_PER_JOB = 20;
+
 // Worker instances
 const workers = [];
 
@@ -352,9 +355,17 @@ const jobProcessors = {
 
     // Redis or the latest holder snapshot's count first; DAS pagination only for the rest
     const known = await require('./services/holderCounts').getDisplayCounts(mints).catch(() => ({}));
+    let scanned = 0;
     for (const mint of mints) {
       try {
         if (known[mint] > 0) { skipped++; continue; }
+        // A recent scan found no count: not a scan, so it mustn't use up the cap
+        // below and keep the same first mints of a list ahead of the rest forever
+        if (await cache.get(`holder-total-none:${mint}`).catch(() => null)) { skipped++; continue; }
+        // Each scan pages DAS; cap them per job so a long list doesn't hold a
+        // worker slot for minutes. The rest are re-queued on their next cache miss.
+        if (scanned >= HOLDER_COUNT_SCANS_PER_JOB) break;
+        scanned++;
 
         const count = await solanaService.getTokenHolderCount(mint);
         // getTokenHolderCount caches exact counts internally (TTL.HOLDER_COUNT)
@@ -514,7 +525,9 @@ const jobProcessors = {
       }
 
       const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
-      await cache.set(`holder-analytics:${mint}`, result, 3 * TTL.HOUR);
+      // Outlives the next curated snapshot (every refreshMs), which re-runs this job;
+      // a shorter TTL left a gap where page views re-queued it for the same list
+      await cache.set(`holder-analytics:${mint}`, result, require('./services/holderPipeline').CONFIG.refreshMs + 2 * TTL.HOUR);
       await cache.delete(`holder-classify-pending:${mint}`);
 
       console.log(`[Worker] Holder analytics done for ${mint}: ${holders.length} holders, ${lpIndices.size} LP, ${burntIndices.size} burnt`);
@@ -536,7 +549,9 @@ const jobProcessors = {
     const holderPipeline = require('./services/holderPipeline');
     const result = await holderPipeline.takeSnapshot(mint);
 
-    if ((result.status === 'ok' || result.status === 'unchanged') && !(await cache.get(`holder-classify-pending:${mint}`))) {
+    // An unchanged holder list whose classification is still cached needs no re-run
+    const classified = result.status === 'unchanged' && !!(await cache.get(`holder-analytics:${mint}`).catch(() => null));
+    if ((result.status === 'ok' || result.status === 'unchanged') && !classified && !(await cache.get(`holder-classify-pending:${mint}`))) {
       const list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
       if (list) {
         await cache.set(`holder-classify-pending:${mint}`, Date.now(), 120000);
@@ -957,20 +972,54 @@ async function start() {
 
 /**
  * Graceful shutdown
+ *
+ * All queue workers stop taking jobs at once and get `deadlineMs` to finish the
+ * active ones. Past the deadline the process exits with them still running
+ * (BullMQ's stalled check re-runs them). A hard timer exits if closing hangs.
+ * Render waits maxShutdownDelaySeconds (render.yaml) before SIGKILL, so the
+ * signal deadline stays under it.
  */
-async function shutdown(signal) {
-  console.log(`\n[Worker] ${signal} received. Shutting down gracefully...`);
+const SIGNAL_SHUTDOWN_MS = parseInt(process.env.WORKER_SHUTDOWN_DEADLINE_MS) || 270000;
+const CRASH_SHUTDOWN_MS = 10000;
+let shuttingDown = false;
+
+async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 } = {}) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[Worker] ${signal} received. Shutting down gracefully (deadline ${Math.round(deadlineMs / 1000)}s)...`);
   if (scheduleCheckTimer) clearInterval(scheduleCheckTimer);
 
-  // Close all workers
-  for (const worker of workers) {
-    await worker.close();
+  // Exits even if a close below never settles
+  const forceExit = setTimeout(() => {
+    console.error('[Worker] Shutdown timed out, forcing exit');
+    process.exit(exitCode || 1);
+  }, deadlineMs + 10000);
+  if (forceExit.unref) forceExit.unref();
+
+  try {
+    // Close all workers in parallel: none keeps picking up jobs while another drains
+    let deadlineTimer;
+    const drained = await Promise.race([
+      Promise.all(workers.map(w => w.close().catch(err => console.error('[Worker] Close error:', err.message)))).then(() => true),
+      new Promise(r => { deadlineTimer = setTimeout(() => r(false), deadlineMs); }),
+    ]);
+    clearTimeout(deadlineTimer);
+    if (!drained) {
+      // close(true) can't help here: once close() has started, BullMQ hands back
+      // that same pending close. Exit anyway; the stalled check re-runs the jobs.
+      console.warn('[Worker] Active jobs still running at the shutdown deadline; exiting without them');
+    }
+  } catch (err) {
+    console.error('[Worker] Error closing workers:', err.message);
   }
 
-  await telegramBot.stopBot();
+  await telegramBot.stopBot().catch(() => {});
+
+  // Only now: in-flight jobs used these sockets until their workers closed
+  try { require('./services/httpAgent').destroy(); } catch (_) {}
 
   console.log('[Worker] All workers stopped');
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 // Only when run as the worker process; tests require this file for jobProcessors.
@@ -979,15 +1028,16 @@ if (require.main === module) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Handle uncaught errors
+// Handle uncaught errors: close the workers (short deadline) so finished jobs
+// don't stay locked, then exit non-zero
 process.on('uncaughtException', (err) => {
   console.error('[Worker] Uncaught exception:', err);
-  process.exit(1);
+  shutdown('uncaughtException', { deadlineMs: CRASH_SHUTDOWN_MS, exitCode: 1 });
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Worker] Unhandled rejection at:', promise, 'reason:', reason);
-  process.exit(1);
+  shutdown('unhandledRejection', { deadlineMs: CRASH_SHUTDOWN_MS, exitCode: 1 });
 });
 
 // Start the worker

@@ -22,6 +22,39 @@ const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analys
 
 // ── fetchSwapHistory ─────────────────────────────────────────────────────────
 
+// Swaps are cached in a compact form: one array per swap, [timestamp, mint,
+// signedAmount, mint, signedAmount, ...], with only this wallet's legs (positive =
+// received, negative = sent) and the cash mints computeHoldPairs ignores left out.
+// About a fifth of the full swap objects, which held signatures and both sides of
+// every transfer. The key prefix carries the format version.
+const HB_SWAPS_KEY_PREFIX = 'hb-swaps:v2:';
+
+function compactSwap(tx, walletAddress) {
+  const out = [tx.timestamp ?? null];
+  for (const t of (tx.tokenTransfers || [])) {
+    const { mint: tm, fromUserAccount, toUserAccount, tokenAmount } = t || {};
+    if (!tm || HB_EXCLUDED_MINTS.has(tm)) continue;
+    const amount = Number(tokenAmount);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    // Same precedence as computeHoldPairs: received first, then sent
+    if (toUserAccount === walletAddress) out.push(tm, amount);
+    else if (fromUserAccount === walletAddress) out.push(tm, -amount);
+  }
+  return out;
+}
+
+// Back to the shape computeHoldPairs consumes
+function expandSwap(c, walletAddress) {
+  const tokenTransfers = [];
+  for (let i = 1; i + 1 < c.length; i += 2) {
+    const amount = c[i + 1];
+    tokenTransfers.push(amount > 0
+      ? { mint: c[i], fromUserAccount: null, toUserAccount: walletAddress, tokenAmount: amount }
+      : { mint: c[i], fromUserAccount: walletAddress, toUserAccount: null, tokenAmount: -amount });
+  }
+  return { timestamp: c[0] == null ? undefined : c[0], tokenTransfers };
+}
+
 // Fetch up to maxCount of a wallet's most recent swaps, newest first.
 // Preferred source: getTransactionsForAddress pages of 250 full transactions
 // (10 credits per 100), newest first, read into swaps by swapFromRawTransaction until
@@ -30,10 +63,11 @@ const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analys
 // Results are cached per-wallet for 1 day — the same whale wallets appear as top
 // holders across many different tokens, so the cache hit rate is high after the
 // first analysis of any given token.
-async function fetchSwapHistory(walletAddress, maxCount) {
-  const swapCacheKey = `hb-swaps:${walletAddress}`;
-  const cached = await cache.get(swapCacheKey);
-  if (cached) return cached;
+// `cached`: the wallet's cache entry when the caller already read it (undefined: read it here).
+async function fetchSwapHistory(walletAddress, maxCount, cached) {
+  const swapCacheKey = `${HB_SWAPS_KEY_PREFIX}${walletAddress}`;
+  if (cached === undefined) cached = await cache.get(swapCacheKey);
+  if (cached) return cached.map(c => expandSwap(c, walletAddress));
 
   if (solanaService.isTransactionHistoryAvailable()) {
     try {
@@ -52,9 +86,10 @@ async function fetchSwapHistory(walletAddress, maxCount) {
         if (!page.paginationToken || txs.length < HB_HISTORY_PAGE) break;
         paginationToken = page.paginationToken;
       }
+      const compact = swaps.map(tx => compactSwap(tx, walletAddress));
       // Cache empty answers too, or a wallet with no swaps is re-read on every run
-      await cache.set(swapCacheKey, swaps, TTL.DAY);
-      return swaps;
+      await cache.set(swapCacheKey, compact, TTL.DAY);
+      return compact.map(c => expandSwap(c, walletAddress));
     } catch (err) {
       // -32601 latches the legacy path in solana.js; anything else is this wallet's failure
       if (solanaService.isTransactionHistoryAvailable()) throw err;
@@ -77,10 +112,11 @@ async function fetchSwapHistory(walletAddress, maxCount) {
     before = txns[txns.length - 1].signature;
   }
 
-  if (results.length > 0) {
-    await cache.set(swapCacheKey, results, TTL.DAY);
+  const compact = results.map(tx => compactSwap(tx, walletAddress));
+  if (compact.length > 0) {
+    await cache.set(swapCacheKey, compact, TTL.DAY);
   }
-  return results;
+  return compact.map(c => expandSwap(c, walletAddress));
 }
 
 // ── runHolderBehaviorAnalysis ────────────────────────────────────────────────
@@ -139,12 +175,12 @@ async function runHolderBehaviorAnalysis(mint) {
     const tokenAgg = {};
     let totalSwaps = 0;
 
-    const processHolder = async (holder) => {
+    const processHolder = async (holder, cachedSwaps) => {
       try {
         // 45s timeout per holder — prevents one slow/hung Helius call from stalling the entire analysis
         let timeoutId;
         const txns = await Promise.race([
-          fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER),
+          fetchSwapHistory(holder.address, HB_MAX_SWAPS_PER_HOLDER, cachedSwaps),
           new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('holder timeout')), 45000); })
         ]);
         clearTimeout(timeoutId);
@@ -183,15 +219,15 @@ async function runHolderBehaviorAnalysis(mint) {
 
     // Pre-check swap cache to split into cached (immediate) vs uncached (needs Helius)
     const swapCacheEntries = await Promise.all(
-      eligible.map(h => cache.get(`hb-swaps:${h.address}`).then(v => [h, v]))
+      eligible.map(h => cache.get(`${HB_SWAPS_KEY_PREFIX}${h.address}`).then(v => [h, v]))
     );
-    const cachedHolders   = swapCacheEntries.filter(([, v]) => v != null).map(([h]) => h);
+    const cachedEntries   = swapCacheEntries.filter(([, v]) => v != null);
     const uncachedHolders = swapCacheEntries.filter(([, v]) => v == null).map(([h]) => h);
-    console.log(`[HB] ${mint.slice(0, 8)}: ${cachedHolders.length} cached, ${uncachedHolders.length} need Helius`);
+    console.log(`[HB] ${mint.slice(0, 8)}: ${cachedEntries.length} cached, ${uncachedHolders.length} need Helius`);
 
-    for (const holder of cachedHolders) {
-      accumulateResult(await processHolder(holder));
-    }
+    // The values just read are handed over, so nothing is fetched or parsed twice
+    const cachedRes = await Promise.all(cachedEntries.map(([h, v]) => processHolder(h, v)));
+    for (const r of cachedRes) accumulateResult(r);
 
     // BATCH=6: 6 wallets at once, up to 4 history calls each. The Helius queue
     // (rateLimiter.js) still caps the request rate and the calls in flight.
@@ -200,7 +236,7 @@ async function runHolderBehaviorAnalysis(mint) {
     for (let i = 0; i < uncachedHolders.length; i += BATCH) {
       if (i > 0) await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
       const batch = uncachedHolders.slice(i, i + BATCH);
-      const batchRes = await Promise.all(batch.map(processHolder));
+      const batchRes = await Promise.all(batch.map(h => processHolder(h)));
       for (const r of batchRes) accumulateResult(r);
     }
 
