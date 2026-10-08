@@ -908,6 +908,9 @@ const tokenDetail = {
         const burntEl = document.getElementById('holders-burnt');
         if (lockedEl) lockedEl.textContent = '...';
         if (burntEl) burntEl.textContent = '...';
+        // Poll for the worker result (the poll finishes when supply arrives). Already
+        // started above when metrics are pending; metrics can also be null here.
+        if (!(metrics && metrics.top5Pct == null)) this._pollForFullMetrics();
       } else {
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
@@ -1096,7 +1099,7 @@ const tokenDetail = {
         }
       }
 
-      if (metrics.holderCount && metrics.holderCount > 0) {
+      if (metrics && metrics.holderCount > 0) {
         const count = metrics.holderCount.toLocaleString();
         const el1 = document.getElementById('stat-holders');
         if (el1) el1.textContent = count;
