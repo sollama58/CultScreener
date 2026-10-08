@@ -591,17 +591,19 @@ const api = {
       return api.request(`/api/watchlist/${wallet}`);
     },
 
-    async add(wallet, tokenMint) {
+    // auth = { signature, signatureTimestamp } - the server requires a wallet
+    // signature over `HolDEX Watchlist: add|remove <mint> for <wallet> at <ts>`
+    async add(wallet, tokenMint, auth = {}) {
       return api.request('/api/watchlist', {
         method: 'POST',
-        body: JSON.stringify({ wallet, tokenMint })
+        body: JSON.stringify({ wallet, tokenMint, ...auth })
       });
     },
 
-    async remove(wallet, tokenMint) {
+    async remove(wallet, tokenMint, auth = {}) {
       return api.request('/api/watchlist', {
         method: 'DELETE',
-        body: JSON.stringify({ wallet, tokenMint })
+        body: JSON.stringify({ wallet, tokenMint, ...auth })
       });
     },
 
