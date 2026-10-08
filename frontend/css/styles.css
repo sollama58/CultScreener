@@ -5808,12 +5808,6 @@ textarea {
   display: inline-block;
 }
 
-/* Emoji icon in the performance share graphic */
-.psg-hammer {
-  font-size: 0.8rem;
-  line-height: 1;
-}
-
 /* Name + emoji badge on the same flex row inside table token cells */
 .table-name-line {
   display: flex;

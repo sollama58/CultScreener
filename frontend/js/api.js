@@ -231,8 +231,10 @@ const api = {
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       try {
+        // Only declare a JSON body when there is one: on a bodiless GET the
+        // non-safelisted Content-Type forces a CORS preflight per URL.
         const headers = {
-          'Content-Type': 'application/json',
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
           ...options.headers
         };
 
@@ -570,9 +572,16 @@ const api = {
       );
     },
 
-    async leaderboardConviction(params = {}) {
+    async leaderboardConviction(params = {}, options = {}) {
       const query = new URLSearchParams(params).toString();
       const cacheKey = `tokens:leaderboard:conviction:${query}`;
+      // fresh: bypass the client cache for this one request (and refill it),
+      // without evicting the entry the other home tabs share.
+      if (options.fresh === true) {
+        const data = await api.request(`/api/tokens/leaderboard/conviction?${query}`);
+        if (data) apiCache.set(cacheKey, data, apiCache.TTL.tokenList);
+        return data;
+      }
       return apiCache.getOrFetch(
         cacheKey,
         () => api.request(`/api/tokens/leaderboard/conviction?${query}`),
