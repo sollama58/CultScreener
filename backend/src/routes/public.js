@@ -94,8 +94,9 @@ router.get('/leaderboard/:mint', asyncHandler(async (req, res) => {
   const rankCacheKey = `api:token:rank:${mint}`;
   let rank = null;
 
+  // cache.get answers undefined (never null) on a miss
   const cachedRank = await cache.get(rankCacheKey);
-  if (cachedRank !== null) {
+  if (cachedRank != null) {
     rank = cachedRank;
   } else {
     rank = await db.getTokenConvictionRank(mint);
