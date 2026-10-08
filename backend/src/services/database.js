@@ -1649,15 +1649,16 @@ async function getApiKeyByWallet(ownerWallet) {
   return result.rows[0];
 }
 
-// Update last used timestamp and increment request count
-async function updateApiKeyUsage(keyHash) {
+// Update last used timestamp and add to the request count
+// (validateApiKey buffers usage and passes the count and last use time per flush)
+async function updateApiKeyUsage(keyHash, count = 1, lastUsedAt = null) {
   if (!pool) return;
 
   await pool.query(
     `UPDATE api_keys
-     SET last_used_at = NOW(), request_count = request_count + 1
+     SET last_used_at = COALESCE($3, NOW()), request_count = request_count + $2
      WHERE key_hash = $1`,
-    [keyHash]
+    [keyHash, count, lastUsedAt]
   );
 }
 
