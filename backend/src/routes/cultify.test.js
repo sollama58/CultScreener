@@ -127,3 +127,78 @@ describe('GET /holder-behavior/analyze/:mint', () => {
     assert.strictEqual(added.length, 1);
   });
 });
+
+// ── Burn claims ──────────────────────────────────────────────────────────
+
+const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
+const OTHER_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const BURN_SIG = '5'.repeat(88);
+
+// cultify_burns stand-in, shared by the db stubs and the pool the route queries
+const burns = new Map();
+function fakeBurnTx(wallet, uiAmount) {
+  return {
+    meta: { err: null },
+    transaction: { message: { instructions: [{
+      parsed: { type: 'burn', info: { mint: BURN_MINT, authority: wallet, amount: String(BigInt(uiAmount) * 1_000_000n) } }
+    }] } }
+  };
+}
+
+async function post(path, body) {
+  const resp = await fetch(baseUrl + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  return { status: resp.status, body: await resp.json() };
+}
+
+function useFakeBurnTable() {
+  burns.clear();
+  // Both racing requests got past the pre-check; the insert is what decides
+  db.isCultifySignatureUsed = async () => false;
+  db.recordCultifyBurn = async (wallet, mint, sig, amount, utility = 'cultify') => {
+    if (burns.has(sig)) { const e = new Error('duplicate key'); e.code = '23505'; throw e; }
+    burns.set(sig, { wallet_address: wallet, token_mint: mint, utility_type: utility });
+  };
+  Object.defineProperty(db, 'pool', {
+    configurable: true,
+    get: () => ({
+      query: async (sql, [sig]) => ({ rows: burns.has(sig) ? [burns.get(sig)] : [] })
+    })
+  });
+}
+
+const nacl = require('tweetnacl');
+const bs58 = require('bs58');
+const burner = nacl.sign.keyPair();
+const BURNER = bs58.encode(burner.publicKey);
+
+describe('POST /verify-burn duplicate signature', () => {
+  beforeEach(() => {
+    useFakeBurnTable();
+    solanaService.getTransaction = async () => fakeBurnTx(BURNER, 10_000);
+  });
+
+  test('a racing claim of the same burn for another mint is refused', async () => {
+    burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'cultify' });
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: OTHER_MINT, wallet: BURNER });
+    assert.strictEqual(r.status, 409);
+    assert.ok(!r.body.accessToken);
+    assert.ok(![...store.values()].some(v => v && v.mint === OTHER_MINT), 'no access token stored for the other mint');
+  });
+
+  test('a racing claim of the same burn for the other utility is refused', async () => {
+    burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'cultify' });
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER });
+    assert.strictEqual(r.status, 409);
+    assert.ok(!r.body.accessToken);
+  });
+
+  test('a retry of the recorded claim still gets a token', async () => {
+    burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'holder_behavior' });
+    const r = await post('/holder-behavior/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER });
+    assert.strictEqual(r.status, 200);
+    assert.ok(r.body.accessToken);
+    assert.strictEqual(store.get(`hb:access:${r.body.accessToken}`).mint, MINT);
+  });
+});

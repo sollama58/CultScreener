@@ -89,6 +89,20 @@ function generateAccessToken(walletAddress, mint) {
   return token;
 }
 
+// Whether the recorded burn for `signature` is this exact claim (same wallet, mint and utility).
+// A duplicate-signature insert is only an idempotent retry when it is; otherwise a second request
+// racing the first with the same burn could buy access to another mint (or the other utility).
+async function isSameBurnClaim(signature, walletAddress, mint, utilityType) {
+  if (!db.pool) return false;
+  const { rows } = await db.pool.query(
+    'SELECT wallet_address, token_mint, utility_type FROM cultify_burns WHERE burn_signature = $1',
+    [signature]
+  );
+  const row = rows[0];
+  return !!row && row.wallet_address === walletAddress && row.token_mint === mint &&
+    (row.utility_type || 'cultify') === utilityType;
+}
+
 // POST /api/cultify/verify-burn — verify a burn transaction on-chain
 // Returns a short-lived access token on success (prevents wallet spoofing)
 router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
@@ -135,8 +149,12 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   try {
     await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString());
   } catch (err) {
-    // Handle duplicate signature — idempotent: still grant access so retries work
+    // Handle duplicate signature — idempotent: still grant access so retries work, but only
+    // for the claim that was recorded
     if (err.code === '23505') { // PostgreSQL unique violation
+      if (!(await isSameBurnClaim(signature, walletAddress, mint, 'cultify'))) {
+        return res.status(409).json({ error: 'This burn transaction has already been claimed' });
+      }
       const accessToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
@@ -546,6 +564,9 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
     await db.recordCultifyBurn(walletAddress, mint, signature, rawAmount.toString(), 'holder_behavior');
   } catch (err) {
     if (err.code === '23505') {
+      if (!(await isSameBurnClaim(signature, walletAddress, mint, 'holder_behavior'))) {
+        return res.status(409).json({ error: 'This burn transaction has already been claimed' });
+      }
       const accessToken = await storeHBAccess(walletAddress, mint);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
