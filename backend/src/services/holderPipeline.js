@@ -75,6 +75,7 @@ const CONFIG = {
   snapshotLockTtl: 10 * 60 * 1000,
   snapshotFailCooldown: 5 * 60 * 1000,
   backfillLockTtl: 10 * 60 * 1000,                           // > backfillRunMs plus the slowest wallet
+  backfillFailCooldown: 60 * 1000,                           // > BullMQ's retry backoff
   staleSnapshotMs: 24 * 3_600_000,                           // routes ask for a fresh one past this
 };
 
@@ -528,8 +529,12 @@ async function runBackfill(mint) {
   let remaining = 0;
   let retryDelay = 2000;
   let slot = null;
+  let failed = false;
   const startedAt = Date.now();
   try {
+    // Hold the dedupe lock for this run, also when this is BullMQ retrying a
+    // failed run whose lock was kept only as a short cooldown
+    await cache.set(keys.backfillPending(mint), Date.now(), CONFIG.backfillLockTtl).catch(() => {});
     const snap = await store.getLatestSnapshot(mint);
     if (!snap) return { status: 'no-snapshot' };
     slot = await acquireBackfillSlot(mint);
@@ -569,8 +574,17 @@ async function runBackfill(mint) {
     };
 
     const runOne = async wallet => {
-      // Re-read the row: an earlier pass in this run may have saved a cursor for it
-      const pos = (await store.getPositions(mint, [wallet])).get(wallet);
+      // Re-read the row: an earlier pass in this run may have saved a cursor for it.
+      // A failed read must not reject the pool and leave its other slots running
+      // on after this run has released its lock.
+      let pos;
+      try {
+        pos = (await store.getPositions(mint, [wallet])).get(wallet);
+      } catch (err) {
+        stats.errors++;
+        console.warn(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} could not read its position:`, err.message);
+        return null;
+      }
       if (!pos || pos.acquired_source !== 'pending') return true;
       const t0 = Date.now();
       try {
@@ -648,9 +662,15 @@ async function runBackfill(mint) {
       }
     }
     return { status: 'ok', settled: stats.settled, remaining, ms: elapsed };
+  } catch (err) {
+    // BullMQ retries the job: keep the lock as a cooldown so an API poll does
+    // not queue a second run alongside the retry
+    failed = true;
+    await cache.set(keys.backfillPending(mint), Date.now(), CONFIG.backfillFailCooldown).catch(() => {});
+    throw err;
   } finally {
     await releaseBackfillSlot(slot, mint);
-    await cache.delete(keys.backfillPending(mint)).catch(() => {});
+    if (!failed) await cache.delete(keys.backfillPending(mint)).catch(() => {});
     if (remaining > 0) await ensureBackfill(mint, { delay: retryDelay }).catch(() => {});
   }
 }

@@ -530,6 +530,25 @@ if (!DB_URL) {
       assert.strictEqual(await cache.get('holder-backfill-slot:0'), undefined);
     });
 
+    test('a backfill run that fails keeps its lock for the retry, so a poll queues no second run', async () => {
+      const realEntries = store.getSnapshotEntries;
+      store.getSnapshotEntries = async () => { throw new Error('canceling statement due to statement timeout'); };
+      const before = queued.length;
+      try {
+        await assert.rejects(pipeline.runBackfill(MINT), /statement timeout/);
+        assert.ok(await cache.get(`holder-backfill-pending:${MINT}`), 'lock kept as a cooldown');
+        assert.strictEqual(await pipeline.ensureBackfill(MINT), false);
+        assert.strictEqual(queued.length, before);
+        assert.strictEqual(await cache.get('holder-backfill-slot:0'), undefined, 'slot released');
+      } finally {
+        store.getSnapshotEntries = realEntries;
+      }
+      // the retry runs and releases the lock
+      const r = await pipeline.runBackfill(MINT);
+      assert.strictEqual(r.status, 'ok');
+      assert.strictEqual(await cache.get(`holder-backfill-pending:${MINT}`), undefined);
+    });
+
     test('backfill order interleaves the strata so partial results cover all of them', () => {
       const snap = { sample: [
         { wallet: 't1', stratum: 'top' }, { wallet: 't2', stratum: 'top' },
