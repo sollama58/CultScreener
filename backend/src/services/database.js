@@ -2515,14 +2515,19 @@ async function getCallsByWallet(callerWallet, limit = 50, offset = 0) {
 // ==========================================
 
 // Delete all user data associated with a wallet (GDPR right to erasure)
+const GDPR_DELETE_TIMEOUT_MS = 120000;
+
 async function deleteUserData(walletAddress) {
   if (!pool) return null;
 
   const client = await pool.connect();
+  // The pool's client-side query_timeout (30s) would reject a statement long before the
+  // server-side limit below, so every statement here carries the same 2-minute budget.
+  const query = (text, values) => client.query({ text, values, query_timeout: GDPR_DELETE_TIMEOUT_MS });
   try {
-    await client.query('BEGIN');
+    await query('BEGIN');
     // Set a transaction-level timeout for this long-running GDPR deletion
-    await client.query('SET LOCAL statement_timeout = 120000'); // 2 minutes
+    await query(`SET LOCAL statement_timeout = ${GDPR_DELETE_TIMEOUT_MS}`); // 2 minutes
 
     // Count data before deletion for reporting
     const counts = {
@@ -2533,52 +2538,52 @@ async function deleteUserData(walletAddress) {
     };
 
     // Get counts
-    const watchlistCount = await client.query(
+    const watchlistCount = await query(
       'SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1',
       [walletAddress]
     );
     counts.watchlist = parseInt(watchlistCount.rows[0].count);
 
-    const votesCount = await client.query(
+    const votesCount = await query(
       'SELECT COUNT(*) FROM votes WHERE voter_wallet = $1',
       [walletAddress]
     );
     counts.votes = parseInt(votesCount.rows[0].count);
 
-    const submissionsCount = await client.query(
+    const submissionsCount = await query(
       'SELECT COUNT(*) FROM submissions WHERE submitter_wallet = $1',
       [walletAddress]
     );
     counts.submissions = parseInt(submissionsCount.rows[0].count);
 
-    const apiKeysCount = await client.query(
+    const apiKeysCount = await query(
       'SELECT COUNT(*) FROM api_keys WHERE owner_wallet = $1',
       [walletAddress]
     );
     counts.apiKeys = parseInt(apiKeysCount.rows[0].count);
 
     // Delete watchlist entries
-    await client.query(
+    await query(
       'DELETE FROM watchlist WHERE wallet_address = $1',
       [walletAddress]
     );
 
     // Delete votes (and update tallies)
     // Get submission IDs for tally updates
-    const voteSubmissions = await client.query(
+    const voteSubmissions = await query(
       'SELECT DISTINCT submission_id FROM votes WHERE voter_wallet = $1',
       [walletAddress]
     );
     const submissionIds = voteSubmissions.rows.map(r => r.submission_id);
 
-    await client.query(
+    await query(
       'DELETE FROM votes WHERE voter_wallet = $1',
       [walletAddress]
     );
 
     // Update vote tallies for affected submissions in bulk
     if (submissionIds.length > 0) {
-      await client.query(
+      await query(
         `UPDATE vote_tallies vt SET
            upvotes = COALESCE(s.up_count, 0),
            downvotes = COALESCE(s.down_count, 0),
@@ -2602,37 +2607,37 @@ async function deleteUserData(walletAddress) {
 
     // Anonymize submissions (keep content but remove wallet association)
     // We don't delete submissions as they may be approved community content
-    await client.query(
+    await query(
       'UPDATE submissions SET submitter_wallet = NULL WHERE submitter_wallet = $1',
       [walletAddress]
     );
 
     // Delete API keys
-    await client.query(
+    await query(
       'DELETE FROM api_keys WHERE owner_wallet = $1',
       [walletAddress]
     );
 
     // Delete token calls
-    const callsCount = await client.query(
+    const callsCount = await query(
       'SELECT COUNT(*) FROM token_calls WHERE caller_wallet = $1',
       [walletAddress]
     );
     counts.tokenCalls = parseInt(callsCount.rows[0].count);
 
-    await client.query(
+    await query(
       'DELETE FROM token_calls WHERE caller_wallet = $1',
       [walletAddress]
     );
 
     // Delete sentiment votes and update tallies
-    const sentimentTokens = await client.query(
+    const sentimentTokens = await query(
       'SELECT DISTINCT token_mint FROM sentiment_votes WHERE voter_wallet = $1',
       [walletAddress]
     );
     counts.sentimentVotes = sentimentTokens.rows.length;
 
-    await client.query(
+    await query(
       'DELETE FROM sentiment_votes WHERE voter_wallet = $1',
       [walletAddress]
     );
@@ -2640,7 +2645,7 @@ async function deleteUserData(walletAddress) {
     // Recalculate sentiment tallies for affected tokens (batch query)
     if (sentimentTokens.rows.length > 0) {
       const affectedMints = sentimentTokens.rows.map(r => r.token_mint);
-      await client.query(
+      await query(
         `UPDATE sentiment_tallies st SET
            bullish = COALESCE(sub.bullish, 0),
            bearish = COALESCE(sub.bearish, 0),
@@ -2658,7 +2663,7 @@ async function deleteUserData(walletAddress) {
       );
     }
 
-    await client.query('COMMIT');
+    await query('COMMIT');
 
     // Invalidate admin stats cache after data deletion
     invalidateAdminStatsCache();
@@ -2669,7 +2674,7 @@ async function deleteUserData(walletAddress) {
       message: 'All user data has been deleted or anonymized'
     };
   } catch (error) {
-    await client.query('ROLLBACK');
+    await query('ROLLBACK');
     throw error;
   } finally {
     client.release();

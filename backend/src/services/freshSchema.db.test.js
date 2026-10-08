@@ -154,4 +154,39 @@ if (!DB_URL) {
       assert.ok(await db.getDeviceSession('fresh-session'));
     });
   });
+
+  describe('GDPR deletion', () => {
+    test('every statement gets the 2-minute budget, not the pool\'s 30-second client timeout', async () => {
+      const WALLET = 'FreshGdpr1111111111111111111111111111111111';
+      await db.pool.query('INSERT INTO watchlist (wallet_address, token_mint) VALUES ($1, $2)',
+        [WALLET, 'FreshGdprMint111111111111111111111111111111']);
+
+      const seen = [];
+      const connect = db.pool.connect;
+      db.pool.connect = async function () {
+        const client = await connect.call(this);
+        const real = client.query;
+        client.query = function (config, values) {
+          seen.push(typeof config === 'object' ? config.query_timeout : undefined);
+          return real.call(this, config, values);
+        };
+        const release = client.release;
+        client.release = function (...args) {
+          client.query = real;
+          client.release = release;
+          return release.apply(this, args);
+        };
+        return client;
+      };
+      let result;
+      try {
+        result = await db.deleteUserData(WALLET);
+      } finally {
+        db.pool.connect = connect;
+      }
+      assert.strictEqual(result.deleted.watchlist, 1);
+      assert.ok(seen.length > 5);
+      assert.deepStrictEqual(seen.filter(t => t !== 120000), []);
+    });
+  });
 }
