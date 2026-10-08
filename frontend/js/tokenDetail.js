@@ -1975,6 +1975,10 @@ const tokenDetail = {
     if (!container) return;
     const proxied = utils.proxyImageUrl(url);
     if (!proxied) return;
+    // The backend payload and DexScreener usually name the same banner; load it once
+    const bannerKey = `${this.mint}|${proxied}`;
+    if (this._bannerKey === bannerKey) return;
+    this._bannerKey = bannerKey;
     const img = new Image();
     img.onload = () => {
       container.innerHTML = `<img src="${utils.escapeHtml(img.src)}" alt="Token banner" class="token-banner-img" loading="lazy">`;
@@ -1989,6 +1993,7 @@ const tokenDetail = {
         setTimeout(() => { img.src = `${proxied}&retry=1`; }, 1500 + Math.random() * 2500);
         return;
       }
+      if (this._bannerKey === bannerKey) this._bannerKey = null;
       container.style.display = 'none';
     };
     img.src = proxied;
@@ -2007,7 +2012,12 @@ const tokenDetail = {
     if (website) links.push(`<a href="${esc(website)}" target="_blank" rel="noopener" class="social-chip"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Website</a>`);
     if (tiktok) links.push(`<a href="${esc(tiktok)}" target="_blank" rel="noopener" class="social-chip">TikTok</a>`);
     if (links.length > 0) {
-      container.innerHTML = links.join('');
+      // Skip the rebuild when the same chips are already shown for this token
+      const html = links.join('');
+      const socialsKey = `${this.mint}|${html}`;
+      if (this._socialsKey === socialsKey) return;
+      this._socialsKey = socialsKey;
+      container.innerHTML = html;
       container.style.display = '';
     }
   },
