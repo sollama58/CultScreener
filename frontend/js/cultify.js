@@ -336,14 +336,23 @@
   // Mint whose burn gate is showing. One page-level walletConnected listener re-renders it:
   // per-render listeners piled up, and together with the Connect button's own re-render they
   // bound two burn handlers to one button (one click, two burn prompts).
+  // It also re-renders a connected gate when the account changes (Phantom accountChanged
+  // dispatches walletConnected), so balance and token account match the new wallet,
+  // but never over results or an in-flight burn.
   let burnGateMint = null;
+  let burnGateAddress = null; // wallet address the showing gate was rendered for
   window.addEventListener('walletConnected', () => {
-    if (burnGateMint && document.getElementById('cultify-connect-btn')) showBurnGate(burnGateMint);
+    if (!burnGateMint) return;
+    const accountChanged = document.getElementById('cultify-burn-btn') && !burnInProgress &&
+      typeof wallet !== 'undefined' && wallet.address !== burnGateAddress;
+    if (document.getElementById('cultify-connect-btn') || accountChanged) showBurnGate(burnGateMint);
   });
 
   async function showBurnGate(mint) {
     burnGateMint = mint;
     const connected = typeof wallet !== 'undefined' && wallet.connected;
+    const gateAddress = connected ? wallet.address : null;
+    burnGateAddress = gateAddress;
 
     let html = '<div class="cultify-gate">';
     html += '<h3>Burn Required</h3>';
@@ -370,6 +379,7 @@
       const balEl = document.getElementById('cultify-balance');
       const burnBtn = document.getElementById('cultify-burn-btn');
       if (!balEl || !burnBtn) return; // user navigated away
+      if (burnGateAddress !== gateAddress) return; // gate re-rendered for another account meanwhile
 
       const required = BURN_AMOUNT * (10 ** BURN_DECIMALS);
 
