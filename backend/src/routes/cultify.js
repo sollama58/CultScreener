@@ -328,6 +328,11 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
       if (!job) {
         await cache.delete(pendingKey);
       }
+    } else {
+      // Enrichment is already queued (by the worker or another request): cache the fast
+      // result too, so polls in that window are served from cache instead of repeating the
+      // RPCs. setNX never replaces a result the worker has written.
+      await cache.setNX(cacheKey, fastResult, 120000);
     }
 
     res.json(fastResult);
