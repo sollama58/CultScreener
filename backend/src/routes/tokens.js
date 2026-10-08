@@ -1784,7 +1784,10 @@ router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async
 // Uses getOrSet for automatic caching with stampede prevention
 router.get('/:mint/pools', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
-  const { limit = 10 } = req.query;
+  // The cache key is per mint only, so always cache the full list (one GeckoTerminal page,
+  // 20 pools) and apply the caller's limit after the read: ?limit=abc|0|1 must not shrink
+  // the list everyone else is served.
+  const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 10), POOLS_PAGE_SIZE);
 
   const cacheKey = keys.pools(mint);
 
@@ -1792,10 +1795,10 @@ router.get('/:mint/pools', validateMint, requireAllowedToken, asyncHandler(async
     // Use getOrSet for caching with stampede prevention
     // Pools data cached for 3 minutes - pool info rarely changes
     const pools = await cache.getOrSet(cacheKey, async () => {
-      return geckoService.getTokenPools(mint, { limit: parseInt(limit) });
+      return geckoService.getTokenPools(mint, { limit: POOLS_PAGE_SIZE });
     }, TTL.POOLS);
 
-    if (!res.headersSent) res.json(pools);
+    if (!res.headersSent) res.json(Array.isArray(pools) ? pools.slice(0, limit) : pools);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
     // Privacy: Don't log error details
