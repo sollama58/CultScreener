@@ -122,9 +122,10 @@ async function addAnalyticsJob(jobName, data = {}, options = {}) {
 
   // One holder-count scan per mint at a time: the token page, /holders and
   // cultify all queue it on a cache miss. Removed once done, so the id only
-  // dedupes waiting/active jobs and never hides a later request.
+  // dedupes waiting/active jobs and never hides a later request. (BullMQ rejects
+  // custom ids with a single ':', hence the '-'.)
   if (jobName === 'fetch-holder-counts-batch' && !options.jobId && Array.isArray(data.mints) && data.mints.length === 1) {
-    options = { ...options, jobId: `holder-count:${data.mints[0]}`, removeOnComplete: true, removeOnFail: true };
+    options = { ...options, jobId: `holder-count-${data.mints[0]}`, removeOnComplete: true, removeOnFail: true };
   }
 
   try {
