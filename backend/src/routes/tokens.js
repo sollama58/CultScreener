@@ -597,30 +597,37 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
 
     // Batch fetch uncached tokens
     if (uncachedMints.length > 0) {
-      // Fetch from Helius and local DB in parallel (independent sources)
-      // Helius has priority; DB is fallback for mints Helius doesn't cover
-      const [heliusData, dbRows] = await Promise.all([
-        solanaService.isHeliusConfigured()
-          ? solanaService.getTokenMetadataBatch(uncachedMints).catch(catchUnlessOverloaded({}))
-          : Promise.resolve({}),
-        db.getTokensBatch(uncachedMints).catch(() => [])
-      ]);
+      // Local DB first: curated and previously seen tokens have a row with metadata and the
+      // worker's market data. Helius (getAssetBatch, credits and a shared queue) is asked
+      // only for mints the DB has no usable name for.
+      const dbRows = await db.getTokensBatch(uncachedMints).catch(() => []);
 
+      const num = v => (v != null && v !== '' && Number.isFinite(parseFloat(v)) ? parseFloat(v) : null);
       const localTokens = {};
       if (dbRows) {
         for (const local of dbRows) {
-          if (local && local.mint_address && !heliusData[local.mint_address]) {
+          if (local && local.mint_address) {
             localTokens[local.mint_address] = {
               mintAddress: local.mint_address,
               address: local.mint_address,
               name: local.name,
               symbol: local.symbol,
               decimals: local.decimals,
-              logoUri: local.logo_uri
+              logoUri: local.logo_uri,
+              logoURI: local.logo_uri || null,
+              price: num(local.price) || 0,
+              priceChange24h: num(local.price_change_24h),
+              volume24h: num(local.volume_24h) || 0,
+              marketCap: num(local.market_cap)
             };
           }
         }
       }
+      const hasName = t => !!(t?.name && !PLACEHOLDER_NAMES.has(t.name.toLowerCase()));
+      const needHelius = uncachedMints.filter(m => !hasName(localTokens[m]));
+      const heliusData = needHelius.length > 0 && solanaService.isHeliusConfigured()
+        ? await solanaService.getTokenMetadataBatch(needHelius).catch(catchUnlessOverloaded({}))
+        : {};
 
       // Priority 3: Try GeckoTerminal batch (market data) for mints still unresolved
       let geckoData = {};
@@ -640,11 +647,13 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
         const mintShort = `${mint.slice(0, 4)}...${mint.slice(-4)}`;
         const mintSymbol = mint.slice(0, 5).toUpperCase();
 
-        const heliusHasName = heliusData[mint]?.name && !PLACEHOLDER_NAMES.has(heliusData[mint].name.toLowerCase());
-        const localHasName = localTokens[mint]?.name && !PLACEHOLDER_NAMES.has(localTokens[mint].name.toLowerCase());
-        const geckoHasName = geckoData[mint]?.name && !PLACEHOLDER_NAMES.has(geckoData[mint].name.toLowerCase());
+        const heliusHasName = hasName(heliusData[mint]);
+        const localHasName = hasName(localTokens[mint]);
+        const geckoHasName = hasName(geckoData[mint]);
 
-        if (heliusHasName) {
+        if (localHasName) {
+          tokenData = localTokens[mint];
+        } else if (heliusHasName) {
           const h = heliusData[mint];
           tokenData = {
             mintAddress: mint,
@@ -659,8 +668,6 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
             volume24h: 0,
             marketCap: 0
           };
-        } else if (localHasName) {
-          tokenData = localTokens[mint];
         } else if (geckoHasName) {
           const g = geckoData[mint];
           tokenData = {
