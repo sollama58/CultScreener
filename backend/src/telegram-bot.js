@@ -211,7 +211,7 @@ function startBot(token) {
       console.error('[TelegramBot] /TryConviction error:', err.message);
       const errText = '❌ Failed to fetch conviction data\\. Please try again in a moment\\.';
       await sendOrEdit(chatId, errText, loadingMsg).catch(() =>
-        bot.sendMessage(chatId, '❌ Failed to fetch conviction data. Please try again.')
+        bot.sendMessage(chatId, '❌ Failed to fetch conviction data. Please try again.').catch(() => {})
       );
     }
   });

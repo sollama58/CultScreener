@@ -1598,7 +1598,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         // Price: prefer GeckoTerminal (more accurate), fallback to Helius
         price: usdPrice,
         // Market data: GeckoTerminal only (Helius doesn't provide these)
-        priceChange24h: gecko.priceChange24h ?? jup.priceChange24h ?? 0,
+        priceChange24h: gecko.priceChange24h ?? jup.priceChange24h ?? null,
         volume24h: gecko.volume24h || 0,
         liquidity: gecko.liquidity || 0,
         // A quote-side pool publishes no FDV for the token; fall back to price x supply

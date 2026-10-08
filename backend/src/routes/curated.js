@@ -112,6 +112,8 @@ router.delete('/:mint', strictLimiter, requireAdmin, asyncHandler(async (req, re
     await cache.delete(`holders:${mint}`);
     await cache.delete(`batch:${mint}`);
     await cache.clearPattern(`*${mint}*`);
+    await cache.clearPattern('leaderboard:conviction:*');
+    await cache.delete('king-of-pill:featured');
     console.log(`[Curated] Cache cleared for ${mint.slice(0, 8)}...`);
   } catch (cacheErr) {
     console.error(`[Curated] Cache clear failed:`, cacheErr.message);
