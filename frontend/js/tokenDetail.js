@@ -977,6 +977,16 @@ const tokenDetail = {
       if (holders.length > 0) this._loadDiamondHands();
     } catch (error) {
       console.warn('[TokenDetail] Holder analytics failed:', error.message);
+      // 503 rpc_unavailable, timeouts and other errors land here (api.request throws on
+      // non-2xx) — replace the skeleton rows and shimmer with a retry message
+      if (section) section.style.display = '';
+      const tbody = document.getElementById('holders-tbody');
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="6" class="holders-empty">Holder data temporarily unavailable. Click refresh to retry.</td></tr>';
+      }
+      const avgHoldTimeEl = document.getElementById('holders-avg-hold-time');
+      if (avgHoldTimeEl && avgHoldTimeEl.textContent === '...') avgHoldTimeEl.textContent = '--';
+      this._showDiamondHandsUnavailable();
     } finally {
       if (refreshBtn) refreshBtn.classList.remove('spinning');
     }

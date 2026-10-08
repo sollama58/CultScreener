@@ -285,8 +285,10 @@ const api = {
         if (error.status >= 400 && error.status < 500 && error.status !== 429) {
           break;
         }
-        // Global 429/503 awareness: suppress background fetches for the retry-after window
-        if (error.status === 429 || error.status === 503) {
+        // Global 429/503 awareness: suppress background fetches for the retry-after window.
+        // A 503 'rpc_unavailable' (holders endpoint) means an upstream RPC failed, not that
+        // our server is overloaded — the caller shows its own retry message.
+        if ((error.status === 429 || error.status === 503) && error.message !== 'rpc_unavailable') {
           const wasAlreadyLimited = isRateLimited();
           const backoff = (error.retryAfter || 60) * 1000;
           _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + backoff);
