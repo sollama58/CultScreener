@@ -916,11 +916,12 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
  * Page through every token account of a mint (Helius DAS getTokenAccounts, 1000
  * per page). Used by the holder snapshot job. Throws on any page error so a
  * half-read holder list is never mistaken for a full one; hitting maxPages is
- * the only way to get complete=false.
+ * the only way to get complete=false. With partial=true a page that keeps
+ * failing ends the read there instead (complete=false, the pages before it).
  *
  * @returns {Promise<{accounts: Array<{owner, address, amount}>, pages: number, complete: boolean}>}
  */
-async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1, accounts: already = [], concurrency = DAS_PAGE_CONCURRENCY } = {}) {
+async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1, accounts: already = [], concurrency = DAS_PAGE_CONCURRENCY, partial = false } = {}) {
   if (!HELIUS_DAS_URL) throw new Error('Helius DAS not configured');
   // startPage/accounts continue a read whose earlier pages the caller already has
   const accounts = already.slice();
@@ -965,22 +966,43 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
   };
 
   // Pages are numbered, so several can be read at once. A big token's snapshot
-  // used to read up to 250 pages one after another. Past the last page a read
-  // returns nothing, so the most a wave wastes is concurrency-1 empty pages.
-  let page = startPage;
+  // used to read up to 250 pages one after another. A sliding window keeps
+  // `concurrency` pages in flight: a slot starts the next page as soon as its
+  // last one is back, so one slow or retrying page doesn't idle the others.
+  // Past the last page a read returns nothing, so the most it wastes is
+  // concurrency-1 empty pages. Pages are appended in order afterwards.
+  const got = new Map(); // page -> batch
+  const failed = new Map(); // page -> error
+  let next = startPage;
+  let shortPage = Infinity; // first page seen with fewer than 1000 accounts
+  const slot = async () => {
+    while (failed.size === 0) {
+      const p = next;
+      if (p > maxPages || p > shortPage) return;
+      next++;
+      try {
+        const batch = await fetchPage(p);
+        got.set(p, batch);
+        if (batch.length < 1000 && p < shortPage) shortPage = p;
+      } catch (err) {
+        failed.set(p, err);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, slot));
+
   let lastPage = Math.max(startPage - 1, 0);
   let complete = false;
-  while (page <= maxPages && !complete) {
-    const wave = [];
-    for (let p = page; p < page + Math.max(1, concurrency) && p <= maxPages; p++) wave.push(p);
-    const batches = await Promise.all(wave.map(fetchPage));
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
-      lastPage = wave[i];
-      if (batch.length < 1000) { complete = true; break; }
+  for (let p = startPage; p <= maxPages && (got.has(p) || failed.has(p)); p++) {
+    if (failed.has(p)) {
+      // partial: the pages before the failed one, as a capped read
+      if (partial) break;
+      throw failed.get(p);
     }
-    page += wave.length;
+    const batch = got.get(p);
+    for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
+    lastPage = p;
+    if (batch.length < 1000) { complete = true; break; }
   }
   return { accounts, pages: lastPage, complete };
 }

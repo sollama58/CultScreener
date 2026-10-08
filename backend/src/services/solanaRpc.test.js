@@ -70,7 +70,10 @@ describe('rpcCall', () => {
       assert.strictEqual(r.accounts.length, 5010);
       assert.strictEqual(r.accounts[0].owner, 'o1_0', 'pages kept in order');
       assert.strictEqual(r.accounts[5009].owner, 'o6_9');
-      assert.deepStrictEqual(calls.map(c => c.params.page), [1, 2, 3, 4, 5, 6, 7, 8], 'two waves of 4');
+      const read = calls.map(c => c.params.page).sort((a, b) => a - b);
+      assert.deepStrictEqual(read.slice(0, 6), [1, 2, 3, 4, 5, 6], 'every page up to the last one');
+      assert.strictEqual(new Set(read).size, read.length, 'no page read twice');
+      assert.ok(read[read.length - 1] <= 6 + 3, 'at most concurrency-1 pages past the last one');
       assert.ok(maxInFlight > 1, 'pages were read at the same time');
 
       calls = [];
@@ -78,6 +81,51 @@ describe('rpcCall', () => {
       assert.strictEqual(capped.complete, false);
       assert.strictEqual(capped.pages, 3);
       assert.deepStrictEqual(calls.map(c => c.params.page), [1, 2, 3], 'never past maxPages');
+    } finally {
+      axios.post = realPost2;
+    }
+  });
+
+  test('getAllTokenAccounts keeps the other slots busy while one page is slow', async () => {
+    const startedWhileSlow = [];
+    let page1Done = false;
+    const realPost2 = axios.post;
+    axios.post = async (url, body) => {
+      const page = body.params.page;
+      if (!page1Done) startedWhileSlow.push(page);
+      // page 1 is slow; the others answer quickly
+      await new Promise(r => setTimeout(r, page === 1 ? 400 : 30));
+      if (page === 1) page1Done = true;
+      const n = page <= 7 ? 1000 : 0;
+      return { data: { result: { token_accounts: Array.from({ length: n }, (_, i) => ({ owner: `o${page}_${i}`, address: `a${page}_${i}`, amount: '1' })) } } };
+    };
+    try {
+      const r = await solana.getAllTokenAccounts('Mint', { maxPages: 250, concurrency: 4 });
+      assert.strictEqual(r.complete, true);
+      assert.strictEqual(r.pages, 8);
+      assert.strictEqual(r.accounts.length, 7000);
+      assert.strictEqual(r.accounts[0].owner, 'o1_0', 'pages kept in order');
+      assert.strictEqual(r.accounts[6999].owner, 'o7_999');
+      // pages past the first wave started before slow page 1 came back
+      assert.ok(startedWhileSlow.includes(8), 'read on past the first 4 pages while page 1 was slow');
+    } finally {
+      axios.post = realPost2;
+    }
+  });
+
+  test('getAllTokenAccounts with partial=true returns the pages before one that keeps failing', async () => {
+    const realPost2 = axios.post;
+    axios.post = async (url, body) => {
+      const page = body.params.page;
+      if (page === 3) return { data: { error: { code: -32602, message: 'Invalid params' } } };
+      return { data: { result: { token_accounts: Array.from({ length: 1000 }, (_, i) => ({ owner: `o${page}_${i}`, address: `a${page}_${i}`, amount: '1' })) } } };
+    };
+    try {
+      const r = await solana.getAllTokenAccounts('Mint', { maxPages: 10, concurrency: 4, partial: true });
+      assert.strictEqual(r.complete, false);
+      assert.strictEqual(r.pages, 2);
+      assert.strictEqual(r.accounts.length, 2000);
+      await assert.rejects(solana.getAllTokenAccounts('Mint', { maxPages: 10, concurrency: 4 }), /DAS page 3/);
     } finally {
       axios.post = realPost2;
     }
