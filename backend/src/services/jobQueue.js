@@ -215,6 +215,10 @@ const VIEW_BUFFER_MAX_SIZE = parseInt(process.env.VIEW_BUFFER_MAX_SIZE) || 50000
 const VIEW_FLUSH_INTERVAL_MS = parseInt(process.env.VIEW_FLUSH_INTERVAL_MS) || 5000;
 let viewFlushScheduled = false;
 let viewFlushTimer = null;
+// Once queued, the counts exist only in this job, and the worker throws while the
+// DB is not ready (its recovery check runs every 30s). The default 3 attempts
+// (1s, 2s) dropped them on any blip; this rides out ~20 minutes.
+const VIEW_COUNT_JOB_OPTIONS = { attempts: 10, backoff: { type: 'exponential', delay: 5000 } };
 let isFlushing = false; // Mutex to prevent concurrent flushes
 
 // Import db lazily to avoid circular dependency
@@ -285,7 +289,7 @@ async function flushViewCounts() {
     // Try job queue first if available
     if (isInitialized) {
       try {
-        const job = await addAnalyticsJob('batch-view-counts', { updates: viewUpdates });
+        const job = await addAnalyticsJob('batch-view-counts', { updates: viewUpdates }, VIEW_COUNT_JOB_OPTIONS);
         if (job) {
           console.log(`[JobQueue] Queued ${viewUpdates.length} view count updates`);
           return;
