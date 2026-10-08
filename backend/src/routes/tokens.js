@@ -1509,9 +1509,13 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       await cache.delete(cacheKey);
     }
 
+    // A full detail entry is served from the read above (requireFresh is off, so
+    // getOrSetWithFreshness would only read and parse the same value again).
+    const hit = existing && existing.value && existing.value.submissions ? existing.value : null;
+
     // Use getOrSetWithFreshness for stampede prevention
     // If multiple requests come in for the same token, they share one API fetch
-    const result = await cache.getOrSetWithFreshness(cacheKey, async () => {
+    const result = hit || await cache.getOrSetWithFreshness(cacheKey, async () => {
       // Fetch core data in parallel — holder count uses cache-first to avoid
       // blocking on paginated Helius DAS calls (which can take 2-30s for popular tokens).
       let geckoTimedOut = false;
@@ -1535,11 +1539,14 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
           return null;
         }),
         db.getApprovedSubmissions(mint).catch(() => []),
-        holderCounts.getDisplayCounts([mint]).then(c => c[mint] || null).catch(() => null)
+        holderCounts.getDisplayCounts([mint]).then(c => c[mint] || null).catch(() => null),
+        // View count and curated data: independent of the above, so fetched alongside them
+        db.getTokenViews(mint).catch(() => null),
+        db.getCuratedToken(mint).catch(() => null)
       ];
 
       const results = await Promise.all(fetchPromises);
-      const [heliusMetadata, geckoOverview, submissions, cachedHolders] = results;
+      const [heliusMetadata, geckoOverview, submissions, cachedHolders, dbViews, curated] = results;
 
       // Use cached holder count; if missing, queue a background fetch via worker
       let holders = (typeof cachedHolders === 'number' && cachedHolders > 0) ? cachedHolders : null;
@@ -1617,7 +1624,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
 
       // Include view count so the frontend can display it immediately
       try {
-        const dbViews = await db.getTokenViews(mint);
+        if (dbViews == null) throw new Error('view count unavailable');
         const buffered = jobQueue.getBufferedViewCounts([mint]);
         tokenResult.views = dbViews + (buffered[mint] || 0);
       } catch {
@@ -1625,7 +1632,6 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       }
 
       // Include curated token DexScreener data (banner + socials) and mcap tracking if available
-      const curated = await db.getCuratedToken(mint).catch(() => null);
       if (curated) {
         if (curated.bannerUrl) tokenResult.bannerUrl = curated.bannerUrl;
         if (curated.socials && Object.keys(curated.socials).length > 0) {
