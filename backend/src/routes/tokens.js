@@ -12,6 +12,7 @@ const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
 const priceChanges = require('../services/priceChanges');
 const axios = require('axios');
+const crypto = require('crypto');
 const { rateLimitedRequest } = require('../services/rateLimiter');
 
 // Require database for all token routes
@@ -2355,7 +2356,21 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: true });
     }
 
+    // A computed result is cached for the diamond-hands result TTL, tagged with the wallet
+    // list it was computed for (the list changes when classification or a new snapshot
+    // lands); holderPipeline drops the key on a new snapshot or a finished backfill.
+    const holdTimesKey = `hold-times:${mint}`;
+    const walletsHash = crypto.createHash('sha1').update(wallets.join(',')).digest('hex');
+    const cachedHoldTimes = await cache.get(holdTimesKey).catch(() => undefined);
+    if (cachedHoldTimes && cachedHoldTimes.walletsHash === walletsHash) {
+      const { holdTimes, floors } = cachedHoldTimes;
+      return res.json({ holdTimes, tokenHoldTimes: holdTimes, floors, computed: true });
+    }
+
     const { holdTimes, floors, computed } = await holderPipeline.getHoldTimes(mint, wallets);
+    if (computed) {
+      await cache.set(holdTimesKey, { walletsHash, holdTimes, floors }, holderPipeline.CONFIG.resultTtl).catch(() => {});
+    }
     // holdTimes and tokenHoldTimes are the same thing (time holding this token);
     // both keys are kept for the frontend. floors: wallets whose time is a lower
     // bound (the history read stopped before the streak start).
@@ -2378,7 +2393,14 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
     if (!solanaService.isHeliusConfigured()) {
       return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
     }
+    // While the backfill runs every poll would re-read the snapshot and positions; an
+    // in-progress result is shared for 5s. Its own key: cultify treats any hit on
+    // diamond-hands:<mint> as the final result.
+    const partialKey = `diamond-hands-partial:${mint}`;
+    const partial = await cache.get(partialKey).catch(() => undefined);
+    if (partial) return res.json(partial);
     const result = await holderPipeline.getDiamondHands(mint);
+    if (result && !result.computed) await cache.set(partialKey, result, 5000).catch(() => {});
     if (!res.headersSent) res.json(result);
   } catch (error) {
     console.error('[DiamondHands] Error:', error.message);
