@@ -549,6 +549,10 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
   // panel-added tokens sat blank on the home page for up to ten minutes) and no tiktok social.
   const { addCuratedTokenFully } = require('../services/curatedTokens');
   const { token } = await addCuratedTokenFully(mintAddress);
+  // The home table lists curated tokens only: show the new one now, not when the cache expires
+  await cache.clearPattern('leaderboard:conviction:*').catch(err => {
+    console.warn('[Admin] add curated: failed to bust leaderboard cache:', err.message);
+  });
   res.status(201).json({ success: true, token });
 }));
 
@@ -572,6 +576,10 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
     await cache.delete(`holders:${mint}`);
     await cache.delete(`batch:${mint}`);
     await cache.clearPattern(`*${mint}*`);
+    // Leaderboard keys do not contain the mint; without this the home table keeps listing a
+    // token that now answers 403 NOT_CURATED until the entry expires
+    await cache.clearPattern('leaderboard:conviction:*');
+    await cache.delete('king-of-pill:featured');
     console.log(`[Admin] Cache cleared for ${mint.slice(0, 8)}...`);
   } catch (cacheErr) {
     console.error(`[Admin] Cache clear failed:`, cacheErr.message);
