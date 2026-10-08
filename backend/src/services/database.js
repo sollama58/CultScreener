@@ -1023,19 +1023,35 @@ async function findSimilarTokens(mintAddress, name, symbol, limit = 5) {
   const safeName = (name || '').slice(0, 100).toLowerCase();
 
   // Search by token name similarity only (not ticker/symbol)
-  // Minimum threshold of 0.15 prevents irrelevant noise
-  const result = await pool.query(
-    `SELECT
-       mint_address, name, symbol, decimals, logo_uri, pair_created_at,
-       price, market_cap, volume_24h,
-       similarity(LOWER(name), $1) AS name_sim
-     FROM tokens
-     WHERE mint_address != $2
-       AND similarity(LOWER(name), $1) > 0.15
-     ORDER BY name_sim DESC
-     LIMIT $3`,
-    [safeName, mintAddress, limit]
-  );
+  // Minimum threshold of 0.15 prevents irrelevant noise.
+  // The % operator (similarity >= pg_trgm.similarity_threshold) can use the
+  // LOWER(name) trigram GIN index; similarity() alone in WHERE cannot. SET LOCAL
+  // only lasts inside a transaction, so this runs on a checked-out client.
+  const client = await pool.connect();
+  let result;
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL pg_trgm.similarity_threshold = 0.15');
+    result = await client.query(
+      `SELECT
+         mint_address, name, symbol, decimals, logo_uri, pair_created_at,
+         price, market_cap, volume_24h,
+         similarity(LOWER(name), $1) AS name_sim
+       FROM tokens
+       WHERE mint_address != $2
+         AND LOWER(name) % $1
+         AND similarity(LOWER(name), $1) > 0.15
+       ORDER BY name_sim DESC
+       LIMIT $3`,
+      [safeName, mintAddress, limit]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return result.rows.map(row => ({
     address: row.mint_address,
