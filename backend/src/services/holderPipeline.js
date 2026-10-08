@@ -411,7 +411,13 @@ async function backfillWallet(mint, pos, decimals, { boundBeforeMs = null } = {}
     cursor = null;
     const pagePromise = readPage(null);
     pagePromise.catch(() => {});
-    const bal = await solanaService.getTokenAccountBalance(tokenAccount).catch(() => null);
+    // Only a real answer counts: a closed account (RPC "could not find account")
+    // or a zero balance. Rate limiting, timeouts and an open breaker go to the
+    // caller's retry and pushback handling instead of marking a holder 'left'.
+    const bal = await solanaService.getTokenAccountBalance(tokenAccount).catch(err => {
+      if (isAccountMissing(err)) return null;
+      throw err;
+    });
     balance = toBigInt(bal?.value?.amount);
     if (balance <= 0n) {
       // Account emptied or closed since the snapshot: the wallet left. The next
@@ -467,6 +473,11 @@ async function backfillWallet(mint, pos, decimals, { boundBeforeMs = null } = {}
 
   await store.saveBackfill(mint, pos.wallet, { cursor, balance, oldestAt, pagesAdded: units() });
   return false;
+}
+
+// The JSON-RPC answer for a token account that no longer exists (closed)
+function isAccountMissing(err) {
+  return err?.rpcCode === -32602 || /could not find account/i.test(String(err?.message || ''));
 }
 
 // A failure that says nothing about the wallet itself: Helius rate limiting or

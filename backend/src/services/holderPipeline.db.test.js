@@ -403,6 +403,33 @@ if (!DB_URL) {
       assert.strictEqual(back.backfill_attempts, 0);
     });
 
+    test('only a closed or empty account marks a wallet left; a failed balance read leaves it pending', async () => {
+      const w = 'GONE';
+      const saved = await position(w);
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending' WHERE mint_address = $1 AND wallet = $2`, [MINT, w]);
+      const realBalance = solana.getTokenAccountBalance;
+      try {
+        for (const make of [
+          () => Object.assign(new Error('Request failed with status code 429'), { response: { status: 429 } }),
+          () => Object.assign(new Error('Breaker is open'), { name: 'CircuitBreakerError' }),
+          () => Object.assign(new Error('timeout of 15000ms exceeded'), { code: 'ECONNABORTED' }),
+        ]) {
+          solana.getTokenAccountBalance = async () => { throw make(); };
+          await assert.rejects(pipeline.backfillWallet(MINT, await position(w), 6));
+          assert.strictEqual((await position(w)).acquired_source, 'pending');
+        }
+        solana.getTokenAccountBalance = async () => {
+          throw Object.assign(new Error('Invalid param: could not find account'), { rpcCode: -32602 });
+        };
+        assert.strictEqual(await pipeline.backfillWallet(MINT, await position(w), 6), true);
+        assert.strictEqual((await position(w)).acquired_source, 'left');
+      } finally {
+        solana.getTokenAccountBalance = realBalance;
+        await db.pool.query(`UPDATE holder_positions SET acquired_source = $3, acquired_at = $4, backfill_attempts = $5
+          WHERE mint_address = $1 AND wallet = $2`, [MINT, w, saved.acquired_source, saved.acquired_at, saved.backfill_attempts]);
+      }
+    });
+
     test('hold times flag lower bounds, and wait for wallets a snapshot in flight will bring', async () => {
       await db.pool.query(`UPDATE holder_positions SET acquired_source = 'backfill_capped' WHERE mint_address = $1 AND wallet = 'W007'`, [MINT]);
       try {
