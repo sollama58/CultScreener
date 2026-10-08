@@ -11,6 +11,7 @@ const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('../constant
 const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
 const priceChanges = require('../services/priceChanges');
+const { resolveMintDecimals } = require('../services/mintDecimals');
 const axios = require('axios');
 
 // Require database for all token routes
@@ -38,17 +39,6 @@ const requireAllowedToken = asyncHandler(async (req, res, next) => {
   }
   next();
 });
-
-// Mint decimals for scaling raw DAS amounts when the RPC answer that normally carries them
-// is missing. Helius metadata is cached for an hour; getTokenSupply is the second source.
-// null when neither knows: callers must not guess (a wrong guess is off by 10^n).
-async function resolveMintDecimals(mint) {
-  const meta = await solanaService.getTokenMetadata(mint).catch(() => null);
-  if (Number.isInteger(meta?.decimals)) return meta.decimals;
-  const supply = await solanaService.getTokenSupply(mint).catch(() => null);
-  if (Number.isInteger(supply?.value?.decimals)) return supply.value.decimals;
-  return null;
-}
 
 // Names that indicate missing/placeholder metadata
 const PLACEHOLDER_NAMES = new Set(['unknown token', 'unknown', '']);

@@ -17,6 +17,7 @@ const {
   runHolderBehaviorAnalysis
 } = require('../services/holderBehaviorAnalysis');
 const holderPipeline = require('../services/holderPipeline');
+const { resolveMintDecimals } = require('../services/mintDecimals');
 
 const BURN_MINT = '9zB5wRarXMj86MymwLumSKA1Dx35zPqqKfcZtK1Spump';
 const BURN_AMOUNT = 5_000;
@@ -343,9 +344,18 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     ]);
 
     let largestAccounts = rpcAccounts;
+    // Decimals for the DAS path, whose amounts come back raw. Defaulting to 0 when
+    // getTokenSupply also failed cached raw base units in the holder-analytics cache that the
+    // token page's /holders serves too. Same handling as that route: no guessing.
+    let dasDecimals = null;
     if (!largestAccounts && solanaService.isHeliusConfigured()) {
-      const decimals = supplyResult?.value?.decimals || 0;
-      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, decimals);
+      dasDecimals = Number.isInteger(supplyResult?.value?.decimals)
+        ? supplyResult.value.decimals
+        : await resolveMintDecimals(mint);
+      if (dasDecimals == null) {
+        return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
+      }
+      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, dasDecimals);
     }
 
     if (!largestAccounts || largestAccounts.length === 0) {
@@ -412,7 +422,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
         rawAccounts,
         totalSupply,
         usedDAS: !rpcAccounts,
-        supplyDecimals: supplyResult?.value?.decimals || 0
+        supplyDecimals: dasDecimals ?? (supplyResult?.value?.decimals || 0)
       });
       if (!job) {
         await cache.delete(pendingKey);

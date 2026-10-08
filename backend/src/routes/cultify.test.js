@@ -481,3 +481,43 @@ describe('GET /holder-behavior/analyze/:mint for a whitelisted wallet', () => {
     assert.strictEqual(added.length, 0);
   });
 });
+
+describe('GET /analyze/:mint DAS fallback decimals', () => {
+  let added;
+  let dasDecimals;
+  beforeEach(() => {
+    added = [];
+    dasDecimals = [];
+    db.isTokenAllowed = async () => true;
+    solanaService.getTokenLargestAccounts = async () => null; // RPC down
+    solanaService.getTokenSupply = async () => { throw new Error('rpc down'); };
+    solanaService.getTokenMetadata = async () => null;
+    solanaService.getTokenLargestAccountsDAS = async (mint, decimals) => {
+      dasDecimals.push(decimals);
+      return [{ address: 'acct1', wallet: 'owner1', uiAmount: 1234 / 10 ** decimals }];
+    };
+    jobQueue.addAnalyticsJob = async (name, data) => { added.push({ name, data }); return { id: 'j' }; };
+  });
+
+  test('unknown decimals: answers rpc_unavailable without caching or queueing raw units', async () => {
+    const r = await get(`/analyze/${MINT}`);
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.body, { holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
+    assert.deepStrictEqual(dasDecimals, [], 'DAS not scaled with a guess');
+    assert.strictEqual(store.has(`holder-analytics:${MINT}`), false);
+    assert.strictEqual(store.has(`holder-classify-pending:${MINT}`), false);
+    assert.strictEqual(added.length, 0);
+  });
+
+  test('decimals from Helius metadata scale the DAS amounts and reach the worker job', async () => {
+    solanaService.getTokenMetadata = async () => ({ decimals: 6 });
+    const r = await get(`/analyze/${MINT}`);
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(dasDecimals, [6]);
+    assert.strictEqual(r.body.holders[0].balance, 1234 / 1e6);
+    const job = added.find(j => j.name === 'compute-holder-analytics');
+    assert.ok(job, 'enrichment job queued');
+    assert.strictEqual(job.data.supplyDecimals, 6);
+    assert.strictEqual(job.data.usedDAS, true);
+  });
+});
