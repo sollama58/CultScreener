@@ -41,4 +41,24 @@ describe('solana', () => {
     assert.strictEqual(await solana.getTokenHolderCount(mint, { skipCache: true }), 2);
     assert.strictEqual(await cache.get(`holder-total:${mint}`), 2);
   });
+
+  test('0-decimal tokens keep 0 decimals and their real supply (audit #50)', async () => {
+    const zeroMint = 'ZeroDecimalsMint11111111111111111111111111';
+    const nineMint = 'NineDecimalsMint11111111111111111111111111';
+    const asset = (id, token_info) => ({ id, content: { metadata: { name: id, symbol: 'X' } }, token_info });
+    answer = (body) => {
+      if (body.method === 'getAsset') return { data: { result: asset(zeroMint, { decimals: 0, supply: '1000000' }) } };
+      return { data: { result: [asset(zeroMint, { decimals: 0, supply: '1000000' }), asset(nineMint, { supply: '5000000000' })] } };
+    };
+    const one = await solana.getTokenMetadata(zeroMint);
+    assert.strictEqual(one.decimals, 0);
+    assert.strictEqual(one.supply, 1000000);
+
+    const batch = await solana.getTokenMetadataBatch([zeroMint, nineMint]);
+    assert.strictEqual(batch[zeroMint].decimals, 0);
+    assert.strictEqual(batch[zeroMint].supply, 1000000);
+    // Missing decimals still default to 9.
+    assert.strictEqual(batch[nineMint].decimals, 9);
+    assert.strictEqual(batch[nineMint].supply, 5);
+  });
 });

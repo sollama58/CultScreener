@@ -470,6 +470,12 @@ function isHeliusConfigured() {
  * @param {string} mintAddress - Token mint address
  * @returns {Promise<Object|null>} - Token info or null if unavailable
  */
+// DAS token_info.decimals, defaulting to 9 only when absent: 0 is a real value
+// (`decimals || 9` turned 0-decimal tokens into 9 and their supply off by 1e9).
+function dasDecimals(tokenInfo) {
+  return Number.isInteger(tokenInfo?.decimals) ? tokenInfo.decimals : 9;
+}
+
 async function getTokenMetadata(mintAddress) {
   if (!HELIUS_DAS_URL) {
     return null;
@@ -574,8 +580,8 @@ async function getTokenMetadata(mintAddress) {
       address: mintAddress,
       name: metadata.name || content.json_uri || null,
       symbol: tokenInfo.symbol || metadata.symbol || null,
-      decimals: tokenInfo.decimals || 9,
-      supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, tokenInfo.decimals || 9) : null,
+      decimals: dasDecimals(tokenInfo),
+      supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, dasDecimals(tokenInfo)) : null,
       // Price only available for top 10k tokens by volume
       price: price,
       hasPriceData: price !== null,
@@ -725,8 +731,8 @@ async function getTokenMetadataBatch(mintAddresses) {
         address: asset.id,
         name: metadata.name || content.json_uri || null,
         symbol: tokenInfo.symbol || metadata.symbol || null,
-        decimals: tokenInfo.decimals || 9,
-        supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, tokenInfo.decimals || 9) : null,
+        decimals: dasDecimals(tokenInfo),
+        supply: tokenInfo.supply ? parseFloat(tokenInfo.supply) / Math.pow(10, dasDecimals(tokenInfo)) : null,
         price: priceInfo.price_per_token || null,
         hasPriceData: !!priceInfo.price_per_token,
         logoUri: normalizeLogoUri(logoUri)
