@@ -70,7 +70,7 @@
 // communityPage, no OG banner, no duplicate icon); API responses go to the page before the cache
 // write; polled endpoints are not stored. Token page: web3.js loads on the first burn, the holders
 // chart builds when scrolled into view, chart refreshes fetch a 100-candle tail, polls pause in
-// hidden tabs - api.js v16, conviction.js v22, styles.css v26, new css/home.css, tokenDetail.js v35,
+// hidden tabs - api.js v17, conviction.js v22, styles.css v26, new css/home.css, tokenDetail.js v35,
 // tokenChart.js v7, holderChart.js v4, holderBehavior.js v11, cultify.js v21, communityPage.js v10.
 const CACHE_VERSION = 'holdex-v84';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -85,7 +85,7 @@ const APP_SHELL = [
   '/css/home.css?v=1',
   '/css/token.css?v=8',
   '/js/config.js?v=4',
-  '/js/api.js?v=16',
+  '/js/api.js?v=17',
   '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
   '/js/tokenTable.js?v=8',
@@ -95,13 +95,13 @@ const APP_SHELL = [
   '/js/versus.js?v=17',
   '/js/mainViewTabs.js?v=2',
   '/js/kotp.js?v=7',
-  '/js/tokenDetail.js?v=34',
+  '/js/tokenDetail.js?v=35',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
-  '/js/tokenChart.js?v=6',
-  '/js/holderChart.js?v=3',
+  '/js/tokenChart.js?v=7',
+  '/js/holderChart.js?v=4',
   '/js/watchlist.js?v=3',
-  '/js/holderBehavior.js?v=10',
+  '/js/holderBehavior.js?v=11',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
   '/js/performance.js?v=28',

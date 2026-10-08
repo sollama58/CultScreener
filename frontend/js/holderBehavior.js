@@ -322,6 +322,27 @@
     } catch { return { balance: 0, uiBalance: 0, tokenAccount: null }; }
   }
 
+  // ── Solana web3 (loaded on first burn, not with the page) ─────────────
+  const WEB3_SRC = 'https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js';
+  const WEB3_INTEGRITY = 'sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ';
+  let web3Promise = null;
+  function loadWeb3() {
+    if (window.solanaWeb3) return Promise.resolve(window.solanaWeb3);
+    if (web3Promise) return web3Promise;
+    web3Promise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = WEB3_SRC;
+      s.integrity = WEB3_INTEGRITY;
+      s.crossOrigin = 'anonymous';
+      s.async = true;
+      const fail = () => { web3Promise = null; s.remove(); reject(new Error('Wallet library failed to load')); };
+      s.onload = () => window.solanaWeb3 ? resolve(window.solanaWeb3) : fail();
+      s.onerror = fail;
+      document.head.appendChild(s);
+    });
+    return web3Promise;
+  }
+
   // ── Burn transaction ──────────────────────────────────────────────────
   let burnInProgress = false;
 
@@ -362,7 +383,8 @@
     }
 
     try {
-      const { PublicKey, Transaction, TransactionInstruction } = solanaWeb3;
+      if (!window.solanaWeb3) setStatus('Loading...');
+      const { PublicKey, Transaction, TransactionInstruction } = await loadWeb3();
 
       // Pre-flight — verify backend reachable before touching the wallet
       setStatus('Checking backend...');
