@@ -283,6 +283,11 @@ async function takeSnapshot(mint) {
     if (!complete) await mergeLargestAccounts(mint, accounts);
     const takenAt = Date.now();
     const holders = aggregateHolders(accounts);
+    // The raw account list (one object per token account, tens of MB for a big
+    // token) isn't needed past aggregation; let it go before the LP check and the DB write
+    const accountCount = accounts.length;
+    accounts = null;
+    first.accounts = null;
     if (holders.length === 0) {
       await cache.delete(keys.snapshotPending(mint)).catch(() => {});
       return { status: 'empty' };
@@ -304,16 +309,16 @@ async function takeSnapshot(mint) {
     );
 
     const snapshotId = await store.writeSnapshot({
-      mint, takenAt, complete, pages, accountCount: accounts.length, holders, decimals, supply,
+      mint, takenAt, complete, pages, accountCount, holders, decimals, supply,
       sample, sampleMeta: meta, topN: CONFIG.topN, newAcquisition,
     });
     await store.pruneSnapshots(mint).catch(err => console.warn(`[Holders] Prune failed for ${mint.slice(0, 8)}:`, err.message));
 
-    await recordSnapshotPoint(mint, { takenAt, complete, holders, exclude, decimals, supply, accountCount: accounts.length });
+    await recordSnapshotPoint(mint, { takenAt, complete, holders, exclude, decimals, supply, accountCount });
     await cache.delete(keys.result(mint)).catch(() => {});
     await cache.delete(keys.snapshotVerified(mint)).catch(() => {});
 
-    console.log(`[Holders] Snapshot ${snapshotId} for ${mint.slice(0, 8)}: ${holders.length} wallets from ${accounts.length} accounts, ` +
+    console.log(`[Holders] Snapshot ${snapshotId} for ${mint.slice(0, 8)}: ${holders.length} wallets from ${accountCount} accounts, ` +
       `${pages} page(s)${complete ? '' : ' (capped)'}, sample ${sample.length} (${meta.method}), new wallets: ${newAcquisition.source}, ${Date.now() - startedAt}ms`);
 
     await ensureBackfill(mint);
