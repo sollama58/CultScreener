@@ -61,4 +61,21 @@ describe('solana', () => {
     assert.strictEqual(batch[nineMint].decimals, 9);
     assert.strictEqual(batch[nineMint].supply, 5);
   });
+
+  test('a 401/403 switches getTransactionsForAddress off only for a while (audit #51)', async () => {
+    answer = () => { throw Object.assign(new Error('Request failed with status code 403'), { response: { status: 403, data: {} } }); };
+    await assert.rejects(solana.getAccountTransactionsPage('Acct'));
+    assert.strictEqual(solana.isTransactionHistoryAvailable(), false);
+
+    const realNow = Date.now;
+    try {
+      Date.now = () => realNow() + 31 * 60 * 1000;
+      assert.strictEqual(solana.isTransactionHistoryAvailable(), true);
+      answer = () => ({ data: { result: { data: [{ blockTime: 1 }], paginationToken: null } } });
+      const page = await solana.getAccountTransactionsPage('Acct');
+      assert.strictEqual(page.txs.length, 1);
+    } finally {
+      Date.now = realNow;
+    }
+  });
 });

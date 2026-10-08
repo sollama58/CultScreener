@@ -1026,19 +1026,23 @@ async function parseTransactions(signatures) {
 // Helius' getTransactionsForAddress (full mode: 10 credits per 100 transactions
 // returned) replaces getSignaturesForAddress + the 100-credit-per-100 Enhanced
 // Transactions parse for the hold-time backfill and holder behavior. Latched off
-// for the process when Helius refuses the method itself (not served, or not on
-// this plan) so callers use the legacy path instead of failing every wallet.
-let gtfaUnavailable = false;
+// for the process when Helius says the method does not exist (-32601), so callers
+// use the legacy path instead of failing every wallet. Softer refusals (401/403,
+// "not on this plan" wording) can be transient (credit cap, edge/WAF), so they
+// only switch it off for GTFA_REFUSAL_COOLDOWN_MS and the method is then retried.
+const GTFA_REFUSAL_COOLDOWN_MS = 30 * 60 * 1000;
+let gtfaUnavailableUntil = 0;
 
-function isMethodRefusal(error) {
-  if (error.rpcCode === -32601) return true;
+// Returns how long to switch the method off for (Infinity = for good), or 0.
+function methodRefusalCooldown(error) {
+  if (error.rpcCode === -32601) return Infinity;
   const status = error.response?.status;
-  if (status === 401 || status === 403) return true;
-  return /not (available|supported|allowed)|\bupgrade\b|\bplan\b/i.test(String(error.message || ''));
+  if (status === 401 || status === 403) return GTFA_REFUSAL_COOLDOWN_MS;
+  return /not (available|supported|allowed)|\bupgrade\b|\bplan\b/i.test(String(error.message || '')) ? GTFA_REFUSAL_COOLDOWN_MS : 0;
 }
 
 function isTransactionHistoryAvailable() {
-  return !!HELIUS_API_KEY && !gtfaUnavailable;
+  return !!HELIUS_API_KEY && Date.now() >= gtfaUnavailableUntil;
 }
 
 /**
@@ -1068,9 +1072,10 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
     if (extra > 0) countCredits('getTransactionsForAddress', extra * 10, 0);
     return { txs: result.data, paginationToken: result.paginationToken || null };
   } catch (error) {
-    if (isMethodRefusal(error)) {
-      gtfaUnavailable = true;
-      console.warn(`[Solana] getTransactionsForAddress refused (${error.rpcCode || error.response?.status || ''} ${error.message}); falling back to signatures + Enhanced API`);
+    const cooldown = methodRefusalCooldown(error);
+    if (cooldown > 0) {
+      gtfaUnavailableUntil = Math.max(gtfaUnavailableUntil, Date.now() + cooldown);
+      console.warn(`[Solana] getTransactionsForAddress refused (${error.rpcCode || error.response?.status || ''} ${error.message}); falling back to signatures + Enhanced API${cooldown === Infinity ? '' : ` for ${Math.round(cooldown / 60000)} min`}`);
     }
     throw error;
   }
