@@ -361,9 +361,9 @@ async function getMultiTokenInfo(addresses) {
 
   // Attempt with include=top_pools so pool records (which carry
   // price_change_percentage.h24) are returned in the same response.
-  // If the free API doesn't support the parameter it returns a non-429 error;
-  // we then fall back to the plain token request and permanently skip the
-  // include attempt for the rest of this process lifetime to avoid double-calling.
+  // If the API rejects the parameter (400/422) we fall back to the plain token request
+  // and skip the include attempt for the rest of this process lifetime to avoid
+  // double-calling. Other failures fall back for this call only.
   if (_multiTokenIncludeSupported) {
     try {
       const response = await geckoRequest(() =>
@@ -377,9 +377,16 @@ async function getMultiTokenInfo(addresses) {
       debugLog(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens, ${withChange} with price change`);
       return result;
     } catch (includeErr) {
-      // Permanent fallback: stop using include=top_pools for this session
-      _multiTokenIncludeSupported = false;
-      console.warn('[GeckoTerminal] include=top_pools unsupported, disabling for this session:', includeErr.message);
+      // Only a 400/422 means the API rejects the parameter; stop sending it for this
+      // session then. A 429, timeout, 5xx or open breaker is transient: fall back to the
+      // plain request for this call only and try include again next time.
+      const status = includeErr.response?.status;
+      if (status === 400 || status === 422) {
+        _multiTokenIncludeSupported = false;
+        console.warn('[GeckoTerminal] include=top_pools unsupported, disabling for this session:', includeErr.message);
+      } else {
+        console.warn('[GeckoTerminal] include=top_pools request failed, using plain request this time:', includeErr.message);
+      }
     }
   }
 
