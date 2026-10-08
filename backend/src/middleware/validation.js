@@ -796,6 +796,13 @@ async function validateWalletSignature(req, res, next) {
     });
   }
 
+  // Replay protection: burn the signature like every other signed route, so a captured
+  // deletion request can't be re-run inside its expiry window
+  const alreadyUsed = await checkAndMarkSignature(signature.join(','), SIGNATURE_EXPIRY_MS);
+  if (alreadyUsed) {
+    return res.status(400).json({ error: 'Signature already used', code: 'SIGNATURE_REPLAY' });
+  }
+
   // Signature is valid - proceed
   next();
 }
