@@ -358,7 +358,8 @@ const _holderCountInFlight = new Map();
 
 // opts.maxPages  — cap pagination (default 100 = 100k holders). Pass 500 for curated daily job.
 // opts.skipCache — bypass Redis read; used by record-holder-counts to always get a fresh count.
-// Only caches when the count is exact (last page was partial, not a cap hit).
+// Caches exact and maxPages-capped counts. A DAS error part-way through returns
+// null (and caches nothing), so an undercount is never stored or shown.
 async function getTokenHolderCount(mintAddress, opts = {}) {
   if (!HELIUS_DAS_URL) return null;
   const { maxPages = 100, skipCache = false } = opts;
@@ -423,8 +424,10 @@ async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
         );
 
         if (response.data.error) {
-          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — returning partial count (${owners.size})`);
-          break;
+          // A partial count is an undercount: returning it would cache it for
+          // TTL.HOLDER_COUNT and make the daily job skip this mint as "known".
+          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — discarding partial count (${owners.size})`);
+          return { count: null, isExact: false };
         }
 
         const accounts = response.data.result?.token_accounts;
