@@ -37,6 +37,46 @@
   // Cached token metadata for the current preview
   let previewData = null;
   let previewAbort = null;
+  let previewTimer = null;
+  let lastPreviewMint = null;
+
+  // DexScreener metadata per mint, shared by the preview and the My Tokens list
+  // ({ name, symbol, logo, pairCreatedAt, price, priceChange24h, ts }).
+  const tokenMetaCache = new Map();
+  const TOKEN_META_TTL = 5 * 60 * 1000;
+  const DEXSCREENER_BATCH = 30; // /tokens/v1/solana/{a,b,c} takes up to 30 addresses
+
+  function getCachedMeta(mint) {
+    const meta = tokenMetaCache.get(mint);
+    return meta && Date.now() - meta.ts < TOKEN_META_TTL ? meta : null;
+  }
+
+  // Build metadata for one mint from a DexScreener pairs array. In a batched response the
+  // array holds pairs for several mints, so only this mint's pairs are considered.
+  function metaFromPairs(pairs, mint, onlyOwnPairs) {
+    if (!Array.isArray(pairs)) return null;
+    const own = onlyOwnPairs
+      ? pairs.filter(p => p?.baseToken?.address === mint || p?.quoteToken?.address === mint)
+      : pairs;
+    if (own.length === 0) return null;
+    // The pair's priceUsd, priceChange and info belong to its base token, which is not
+    // this mint when it trades as the quote (e.g. ZEC / TOKEN)
+    const picked = utils.pickDexScreenerPair(own, mint);
+    if (!picked) return null;
+    const pair = picked.pair;
+    const isBase = picked.side === 'base';
+    const meta = {
+      name: picked.token?.name || null,
+      symbol: picked.token?.symbol || null,
+      logo: (isBase ? utils.proxyImageUrl(pair.info?.imageUrl) : null) || null,
+      pairCreatedAt: pair.pairCreatedAt || null,
+      price: picked.priceUsd,
+      priceChange24h: isBase && pair.priceChange?.h24 != null ? parseFloat(pair.priceChange.h24) : null,
+      ts: Date.now(),
+    };
+    tokenMetaCache.set(mint, meta);
+    return meta;
+  }
 
   // ── Helpers ───────────────────────────────────────
 
@@ -75,6 +115,7 @@
     previewEl.innerHTML = '';
     previewEl.classList.remove('visible');
     previewData = null;
+    lastPreviewMint = null;
   }
 
   const defaultLogo = typeof utils !== 'undefined' ? utils.getDefaultLogo() :
@@ -84,31 +125,28 @@
     // Cancel previous fetch
     if (previewAbort) previewAbort.abort();
     previewAbort = new AbortController();
+    lastPreviewMint = mint;
 
-    showPreview('<div class="cultify-preview-loading">Loading token info...</div>');
+    let meta = getCachedMeta(mint);
+    if (!meta) showPreview('<div class="cultify-preview-loading">Loading token info...</div>');
 
     try {
-      const resp = await fetch(
-        `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
-        { signal: previewAbort.signal, headers: {} }
-      );
+      if (!meta) {
+        const resp = await fetch(
+          `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
+          { signal: previewAbort.signal, headers: {} }
+        );
 
-      if (!resp.ok) throw new Error('not found');
-      const pairs = await resp.json();
-      if (!Array.isArray(pairs) || pairs.length === 0) throw new Error('not found');
+        if (!resp.ok) throw new Error('not found');
+        const pairs = await resp.json();
+        meta = metaFromPairs(pairs, mint, false);
+        if (!meta) throw new Error('not found');
+      }
 
-      // The pair's priceUsd, priceChange and info belong to its base token, which is not
-      // this mint when it trades as the quote (e.g. ZEC / TOKEN)
-      const picked = utils.pickDexScreenerPair(pairs, mint);
-      const pair = picked.pair;
-      const isBase = picked.side === 'base';
-      const name = picked.token?.name || 'Unknown';
-      const symbol = picked.token?.symbol || '???';
-      const logo = (isBase ? utils.proxyImageUrl(pair.info?.imageUrl) : null) || defaultLogo;
-
-      const pairCreatedAt = pair.pairCreatedAt || null;
-      const price = picked.priceUsd;
-      const priceChange24h = isBase && pair.priceChange?.h24 != null ? parseFloat(pair.priceChange.h24) : null;
+      const name = meta.name || 'Unknown';
+      const symbol = meta.symbol || '???';
+      const logo = meta.logo || defaultLogo;
+      const { pairCreatedAt, price, priceChange24h } = meta;
       previewData = { name, symbol, logo, pairCreatedAt, price, priceChange24h };
 
       showPreview(`<div class="cultify-preview-card">
@@ -133,10 +171,15 @@
     }
   }
 
-  function handleInputChange() {
+  // Debounced (input and paste both fire for a paste, and typing matches the address
+  // regex at several lengths); the same mint is not fetched twice in a row.
+  function handleInputChange(immediate) {
+    clearTimeout(previewTimer);
     const mint = mintInput.value.trim();
     if (SOLANA_ADDR_RE.test(mint)) {
-      fetchTokenPreview(mint);
+      if (mint === lastPreviewMint) return;
+      if (immediate === true) fetchTokenPreview(mint);
+      else previewTimer = setTimeout(() => fetchTokenPreview(mint), 200);
     } else {
       hidePreview();
     }
@@ -153,31 +196,36 @@
     try {
       const resp = await fetch(`${baseUrl}/api/cultify/my-tokens/${wallet.address}`);
       if (!resp.ok) return;
-      const { tokens } = await resp.json();
-      if (!tokens || tokens.length === 0) {
+      const { tokens: rows } = await resp.json();
+      if (!rows || rows.length === 0) {
         myTokensEl.classList.remove('visible');
         return;
       }
 
-      // Fetch DexScreener metadata for all mints in parallel
-      const metaMap = {};
-      await Promise.all(tokens.map(async (t) => {
+      // One row per mint (repeat burns return several), keeping the latest burn
+      const byMint = new Map();
+      rows.forEach(t => {
+        const prev = byMint.get(t.mint);
+        if (!prev || new Date(t.createdAt) > new Date(prev.createdAt)) byMint.set(t.mint, t);
+      });
+      const tokens = [...byMint.values()];
+
+      // Fetch DexScreener metadata for mints not already known, up to 30 per request
+      const missing = tokens.map(t => t.mint).filter(m => !getCachedMeta(m));
+      const chunks = [];
+      for (let i = 0; i < missing.length; i += DEXSCREENER_BATCH) chunks.push(missing.slice(i, i + DEXSCREENER_BATCH));
+      await Promise.all(chunks.map(async (chunk) => {
         try {
-          const r = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(t.mint)}`,
+          const r = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${chunk.map(encodeURIComponent).join(',')}`,
             { signal: AbortSignal.timeout(5000) });
           if (r.ok) {
             const pairs = await r.json();
-            const picked = utils.pickDexScreenerPair(pairs, t.mint);
-            if (picked) {
-              metaMap[t.mint] = {
-                name: picked.token?.name || null,
-                symbol: picked.token?.symbol || null,
-                logo: picked.side === 'base' ? (utils.proxyImageUrl(picked.pair.info?.imageUrl) || null) : null,
-              };
-            }
+            chunk.forEach(m => metaFromPairs(pairs, m, true));
           }
         } catch { /* skip */ }
       }));
+      const metaMap = {};
+      tokens.forEach(t => { const meta = getCachedMeta(t.mint); if (meta) metaMap[t.mint] = meta; });
 
       let html = '<div class="cultify-my-tokens-header">Your Analyzed Tokens (12hr access)</div>';
       html += '<div class="cultify-my-tokens-list">';
@@ -215,7 +263,7 @@
         el.addEventListener('click', () => {
           const m = el.dataset.mint;
           mintInput.value = m;
-          handleInputChange();
+          handleInputChange(true);
           handleCultify();
         });
       });
