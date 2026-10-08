@@ -1484,7 +1484,7 @@ const tokenDetail = {
             if (wa) params.set('wallet', wa);
             const ac = new AbortController();
             const t = setTimeout(() => ac.abort(), 3000);
-            const r = await fetch(`${apiBase}/api/cultify/holder-behavior/analyze/${encodeURIComponent(this.mint)}?${params}`, { signal: ac.signal });
+            const r = await fetch(`${API_BASE_URL}/api/cultify/holder-behavior/analyze/${encodeURIComponent(this.mint)}?${params}`, { signal: ac.signal });
             clearTimeout(t);
             if (r.ok) { const d = await r.json(); if (d.status === 'done') hbData = d; }
           }
