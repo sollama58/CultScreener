@@ -781,6 +781,14 @@ async function gracefulShutdown(signal) {
     stopSignatureCleanup();
   } catch (_) {}
 
+  // Write buffered API key usage before the pool closes
+  try {
+    const { flushApiKeyUsage } = require('./middleware/validation');
+    await flushApiKeyUsage();
+  } catch (err) {
+    console.error('[Shutdown] API key usage flush error:', err.message);
+  }
+
   // Shutdown job queue (handles view count flushing internally)
   try {
     await jobQueue.shutdown();
