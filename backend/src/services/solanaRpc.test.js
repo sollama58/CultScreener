@@ -35,6 +35,29 @@ describe('rpcCall', () => {
     assert.match(calls[0].url, /helius/);
   });
 
+  // (before the method-refusal test below, which turns getTransactionsForAddress off)
+  test('large getTransactionsForAddress pages are capped in flight; small ones are not', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const realPost2 = axios.post;
+    axios.post = async (url, body) => {
+      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(r => setTimeout(r, 300)); // well past the limiter's 25ms start spacing
+      inFlight--;
+      return { data: { result: { data: [{ blockTime: 1 }], paginationToken: null } } };
+    };
+    try {
+      const big = await Promise.all(Array.from({ length: 10 }, (_, i) => solana.getAccountTransactionsPage(`Acct${i}`, { limit: 500 })));
+      assert.strictEqual(big.length, 10);
+      assert.ok(maxInFlight <= 4, `at most 4 large pages at once (saw ${maxInFlight})`);
+      maxInFlight = 0;
+      await Promise.all(Array.from({ length: 8 }, (_, i) => solana.getAccountTransactionsPage(`Acct${i}`, { limit: 100 })));
+      assert.ok(maxInFlight > 4, 'small pages are not held back');
+    } finally {
+      axios.post = realPost2;
+    }
+  });
+
   test('getTransactionsForAddress pages: small pages, and a method refusal switches to the legacy path', async () => {
     calls = [];
     answer = () => ({ data: { result: { data: [{ blockTime: 1 }], paginationToken: null } } });

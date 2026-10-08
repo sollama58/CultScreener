@@ -1026,6 +1026,24 @@ function isTransactionHistoryAvailable() {
   return !!HELIUS_API_KEY && !gtfaUnavailable;
 }
 
+// Large getTransactionsForAddress pages (limit > 100: backfill continuation
+// pages of 500 full transactions, Holder Behavior pages of 250) are several MB of
+// JSON each. Cap how many are in flight at once, below the Helius-wide limit.
+const BIG_GTFA_PAGE_CONCURRENCY = Math.max(1, parseInt(process.env.HELIUS_BIG_PAGE_CONCURRENCY, 10) || 4);
+let bigPagesInFlight = 0;
+const bigPageWaiters = [];
+async function withBigPageSlot(fn) {
+  while (bigPagesInFlight >= BIG_GTFA_PAGE_CONCURRENCY) await new Promise(r => bigPageWaiters.push(r));
+  bigPagesInFlight++;
+  try {
+    return await fn();
+  } finally {
+    bigPagesInFlight--;
+    const next = bigPageWaiters.shift();
+    if (next) next();
+  }
+}
+
 /**
  * One page of an account's succeeded transactions with full meta (pre/post token
  * balances), newest first, via getTransactionsForAddress.
@@ -1047,7 +1065,8 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
   if (paginationToken) opts.paginationToken = paginationToken;
   try {
     // A large page of full transactions is a big response; give it longer
-    const result = await rpcCall('getTransactionsForAddress', [address, opts], 0, { timeout: opts.limit > 100 ? 40000 : 15000 });
+    const call = () => rpcCall('getTransactionsForAddress', [address, opts], 0, { timeout: opts.limit > 100 ? 40000 : 15000 });
+    const result = await (opts.limit > 100 ? withBigPageSlot(call) : call());
     if (!result || !Array.isArray(result.data)) throw new Error('Unexpected getTransactionsForAddress response');
     const extra = Math.ceil(result.data.length / 100) - 1;
     if (extra > 0) countCredits('getTransactionsForAddress', extra * 10, 0);
