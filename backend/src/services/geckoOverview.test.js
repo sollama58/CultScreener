@@ -74,6 +74,8 @@ before(() => {
     return inst;
   };
   gecko = require('./geckoTerminal');
+  // No COINGECKO_API_KEY here, so the limiter is paced for the free API; requests are stubbed
+  Object.assign(require('./rateLimiter').RATE_LIMITS.geckoTerminal, { minInterval: 0, maxJitter: 0, burstLimit: 1000 });
 });
 
 describe('token whose deepest pool is ZEC / TOKEN', () => {
@@ -107,6 +109,11 @@ describe('token whose deepest pool is ZEC / TOKEN', () => {
     assert.strictEqual(pools[0].side, 'quote');
     assert.strictEqual(pools[0].priceChange24h, null);
     assert.strictEqual(pools[1].priceUsd, 0.00209);
+  });
+
+  test('overview, OHLCV and pools share one pools-page request', () => {
+    const poolsCalls = calls.filter(c => c.url.endsWith(`/tokens/${TOKEN}/pools`));
+    assert.strictEqual(poolsCalls.length, 1);
   });
 });
 

@@ -57,3 +57,12 @@ test('a queue without maxConcurrent stays one at a time, and errors reach their 
   assert.strictEqual(await ok2, 'c');
   assert.strictEqual(t.max, 1);
 });
+
+test('GeckoTerminal free tier pacing stays within the requested requests per minute', () => {
+  for (const rpm of [30, 20, 10]) {
+    const c = limiter.geckoFreeTierLimits(rpm);
+    assert.ok(60000 / c.minInterval <= rpm, `minInterval ${c.minInterval} at ${rpm}/min`);
+    assert.ok(c.burstLimit * (60000 / c.burstWindow) <= rpm, `burst ${c.burstLimit} at ${rpm}/min`);
+  }
+  assert.strictEqual(limiter.geckoFreeTierLimits(30).minInterval, 2100);
+});

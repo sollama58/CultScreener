@@ -20,6 +20,9 @@ let router;
 
 before(() => {
   stub('../services/cache', {
+    // Modules loaded through admin.js read TTL presets at load time
+    TTL: new Proxy({}, { get: () => 60000 }),
+    keys: new Proxy({}, { get: () => (...a) => a.join(':') }),
     cache: {
       clearPattern: async (p) => { calls.push(['clearPattern', p]); },
       delete: async (k) => { calls.push(['delete', k]); },

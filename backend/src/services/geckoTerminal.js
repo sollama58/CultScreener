@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { normalizeLogoUri } = require('./tokenImage');
-const { rateLimitedRequest, sleep } = require('./rateLimiter');
+const { rateLimitedRequest, sleep, useGeckoFreeTierLimits } = require('./rateLimiter');
 const { circuitBreakers } = require('./circuitBreaker');
 const { httpsAgent } = require('./httpAgent');
 const { cache: redisCache, TTL } = require('./cache');
@@ -17,6 +17,13 @@ const GECKO_API = COINGECKO_API_KEY
   : 'https://api.geckoterminal.com/api/v2';
 const NETWORK = 'solana';
 
+// Per-call progress logs (entry, counts, samples) only when DEBUG_API_LOGS=1; warnings
+// and errors are always logged.
+const DEBUG_API_LOGS = process.env.DEBUG_API_LOGS === '1';
+function debugLog(...args) {
+  if (DEBUG_API_LOGS) console.log(...args);
+}
+
 /** Ensure no token leaves with null name/symbol — use truncated address as fallback */
 function ensureTokenMetadata(tokens) {
   for (const t of tokens) {
@@ -32,6 +39,15 @@ if (COINGECKO_API_KEY) {
 } else {
   console.log('[GeckoTerminal] Using free GeckoTerminal API (30 req/min) — set COINGECKO_API_KEY for Basic plan (300 req/min)');
 }
+
+// True while requests go to the free API (30 req/min): no key, or the key was rejected.
+// The rate limiter and 429 retries are paced for the free tier then.
+let geckoFreeTier = false;
+function switchToFreeTier() {
+  geckoFreeTier = true;
+  useGeckoFreeTierLimits();
+}
+if (!COINGECKO_API_KEY) switchToFreeTier();
 
 // Create axios instance with connection pooling for GeckoTerminal
 const geckoHeaders = { 'Accept': 'application/json' };
@@ -58,6 +74,7 @@ if (COINGECKO_API_KEY) {
         geckoAxios.defaults.baseURL = 'https://api.geckoterminal.com/api/v2';
         delete geckoAxios.defaults.headers.common['x-cg-pro-api-key'];
         geckoAxios.interceptors.response.eject(authInterceptorId);
+        switchToFreeTier();
       }
       return Promise.reject(error);
     }
@@ -72,41 +89,62 @@ const RETRY_CONFIG = {
   maxDelay: 5000,       // 5 seconds max delay
   backoffMultiplier: 2  // Exponential backoff: 1s → 2s → give up
 };
+// The free API's window is a minute: wait at least this long before retrying a 429 there,
+// and retry once.
+const FREE_TIER_RETRY_FLOOR_MS = 15000;
+const FREE_TIER_MAX_RETRIES = 1;
+// Give up rather than sleep when the server asks for a longer wait than this
+const RETRY_AFTER_MAX_MS = 30000;
+
+/**
+ * Milliseconds a 429 response asks us to wait (Retry-After as seconds or an HTTP date),
+ * or null when it does not say.
+ */
+function retryAfterMs(error) {
+  const headers = error?.response?.headers;
+  const value = headers && (typeof headers.get === 'function' ? headers.get('retry-after') : headers['retry-after']);
+  if (value == null || value === '') return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
+}
 
 /**
  * Execute request with retry logic for 429 (rate limit) errors
  * Uses exponential backoff with jitter
  */
 async function withRetry(requestFn, context = 'request') {
-  let lastError;
-
-  for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       return await requestFn();
     } catch (error) {
-      lastError = error;
-
       // Only retry on 429 (rate limit) errors
       if (error.response?.status !== 429) {
         throw error;
       }
 
-      if (attempt === RETRY_CONFIG.maxRetries) {
-        console.error(`[GeckoTerminal] ${context}: Max retries (${RETRY_CONFIG.maxRetries}) exceeded for 429 error`);
+      const maxRetries = geckoFreeTier ? FREE_TIER_MAX_RETRIES : RETRY_CONFIG.maxRetries;
+      if (attempt >= maxRetries) {
+        console.error(`[GeckoTerminal] ${context}: Max retries (${maxRetries}) exceeded for 429 error`);
         throw error;
       }
 
-      // Calculate delay with exponential backoff and jitter
+      // Calculate delay with exponential backoff and jitter, but never sooner than the
+      // server's Retry-After or, on the free tier, the floor for its one-minute window
       const baseDelay = RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt);
       const jitter = Math.random() * 1000; // 0-1s jitter
-      const delay = Math.min(baseDelay + jitter, RETRY_CONFIG.maxDelay);
+      const backoff = Math.min(baseDelay + jitter, RETRY_CONFIG.maxDelay);
+      const delay = Math.max(backoff, retryAfterMs(error) ?? 0, geckoFreeTier ? FREE_TIER_RETRY_FLOOR_MS : 0);
+      if (delay > RETRY_AFTER_MAX_MS) {
+        console.error(`[GeckoTerminal] ${context}: 429 asks for a ${Math.round(delay / 1000)}s wait, not retrying`);
+        throw error;
+      }
 
-      console.log(`[GeckoTerminal] ${context}: Rate limited (429), retry ${attempt + 1}/${RETRY_CONFIG.maxRetries} after ${Math.round(delay)}ms`);
+      console.log(`[GeckoTerminal] ${context}: Rate limited (429), retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms`);
       await sleep(delay);
     }
   }
-
-  throw lastError;
 }
 
 /**
@@ -218,6 +256,93 @@ async function geckoRequest(requestFn, context = 'geckoRequest') {
   );
 }
 
+// Pool records reduced to the fields the pool pricing helpers and getTokenPools read,
+// so the shared pools page stays small in Redis.
+function trimPool(pool) {
+  const a = pool.attributes || {};
+  const rel = pool.relationships || {};
+  return {
+    id: pool.id,
+    type: pool.type,
+    attributes: {
+      address: a.address,
+      name: a.name,
+      pool_created_at: a.pool_created_at,
+      base_token_price_usd: a.base_token_price_usd,
+      quote_token_price_usd: a.quote_token_price_usd,
+      price_change_percentage: a.price_change_percentage ? { h24: a.price_change_percentage.h24 } : undefined,
+      market_cap_usd: a.market_cap_usd,
+      fdv_usd: a.fdv_usd,
+      reserve_in_usd: a.reserve_in_usd,
+      volume_usd: a.volume_usd ? { h24: a.volume_usd.h24 } : undefined,
+      transactions: a.transactions ? { h24: a.transactions.h24 } : undefined
+    },
+    relationships: {
+      base_token: rel.base_token,
+      quote_token: rel.quote_token,
+      dex: rel.dex
+    }
+  };
+}
+
+/**
+ * Page 1 of /networks/solana/tokens/{mint}/pools, shared by getTokenOverview,
+ * getTokenPools and getOHLCV through one Redis entry so a token page asks
+ * GeckoTerminal for it once rather than once per caller. Errors are not cached;
+ * each caller keeps its own errorCache handling.
+ */
+const POOLS_PAGE_TTL = TTL.POOLS; // 3 minutes
+async function getPoolsPage(mintAddress) {
+  return redisCache.getOrSet(`gecko-pools-page:${mintAddress}`, async () => {
+    const response = await deduplicatedRequest(`pools:${mintAddress}`, () =>
+      geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
+        params: { page: 1 }
+      })
+    );
+    return (response.data.data || []).map(trimPool);
+  }, POOLS_PAGE_TTL);
+}
+
+/**
+ * The pool OHLCV is charted from, per mint: the in-process Map is the first level and
+ * Redis (shared by the API and worker, kept across restarts) the second. Pool choice is
+ * stable, so the Redis entry lives well past the worker's 3h price-ref refresh cycle.
+ */
+const POOL_REDIS_TTL = 12 * 60 * 60 * 1000; // 12 hours
+const poolRedisKey = (mintAddress) => `gecko-pool:${mintAddress}`;
+
+function setLocalPool(mintAddress, address, side) {
+  // Evict oldest entry if at capacity
+  if (!poolAddressCache.has(mintAddress) && poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
+    poolAddressCache.delete(poolAddressCache.keys().next().value);
+  }
+  poolAddressCache.set(mintAddress, { address, side, expiry: Date.now() + POOL_CACHE_TTL });
+}
+
+function rememberPool(mintAddress, address, side) {
+  if (!address) return;
+  setLocalPool(mintAddress, address, side);
+  Promise.resolve(redisCache.set(poolRedisKey(mintAddress), { address, side }, POOL_REDIS_TTL)).catch(() => {});
+}
+
+async function lookupPool(mintAddress) {
+  const local = poolAddressCache.get(mintAddress);
+  if (local && Date.now() < local.expiry) {
+    return { address: local.address, side: local.side || 'base' };
+  }
+  const shared = await redisCache.get(poolRedisKey(mintAddress)).catch(() => undefined);
+  if (shared?.address) {
+    setLocalPool(mintAddress, shared.address, shared.side);
+    return { address: shared.address, side: shared.side || 'base' };
+  }
+  return null;
+}
+
+function forgetPool(mintAddress) {
+  poolAddressCache.delete(mintAddress);
+  Promise.resolve(redisCache.delete(poolRedisKey(mintAddress))).catch(() => {});
+}
+
 // Get API headers (includes API key when configured)
 function getHeaders() {
   const headers = { 'Accept': 'application/json' };
@@ -234,13 +359,13 @@ function getHeaders() {
  * Caches null responses for 1 minute to prevent repeated failed lookups
  */
 async function getTokenInfo(mintAddress) {
-  console.log(`[GeckoTerminal] getTokenInfo: ${mintAddress}`);
+  debugLog(`[GeckoTerminal] getTokenInfo: ${mintAddress}`);
 
   // Check error cache first
   const errorCacheKey = `token:${mintAddress}`;
   const cachedError = errorCache.get(errorCacheKey);
   if (cachedError && Date.now() < cachedError.expiry) {
-    console.log(`[GeckoTerminal] Returning cached null for ${mintAddress} (error cached)`);
+    debugLog(`[GeckoTerminal] Returning cached null for ${mintAddress} (error cached)`);
     return null;
   }
 
@@ -251,7 +376,7 @@ async function getTokenInfo(mintAddress) {
 
     const token = response.data.data;
     if (!token) {
-      console.log('[GeckoTerminal] No token data returned');
+      debugLog('[GeckoTerminal] No token data returned');
       // Cache the null response
       errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
       return null;
@@ -298,7 +423,7 @@ async function getMultiTokenInfo(addresses) {
     return {};
   }
 
-  console.log(`[GeckoTerminal] getMultiTokenInfo: fetching ${addresses.length} tokens`);
+  debugLog(`[GeckoTerminal] getMultiTokenInfo: fetching ${addresses.length} tokens`);
 
   // GeckoTerminal accepts comma-separated addresses (max ~30 per request)
   const addressList = addresses.slice(0, 30).join(',');
@@ -354,9 +479,9 @@ async function getMultiTokenInfo(addresses) {
 
   // Attempt with include=top_pools so pool records (which carry
   // price_change_percentage.h24) are returned in the same response.
-  // If the free API doesn't support the parameter it returns a non-429 error;
-  // we then fall back to the plain token request and permanently skip the
-  // include attempt for the rest of this process lifetime to avoid double-calling.
+  // If the API rejects the parameter (400/422) we fall back to the plain token request
+  // and skip the include attempt for the rest of this process lifetime to avoid
+  // double-calling. Other failures fall back for this call only.
   if (_multiTokenIncludeSupported) {
     try {
       const response = await geckoRequest(() =>
@@ -367,12 +492,19 @@ async function getMultiTokenInfo(addresses) {
       );
       const result = parseResponse(response.data);
       const withChange = Object.values(result).filter(r => r.priceChange24h != null).length;
-      console.log(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens, ${withChange} with price change`);
+      debugLog(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens, ${withChange} with price change`);
       return result;
     } catch (includeErr) {
-      // Permanent fallback: stop using include=top_pools for this session
-      _multiTokenIncludeSupported = false;
-      console.warn('[GeckoTerminal] include=top_pools unsupported, disabling for this session:', includeErr.message);
+      // Only a 400/422 means the API rejects the parameter; stop sending it for this
+      // session then. A 429, timeout, 5xx or open breaker is transient: fall back to the
+      // plain request for this call only and try include again next time.
+      const status = includeErr.response?.status;
+      if (status === 400 || status === 422) {
+        _multiTokenIncludeSupported = false;
+        console.warn('[GeckoTerminal] include=top_pools unsupported, disabling for this session:', includeErr.message);
+      } else {
+        console.warn('[GeckoTerminal] include=top_pools request failed, using plain request this time:', includeErr.message);
+      }
     }
   }
 
@@ -383,7 +515,7 @@ async function getMultiTokenInfo(addresses) {
       'getMultiTokenInfo'
     );
     const result = parseResponse(response.data);
-    console.log(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens`);
+    debugLog(`[GeckoTerminal] multi token response: ${Object.keys(result).length} tokens`);
     return result;
   } catch (error) {
     console.error('[GeckoTerminal] getMultiTokenInfo error:', error.message);
@@ -402,7 +534,7 @@ async function getMultiTokenInfo(addresses) {
 async function getMultiPoolInfo(poolAddresses) {
   if (!poolAddresses || poolAddresses.length === 0) return {};
 
-  console.log(`[GeckoTerminal] getMultiPoolInfo: fetching ${poolAddresses.length} pools`);
+  debugLog(`[GeckoTerminal] getMultiPoolInfo: fetching ${poolAddresses.length} pools`);
 
   try {
     const addressList = poolAddresses.slice(0, 30).join(',');
@@ -437,7 +569,7 @@ async function getMultiPoolInfo(poolAddresses) {
       };
     }
 
-    console.log(`[GeckoTerminal] multi pool response: ${Object.keys(result).length} pools`);
+    debugLog(`[GeckoTerminal] multi pool response: ${Object.keys(result).length} pools`);
     return result;
   } catch (error) {
     console.error('[GeckoTerminal] getMultiPoolInfo error:', error.message);
@@ -467,17 +599,11 @@ async function getTokenOverview(mintAddress) {
   try {
     // Only fetch pools - it includes price and market data we need
     // Metadata (name, symbol, decimals) now comes from Helius
-    const poolsResponse = await deduplicatedRequest(`pools:${mintAddress}`, () =>
-      geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
-        params: { page: 1 }
-      })
-    );
-
-    const pools = poolsResponse.data.data || [];
+    const pools = await getPoolsPage(mintAddress);
 
     if (pools.length === 0) {
       // No pools found - try token endpoint as fallback
-      console.log(`[GeckoTerminal] No pools found for ${mintAddress}, trying token endpoint`);
+      debugLog(`[GeckoTerminal] No pools found for ${mintAddress}, trying token endpoint`);
       const tokenInfo = await getTokenInfo(mintAddress);
       if (!tokenInfo) {
         // Cache the null response
@@ -491,7 +617,7 @@ async function getTokenOverview(mintAddress) {
     // the token is the quote (e.g. ZEC / TOKEN), whose headline fields describe ZEC.
     const picked = pickGeckoPool(pools, mintAddress);
     if (!picked) {
-      console.log(`[GeckoTerminal] No pool on page 1 names ${mintAddress.slice(0, 8)}..., trying token endpoint`);
+      debugLog(`[GeckoTerminal] No pool on page 1 names ${mintAddress.slice(0, 8)}..., trying token endpoint`);
       return await getTokenInfo(mintAddress);
     }
     const view = geckoPoolView(picked.pool, picked.side);
@@ -554,6 +680,8 @@ async function getTokenOverview(mintAddress) {
       poolSide: picked.side,
       dexIds
     };
+    // getOHLCV charts the same pool; save it the lookup
+    rememberPool(mintAddress, view.poolAddress, picked.side);
     // Cache for 2 minutes (price data needs reasonable freshness)
     await redisCache.set(overviewCacheKey, overviewResult, TTL.OHLCV || 120000);
     return overviewResult;
@@ -578,7 +706,7 @@ async function getTokenOverview(mintAddress) {
  * Makes only 1 GeckoTerminal call instead of 2
  */
 async function getMarketData(mintAddress) {
-  console.log(`[GeckoTerminal] getMarketData: ${mintAddress}`);
+  debugLog(`[GeckoTerminal] getMarketData: ${mintAddress}`);
 
   try {
     // Only fetch single-token info (price change comes from getTokenInfo's pool lookup)
@@ -612,7 +740,7 @@ async function getMarketData(mintAddress) {
 async function getTrendingTokens(options = {}) {
   const { limit = 20, skipEnrichment = false, page = 1 } = options;
 
-  console.log(`[GeckoTerminal] getTrendingTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
+  debugLog(`[GeckoTerminal] getTrendingTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
 
   try {
     const response = await geckoRequest(() =>
@@ -623,7 +751,7 @@ async function getTrendingTokens(options = {}) {
     );
 
     const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] Trending pools returned: ${pools.length}`);
+    debugLog(`[GeckoTerminal] Trending pools returned: ${pools.length}`);
 
     if (pools.length === 0) {
       return [];
@@ -682,10 +810,10 @@ async function getTrendingTokens(options = {}) {
       }
     }
 
-    console.log(`[GeckoTerminal] Returning ${tokens.length} trending tokens`);
+    debugLog(`[GeckoTerminal] Returning ${tokens.length} trending tokens`);
 
     // Log sample token
-    if (tokens.length > 0) {
+    if (DEBUG_API_LOGS && tokens.length > 0) {
       console.log('[GeckoTerminal] Sample trending token:', JSON.stringify(tokens[0], null, 2));
     }
 
@@ -705,7 +833,7 @@ async function getTrendingTokens(options = {}) {
  * Optimized: Set skipEnrichment=true to skip GeckoTerminal enrichment (use Helius batch instead)
  */
 async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
-  console.log(`[GeckoTerminal] getNewTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
+  debugLog(`[GeckoTerminal] getNewTokens: limit=${limit}, page=${page}, skipEnrichment=${skipEnrichment}`);
 
   try {
     const response = await geckoRequest(() =>
@@ -716,7 +844,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
     );
 
     const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] New pools returned: ${pools.length}`);
+    debugLog(`[GeckoTerminal] New pools returned: ${pools.length}`);
 
     if (pools.length === 0) {
       return [];
@@ -773,7 +901,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
       }
     }
 
-    console.log(`[GeckoTerminal] Returning ${tokens.length} new tokens`);
+    debugLog(`[GeckoTerminal] Returning ${tokens.length} new tokens`);
     return ensureTokenMetadata(tokens);
   } catch (error) {
     console.error('[GeckoTerminal] getNewTokens error:', error.message);
@@ -786,7 +914,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
  * Endpoint: /search/pools?query={query}&network={network}
  */
 async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
-  console.log(`[GeckoTerminal] searchTokens: query="${query}", limit=${limit}, dexFilter=${allowedDexPrefixes ? allowedDexPrefixes.join(',') : 'none'}`);
+  debugLog(`[GeckoTerminal] searchTokens: query="${query}", limit=${limit}, dexFilter=${allowedDexPrefixes ? allowedDexPrefixes.join(',') : 'none'}`);
 
   try {
     const response = await geckoRequest(() =>
@@ -801,7 +929,7 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
     );
 
     const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] Search returned ${pools.length} pools`);
+    debugLog(`[GeckoTerminal] Search returned ${pools.length} pools`);
 
     if (pools.length === 0) {
       return [];
@@ -922,29 +1050,24 @@ async function getOHLCV(mintAddress, options = {}) {
   const { interval = '1h' } = options;
   const limit = Math.min(Math.max(1, parseInt(options.limit) || 100), OHLCV_MAX_LIMIT);
 
-  console.log(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}`);
+  debugLog(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}`);
 
   try {
-    // Check pool address cache first
+    // Check pool address cache first (in-process, then Redis)
     let poolAddress = null;
     let side = 'base';
-    const cached = poolAddressCache.get(mintAddress);
-    if (cached && Date.now() < cached.expiry) {
+    const cached = await lookupPool(mintAddress);
+    if (cached) {
       poolAddress = cached.address;
-      side = cached.side || 'base';
+      side = cached.side;
     }
+    const poolFromCache = !!poolAddress;
 
     // If not cached, fetch pools
     if (!poolAddress) {
-      const poolsResponse = await deduplicatedRequest(`pools:${mintAddress}`, () =>
-        geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
-          params: { page: 1 }
-        })
-      );
-
-      const pools = poolsResponse.data.data || [];
+      const pools = await getPoolsPage(mintAddress);
       if (pools.length === 0) {
-        console.log('[GeckoTerminal] No pools found for token');
+        debugLog('[GeckoTerminal] No pools found for token');
         return { mintAddress, interval, data: [] };
       }
 
@@ -956,15 +1079,7 @@ async function getOHLCV(mintAddress, options = {}) {
       }
       side = picked.side;
 
-      // Cache the pool address — evict oldest entry if at capacity
-      if (poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
-        poolAddressCache.delete(poolAddressCache.keys().next().value);
-      }
-      poolAddressCache.set(mintAddress, {
-        address: poolAddress,
-        side,
-        expiry: Date.now() + POOL_CACHE_TTL
-      });
+      rememberPool(mintAddress, poolAddress, side);
     }
 
     const { timeframe, aggregate } = ohlcvTimeframe(interval);
@@ -979,7 +1094,11 @@ async function getOHLCV(mintAddress, options = {}) {
         }
       }),
       'getOHLCV'
-    );
+    ).catch(err => {
+      // A remembered pool that GeckoTerminal no longer knows: pick again next time
+      if (poolFromCache && err.response?.status === 404) forgetPool(mintAddress);
+      throw err;
+    });
 
     const ohlcvList = ohlcvResponse.data.data?.attributes?.ohlcv_list || [];
 
@@ -1013,7 +1132,7 @@ async function getOHLCV(mintAddress, options = {}) {
 async function getPriceHistory(mintAddress, options = {}) {
   const { interval = '1h' } = options;
 
-  console.log(`[GeckoTerminal] getPriceHistory: ${mintAddress}, interval=${interval}`);
+  debugLog(`[GeckoTerminal] getPriceHistory: ${mintAddress}, interval=${interval}`);
 
   try {
     const ohlcv = await getOHLCV(mintAddress, { interval });
@@ -1059,18 +1178,11 @@ async function getTokenPools(mintAddress, options = {}) {
     return [];
   }
 
-  console.log(`[GeckoTerminal] getTokenPools: ${mintAddress}, limit=${limit}`);
+  debugLog(`[GeckoTerminal] getTokenPools: ${mintAddress}, limit=${limit}`);
 
   try {
-    const response = await geckoRequest(() =>
-      geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
-        params: { page: 1 }
-      }),
-      'getTokenPools'
-    );
-
-    const pools = response.data.data || [];
-    console.log(`[GeckoTerminal] Found ${pools.length} pools for token`);
+    const pools = await getPoolsPage(mintAddress);
+    debugLog(`[GeckoTerminal] Found ${pools.length} pools for token`);
 
     // Deepest pools first, each priced from the token's own side of the pair
     const ownPools = pools
@@ -1364,5 +1476,6 @@ module.exports = {
   getTokenPools,
   getCoinSocialLinks,
   getTokenHoldersChart,
+  retryAfterMs,
   stopCleanup
 };
