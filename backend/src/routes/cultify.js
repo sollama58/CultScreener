@@ -311,7 +311,6 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
 
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
 // Uses the SAME cache keys and worker flow as the main tokens endpoint.
-// Includes queue position info so the frontend can show "You are #N in queue".
 router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
@@ -341,23 +340,13 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     // ── Fast path: cached final result ──
     if (!fresh) {
       const cached = await cache.get(resultCacheKey);
-      if (cached) {
-        dequeueMint(mint).catch(() => {});
-        return res.json(cached);
-      }
+      if (cached) return res.json(cached);
     }
-
-    // ── Enqueue early: every token that doesn't have a final result gets a slot ──
-    // ensureEnqueued is idempotent — safe to call on every poll.
-    const queueInfo = await ensureEnqueued(mint);
 
     // ── Snapshot → sample → hold times, same pipeline as the tokens endpoint ──
+    // getDiamondHands dispatches the snapshot/backfill jobs itself; the frontend polls.
     const result = await holderPipeline.getDiamondHands(mint);
-    if (result.computed) {
-      dequeueMint(mint).catch(() => {});
-      return res.json(result);
-    }
-    res.json({ ...result, queue: queueInfo });
+    res.json(result);
   } catch (err) {
     console.error('[Cultify] Diamond hands error:', err.message);
     res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: false });
