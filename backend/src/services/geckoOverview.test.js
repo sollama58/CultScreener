@@ -92,4 +92,9 @@ describe('token whose deepest pool is ZEC / TOKEN', () => {
     assert.strictEqual(pools[0].priceChange24h, null);
     assert.strictEqual(pools[1].priceUsd, 0.00209);
   });
+
+  test('overview, OHLCV and pools share one pools-page request', () => {
+    const poolsCalls = calls.filter(c => c.url.endsWith(`/tokens/${TOKEN}/pools`));
+    assert.strictEqual(poolsCalls.length, 1);
+  });
 });

@@ -225,6 +225,89 @@ async function geckoRequest(requestFn, context = 'geckoRequest') {
   );
 }
 
+// Pool records reduced to the fields the pool pricing helpers and getTokenPools read,
+// so the shared pools page stays small in Redis.
+function trimPool(pool) {
+  const a = pool.attributes || {};
+  const rel = pool.relationships || {};
+  return {
+    id: pool.id,
+    type: pool.type,
+    attributes: {
+      address: a.address,
+      name: a.name,
+      pool_created_at: a.pool_created_at,
+      base_token_price_usd: a.base_token_price_usd,
+      quote_token_price_usd: a.quote_token_price_usd,
+      price_change_percentage: a.price_change_percentage ? { h24: a.price_change_percentage.h24 } : undefined,
+      market_cap_usd: a.market_cap_usd,
+      fdv_usd: a.fdv_usd,
+      reserve_in_usd: a.reserve_in_usd,
+      volume_usd: a.volume_usd ? { h24: a.volume_usd.h24 } : undefined,
+      transactions: a.transactions ? { h24: a.transactions.h24 } : undefined
+    },
+    relationships: {
+      base_token: rel.base_token,
+      quote_token: rel.quote_token,
+      dex: rel.dex
+    }
+  };
+}
+
+/**
+ * Page 1 of /networks/solana/tokens/{mint}/pools, shared by getTokenOverview,
+ * getTokenPools and getOHLCV through one Redis entry so a token page asks
+ * GeckoTerminal for it once rather than once per caller. Errors are not cached;
+ * each caller keeps its own errorCache handling.
+ */
+const POOLS_PAGE_TTL = TTL.POOLS; // 3 minutes
+async function getPoolsPage(mintAddress) {
+  return redisCache.getOrSet(`gecko-pools-page:${mintAddress}`, async () => {
+    const response = await deduplicatedRequest(`pools:${mintAddress}`, () =>
+      geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
+        params: { page: 1 }
+      })
+    );
+    return (response.data.data || []).map(trimPool);
+  }, POOLS_PAGE_TTL);
+}
+
+/**
+ * The pool OHLCV is charted from, per mint: the in-process Map is the first level and
+ * Redis (shared by the API and worker, kept across restarts) the second. Pool choice is
+ * stable, so the Redis entry lives well past the worker's 3h price-ref refresh cycle.
+ */
+const POOL_REDIS_TTL = 12 * 60 * 60 * 1000; // 12 hours
+const poolRedisKey = (mintAddress) => `gecko-pool:${mintAddress}`;
+
+function rememberPool(mintAddress, address, side) {
+  if (!address) return;
+  // Evict oldest entry if at capacity
+  if (!poolAddressCache.has(mintAddress) && poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
+    poolAddressCache.delete(poolAddressCache.keys().next().value);
+  }
+  poolAddressCache.set(mintAddress, { address, side, expiry: Date.now() + POOL_CACHE_TTL });
+  Promise.resolve(redisCache.set(poolRedisKey(mintAddress), { address, side }, POOL_REDIS_TTL)).catch(() => {});
+}
+
+async function lookupPool(mintAddress) {
+  const local = poolAddressCache.get(mintAddress);
+  if (local && Date.now() < local.expiry) {
+    return { address: local.address, side: local.side || 'base' };
+  }
+  const shared = await redisCache.get(poolRedisKey(mintAddress)).catch(() => undefined);
+  if (shared?.address) {
+    poolAddressCache.set(mintAddress, { address: shared.address, side: shared.side, expiry: Date.now() + POOL_CACHE_TTL });
+    return { address: shared.address, side: shared.side || 'base' };
+  }
+  return null;
+}
+
+function forgetPool(mintAddress) {
+  poolAddressCache.delete(mintAddress);
+  Promise.resolve(redisCache.delete(poolRedisKey(mintAddress))).catch(() => {});
+}
+
 // Get API headers (includes API key when configured)
 function getHeaders() {
   const headers = { 'Accept': 'application/json' };
@@ -481,13 +564,7 @@ async function getTokenOverview(mintAddress) {
   try {
     // Only fetch pools - it includes price and market data we need
     // Metadata (name, symbol, decimals) now comes from Helius
-    const poolsResponse = await deduplicatedRequest(`pools:${mintAddress}`, () =>
-      geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
-        params: { page: 1 }
-      })
-    );
-
-    const pools = poolsResponse.data.data || [];
+    const pools = await getPoolsPage(mintAddress);
 
     if (pools.length === 0) {
       // No pools found - try token endpoint as fallback
@@ -567,6 +644,8 @@ async function getTokenOverview(mintAddress) {
       poolSide: picked.side,
       dexIds
     };
+    // getOHLCV charts the same pool; save it the lookup
+    rememberPool(mintAddress, view.poolAddress, picked.side);
     // Cache for 2 minutes (price data needs reasonable freshness)
     await redisCache.set(overviewCacheKey, overviewResult, TTL.OHLCV || 120000);
     return overviewResult;
@@ -938,24 +1017,19 @@ async function getOHLCV(mintAddress, options = {}) {
   debugLog(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}`);
 
   try {
-    // Check pool address cache first
+    // Check pool address cache first (in-process, then Redis)
     let poolAddress = null;
     let side = 'base';
-    const cached = poolAddressCache.get(mintAddress);
-    if (cached && Date.now() < cached.expiry) {
+    const cached = await lookupPool(mintAddress);
+    if (cached) {
       poolAddress = cached.address;
-      side = cached.side || 'base';
+      side = cached.side;
     }
+    const poolFromCache = !!poolAddress;
 
     // If not cached, fetch pools
     if (!poolAddress) {
-      const poolsResponse = await deduplicatedRequest(`pools:${mintAddress}`, () =>
-        geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
-          params: { page: 1 }
-        })
-      );
-
-      const pools = poolsResponse.data.data || [];
+      const pools = await getPoolsPage(mintAddress);
       if (pools.length === 0) {
         debugLog('[GeckoTerminal] No pools found for token');
         return { mintAddress, interval, data: [] };
@@ -969,15 +1043,7 @@ async function getOHLCV(mintAddress, options = {}) {
       }
       side = picked.side;
 
-      // Cache the pool address — evict oldest entry if at capacity
-      if (poolAddressCache.size >= MAX_POOL_ADDRESS_CACHE_SIZE) {
-        poolAddressCache.delete(poolAddressCache.keys().next().value);
-      }
-      poolAddressCache.set(mintAddress, {
-        address: poolAddress,
-        side,
-        expiry: Date.now() + POOL_CACHE_TTL
-      });
+      rememberPool(mintAddress, poolAddress, side);
     }
 
     const { timeframe, aggregate } = ohlcvTimeframe(interval);
@@ -992,7 +1058,11 @@ async function getOHLCV(mintAddress, options = {}) {
         }
       }),
       'getOHLCV'
-    );
+    ).catch(err => {
+      // A remembered pool that GeckoTerminal no longer knows: pick again next time
+      if (poolFromCache && err.response?.status === 404) forgetPool(mintAddress);
+      throw err;
+    });
 
     const ohlcvList = ohlcvResponse.data.data?.attributes?.ohlcv_list || [];
 
@@ -1075,14 +1145,7 @@ async function getTokenPools(mintAddress, options = {}) {
   debugLog(`[GeckoTerminal] getTokenPools: ${mintAddress}, limit=${limit}`);
 
   try {
-    const response = await geckoRequest(() =>
-      geckoAxios.get(`/networks/${NETWORK}/tokens/${mintAddress}/pools`, {
-        params: { page: 1 }
-      }),
-      'getTokenPools'
-    );
-
-    const pools = response.data.data || [];
+    const pools = await getPoolsPage(mintAddress);
     debugLog(`[GeckoTerminal] Found ${pools.length} pools for token`);
 
     // Deepest pools first, each priced from the token's own side of the pair
