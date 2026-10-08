@@ -93,6 +93,15 @@ class MemoryCache {
     this.stats.sets++;
   }
 
+  /** Raw-bytes variants (see RedisCache). In memory a Buffer is stored as-is. */
+  async getBuffer(key) {
+    return this.get(key);
+  }
+
+  async setBuffer(key, buffer, ttlMs = 60000) {
+    return this.set(key, buffer, ttlMs);
+  }
+
   /**
    * Set-if-not-exists. Returns true if the key was set (did not exist), false otherwise.
    */
@@ -284,6 +293,41 @@ class RedisCache {
       this.stats.sets++;
     } catch (err) {
       console.error('[Redis] Set error:', err.message);
+    }
+  }
+
+  /**
+   * Raw-bytes get/set: the Buffer goes to Redis as a binary string, with none of the base64 +
+   * JSON overhead (+33% size, plus a parse and decode per hit) that set/get would add.
+   * Returns undefined on a miss, like get.
+   */
+  async getBuffer(key) {
+    if (!this.isConnected) {
+      this.stats.misses++;
+      return undefined;
+    }
+    try {
+      const data = await this.client.getBuffer(this._prefixKey(key));
+      if (data === null) {
+        this.stats.misses++;
+        return undefined;
+      }
+      this.stats.hits++;
+      return data;
+    } catch (err) {
+      console.error('[Redis] GetBuffer error:', err.message);
+      this.stats.misses++;
+      return undefined;
+    }
+  }
+
+  async setBuffer(key, buffer, ttlMs = 60000) {
+    if (!this.isConnected) return;
+    try {
+      await this.client.setex(this._prefixKey(key), Math.ceil(ttlMs / 1000), buffer);
+      this.stats.sets++;
+    } catch (err) {
+      console.error('[Redis] SetBuffer error:', err.message);
     }
   }
 
@@ -483,6 +527,14 @@ class CacheService {
 
   set(key, value, ttlMs = 60000) {
     return this.backend.set(key, value, ttlMs);
+  }
+
+  getBuffer(key) {
+    return this.backend.getBuffer(key);
+  }
+
+  setBuffer(key, buffer, ttlMs = 60000) {
+    return this.backend.setBuffer(key, buffer, ttlMs);
   }
 
   setNX(key, value, ttlMs = 60000) {

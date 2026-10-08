@@ -403,6 +403,13 @@ const IMAGE_PROXY_GONE_TTL_MS = 30 * 60 * 1000;      // 30m — the source reall
 const IMAGE_PROXY_FAIL_TTL_MS = 45 * 1000;           // 45s — a blip; recover quickly
 const IMAGE_PROXY_MAX_BYTES = 3 * 1024 * 1024;       // 3MB — logos/banners only, reject anything larger
 const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — see withTimeout below
+// The cache shares a small (25 MB free-plan, volatile-lru) Redis with every other HolDEX key, so
+// only entries that are small after the downscale are kept there. A downscaled WebP logo is tens
+// of KB; anything past this is a passthrough GIF/SVG or an image that would not shrink, and is
+// served without a Redis copy (the browser still caches it for a day).
+const IMAGE_PROXY_CACHE_MAX_BYTES = 150 * 1024;
+// Passthrough types skip the downscale, so even under the cap they are the heaviest entries.
+const IMAGE_PROXY_PASSTHROUGH_TTL_MS = 60 * 60 * 1000; // 1h
 
 // Token artwork arrives at whatever size the creator uploaded - routinely a 1200px+ PNG of
 // several megabytes, for something this UI renders into a 56px avatar or a heavily blurred card
@@ -486,6 +493,26 @@ function withTimeout(promise, ms, fallback) {
 // one upstream request instead of stampeding the origin (and each other, via Redis).
 const imageProxyInFlight = new Map();
 
+// Cache entries are raw bytes (cache.getBuffer/setBuffer, no base64 or JSON): one header line,
+// then the body. The header is the image's content type, or one of these markers for a
+// remembered failure. Content types never contain a newline (they come from sniffing, or from a
+// header value with its parameters stripped).
+const IMAGE_PROXY_FAIL_MARK = '!fail';
+const IMAGE_PROXY_GONE_MARK = '!gone';
+function encodeImageEntry(header, body) {
+  return body ? Buffer.concat([Buffer.from(header + '\n'), body]) : Buffer.from(header + '\n');
+}
+function decodeImageEntry(raw) {
+  if (!Buffer.isBuffer(raw)) return null;
+  const nl = raw.indexOf(0x0a);
+  if (nl <= 0) return null;
+  const header = raw.toString('latin1', 0, nl);
+  if (header === IMAGE_PROXY_FAIL_MARK || header === IMAGE_PROXY_GONE_MARK) {
+    return { notFound: true, gone: header === IMAGE_PROXY_GONE_MARK };
+  }
+  return { contentType: header, buffer: raw.subarray(nl + 1) };
+}
+
 // One upstream fetch for the image proxy: bytes plus a content type judged from the bytes.
 async function fetchImageBytes(target, signal) {
   const axios = require('axios');
@@ -548,9 +575,12 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const { cache } = require('./services/cache');
   // v3: v2 entries are all 512px wide and carry no width in the key, so they would be served for
   // backdrop requests too. Bumping the prefix retires them rather than mixing the two.
-  const cacheKey = `image-proxy:v3:${width}:${url}`;
+  // v4: raw-bytes entries (see encodeImageEntry) replace v3's base64 JSON.
+  const cacheKey = `image-proxy:v4:${width}:${url}`;
 
-  const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
+  const cached = decodeImageEntry(
+    await withTimeout(cache.getBuffer(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null)
+  );
   // A remembered transient failure (not a 404/410) is skipped for the browser's one retry
   // (?retry=1, see utils.handleImageError): that retry lands seconds after the failure, inside
   // the 45s window, and would otherwise be answered with the same cached 502 every time.
@@ -559,7 +589,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    return res.send(Buffer.from(cached.data, 'base64'));
+    return res.send(cached.buffer);
   }
 
   // Share one in-flight fetch across concurrent requests for the same URL AT THE SAME WIDTH -
@@ -595,7 +625,14 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
       }
       // Downscaled BEFORE the cache write, so the expensive part happens once per image rather
       // than once per request, and every cache hit is already small.
-      return downscaleImage(image.buffer, image.contentType, width);
+      const result = await downscaleImage(image.buffer, image.contentType, width);
+      // Written once here, by the shared fetch, rather than by every request that joined it.
+      // Fire-and-forget: a slow Redis write must never stall (or fail) the response.
+      if (result.buffer.length <= IMAGE_PROXY_CACHE_MAX_BYTES) {
+        const ttl = IMAGE_PROXY_PASSTHROUGH.test(result.contentType) ? IMAGE_PROXY_PASSTHROUGH_TTL_MS : IMAGE_PROXY_TTL_MS;
+        cache.setBuffer(cacheKey, encodeImageEntry(result.contentType, result.buffer), ttl).catch(() => {});
+      }
+      return result;
     })();
     // then(fn, fn) rather than .finally(fn): `.finally` returns a NEW promise that rejects
     // whenever the original does, and nothing was awaiting that one. Every failed image fetch -
@@ -610,9 +647,6 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
 
   try {
     const { contentType, buffer } = await fetchPromise;
-    // Fire-and-forget — the response doesn't need to wait on the cache write, and a
-    // slow Redis write must never be able to stall (or fail) the response itself.
-    cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -622,7 +656,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     const gone = upstreamStatus === 404 || upstreamStatus === 410;
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
     cache
-      .set(cacheKey, { notFound: true, gone }, gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
+      .setBuffer(cacheKey, encodeImageEntry(gone ? IMAGE_PROXY_GONE_MARK : IMAGE_PROXY_FAIL_MARK), gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
       .catch(() => {});
     res.status(502).send('Bad Gateway');
   }
