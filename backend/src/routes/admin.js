@@ -104,67 +104,30 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
   }
 }));
 
+// "Refresh All Holder Counts": queue a holder snapshot for every curated token, like
+// "Snapshot Holders Now". Each snapshot writes the canonical count to holder-total and the
+// history (holderPipeline). This used to wipe holder-total and re-page Helius DAS for every
+// mint inside the request, which ran past the admin timeout, kept running after the 503,
+// and cached a capped, dust-inclusive count over the snapshot one.
 router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
-  const { cache, keys, TTL } = require('../services/cache');
-  const solanaService = require('../services/solana');
-
-  // Collect all token mints: curated + leaderboard
-  const mintSet = new Set();
-  try {
-    const curated = await db.getCuratedTokens();
-    curated.forEach(t => { if (t.mintAddress || t.mint_address) mintSet.add(t.mintAddress || t.mint_address); });
-  } catch (_) {}
-
-  try {
-    const { tokens } = await db.getTopConvictionTokens(100, 0, {});
-    tokens.forEach(t => { if (t.mint_address) mintSet.add(t.mint_address); });
-  } catch (_) {}
-
-  const mints = [...mintSet];
-  let updated = 0;
+  const holderPipeline = require('../services/holderPipeline');
+  const curatedTokens = await db.getCuratedTokens().catch(() => []);
+  const mints = [...new Set(curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean))];
+  let queued = 0;
+  let alreadyQueued = 0;
   let failed = 0;
-  const results = {};
-
-  // Clear ALL old holder count caches first so stale data isn't served
-  for (const mint of mints) {
-    await cache.delete(`holder-total:${mint}`).catch(() => {});
-    await cache.delete(keys.holderCount(mint)).catch(() => {});
-  }
-
-  // Fetch fresh counts (unique wallets) from Helius DAS
   for (const mint of mints) {
     try {
-      const count = await solanaService.getTokenHolderCount(mint);
-      if (count && count > 0) {
-        await cache.set(`holder-total:${mint}`, count, TTL.HOLDER_COUNT);
-        results[mint] = count;
-        updated++;
-      } else {
-        failed++;
-      }
+      // false = one is already queued or running for this mint
+      if (await holderPipeline.ensureSnapshot(mint)) queued++;
+      else alreadyQueued++;
     } catch {
       failed++;
     }
-    // Space out the DAS pagination: 500ms between tokens
-    if (updated + failed < mints.length) {
-      await new Promise(r => setTimeout(r, 500));
-    }
   }
-
-  // Clear all caches that display holder counts so new data appears immediately
-  try {
-    // Leaderboard cache
-    const lbKeys = await cache.scanKeys('leaderboard:conviction:*');
-    for (const key of lbKeys) await cache.delete(key);
-    // Token detail page caches
-    for (const mint of mints) {
-      await cache.delete(`token:${mint}`).catch(() => {});
-      await cache.delete(`holder-analytics:${mint}`).catch(() => {});
-    }
-  } catch (_) {}
-
-  console.log(`[Admin] Refreshed holder counts from Helius DAS: ${updated} updated, ${failed} failed, ${mints.length} total`);
-  res.json({ success: true, updated, failed, total: mints.length });
+  console.log(`[Admin] Refresh holder counts: ${queued} snapshots queued, ${alreadyQueued} already queued, ${failed} failed, ${mints.length} total`);
+  // updated: mints with a snapshot on the way (the panel shows updated/failed/total)
+  res.json({ success: true, updated: queued + alreadyQueued, failed, total: mints.length, queued, alreadyQueued });
 }));
 
 // "Snapshot Holders Now": queue a fresh holder snapshot for every curated token.
