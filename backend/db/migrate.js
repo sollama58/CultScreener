@@ -86,8 +86,6 @@ async function runMigrations() {
         recorded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
         UNIQUE(mint_address, recorded_date)
       )`,
-      `CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
-        ON holder_history(mint_address, recorded_date DESC)`,
     ];
     for (const sql of columnMigrations) {
       await client.query(sql);

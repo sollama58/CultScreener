@@ -262,7 +262,6 @@ async function initializeDatabase() {
       ALTER TABLE api_keys DROP COLUMN IF EXISTS full_key;
 
       -- Submission indexes
-      CREATE INDEX IF NOT EXISTS idx_submissions_token ON submissions(token_mint);
       CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
       CREATE INDEX IF NOT EXISTS idx_submissions_wallet ON submissions(submitter_wallet);
       CREATE INDEX IF NOT EXISTS idx_submissions_created ON submissions(created_at DESC);
@@ -275,8 +274,6 @@ async function initializeDatabase() {
         WHERE status != 'rejected';
 
       -- Vote indexes (optimized for concurrent load)
-      CREATE INDEX IF NOT EXISTS idx_votes_submission ON votes(submission_id);
-      CREATE INDEX IF NOT EXISTS idx_votes_wallet ON votes(voter_wallet);
       CREATE INDEX IF NOT EXISTS idx_votes_voter_submission ON votes(voter_wallet, submission_id);
       CREATE INDEX IF NOT EXISTS idx_votes_submission_type ON votes(submission_id, vote_type);
       CREATE INDEX IF NOT EXISTS idx_votes_created ON votes(created_at DESC);
@@ -284,11 +281,15 @@ async function initializeDatabase() {
       -- Token indexes (optimized for search queries that use LOWER())
       CREATE INDEX IF NOT EXISTS idx_tokens_name_symbol ON tokens(LOWER(name), LOWER(symbol));
       -- Separate GIN trigram indexes for fast LIKE %pattern% searches (if pg_trgm extension is available)
-      -- These dramatically speed up wildcard searches
+      -- These dramatically speed up wildcard searches. db/init.sql used to create
+      -- idx_tokens_name_trgm / idx_tokens_symbol_trgm on the raw columns, which took these
+      -- names and left no LOWER() index; drop those (whichever definition they have).
+      DROP INDEX IF EXISTS idx_tokens_name_trgm;
+      DROP INDEX IF EXISTS idx_tokens_symbol_trgm;
       DO $$ BEGIN
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
-        CREATE INDEX IF NOT EXISTS idx_tokens_name_trgm ON tokens USING gin (LOWER(name) gin_trgm_ops);
-        CREATE INDEX IF NOT EXISTS idx_tokens_symbol_trgm ON tokens USING gin (LOWER(symbol) gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_tokens_name_lower_trgm ON tokens USING gin (LOWER(name) gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_tokens_symbol_lower_trgm ON tokens USING gin (LOWER(symbol) gin_trgm_ops);
       EXCEPTION WHEN OTHERS THEN
         -- pg_trgm might not be available on some hosts, fall back to btree indexes
         CREATE INDEX IF NOT EXISTS idx_tokens_name_lower ON tokens(LOWER(name) varchar_pattern_ops);
@@ -296,16 +297,13 @@ async function initializeDatabase() {
       END $$;
 
       -- Watchlist indexes
-      CREATE INDEX IF NOT EXISTS idx_watchlist_wallet ON watchlist(wallet_address);
       CREATE INDEX IF NOT EXISTS idx_watchlist_token ON watchlist(token_mint);
 
       -- Vote tally indexes
       CREATE INDEX IF NOT EXISTS idx_vote_tallies_score ON vote_tallies(weighted_score DESC);
       CREATE INDEX IF NOT EXISTS idx_vote_tallies_updated ON vote_tallies(updated_at DESC);
 
-      -- API key indexes
-      CREATE INDEX IF NOT EXISTS idx_api_keys_wallet ON api_keys(owner_wallet);
-      CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+      -- API key lookups use the UNIQUE(key_hash) and UNIQUE(owner_wallet) indexes
 
       -- Admin sessions table for admin panel authentication
       CREATE TABLE IF NOT EXISTS admin_sessions (
@@ -317,7 +315,6 @@ async function initializeDatabase() {
         user_agent TEXT
       );
 
-      CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(session_token);
       CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
 
       -- Device sessions table for mobile device linking
@@ -333,7 +330,6 @@ async function initializeDatabase() {
         user_agent TEXT
       );
 
-      CREATE INDEX IF NOT EXISTS idx_device_sessions_token ON device_sessions(session_token);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_wallet ON device_sessions(wallet_address);
       CREATE INDEX IF NOT EXISTS idx_device_sessions_expires ON device_sessions(expires_at);
 
@@ -346,7 +342,6 @@ async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT NOW()
       );
 
-      CREATE INDEX IF NOT EXISTS idx_token_views_mint ON token_views(token_mint);
       CREATE INDEX IF NOT EXISTS idx_token_views_count ON token_views(view_count DESC);
 
       -- Announcements table for admin-broadcast site-wide messages
@@ -383,8 +378,6 @@ async function initializeDatabase() {
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
 
-      CREATE INDEX IF NOT EXISTS idx_sentiment_votes_mint ON sentiment_votes(token_mint);
-
       -- Token calls table (rolling 24h endorsements)
       CREATE TABLE IF NOT EXISTS token_calls (
         id SERIAL PRIMARY KEY,
@@ -413,8 +406,6 @@ async function initializeDatabase() {
         dexscreener_updated_at TIMESTAMP WITH TIME ZONE,
         added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-
-      CREATE INDEX IF NOT EXISTS idx_curated_tokens_mint ON curated_tokens(mint_address);
 
       -- Bug reports table
       CREATE TABLE IF NOT EXISTS bug_reports (
@@ -445,7 +436,6 @@ async function initializeDatabase() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_cultify_burns_wallet_mint ON cultify_burns(wallet_address, token_mint);
-      CREATE INDEX IF NOT EXISTS idx_cultify_burns_sig ON cultify_burns(burn_signature);
 
       -- utility_type distinguishes Cultify burns from Holder Behavior burns
       ALTER TABLE cultify_burns ADD COLUMN IF NOT EXISTS utility_type VARCHAR(32) DEFAULT 'cultify';
@@ -457,8 +447,6 @@ async function initializeDatabase() {
         note TEXT,
         added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-
-      CREATE INDEX IF NOT EXISTS idx_utility_whitelist_wallet ON utility_whitelist(wallet_address);
 
       -- Market cap tracking for curated tokens
       DO $mca$ BEGIN
@@ -487,9 +475,6 @@ async function initializeDatabase() {
         recorded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
         UNIQUE(mint_address, recorded_date)
       );
-
-      CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
-        ON holder_history(mint_address, recorded_date DESC);
 
       -- Full holder snapshots, written by the worker's snapshot-holders job.
       -- One header row per run; sample/sample_meta hold the conviction sample drawn
@@ -575,6 +560,27 @@ async function initializeDatabase() {
         source VARCHAR(16) NOT NULL,
         PRIMARY KEY (mint_address, taken_at)
       );
+
+      -- Indexes that duplicate a UNIQUE constraint or another index's leading columns
+      -- (some created by older versions of this block or by db/init.sql). They only
+      -- add write cost; the remaining index serves every lookup they did.
+      DROP INDEX IF EXISTS idx_tokens_mint;               -- tokens UNIQUE(mint_address)
+      DROP INDEX IF EXISTS idx_tokens_symbol;             -- unused raw-symbol btree (init.sql)
+      DROP INDEX IF EXISTS idx_token_views_mint;          -- token_views UNIQUE(token_mint)
+      DROP INDEX IF EXISTS idx_curated_tokens_mint;       -- curated_tokens UNIQUE(mint_address)
+      DROP INDEX IF EXISTS idx_api_keys_hash;             -- api_keys UNIQUE(key_hash)
+      DROP INDEX IF EXISTS idx_api_keys_wallet;           -- api_keys UNIQUE(owner_wallet)
+      DROP INDEX IF EXISTS idx_admin_sessions_token;      -- admin_sessions UNIQUE(session_token)
+      DROP INDEX IF EXISTS idx_device_sessions_token;     -- device_sessions UNIQUE(session_token)
+      DROP INDEX IF EXISTS idx_cultify_burns_sig;         -- cultify_burns UNIQUE(burn_signature)
+      DROP INDEX IF EXISTS idx_utility_whitelist_wallet;  -- utility_whitelist UNIQUE(wallet_address)
+      DROP INDEX IF EXISTS idx_sentiment_votes_mint;      -- UNIQUE(token_mint, voter_wallet)
+      DROP INDEX IF EXISTS idx_votes_submission;          -- UNIQUE(submission_id, voter_wallet)
+      DROP INDEX IF EXISTS idx_votes_wallet;              -- idx_votes_voter_submission
+      DROP INDEX IF EXISTS idx_submissions_token;         -- idx_submissions_token_status
+      DROP INDEX IF EXISTS idx_watchlist_wallet;          -- UNIQUE(wallet_address, token_mint)
+      DROP INDEX IF EXISTS idx_watchlist_mint;            -- same as idx_watchlist_token (init.sql)
+      DROP INDEX IF EXISTS idx_holder_history_mint_date;  -- UNIQUE(mint_address, recorded_date)
 
       -- Generic key-value store for admin-configurable settings
       CREATE TABLE IF NOT EXISTS app_settings (
