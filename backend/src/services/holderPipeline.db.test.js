@@ -660,6 +660,31 @@ if (!DB_URL) {
       assert.strictEqual(await cache.get(`holder-total:${MINT}`), lastExact.holders);
     });
 
+    test('a mint with no stored count is not looked up in Postgres again for a minute, but Redis still is', async () => {
+      const NONE = 'TestMintNoPoints11111111111111111111111111';
+      await cache.delete(`holder-total:${NONE}`);
+      await cache.delete(`holder-total-miss:${NONE}`);
+      let queries = 0;
+      const realQuery = db.pool.query;
+      db.pool.query = function (...args) { queries++; return realQuery.apply(this, args); };
+      try {
+        assert.deepStrictEqual(await holderCounts.getDisplayCounts([NONE]), {});
+        assert.strictEqual(queries, 1);
+        assert.deepStrictEqual(await holderCounts.getDisplayCounts([NONE]), {});
+        assert.strictEqual(queries, 1, 'second call skips the Postgres lookup');
+        // A count the worker writes to Redis shows up straight away
+        await cache.set(`holder-total:${NONE}`, 1234, 60_000);
+        const counts = await holderCounts.getDisplayCounts([NONE, MINT]);
+        assert.strictEqual(counts[NONE], 1234);
+        assert.ok(counts[MINT] > 0);
+        assert.strictEqual(queries, 1);
+      } finally {
+        db.pool.query = realQuery;
+        await cache.delete(`holder-total:${NONE}`);
+        await cache.delete(`holder-total-miss:${NONE}`);
+      }
+    });
+
     test('imported history only fills time before our first point and never overwrites', async () => {
       const inserted = await holderCounts.importLegacyPoints(MINT, [
         { takenAt: T0 - 2 * DAY, count: 280 },
