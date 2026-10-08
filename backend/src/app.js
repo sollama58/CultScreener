@@ -435,6 +435,10 @@ const IMAGE_PROXY_WEBP_QUALITY = 82;     // visually lossless at these sizes
 let sharp = null;
 try {
   sharp = require('sharp');
+  // The API runs on a 0.5 CPU / 512 MB instance alongside every other route. One libvips thread
+  // per resize, and a small operation cache rather than the 50 MB default.
+  sharp.concurrency(1);
+  sharp.cache({ memory: 16, files: 0, items: 50 });
 } catch {
   console.warn('[ImageProxy] sharp unavailable - serving artwork at original size');
 }
@@ -455,7 +459,9 @@ const IMAGE_PROXY_PASSTHROUGH = /^image\/(svg\+xml|gif)/i;
 async function downscaleImage(buffer, contentType, maxDimension = IMAGE_PROXY_DEFAULT_WIDTH) {
   if (!sharp || IMAGE_PROXY_PASSTHROUGH.test(contentType)) return { buffer, contentType };
   try {
-    const out = await sharp(buffer)
+    // A 3 MB upload can still decode to a huge bitmap; anything over 4096x4096 fails fast here
+    // and falls back to the original bytes below.
+    const out = await sharp(buffer, { limitInputPixels: 4096 * 4096 })
       .rotate() // honour EXIF orientation before resizing, or a phone photo comes out sideways
       .resize({
         width: maxDimension,
@@ -492,6 +498,28 @@ function withTimeout(promise, ms, fallback) {
 // cold. Without this, each one triggers its own axios fetch; with it, they all share
 // one upstream request instead of stampeding the origin (and each other, via Redis).
 const imageProxyInFlight = new Map();
+
+// The in-flight map only de-dups the SAME image. A cold cache (a Redis restart, several visitors
+// at once) can still ask for dozens of different images together, each holding up to 3 MB of
+// source bytes and a resize, so at most this many fetch+resize jobs run at once; the rest queue.
+const IMAGE_PROXY_MAX_CONCURRENT = 4;
+let imageProxyActive = 0;
+const imageProxyQueue = [];
+async function withImageProxySlot(fn) {
+  if (imageProxyActive >= IMAGE_PROXY_MAX_CONCURRENT) {
+    await new Promise((resolve) => imageProxyQueue.push(resolve));
+  } else {
+    imageProxyActive++;
+  }
+  try {
+    return await fn();
+  } finally {
+    // Hand the slot straight to the next waiter (the count stays the same), or release it.
+    const next = imageProxyQueue.shift();
+    if (next) next();
+    else imageProxyActive--;
+  }
+}
 
 // Cache entries are raw bytes (cache.getBuffer/setBuffer, no base64 or JSON): one header line,
 // then the body. The header is the image's content type, or one of these markers for a
@@ -596,7 +624,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // keyed on the cache key rather than the URL, since the two widths produce different bytes.
   let fetchPromise = imageProxyInFlight.get(cacheKey);
   if (!fetchPromise) {
-    fetchPromise = (async () => {
+    fetchPromise = withImageProxySlot(async () => {
       // An IPFS image races its original URL against the other gateways and Helius's image CDN
       // (see imageSourceFallbacks): ipfs.io refuses or stalls on requests from cloud servers often
       // enough that waiting for it first made those logos slow at best. Anything else tries its
@@ -633,7 +661,7 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
         cache.setBuffer(cacheKey, encodeImageEntry(result.contentType, result.buffer), ttl).catch(() => {});
       }
       return result;
-    })();
+    });
     // then(fn, fn) rather than .finally(fn): `.finally` returns a NEW promise that rejects
     // whenever the original does, and nothing was awaiting that one. Every failed image fetch -
     // a dead IPFS link, a 429, a timeout - therefore surfaced as an unhandledRejection, which
