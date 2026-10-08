@@ -9,6 +9,16 @@ const { getQueueMetrics } = require('../services/rateLimiter');
 const jobQueue = require('../services/jobQueue');
 const { asyncHandler } = require('../middleware/validation');
 
+// /health is mounted outside the /api limiters (probes must never be throttled), but /stats is
+// public and touches the DB and Redis on every call, so it gets its own cap.
+const statsLimiter = require('express-rate-limit')({
+  windowMs: 60000,
+  max: 30,
+  message: { error: 'Too many requests.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // GET /health - Basic health check
 router.get('/', async (req, res) => {
   res.json({
@@ -222,7 +232,7 @@ router.get('/live', (req, res) => {
 });
 
 // GET /api/stats - Public API statistics (stripped of internal pool details)
-router.get('/stats', asyncHandler(async (req, res) => {
+router.get('/stats', statsLimiter, asyncHandler(async (req, res) => {
   try {
     const dbHealth = await db.checkHealth();
     const cacheStats = await cache.getStats();

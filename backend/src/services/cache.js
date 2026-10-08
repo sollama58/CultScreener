@@ -388,9 +388,10 @@ class RedisCache {
     let size = 0;
 
     try {
-      // Count only keys with our cache prefix to exclude non-cache keys (e.g. BullMQ)
-      const cacheKeys = await this._scanKeys(this._prefixKey('*'));
-      size = cacheKeys.length;
+      // DBSIZE is O(1). A SCAN of the HolDEX:* keys walks the whole keyspace (BullMQ's keys
+      // included) in COUNT-100 round trips, which is too much for an unauthenticated endpoint.
+      // So this counts every key in the Redis DB, not only the cache's own.
+      size = await this.client.dbsize();
     } catch (err) {
       console.error('[Redis] Stats error:', err.message);
     }
