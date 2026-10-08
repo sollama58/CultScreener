@@ -283,8 +283,9 @@
       s.integrity = WEB3_INTEGRITY;
       s.crossOrigin = 'anonymous';
       s.async = true;
-      s.onload = () => window.solanaWeb3 ? resolve(window.solanaWeb3) : reject(new Error('Wallet library failed to load'));
-      s.onerror = () => { web3Promise = null; s.remove(); reject(new Error('Wallet library failed to load')); };
+      const fail = () => { web3Promise = null; s.remove(); reject(new Error('Wallet library failed to load')); };
+      s.onload = () => window.solanaWeb3 ? resolve(window.solanaWeb3) : fail();
+      s.onerror = fail;
       document.head.appendChild(s);
     });
     return web3Promise;
@@ -318,6 +319,7 @@
     }
 
     try {
+      if (!window.solanaWeb3) setStatus('Loading...');
       const { PublicKey, Transaction, TransactionInstruction } = await loadWeb3();
 
       // Pre-flight — verify backend reachable before touching the wallet
