@@ -35,3 +35,21 @@ test('Redis cache marks itself connected again on ready (audit #1)', async () =>
     if (prev === undefined) delete process.env.REDIS_URL; else process.env.REDIS_URL = prev;
   }
 });
+
+test('createByteBudget bounds bytes written per window, then frees them as they age (audit #59)', () => {
+  const { createByteBudget } = require('./cache');
+  let t = 0;
+  const budget = createByteBudget({ limitBytes: 1000, windowMs: 24000, buckets: 24, now: () => t });
+  assert.strictEqual(budget.tryConsume(600), true);
+  t = 5000;
+  assert.strictEqual(budget.tryConsume(300), true);
+  assert.strictEqual(budget.tryConsume(200), false, 'would exceed the limit');
+  assert.strictEqual(budget.tryConsume(100), true, 'exactly at the limit is allowed');
+  assert.strictEqual(budget.used(), 1000);
+  t = 24000; // the first write's slice has aged out
+  assert.strictEqual(budget.used(), 400);
+  assert.strictEqual(budget.tryConsume(600), true);
+  assert.strictEqual(budget.tryConsume(1), false);
+  t = 29000; // everything from t=5000 has aged out
+  assert.strictEqual(budget.used(), 600);
+});

@@ -408,6 +408,15 @@ const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — se
 // base64 (~4MB). A handful of those fill a small volatile-lru Redis and evict TTL'd keys that
 // matter far more (signature replay markers, access tokens), so they are served but not cached.
 const IMAGE_PROXY_CACHE_MAX_BYTES = 512 * 1024;
+// The per-entry cap alone does not bound the total: resized images are small but their keys are
+// any URL a client names, at 600 requests/min per IP. So everything this proxy writes to Redis in
+// one TTL window is capped too (base64 bytes, this process). Past it, images are still served,
+// just not cached, and the rest of the instance keeps its room. Override with
+// IMAGE_PROXY_CACHE_BUDGET_MB.
+const imageProxyCacheBudget = require('./services/cache').createByteBudget({
+  limitBytes: (Number(process.env.IMAGE_PROXY_CACHE_BUDGET_MB) || 8) * 1024 * 1024,
+  windowMs: IMAGE_PROXY_TTL_MS
+});
 
 // Token artwork arrives at whatever size the creator uploaded - routinely a 1200px+ PNG of
 // several megabytes, for something this UI renders into a 56px avatar or a heavily blurred card
@@ -624,7 +633,10 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     // Fire-and-forget — the response doesn't need to wait on the cache write, and a
     // slow Redis write must never be able to stall (or fail) the response itself.
     if (buffer.length <= IMAGE_PROXY_CACHE_MAX_BYTES) {
-      cache.set(cacheKey, { contentType, data: buffer.toString('base64') }, IMAGE_PROXY_TTL_MS).catch(() => {});
+      const data = buffer.toString('base64');
+      if (imageProxyCacheBudget.tryConsume(data.length)) {
+        cache.set(cacheKey, { contentType, data }, IMAGE_PROXY_TTL_MS).catch(() => {});
+      }
     }
 
     res.setHeader('Content-Type', contentType);
