@@ -561,6 +561,7 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   const result = await db.removeCuratedToken(mint);
   console.log(`[Admin] removeCuratedToken result:`, result ? 'deleted' : 'not found');
   if (!result) return res.status(404).json({ error: 'Token not found in curated list' });
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   // Invalidate all caches that could contain this token
   try {
@@ -736,6 +737,7 @@ router.patch('/curated/:mint/emerging-cult', strictLimiter, asyncHandler(async (
 
   // Invalidate token cache so the label shows immediately
   await cache.delete(`token:${mint}`).catch(() => {});
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, emergingCult: value });
 }));
@@ -759,6 +761,7 @@ router.patch('/curated/:mint/tech-coin', strictLimiter, asyncHandler(async (req,
 
   // Invalidate token cache so the label shows immediately
   await cache.delete(`token:${mint}`).catch(() => {});
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, techCoin: value });
 }));
@@ -791,6 +794,7 @@ router.post('/curated/refresh', strictLimiter, (req, res, next) => {
     // Rate limit: 1 second between DexScreener calls
     if (i < tokens.length - 1) await new Promise(r => setTimeout(r, 1000));
   }
+  await require('../services/curatedTokens').invalidateCuratedList();
   if (!res.headersSent) res.json({ success: true, ...results });
 }));
 
