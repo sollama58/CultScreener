@@ -272,6 +272,27 @@
     }
   }
 
+  // ── Poll lifecycle ────────────────────────────────
+  // Each analysis/burn gate gets a run id; polls capture it and stop once a newer run
+  // starts, so a previous mint's polls can neither keep going nor write into the new results.
+  let runId = 0;
+  function startNewRun() {
+    runId++;
+    if (diamondPollTimer) { clearTimeout(diamondPollTimer); diamondPollTimer = null; }
+    if (analysisPollTimer) { clearTimeout(analysisPollTimer); analysisPollTimer = null; }
+  }
+
+  // Run fn now, or once the tab is visible again (polls pause in hidden tabs).
+  function whenVisible(fn) {
+    if (!document.hidden) { fn(); return; }
+    const onVisible = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVisible);
+      fn();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+  }
+
   // ── Main flow ─────────────────────────────────────
 
   async function handleCultify() {
@@ -283,6 +304,7 @@
     }
 
     goBtn.disabled = true;
+    startNewRun();
     hideResults();
     showStatus('<div class="cultify-gate"><p class="cultify-loading">Checking token...</p></div>');
 
@@ -358,6 +380,7 @@
   }
 
   async function showBurnGate(mint) {
+    startNewRun();
     const connected = typeof wallet !== 'undefined' && wallet.connected;
 
     let html = '<div class="cultify-gate">';
@@ -601,9 +624,11 @@
 
       // Step 6: Poll for confirmation
       burnBtn.textContent = 'Confirming burn...';
+      // Back off 1, 2, 4, then every 5 s for up to ~60 s (it shares a per-IP rate limit)
       let confirmed = false;
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 2000));
+      const confirmDeadline = Date.now() + 60000;
+      for (let delay = 1000; Date.now() < confirmDeadline; delay = Math.min(delay * 2, 5000)) {
+        await new Promise(r => setTimeout(r, delay));
         try {
           const statusResp = await fetch(`${baseUrl}/api/cultify/tx-status/${signature}`);
           if (statusResp.ok) {
@@ -643,6 +668,7 @@
   let analysisPollTimer = null;
 
   async function loadAnalysis(mint, isCurated) {
+    const run = runId;
     try {
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
       const tokenParam = currentAccessToken ? `?token=${currentAccessToken}` : '';
@@ -656,6 +682,7 @@
       }
 
       const data = await resp.json();
+      if (run !== runId) return; // a newer analysis started meanwhile
 
       if (data.error === 'rpc_unavailable' || data.error === 'no_holders') {
         showStatus('<div class="cultify-gate"><p class="cultify-error">Holder data temporarily unavailable. Try again later.</p></div>');
@@ -671,10 +698,12 @@
         let enrichAttempt = 0;
         const pollEnriched = async () => {
           analysisPollTimer = null;
+          if (run !== runId) return;
           enrichAttempt++;
           if (enrichAttempt > 5) return; // give up after 5 attempts (~25s)
           try {
             const enrichedResp = await fetch(url);
+            if (run !== runId) return;
             if (enrichedResp.ok) {
               const enriched = await enrichedResp.json();
               if (enriched.supply || (enriched.metrics && enriched.metrics.holderCount)) {
@@ -684,9 +713,9 @@
             }
           } catch (_) {}
           // Not enriched yet — try again
-          analysisPollTimer = setTimeout(pollEnriched, 5000);
+          analysisPollTimer = setTimeout(() => whenVisible(pollEnriched), 5000);
         };
-        analysisPollTimer = setTimeout(pollEnriched, 4000);
+        analysisPollTimer = setTimeout(() => whenVisible(pollEnriched), 4000);
       }
     } catch (err) {
       showStatus(`<div class="cultify-gate"><p class="cultify-error">${escapeHtml(err.message)}</p></div>`);
@@ -1028,8 +1057,10 @@
   const MAX_DIAMOND_POLLS_ACTIVE = 60;  // ~3 min at 3s — actively computing
   const MAX_DIAMOND_POLLS_QUEUED = 120; // ~10 min at 5s — waiting in queue
 
-  async function pollDiamondHands(mint) {
+  async function pollDiamondHands(mint, run = runId) {
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
+    diamondPollTimer = null;
+    if (run !== runId) return;
     diamondCurrentMint = mint;
     diamondPollCount++;
 
@@ -1044,6 +1075,7 @@
 
     try {
       const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${qs ? '?' + qs : ''}`);
+      if (run !== runId) return; // a newer analysis started meanwhile
 
       if (resp.status === 403) {
         currentAccessToken = null; _clearAccessToken(mint);
@@ -1053,7 +1085,7 @@
       }
 
       if (!resp.ok) {
-        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
+        diamondPollTimer = setTimeout(() => whenVisible(() => pollDiamondHands(mint, run)), 5000);
         return;
       }
 
@@ -1124,9 +1156,9 @@
 
       // Poll again — slower when queued
       const pollDelay = isQueued ? 5000 : 3000;
-      diamondPollTimer = setTimeout(() => pollDiamondHands(mint), pollDelay);
+      diamondPollTimer = setTimeout(() => whenVisible(() => pollDiamondHands(mint, run)), pollDelay);
     } catch {
-      diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
+      diamondPollTimer = setTimeout(() => whenVisible(() => pollDiamondHands(mint, run)), 5000);
     }
   }
 
