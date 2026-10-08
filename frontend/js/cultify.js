@@ -158,6 +158,7 @@
       </div>`);
     } catch (err) {
       if (err.name === 'AbortError') return;
+      lastPreviewMint = null; // allow a later retry of the same address
       // Couldn't load metadata — show minimal preview with just the address
       previewData = null;
       const short = mint.slice(0, 6) + '...' + mint.slice(-4);
@@ -352,12 +353,14 @@
         script.src = 'https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js';
         script.integrity = 'sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ';
         script.crossOrigin = 'anonymous';
-        script.onload = resolve;
-        script.onerror = () => {
+        const fail = () => {
           web3Promise = null; // allow a retry on the next attempt
           script.remove();
           reject(new Error('Failed to load the Solana library. Check your connection and try again.'));
         };
+        // A script that loads without defining the global (e.g. a proxy error page) is a failure too
+        script.onload = () => (typeof solanaWeb3 !== 'undefined' ? resolve() : fail());
+        script.onerror = fail;
         document.head.appendChild(script);
       });
     }
@@ -697,8 +700,8 @@
       if (!data.supply && !analysisPollTimer) {
         let enrichAttempt = 0;
         const pollEnriched = async () => {
+          if (run !== runId) return; // superseded: leave the current run's timer alone
           analysisPollTimer = null;
-          if (run !== runId) return;
           enrichAttempt++;
           if (enrichAttempt > 5) return; // give up after 5 attempts (~25s)
           try {
@@ -706,6 +709,7 @@
             if (run !== runId) return;
             if (enrichedResp.ok) {
               const enriched = await enrichedResp.json();
+              if (run !== runId) return;
               if (enriched.supply || (enriched.metrics && enriched.metrics.holderCount)) {
                 updateEnrichedMetrics(enriched);
                 return; // done
@@ -718,6 +722,7 @@
         analysisPollTimer = setTimeout(() => whenVisible(pollEnriched), 4000);
       }
     } catch (err) {
+      if (run !== runId) return; // a stale analysis's error must not cover the newer run
       showStatus(`<div class="cultify-gate"><p class="cultify-error">${escapeHtml(err.message)}</p></div>`);
     }
   }
@@ -1059,9 +1064,10 @@
   const MAX_DIAMOND_POLLS_QUEUED = 120; // ~10 min at 5s — waiting in queue
 
   async function pollDiamondHands(mint, run = runId) {
+    // Stale check first: a superseded poll must not touch the current run's timer
+    if (run !== runId) return;
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
     diamondPollTimer = null;
-    if (run !== runId) return;
     diamondCurrentMint = mint;
     diamondPollCount++;
 
@@ -1091,6 +1097,7 @@
       }
 
       const data = await resp.json();
+      if (run !== runId) return;
 
       // Terminal: computed with no distribution
       if (data.computed && !data.distribution) {
