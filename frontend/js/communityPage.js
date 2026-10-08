@@ -56,6 +56,9 @@ const communityPage = {
       } catch (_) {}
 
       const defaultLogo = utils.getDefaultLogo();
+      // Removing needs the wallet itself (a signed request); a linked phone can only read,
+      // so it gets no Remove button rather than one that silently does nothing.
+      const canEdit = !!(wallet.connected && wallet.address === viewer);
       tbody.innerHTML = tokens.map((token, i) => {
         const mint = token.mint || '';
         const d = enriched[mint] || {};
@@ -79,7 +82,7 @@ const communityPage = {
             </td>
             <td class="cell-price mono-num">${price}</td>
             <td class="cell-mcap mono-num">${mcap}</td>
-            <td class="text-right"><button class="action-btn danger" data-remove-wl="${utils.escapeHtml(mint)}">Remove</button></td>
+            <td class="text-right">${canEdit ? `<button class="action-btn danger" data-remove-wl="${utils.escapeHtml(mint)}">Remove</button>` : ''}</td>
           </tr>`;
       }).join('');
 
