@@ -547,8 +547,9 @@ async function initializeDatabase() {
         backfill_updated_at TIMESTAMP WITH TIME ZONE,
         PRIMARY KEY (mint_address, wallet)
       );
-      CREATE INDEX IF NOT EXISTS idx_holder_positions_mint_seen
-        ON holder_positions(mint_address, last_seen_at);
+      -- Nothing filters or orders on last_seen_at; indexing it only made every
+      -- amount-change update in writeSnapshot non-HOT.
+      DROP INDEX IF EXISTS idx_holder_positions_mint_seen;
 
       -- When a later pre-check last confirmed this snapshot still exact (every account
       -- unchanged). Newcomers at the next snapshot are dated from this, not taken_at.
