@@ -87,10 +87,12 @@ router.post('/', veryStrictLimiter, validateApiKeySignature, asyncHandler(async 
 // API Key Management
 // ==========================================
 
-// GET /api/keys/me — Get current API key info for a wallet
+// POST /api/keys/me (and GET /api/keys/me) — Get current API key info for a wallet
 // SECURITY: Requires wallet signature to prevent enumeration attacks
 // This prevents attackers from discovering which wallets have registered API keys
-router.get('/me', validateApiKeySignature, asyncHandler(async (req, res) => {
+// The signed fields are read from the body. Browsers (fetch) cannot send a body on a GET,
+// so POST is the form web clients use; GET is kept for scripted clients that already call it.
+const getKeyInfo = asyncHandler(async (req, res) => {
   const wallet = req.body.wallet; // From validated signature, not query param
 
   // Double-check wallet format (defense in depth)
@@ -122,7 +124,9 @@ router.get('/me', validateApiKeySignature, asyncHandler(async (req, res) => {
     request_count: apiKey.request_count || 0,
     is_active: apiKey.is_active
   });
-}));
+});
+router.post('/me', validateApiKeySignature, getKeyInfo);
+router.get('/me', validateApiKeySignature, getKeyInfo);
 
 // DELETE /api/keys/me — Delete/revoke API key
 // Requires wallet signature (wallet must own the key)
