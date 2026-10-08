@@ -43,3 +43,17 @@ test('fmtValue keeps the plain paths', () => {
   assert.strictEqual(fmtValue(null), '--');
   assert.strictEqual(fmtValue(12345), '12.35K');
 });
+
+test('normalizeHStyle keeps valid holder line settings and drops bad ones', () => {
+  const { normalizeHStyle } = loadTokenChart()._test;
+  assert.deepStrictEqual({ ...normalizeHStyle(null) }, { color: '#22d3ee', opacity: 1, pane: 'overlay' });
+  assert.deepStrictEqual({ ...normalizeHStyle({ color: '#F472B6', opacity: 0.6, pane: 'pane' }) }, { color: '#f472b6', opacity: 0.6, pane: 'pane' });
+  assert.deepStrictEqual({ ...normalizeHStyle({ color: 'red;}', opacity: 0, pane: 'left' }) }, { color: '#22d3ee', opacity: 0.1, pane: 'overlay' });
+  assert.strictEqual(normalizeHStyle({ opacity: 'x' }).opacity, 1);
+  assert.strictEqual(normalizeHStyle({ opacity: 5 }).opacity, 1);
+});
+
+test('hexToRgba applies the opacity', () => {
+  const { hexToRgba } = loadTokenChart()._test;
+  assert.strictEqual(hexToRgba('#22d3ee', 0.5), 'rgba(34,211,238,0.5)');
+});

@@ -21,9 +21,11 @@ const tokenChart = (() => {
     { id: 'rsi', label: 'RSI 14', title: 'Relative Strength Index (14)' },
     { id: 'holders', label: 'Holders', title: 'Holder count on the left scale (one point per holder snapshot)' }
   ];
-  const DEFAULT_PREFS = { tf: '15m', unit: 'price', style: 'candles', log: false, ind: { vol: true, ma20: false, ema50: false, bb: false, rsi: false, holders: false } };
+  // Holders line look: color, opacity, and whether it rides on the price chart or gets its own pane
+  const HOLDERS_SWATCHES = ['#22d3ee', '#60a5fa', '#a78bfa', '#f472b6', '#fb923c', '#facc15', '#4ade80', '#f1f5f9'];
+  const DEFAULT_HSTYLE = { color: '#22d3ee', opacity: 1, pane: 'overlay' };
+  const DEFAULT_PREFS = { tf: '15m', unit: 'price', style: 'candles', log: false, ind: { vol: true, ma20: false, ema50: false, bb: false, rsi: false, holders: false }, hstyle: DEFAULT_HSTYLE };
 
-  const HOLDERS_COLOR = '#22d3ee';
   let libPromise = null;
   let state = null; // live modal state; null while closed
 
@@ -32,10 +34,28 @@ const tokenChart = (() => {
     try {
       const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
       if (saved && typeof saved === 'object') {
-        return { ...DEFAULT_PREFS, ...saved, ind: { ...DEFAULT_PREFS.ind, ...(saved.ind || {}) } };
+        return { ...DEFAULT_PREFS, ...saved, ind: { ...DEFAULT_PREFS.ind, ...(saved.ind || {}) }, hstyle: normalizeHStyle(saved.hstyle) };
       }
     } catch { /* storage blocked or bad JSON */ }
-    return { ...DEFAULT_PREFS, ind: { ...DEFAULT_PREFS.ind } };
+    return { ...DEFAULT_PREFS, ind: { ...DEFAULT_PREFS.ind }, hstyle: { ...DEFAULT_HSTYLE } };
+  }
+  // Stored values are only a convenience: anything unexpected falls back to the default
+  function normalizeHStyle(h) {
+    const out = { ...DEFAULT_HSTYLE };
+    if (!h || typeof h !== 'object') return out;
+    if (typeof h.color === 'string' && /^#[0-9a-f]{6}$/i.test(h.color)) out.color = h.color.toLowerCase();
+    const op = Number(h.opacity);
+    if (isFinite(op)) out.opacity = Math.min(1, Math.max(0.1, Math.round(op * 100) / 100));
+    if (h.pane === 'overlay' || h.pane === 'pane') out.pane = h.pane;
+    return out;
+  }
+  function hexToRgba(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function holdersColor(prefs) {
+    const h = prefs.hstyle;
+    return h.opacity >= 1 ? h.color : hexToRgba(h.color, h.opacity);
   }
   function savePrefs(prefs) {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
@@ -249,12 +269,13 @@ const tokenChart = (() => {
           ${seg('unit', [{ id: 'price', label: 'Price' }, { id: 'mcap', label: 'MCap', disabled: !canMcap, title: canMcap ? 'Market cap (price × supply)' : 'Market cap needs supply data' }], prefs.unit, 'Value')}
           ${seg('style', [{ id: 'candles', label: 'Candles' }, { id: 'line', label: 'Line' }], prefs.style, 'Chart style')}
           <div class="tc-toggles" role="group" aria-label="Indicators">
-            ${INDICATORS.map(ind => `<button type="button" class="tc-chip${prefs.ind[ind.id] ? ' on' : ''}" data-ind="${ind.id}" aria-pressed="${!!prefs.ind[ind.id]}" title="${esc(ind.title)}">${esc(ind.label)}</button>`).join('')}
+            ${INDICATORS.map(ind => `<button type="button" class="tc-chip${prefs.ind[ind.id] ? ' on' : ''}" data-ind="${ind.id}" aria-pressed="${!!prefs.ind[ind.id]}" title="${esc(ind.title)}">${esc(ind.label)}</button>${ind.id === 'holders' ? hstyleBtnHtml(prefs) : ''}`).join('')}
             <button type="button" class="tc-chip${prefs.log ? ' on' : ''}" data-log aria-pressed="${!!prefs.log}" title="Logarithmic price scale">Log</button>
             <button type="button" class="tc-chip" data-fit title="Show all candles">Reset</button>
           </div>
           </div>
         </div>
+        ${hstylePanelHtml(prefs)}
         <div class="tc-legend num" id="tc-legend" aria-live="off"></div>
         <div class="tc-body">
           <div class="tc-rail" role="toolbar" aria-label="Drawing tools">
@@ -287,6 +308,35 @@ const tokenChart = (() => {
           <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">Charting by TradingView</a>
         </div>
       </div>`;
+  }
+
+  function hstyleBtnHtml(prefs) {
+    return `<button type="button" class="tc-chip tc-hstyle-btn" data-hstyle-toggle aria-expanded="false" aria-controls="tc-hstyle"${prefs.ind.holders ? '' : ' hidden'} title="Holders line color, transparency and placement" aria-label="Holders line style"><i class="tc-hstyle-dot" style="background:${holdersColor(prefs)}" aria-hidden="true"></i><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+  }
+  function hstylePanelHtml(prefs) {
+    const h = prefs.hstyle;
+    const pct = Math.round(h.opacity * 100);
+    return `
+        <div class="tc-hstyle" id="tc-hstyle" role="group" aria-label="Holders line style" hidden>
+          <div class="tc-hstyle-row">
+            <span class="tc-hstyle-label">Color</span>
+            <div class="tc-swatches">
+              ${HOLDERS_SWATCHES.map(c => `<button type="button" class="tc-swatch${c === h.color ? ' on' : ''}" data-hcolor="${c}" style="--sw:${c}" aria-pressed="${c === h.color}" aria-label="Color ${c}" title="${c}"></button>`).join('')}
+              <label class="tc-swatch tc-swatch-custom${HOLDERS_SWATCHES.includes(h.color) ? '' : ' on'}" title="Pick any color">
+                <input type="color" data-hcolor-input value="${esc(h.color)}" aria-label="Custom color">
+              </label>
+            </div>
+          </div>
+          <div class="tc-hstyle-row">
+            <label class="tc-hstyle-label" for="tc-hopacity">Opacity</label>
+            <input type="range" id="tc-hopacity" class="tc-hrange" data-hopacity min="10" max="100" step="5" value="${pct}">
+            <span class="tc-hstyle-val num" id="tc-hopacity-val">${pct}%</span>
+          </div>
+          <div class="tc-hstyle-row">
+            <span class="tc-hstyle-label">Placement</span>
+            ${seg('hpane', [{ id: 'overlay', label: 'On chart', title: 'Draw the holder count over the price chart' }, { id: 'pane', label: 'Own pane', title: 'Draw the holder count in a separate pane under the price chart' }], h.pane, 'Holders placement')}
+          </div>
+        </div>`;
   }
 
   function tokenInfo() {
@@ -507,43 +557,61 @@ const tokenChart = (() => {
       state.series.bbM = line('rgba(57,135,229,0.45)', bb.mid, { lineStyle: 2 });
       state.series.bbL = line('rgba(57,135,229,0.8)', bb.lower);
     }
-    if (prefs.ind.rsi) {
-      const r = chart.addSeries(LWC.LineSeries, {
-        color: '#b9a6ff', lineWidth: 1.5, priceLineVisible: false,
-        priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
-        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } })
-      }, 1);
-      r.setData(rsi(candles, 14));
-      r.createPriceLine({ price: 70, color: 'rgba(255,128,128,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
-      r.createPriceLine({ price: 30, color: 'rgba(74,222,128,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
-      state.series.rsi = r;
-      try { chart.panes()[1].setStretchFactor(0.28); chart.panes()[0].setStretchFactor(1); } catch { /* ignore */ }
-    }
-
+    // The holder pane sits right under the price chart, RSI below it (holders are added first:
+    // a series can only open the pane right after the last one)
+    const holderPane = prefs.ind.holders && prefs.hstyle.pane === 'pane' && state.holders?.length
+      ? holdersPerCandle(candles, state.holders, tfSeconds()) : null;
+    const holdersInPane = !!holderPane?.length;
     const showHolders = prefs.ind.holders && state.holders?.length;
-    // Phones have no room for a second axis: the line gets its own hidden scale and the
-    // legend carries the number.
-    const holderAxis = (state.root.querySelector('#tc-chart')?.clientWidth || 0) >= 600;
+    // Phones have no room for a second axis: the overlay line gets its own hidden scale and
+    // the legend carries the number. In its own pane the line uses that pane's right axis.
+    const holderAxis = !holdersInPane && holderAxisFits();
     chart.priceScale('left').applyOptions({ visible: !!showHolders && holderAxis, borderVisible: false, scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
     if (showHolders) {
-      const data = holdersPerCandle(candles, state.holders, tfSeconds());
+      const data = holderPane || holdersPerCandle(candles, state.holders, tfSeconds());
       if (data.length) {
         const h = chart.addSeries(LWC.LineSeries, {
-          priceScaleId: holderAxis ? 'left' : 'holders', color: HOLDERS_COLOR, lineWidth: 2, lineType: 1, lastValueVisible: true, priceLineVisible: false,
+          priceScaleId: holdersInPane ? 'right' : holderAxis ? 'left' : 'holders', color: holdersColor(prefs), lineWidth: 2, lineType: 1, lastValueVisible: true, priceLineVisible: false,
           crosshairMarkerVisible: false, priceFormat: { type: 'custom', formatter: fmtVolume, minMove: 1 }
-        });
-        if (!holderAxis) h.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
+        }, holdersInPane ? 1 : 0);
+        if (holdersInPane) h.priceScale().applyOptions({ scaleMargins: { top: 0.12, bottom: 0.08 } });
+        else if (!holderAxis) h.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: prefs.ind.vol ? 0.22 : 0.06 } });
         h.setData(data);
         state.series.holders = h;
       }
     } else if (prefs.ind.holders && state.holders == null) {
       fetchHolders();
     }
+    if (prefs.ind.rsi) {
+      const rsiPane = holdersInPane ? 2 : 1;
+      const r = chart.addSeries(LWC.LineSeries, {
+        color: '#b9a6ff', lineWidth: 1.5, priceLineVisible: false,
+        priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } })
+      }, rsiPane);
+      r.setData(rsi(candles, 14));
+      r.createPriceLine({ price: 70, color: 'rgba(255,128,128,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+      r.createPriceLine({ price: 30, color: 'rgba(74,222,128,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+      state.series.rsi = r;
+    }
+
+    try {
+      const panes = chart.panes();
+      panes[0].setStretchFactor(1);
+      for (let i = 1; i < panes.length; i++) panes[i].setStretchFactor(holdersInPane && i === 1 ? 0.32 : 0.28);
+    } catch { /* ignore */ }
 
     if (prevRange) chart.timeScale().setVisibleLogicalRange(prevRange);
     else showRecent();
     renderHeader();
     renderLegend(null);
+  }
+
+  function holderAxisFits() {
+    return (state.root.querySelector('#tc-chart')?.clientWidth || 0) >= 600;
+  }
+  function holdersInOwnPane() {
+    return !!state.series.holders && state.prefs.hstyle.pane === 'pane';
   }
 
   // Open on the most recent ~150 candles; Reset zooms out to everything we have
@@ -612,8 +680,10 @@ const tokenChart = (() => {
       if (p.ema50 && pick('ema50') != null) parts.push(`<span class="tc-lg-ema">EMA50&nbsp;${fmtValue(pick('ema50'))}</span>`);
       if (p.rsi && pick('rsi') != null) parts.push(`<span class="tc-lg-rsi">RSI&nbsp;${pick('rsi').toFixed(1)}</span>`);
     }
-    if (p.holders && holdersNow() != null) parts.push(`<span class="tc-lg-holders"><i class="tc-lg-key" aria-hidden="true"></i>Holders&nbsp;${Math.round(holdersNow()).toLocaleString()}</span>`);
-    if (p.holders && state.holders && !state.series.holders) parts.push('<span class="tc-lg-holders">Holders: no count in this range yet</span>');
+    // Text keeps the full color so it stays readable when the line itself is faint
+    const hs = state.prefs.hstyle;
+    if (p.holders && holdersNow() != null) parts.push(`<span class="tc-lg-holders" style="color:${hs.color}"><i class="tc-lg-key" style="background:${holdersColor(state.prefs)}" aria-hidden="true"></i>Holders&nbsp;${Math.round(holdersNow()).toLocaleString()}</span>`);
+    if (p.holders && state.holders && !state.series.holders) parts.push(`<span class="tc-lg-holders" style="color:${hs.color}">Holders: no count in this range yet</span>`);
     el.innerHTML = parts.filter(Boolean).join('<span class="tc-lg-gap"></span>');
   }
 
@@ -729,6 +799,8 @@ const tokenChart = (() => {
     requestAnimationFrame(() => root.classList.add('tc-overlay--visible'));
 
     root.addEventListener('click', onClick);
+    root.addEventListener('input', onInput);
+    root.addEventListener('change', onInput);
     document.addEventListener('keydown', onKey);
     root.querySelector('#tc-close').focus();
 
@@ -759,7 +831,8 @@ const tokenChart = (() => {
     if (!state) return;
     if (e.key === 'Escape') {
       e.preventDefault();
-      // First Escape drops the active tool or selection; the next one closes
+      // First Escape closes the style panel or drops the active tool or selection; the next one closes
+      if (!state.root.querySelector('#tc-hstyle')?.hidden) { setHStyleOpen(false); return; }
       if (!state.draw?.cancel()) close();
       return;
     }
@@ -770,7 +843,7 @@ const tokenChart = (() => {
     }
     // Keep Tab inside the dialog
     if (e.key === 'Tab') {
-      const f = [...state.root.querySelectorAll('button:not([disabled]), a[href]')];
+      const f = [...state.root.querySelectorAll('button:not([disabled]):not([hidden]), a[href], input:not([disabled])')].filter(x => x.offsetParent !== null);
       if (!f.length) return;
       const first = f[0], last = f[f.length - 1];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -812,12 +885,21 @@ const tokenChart = (() => {
           accent: chg ? cssVar(up ? '--good-ink' : '--bad-ink', up ? '#4ade80' : '#ff8080') : undefined,
           legend: state.series.holders ? [
             { label: `${unit} (right axis)`, color: cssVar('--good-ink', '#4ade80') },
-            { label: `Holders${state.root.querySelector('#tc-chart')?.clientWidth >= 600 ? ' (left axis)' : ''}`, color: HOLDERS_COLOR },
+            { label: `Holders${holdersInOwnPane() ? ' (lower pane)' : holderAxisFits() ? ' (left axis)' : ''}`, color: holdersColor(state.prefs) },
           ] : [],
         });
       };
       if (t.dataset.shot === 'copy') chartShot.copy(make, 'chart');
       else chartShot.download(make, 'chart');
+      return;
+    }
+    if (t.hasAttribute('data-hstyle-toggle')) { setHStyleOpen(state.root.querySelector('#tc-hstyle').hidden); return; }
+    if (t.dataset.hcolor) { setHStyle({ color: t.dataset.hcolor }, true); return; }
+    if (t.closest('[data-seg="hpane"]')) {
+      if (state.prefs.hstyle.pane === t.dataset.val) return;
+      setSegOn('hpane', t.dataset.val);
+      setHStyle({ pane: t.dataset.val }, true);
+      render(false);
       return;
     }
     if (t.dataset.draw) { state.draw?.setTool(t.dataset.draw); return; }
@@ -843,6 +925,11 @@ const tokenChart = (() => {
       state.prefs.ind[id] = !state.prefs.ind[id];
       t.classList.toggle('on', state.prefs.ind[id]);
       t.setAttribute('aria-pressed', String(state.prefs.ind[id]));
+      if (id === 'holders') {
+        const btn = state.root.querySelector('[data-hstyle-toggle]');
+        if (btn) btn.hidden = !state.prefs.ind.holders;
+        if (!state.prefs.ind.holders) setHStyleOpen(false);
+      }
       savePrefs(state.prefs);
       render(false);
       return;
@@ -858,6 +945,45 @@ const tokenChart = (() => {
     if (t.hasAttribute('data-fit')) {
       state.chart.timeScale().fitContent();
     }
+  }
+
+  // ── Holders line style ─────────────────────────────────────────────────
+  function setHStyleOpen(open) {
+    const panel = state.root.querySelector('#tc-hstyle');
+    const btn = state.root.querySelector('[data-hstyle-toggle]');
+    if (!panel) return;
+    panel.hidden = !open;
+    btn?.setAttribute('aria-expanded', String(open));
+    btn?.classList.toggle('on', open);
+  }
+  // Color and opacity restyle the live line in place; placement needs a re-render (caller)
+  function setHStyle(patch, save) {
+    const h = state.prefs.hstyle = normalizeHStyle({ ...state.prefs.hstyle, ...patch });
+    const color = holdersColor(state.prefs);
+    state.series.holders?.applyOptions({ color });
+    const root = state.root;
+    root.querySelectorAll('[data-hcolor]').forEach(b => {
+      const on = b.dataset.hcolor === h.color;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    const custom = root.querySelector('.tc-swatch-custom');
+    custom?.classList.toggle('on', !HOLDERS_SWATCHES.includes(h.color));
+    const input = root.querySelector('[data-hcolor-input]');
+    if (input && input.value.toLowerCase() !== h.color) input.value = h.color;
+    const dot = root.querySelector('.tc-hstyle-dot');
+    if (dot) dot.style.background = color;
+    const val = root.querySelector('#tc-hopacity-val');
+    if (val) val.textContent = `${Math.round(h.opacity * 100)}%`;
+    if (save) savePrefs(state.prefs);
+    renderLegend(null);
+  }
+  function onInput(e) {
+    if (!state) return;
+    const t = e.target;
+    const save = e.type === 'change';
+    if (t.hasAttribute('data-hopacity')) setHStyle({ opacity: Number(t.value) / 100 }, save);
+    else if (t.hasAttribute('data-hcolor-input')) setHStyle({ color: t.value }, save);
   }
 
   // ── Preview card on the page ───────────────────────────────────────────
@@ -927,5 +1053,5 @@ const tokenChart = (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 
-  return { open, close, loadLib, _test: { fmtValue, sma, ema, rsi, bollinger, normalizeCandles, mergeTail } };
+  return { open, close, loadLib, _test: { fmtValue, sma, ema, rsi, bollinger, normalizeCandles, mergeTail, normalizeHStyle, hexToRgba } };
 })();
