@@ -626,11 +626,17 @@ router.get('/holder-behavior/analyze/:mint', walletLimiter, validateMint, asyncH
   const pending = await cache.get(pendingKey);
   if (pending) return res.json({ status: 'computing' });
 
+  // Claim the pending flag atomically so concurrent requests that raced past the check above
+  // don't enqueue a second run. If the claim fails only because the cache is unreachable (no
+  // flag is set), carry on rather than answering 'computing' while nothing runs.
+  const claimed = await cache.setNX(pendingKey, Date.now(), HB_PENDING_TTL);
+  if (!claimed && await cache.get(pendingKey)) return res.json({ status: 'computing' });
+
   // Enqueue analysis in worker process (replaces setImmediate + in-process semaphore).
-  // jobId deduplicates at the BullMQ level — prevents duplicate jobs when concurrent
-  // requests race past the pending-flag check above.
-  await cache.set(pendingKey, Date.now(), HB_PENDING_TTL);
-  const queued = await jobQueue.addAnalyticsJob('compute-holder-behavior', { mint }, { jobId: `hb:${mint}` });
+  // A fresh jobId per run: BullMQ answers a reused id with the existing job, even a completed
+  // one it is still retaining, so a fixed id would silently skip the retry after a failed run.
+  // (Custom ids also may not contain ':' - BullMQ rejects them.)
+  const queued = await jobQueue.addAnalyticsJob('compute-holder-behavior', { mint }, { jobId: `hb-${mint}-${Date.now()}` });
   if (!queued) {
     // Queue unavailable — fall back to in-process execution so the feature still works
     setImmediate(() => runHolderBehaviorAnalysis(mint));

@@ -15,6 +15,7 @@ const store = new Map();
 cache.get = async (k) => (store.has(k) ? store.get(k) : null);
 cache.set = async (k, v) => { store.set(k, v); return true; };
 cache.delete = async (k) => { store.delete(k); return true; };
+cache.setNX = async (k, v) => { if (store.has(k)) return false; store.set(k, v); return true; };
 cache.getBackendType = () => 'memory';
 
 const MINT = 'So11111111111111111111111111111111111111112';
@@ -79,5 +80,50 @@ describe('GET /diamond-hands/:mint', () => {
     const r = await get(`/diamond-hands/${MINT}?token=tok1`);
     assert.strictEqual(r.status, 200);
     assert.strictEqual(r.body.computed, false);
+  });
+});
+
+describe('GET /holder-behavior/analyze/:mint', () => {
+  const HB_TOKEN = 'hbtok';
+  let added;
+
+  beforeEach(() => {
+    added = [];
+    db.isWalletWhitelisted = async () => false;
+    store.set(`hb:access:${HB_TOKEN}`, { wallet: 'w', mint: MINT, expiresAt: Date.now() + 60000 });
+    jobQueue.addAnalyticsJob = async (name, data, opts) => { added.push({ name, data, opts }); return { id: opts.jobId }; };
+  });
+
+  test('a retry after a finished (failed) run enqueues a new job with a valid, fresh id', async () => {
+    const first = await get(`/holder-behavior/analyze/${MINT}?token=${HB_TOKEN}`);
+    assert.deepStrictEqual(first.body, { status: 'computing' });
+    assert.strictEqual(added.length, 1);
+
+    // The worker finishes: failed result cached, then expired; pending flag cleared
+    store.delete(`hb-pending:${MINT}`);
+    await new Promise(r => setTimeout(r, 2));
+
+    const retry = await get(`/holder-behavior/analyze/${MINT}?token=${HB_TOKEN}`);
+    assert.deepStrictEqual(retry.body, { status: 'computing' });
+    assert.strictEqual(added.length, 2);
+    for (const { name, data, opts } of added) {
+      assert.strictEqual(name, 'compute-holder-behavior');
+      assert.deepStrictEqual(data, { mint: MINT });
+      // BullMQ rejects custom ids containing ':' (unless in its 3-part legacy form)
+      assert.ok(!opts.jobId.includes(':'), `invalid BullMQ jobId ${opts.jobId}`);
+    }
+    assert.notStrictEqual(added[0].opts.jobId, added[1].opts.jobId);
+  });
+
+  test('a run already pending is not enqueued again', async () => {
+    store.set(`hb-pending:${MINT}`, Date.now());
+    const r = await get(`/holder-behavior/analyze/${MINT}?token=${HB_TOKEN}`);
+    assert.deepStrictEqual(r.body, { status: 'computing' });
+    assert.strictEqual(added.length, 0);
+  });
+
+  test('concurrent first requests enqueue one job', async () => {
+    await Promise.all([1, 2, 3].map(() => get(`/holder-behavior/analyze/${MINT}?token=${HB_TOKEN}`)));
+    assert.strictEqual(added.length, 1);
   });
 });
