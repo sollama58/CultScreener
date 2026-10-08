@@ -28,6 +28,38 @@
     try { if (mint) localStorage.removeItem(`cultify-access-${mint}`); } catch (_) {}
   }
 
+  // ── Wallet ownership proofs (messages must match backend/src/routes/cultify.js) ──
+  // A wallet address is public, so the backend only grants access for one with a signature.
+
+  const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function base58Encode(bytes) {
+    let n = 0n;
+    for (const b of bytes) n = n * 256n + BigInt(b);
+    let out = '';
+    while (n > 0n) { out = B58_ALPHABET[Number(n % 58n)] + out; n /= 58n; }
+    for (const b of bytes) { if (b !== 0) break; out = '1' + out; }
+    return out;
+  }
+
+  async function signBase64(message) {
+    const { signature } = await wallet.signMessage(message);
+    let binary = '';
+    for (const b of signature) binary += String.fromCharCode(b);
+    return btoa(binary);
+  }
+
+  // Binds a burn to the token it pays for, so nobody else can claim it first
+  function signBurnClaim(burnSignature, mint, walletAddress) {
+    return signBase64(`HolDEX Cultify Burn Claim: ${burnSignature} for ${mint} by ${walletAddress}`);
+  }
+
+  // Proves a burn on record is ours when the access token was lost; returns query params
+  async function signAccessProof(mint, walletAddress) {
+    const ts = Date.now();
+    const sig = await signBase64(`HolDEX Cultify Access: ${mint} for ${walletAddress} at ${ts}`);
+    return `&sig=${encodeURIComponent(sig)}&sigTs=${ts}`;
+  }
+
   const statusEl = document.getElementById('cultify-status');
   const resultsEl = document.getElementById('cultify-results');
   const previewEl = document.getElementById('cultify-preview');
@@ -249,7 +281,15 @@
       const walletParam = walletAddr ? `&wallet=${walletAddr}` : '';
       const checkUrl = `${baseUrl}/api/cultify/check-access/${mint}?_=1${tokenParam}${walletParam}`;
       const checkResp = await fetch(checkUrl);
-      const checkData = await checkResp.json();
+      let checkData = await checkResp.json();
+
+      // This wallet has a burn on record for the token but our token is gone: sign to restore it
+      if (!checkData.access && checkData.reason === 'signature_required' && walletAddr) {
+        showStatus('<div class="cultify-gate"><p class="cultify-loading">You already burned for this token. Sign the message in your wallet to restore access...</p></div>');
+        const proof = await signAccessProof(mint, walletAddr);
+        const proofResp = await fetch(`${checkUrl}${proof}`);
+        checkData = await proofResp.json();
+      }
 
       if (checkData.access) {
         // Pick up fresh access token if one was issued (returning user within 12hr)
@@ -349,10 +389,10 @@
 
   const PENDING_BURN_KEY = 'cultify_pending_burn';
 
-  function savePendingBurn(signature, mint, walletAddress) {
+  function savePendingBurn(signature, mint, walletAddress, claimSignature) {
     try {
       localStorage.setItem(PENDING_BURN_KEY, JSON.stringify({
-        signature, mint, wallet: walletAddress, ts: Date.now()
+        signature, mint, wallet: walletAddress, claimSignature, ts: Date.now()
       }));
     } catch { /* localStorage unavailable */ }
   }
@@ -385,7 +425,15 @@
       <p class="cultify-loading">Found an unverified burn transaction. Verifying...</p>
     </div>`);
 
-    const ok = await verifyBurnWithRetry(pending.signature, pending.mint, pending.wallet);
+    // A burn saved before claims were signed: sign now if the burning wallet is connected
+    let claimSignature = pending.claimSignature;
+    if (!claimSignature && typeof wallet !== 'undefined' && wallet.connected && wallet.address === pending.wallet) {
+      try { claimSignature = await signBurnClaim(pending.signature, pending.mint, pending.wallet); } catch (_) {}
+    }
+
+    const ok = claimSignature
+      ? await verifyBurnWithRetry(pending.signature, pending.mint, pending.wallet, claimSignature)
+      : false;
     if (ok) {
       mintInput.value = pending.mint;
       fetchTokenPreview(pending.mint);
@@ -394,7 +442,7 @@
     } else {
       showStatus(`<div class="cultify-gate">
         <h3>Burn Recovery Failed</h3>
-        <p class="cultify-error">Could not verify your burn. Your signature: <code style="font-size:0.7rem;word-break:break-all;">${escapeHtml(pending.signature)}</code></p>
+        <p class="cultify-error">Could not verify your burn.${claimSignature ? '' : ' Connect the wallet that made it, then retry.'} Your signature: <code style="font-size:0.7rem;word-break:break-all;">${escapeHtml(pending.signature)}</code></p>
         <button class="cultify-burn-btn" id="cultify-retry-btn" style="margin-top:0.75rem;">Retry Verification</button>
       </div>`);
       document.getElementById('cultify-retry-btn')?.addEventListener('click', () => recoverPendingBurn());
@@ -402,7 +450,7 @@
   }
 
   // Verify burn with retries (up to 3 attempts with backoff)
-  async function verifyBurnWithRetry(signature, mint, walletAddress) {
+  async function verifyBurnWithRetry(signature, mint, walletAddress, claimSignature) {
     const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -412,7 +460,7 @@
         const resp = await fetch(`${baseUrl}/api/cultify/verify-burn`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ signature, mint, wallet: walletAddress }),
+          body: JSON.stringify({ signature, mint, wallet: walletAddress, claimSignature }),
         });
 
         const data = await resp.json();
@@ -424,14 +472,22 @@
           return true;
         }
 
-        // 409 = already claimed — that's fine, it means a previous attempt succeeded
+        // 409 = claimed by something else. Our own earlier claim (a lost response) is answered
+        // with a fresh token above, so only a token already stored for this mint still counts.
         if (resp.status === 409) {
           clearPendingBurn();
-          // Re-check access to get a fresh access token
-          const checkResp = await fetch(`${baseUrl}/api/cultify/check-access/${mint}?token=${currentAccessToken || ''}`);
-          const checkData = await checkResp.json();
-          if (checkData.access) return true;
+          const stored = _loadAccessToken(mint);
+          if (stored) {
+            const checkResp = await fetch(`${baseUrl}/api/cultify/check-access/${mint}?token=${encodeURIComponent(stored)}`);
+            const checkData = await checkResp.json();
+            if (checkData.access) { currentAccessToken = stored; return true; }
+          }
+          return false;
         }
+
+        // 401 = claim not signed by the burning wallet — retrying the same claim won't help,
+        // but keep the pending burn so it can be signed and claimed later
+        if (resp.status === 401) return false;
 
         // 400 = bad transaction (wrong mint, too old, etc.) — don't retry
         if (resp.status === 400) {
@@ -508,6 +564,12 @@
       for (let i = 0; i < serialized.length; i++) binary += String.fromCharCode(serialized[i]);
       const base64Tx = btoa(binary);
 
+      // Step 3b: Sign the claim for this burn BEFORE sending it (declining burns nothing).
+      // The transaction id is its first signature.
+      burnBtn.textContent = 'Sign claim in wallet...';
+      const txId = base58Encode(signed.signatures[0].signature);
+      const claimSignature = await signBurnClaim(txId, mint, wallet.address);
+
       // Step 4: Send transaction via backend
       burnBtn.textContent = 'Sending transaction...';
       const sendResp = await fetch(`${baseUrl}/api/cultify/send-tx`, {
@@ -523,7 +585,7 @@
 
       // Step 5: Save pending burn IMMEDIATELY after send — if anything fails from
       // here on, the user can recover by reloading the page
-      savePendingBurn(signature, mint, wallet.address);
+      savePendingBurn(signature, mint, wallet.address, claimSignature);
 
       // Step 6: Poll for confirmation
       burnBtn.textContent = 'Confirming burn...';
@@ -548,7 +610,7 @@
 
       // Step 7: Verify burn with retries
       burnBtn.textContent = 'Verifying...';
-      const verified = await verifyBurnWithRetry(signature, mint, wallet.address);
+      const verified = await verifyBurnWithRetry(signature, mint, wallet.address, claimSignature);
       if (!verified) {
         throw new Error('Burn verified on-chain but backend verification failed. Reload the page to retry — your burn is safe.');
       }

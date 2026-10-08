@@ -4,7 +4,10 @@ const crypto = require('crypto');
 const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
-const { validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache } = require('../middleware/validation');
+const {
+  validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache,
+  verifyWalletSignature, checkAndMarkSignature, SIGNATURE_EXPIRY_MS, validateDeviceSession
+} = require('../middleware/validation');
 const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
 const jobQueue = require('../services/jobQueue');
 const { checkBurnTransaction } = require('../services/burnTxPolicy');
@@ -89,6 +92,44 @@ function generateAccessToken(walletAddress, mint) {
   return token;
 }
 
+// ── Wallet ownership proofs ──
+// A wallet address is public (and so is every burn of BURN_MINT), so naming one proves nothing.
+// Anything that grants Cultify access on the strength of a wallet needs one of these instead.
+
+// Signed by the burner before the burn is sent: binds that burn to the token it pays for, so
+// nobody who sees the burn on-chain can claim it first (for another token, or just to make the
+// burner's own claim fail). No timestamp: the burn signature already makes it single-purpose,
+// and the frontend keeps it with the pending burn so a reload can still claim without a prompt.
+function createCultifyBurnClaimMessage(burnSignature, mint, walletAddress) {
+  return `HolDEX Cultify Burn Claim: ${burnSignature} for ${mint} by ${walletAddress}`;
+}
+
+// Signed by a returning user whose access token was lost: proves the burn on record is theirs.
+function createCultifyAccessMessage(mint, walletAddress, timestamp) {
+  return `HolDEX Cultify Access: ${mint} for ${walletAddress} at ${timestamp}`;
+}
+
+// Wallet signatures travel base64-encoded (64 bytes); returns the byte array or null.
+function decodeWalletSignature(b64) {
+  if (typeof b64 !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(b64)) return null;
+  return Array.from(Buffer.from(b64, 'base64'));
+}
+
+// Proof that the caller controls `walletAddress` for check-access: an activated device session for
+// that wallet, or a fresh signature of createCultifyAccessMessage (burned on use, no replay).
+async function hasAccessProof(req, walletAddress, mint) {
+  if (req.deviceWallet && req.deviceWallet === walletAddress) return true;
+  const signature = decodeWalletSignature(req.query.sig);
+  const timestamp = parseInt(req.query.sigTs, 10);
+  if (!signature || !Number.isFinite(timestamp)) return false;
+  const now = Date.now();
+  if (now - timestamp > SIGNATURE_EXPIRY_MS || timestamp > now + 10000) return false;
+  if (!verifyWalletSignature(createCultifyAccessMessage(mint, walletAddress, timestamp), signature, walletAddress)) {
+    return false;
+  }
+  return !(await checkAndMarkSignature(req.query.sig, SIGNATURE_EXPIRY_MS));
+}
+
 // Whether the recorded burn for `signature` is this exact claim (same wallet, mint and utility).
 // A duplicate-signature insert is only an idempotent retry when it is; otherwise a second request
 // racing the first with the same burn could buy access to another mint (or the other utility).
@@ -104,9 +145,11 @@ async function isSameBurnClaim(signature, walletAddress, mint, utilityType) {
 }
 
 // POST /api/cultify/verify-burn — verify a burn transaction on-chain
+// Body: { signature, mint, wallet, claimSignature } where claimSignature is the wallet's base64
+// signature of createCultifyBurnClaimMessage(signature, mint, wallet).
 // Returns a short-lived access token on success (prevents wallet spoofing)
 router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
-  const { signature, mint, wallet: walletAddress } = req.body;
+  const { signature, mint, wallet: walletAddress, claimSignature } = req.body;
 
   // Validate inputs
   if (!signature || typeof signature !== 'string' || signature.length < 80 || signature.length > 90) {
@@ -119,9 +162,23 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid wallet address' });
   }
 
+  // The claim must be signed by the wallet it names (the burn authority is checked below)
+  const claimBytes = decodeWalletSignature(claimSignature);
+  if (!claimBytes || !verifyWalletSignature(createCultifyBurnClaimMessage(signature, mint, walletAddress), claimBytes, walletAddress)) {
+    return res.status(401).json({ error: 'Sign the claim with the wallet that made the burn.', code: 'CLAIM_SIGNATURE_REQUIRED' });
+  }
+
   // Check if signature already used (throws on DB failure — no permissive fallback)
   const alreadyUsed = await db.isCultifySignatureUsed(signature);
   if (alreadyUsed) {
+    // The burner's own retry after a lost response: re-issue for the claim that was recorded,
+    // while it is still inside the access window.
+    if (await isSameBurnClaim(signature, walletAddress, mint, 'cultify') &&
+        await db.hasCultifyAccess(walletAddress, mint)) {
+      const accessToken = generateAccessToken(walletAddress, mint);
+      await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      return res.json({ success: true, accessToken, note: 'Burn already recorded' });
+    }
     return res.status(409).json({ error: 'This burn transaction has already been claimed' });
   }
 
@@ -173,8 +230,11 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
 
 // GET /api/cultify/check-access/:mint — check if a wallet/token pair has access
 // For curated tokens this is unauthenticated (free). For burned tokens, the
-// frontend passes the access token it received from verify-burn.
-router.get('/check-access/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+// frontend passes the access token it received from verify-burn. Without a valid token,
+// ?wallet= with a burn on record yields a new token only with proof of that wallet
+// (?sig=&sigTs= signing createCultifyAccessMessage, or its device session); otherwise
+// the answer is { access: false, reason: 'signature_required' }.
+router.get('/check-access/:mint', walletLimiter, validateMint, validateDeviceSession, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   // Curated tokens are free for everyone
@@ -197,6 +257,10 @@ router.get('/check-access/:mint', walletLimiter, validateMint, asyncHandler(asyn
   if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     const hasBurn = await db.hasCultifyAccess(walletAddress, mint);
     if (hasBurn) {
+      // The burn record is public; only the wallet's owner gets a token from it
+      if (!(await hasAccessProof(req, walletAddress, mint))) {
+        return res.json({ access: false, reason: 'signature_required' });
+      }
       // Issue a fresh access token so subsequent analyze calls work
       const newToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
@@ -697,3 +761,5 @@ module.exports = router;
 // Exposed for tests only - lets the burn verification be exercised against captured transaction
 // fixtures without standing up the whole route (and its DB/cache/RPC dependencies).
 module.exports._verifyBurnTransaction = verifyBurnTransaction;
+module.exports._createCultifyBurnClaimMessage = createCultifyBurnClaimMessage;
+module.exports._createCultifyAccessMessage = createCultifyAccessMessage;

@@ -172,6 +172,14 @@ const nacl = require('tweetnacl');
 const bs58 = require('bs58');
 const burner = nacl.sign.keyPair();
 const BURNER = bs58.encode(burner.publicKey);
+const stranger = nacl.sign.keyPair();
+
+function signB64(keyPair, message) {
+  return Buffer.from(nacl.sign.detached(new TextEncoder().encode(message), keyPair.secretKey)).toString('base64');
+}
+function claimFor(mint, keyPair = burner, sig = BURN_SIG) {
+  return signB64(keyPair, cultifyRoutes._createCultifyBurnClaimMessage(sig, mint, BURNER));
+}
 
 describe('POST /verify-burn duplicate signature', () => {
   beforeEach(() => {
@@ -181,7 +189,7 @@ describe('POST /verify-burn duplicate signature', () => {
 
   test('a racing claim of the same burn for another mint is refused', async () => {
     burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'cultify' });
-    const r = await post('/verify-burn', { signature: BURN_SIG, mint: OTHER_MINT, wallet: BURNER });
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: OTHER_MINT, wallet: BURNER, claimSignature: claimFor(OTHER_MINT) });
     assert.strictEqual(r.status, 409);
     assert.ok(!r.body.accessToken);
     assert.ok(![...store.values()].some(v => v && v.mint === OTHER_MINT), 'no access token stored for the other mint');
@@ -200,5 +208,91 @@ describe('POST /verify-burn duplicate signature', () => {
     assert.strictEqual(r.status, 200);
     assert.ok(r.body.accessToken);
     assert.strictEqual(store.get(`hb:access:${r.body.accessToken}`).mint, MINT);
+  });
+});
+
+describe('POST /verify-burn requires the burner to sign the claim', () => {
+  beforeEach(() => {
+    useFakeBurnTable();
+    db.hasCultifyAccess = async (wallet, mint) =>
+      [...burns.values()].some(b => b.wallet_address === wallet && b.token_mint === mint && b.utility_type === 'cultify');
+    solanaService.getTransaction = async () => fakeBurnTx(BURNER, 5_000);
+  });
+
+  test('an unsigned claim (someone who saw the burn on-chain) is refused and records nothing', async () => {
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: OTHER_MINT, wallet: BURNER });
+    assert.strictEqual(r.status, 401);
+    assert.strictEqual(burns.size, 0);
+  });
+
+  test('a claim signed by another wallet is refused', async () => {
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: claimFor(MINT, stranger) });
+    assert.strictEqual(r.status, 401);
+    assert.strictEqual(burns.size, 0);
+  });
+
+  test("the burner's claim for one token cannot be replayed for another", async () => {
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: OTHER_MINT, wallet: BURNER, claimSignature: claimFor(MINT) });
+    assert.strictEqual(r.status, 401);
+  });
+
+  test('a signed claim records the burn and returns a token', async () => {
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: claimFor(MINT) });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(burns.get(BURN_SIG), { wallet_address: BURNER, token_mint: MINT, utility_type: 'cultify' });
+    assert.strictEqual(store.get(`cultify:access:${r.body.accessToken}`).mint, MINT);
+  });
+
+  test("the burner's retry after a lost response gets a token instead of 409", async () => {
+    burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'cultify' });
+    db.isCultifySignatureUsed = async (sig) => burns.has(sig);
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: claimFor(MINT) });
+    assert.strictEqual(r.status, 200);
+    assert.ok(r.body.accessToken);
+  });
+
+  test('a retry outside the access window is not renewed', async () => {
+    burns.set(BURN_SIG, { wallet_address: BURNER, token_mint: MINT, utility_type: 'cultify' });
+    db.isCultifySignatureUsed = async (sig) => burns.has(sig);
+    db.hasCultifyAccess = async () => false;
+    const r = await post('/verify-burn', { signature: BURN_SIG, mint: MINT, wallet: BURNER, claimSignature: claimFor(MINT) });
+    assert.strictEqual(r.status, 409);
+  });
+});
+
+describe('GET /check-access/:mint with ?wallet=', () => {
+  beforeEach(() => {
+    db.hasCultifyAccess = async (wallet, mint) => wallet === BURNER && mint === MINT;
+  });
+
+  function accessProof(keyPair = burner, ts = Date.now()) {
+    return `&sig=${encodeURIComponent(signB64(keyPair, cultifyRoutes._createCultifyAccessMessage(MINT, BURNER, ts)))}&sigTs=${ts}`;
+  }
+
+  test("naming a burner's wallet is not enough for a token", async () => {
+    const r = await get(`/check-access/${MINT}?wallet=${BURNER}`);
+    assert.deepStrictEqual(r.body, { access: false, reason: 'signature_required' });
+  });
+
+  test("the burner's signature gets a token, once", async () => {
+    const proof = accessProof();
+    const r = await get(`/check-access/${MINT}?wallet=${BURNER}${proof}`);
+    assert.strictEqual(r.body.access, true);
+    assert.strictEqual(store.get(`cultify:access:${r.body.accessToken}`).mint, MINT);
+
+    const replay = await get(`/check-access/${MINT}?wallet=${BURNER}${proof}`);
+    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_required' });
+  });
+
+  test("someone else's signature or a stale one is refused", async () => {
+    const other = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof(stranger)}`);
+    assert.strictEqual(other.body.access, false);
+    const stale = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof(burner, Date.now() - 10 * 60 * 1000)}`);
+    assert.strictEqual(stale.body.access, false);
+  });
+
+  test('a wallet with no burn on record is told to burn', async () => {
+    const r = await get(`/check-access/${MINT}?wallet=${bs58.encode(stranger.publicKey)}`);
+    assert.deepStrictEqual(r.body, { access: false, reason: 'none' });
   });
 });
