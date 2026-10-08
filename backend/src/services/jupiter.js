@@ -187,20 +187,21 @@ async function searchTokens(query, limit = 50) {
     const capped = tokens.slice(0, limit);
 
     // Get prices for the tokens
-    const tokenAddresses = capped.map(t => t.address || t.mint).filter(Boolean);
+    const tokenAddresses = capped.map(tokenAddressOf).filter(Boolean);
     const prices = await getTokenPrices(tokenAddresses);
 
     // Combine token info with prices
     return capped.map(token => {
-      const address = token.address || token.mint;
+      const address = tokenAddressOf(token);
       const priceData = prices[address] || {};
+      const v2 = v2Market(token);
       return {
         ...formatToken(token),
-        price: priceData.price || 0,
-        priceChange24h: priceData.priceChange24h || 0,
-        volume24h: priceData.volume24h || 0,
-        marketCap: priceData.marketCap || 0,
-        liquidity: priceData.liquidity || 0
+        price: priceData.price || v2.price || 0,
+        priceChange24h: priceData.priceChange24h || v2.priceChange24h || 0,
+        volume24h: priceData.volume24h || v2.volume24h || 0,
+        marketCap: priceData.marketCap || v2.marketCap || 0,
+        liquidity: priceData.liquidity || v2.liquidity || 0
       };
     });
   } catch (error) {
@@ -230,10 +231,7 @@ async function getTokenInfo(mintAddress) {
     );
 
     const tokens = response.data || [];
-    const token = tokens.find(t =>
-      t.address === mintAddress ||
-      t.mint === mintAddress
-    );
+    const token = tokens.find(t => tokenAddressOf(t) === mintAddress);
 
     if (token) {
       return formatToken(token);
@@ -353,7 +351,7 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
     }
 
     // Get prices for the tokens
-    const tokenAddresses = tokens.slice(0, 50).map(t => t.address || t.mint).filter(Boolean);
+    const tokenAddresses = tokens.slice(0, 50).map(tokenAddressOf).filter(Boolean);
     console.log(`[Jupiter] Fetching prices for ${tokenAddresses.length} tokens`);
 
     const prices = await getTokenPrices(tokenAddresses);
@@ -361,8 +359,9 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
 
     // Combine token info with prices - include all price data fields
     const withPrices = tokens.map(token => {
-      const address = token.address || token.mint;
+      const address = tokenAddressOf(token);
       const priceData = prices[address] || {};
+      const v2 = v2Market(token);
 
       // Debug: log first token's data
       if (tokens.indexOf(token) === 0) {
@@ -371,10 +370,10 @@ async function getTrendingTokens({ sort = 'volume', order = 'desc', limit = 50, 
 
       return {
         ...formatToken(token),
-        price: priceData.price || priceData.usdPrice || 0,
-        priceChange24h: priceData.priceChange24h || 0,
-        volume24h: token.volume24h || token.v24hUSD || priceData.volume24h || 0,
-        marketCap: token.marketCap || token.mc || priceData.marketCap || 0,
+        price: priceData.price || priceData.usdPrice || v2.price || 0,
+        priceChange24h: priceData.priceChange24h || v2.priceChange24h || 0,
+        volume24h: token.volume24h || token.v24hUSD || priceData.volume24h || v2.volume24h || 0,
+        marketCap: token.marketCap || token.mc || priceData.marketCap || v2.marketCap || 0,
         liquidity: token.liquidity || priceData.liquidity || 0
       };
     });
@@ -430,20 +429,21 @@ async function getNewTokens(limit = 50) {
     }
 
     // Get prices for the tokens
-    const tokenAddresses = tokens.slice(0, limit).map(t => t.address || t.mint).filter(Boolean);
+    const tokenAddresses = tokens.slice(0, limit).map(tokenAddressOf).filter(Boolean);
     const prices = await getTokenPrices(tokenAddresses);
 
     // Combine token info with prices
     return tokens.slice(0, limit).map(token => {
-      const address = token.address || token.mint;
+      const address = tokenAddressOf(token);
       const priceData = prices[address] || {};
+      const v2 = v2Market(token);
       return {
         ...formatToken(token),
-        price: priceData.price || 0,
-        priceChange24h: priceData.priceChange24h || 0,
-        volume24h: priceData.volume24h || 0,
-        marketCap: priceData.marketCap || 0,
-        liquidity: priceData.liquidity || 0
+        price: priceData.price || v2.price || 0,
+        priceChange24h: priceData.priceChange24h || v2.priceChange24h || 0,
+        volume24h: priceData.volume24h || v2.volume24h || 0,
+        marketCap: priceData.marketCap || v2.marketCap || 0,
+        liquidity: priceData.liquidity || v2.liquidity || 0
       };
     });
   } catch (error) {
@@ -583,11 +583,7 @@ async function getTokenHolderCount(mintAddress) {
     );
 
     const tokens = response.data || [];
-    const token = tokens.find(t =>
-      t.address === mintAddress ||
-      t.mint === mintAddress ||
-      t.id === mintAddress
-    );
+    const token = tokens.find(t => tokenAddressOf(t) === mintAddress);
 
     if (token) {
       const holderCount = token.holderCount;
@@ -625,21 +621,18 @@ async function getTokenMetrics(mintAddress) {
     );
 
     const tokens = response.data || [];
-    const token = tokens.find(t =>
-      t.address === mintAddress ||
-      t.mint === mintAddress ||
-      t.id === mintAddress
-    );
+    const token = tokens.find(t => tokenAddressOf(t) === mintAddress);
 
     if (!token) return null;
 
+    const v2 = v2Market(token);
     return {
       holderCount: typeof token.holderCount === 'number' ? token.holderCount : null,
-      marketCap: token.marketCap || token.mc || null,
-      volume24h: token.volume24h || token.v24hUSD || null,
+      marketCap: token.marketCap || token.mc || v2.marketCap || null,
+      volume24h: token.volume24h || token.v24hUSD || v2.volume24h || null,
       liquidity: token.liquidity || null,
-      priceChange24h: token.priceChange24h ?? null,
-      price: token.price || null
+      priceChange24h: token.priceChange24h ?? v2.priceChange24h ?? null,
+      price: token.price || v2.price || null
     };
   } catch (error) {
     console.error('[Jupiter] getTokenMetrics error:', error.message);
@@ -648,18 +641,44 @@ async function getTokenMetrics(mintAddress) {
 }
 
 /**
+ * Mint address of a Token API row. V2 rows name it `id`; older shapes used address/mint.
+ */
+function tokenAddressOf(token) {
+  return token.id || token.address || token.mint || token.mintAddress || null;
+}
+
+/**
+ * Market figures carried on a Token API V2 row (usdPrice, mcap, liquidity, stats24h).
+ * Fields the row does not carry come back null.
+ */
+function v2Market(token) {
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const s = token.stats24h || {};
+  const buy = num(s.buyVolume);
+  const sell = num(s.sellVolume);
+  return {
+    price: num(token.usdPrice),
+    marketCap: num(token.mcap) ?? num(token.fdv),
+    liquidity: num(token.liquidity),
+    volume24h: buy !== null || sell !== null ? (buy || 0) + (sell || 0) : null,
+    priceChange24h: num(s.priceChange)
+  };
+}
+
+/**
  * Format token for consistent API response
  */
 function formatToken(token) {
-  const address = token.address || token.mint || token.mintAddress;
+  const address = tokenAddressOf(token);
+  const logo = token.icon || token.logoURI || token.logoUri || token.logo || null;
   return {
     mintAddress: address,
     address: address,
     name: token.name || null,
     symbol: token.symbol || null,
     decimals: token.decimals || 9,
-    logoUri: token.logoURI || token.logoUri || token.logo || null,
-    logoURI: token.logoURI || token.logoUri || token.logo || null,
+    logoUri: logo,
+    logoURI: logo,
     tags: token.tags || [],
     holderCount: token.holderCount || null
   };
