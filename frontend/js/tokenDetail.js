@@ -412,22 +412,7 @@ const tokenDetail = {
         throw new Error('Token not found');
       }
 
-      const isPreview = !this.token.holders;
       this.renderToken();
-
-      // If initial data came from list-page preview (sessionStorage seed), fetch full detail
-      // before Phase 2 starts so this.token.pairCreatedAt is available for diamond hands
-      if (isPreview) {
-        const mintAtFetch = this.mint;
-        try {
-          const fullData = await api.tokens.get(mintAtFetch, { fresh: true });
-          // Guard: discard if user navigated to a different token while the fetch was in-flight
-          if (fullData && this.mint === mintAtFetch) {
-            this.token = fullData;
-            this.renderToken();
-          }
-        } catch { /* Full fetch failed, continue with preview data */ }
-      }
     } catch (err) {
       _ok = false;
       throw err;
