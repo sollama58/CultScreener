@@ -625,7 +625,8 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
         }
       }
       const hasName = t => !!(t?.name && !PLACEHOLDER_NAMES.has(t.name.toLowerCase()));
-      const needHelius = uncachedMints.filter(m => !hasName(localTokens[m]));
+      // A DB row with a name but no logo still asks Helius, for the logo only
+      const needHelius = uncachedMints.filter(m => !hasName(localTokens[m]) || !localTokens[m].logoUri);
       const heliusData = needHelius.length > 0 && solanaService.isHeliusConfigured()
         ? await solanaService.getTokenMetadataBatch(needHelius).catch(catchUnlessOverloaded({}))
         : {};
@@ -654,6 +655,10 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
 
         if (localHasName) {
           tokenData = localTokens[mint];
+          if (!tokenData.logoUri && heliusData[mint]?.logoUri) {
+            tokenData.logoUri = heliusData[mint].logoUri;
+            tokenData.logoURI = heliusData[mint].logoUri;
+          }
         } else if (heliusHasName) {
           const h = heliusData[mint];
           tokenData = {
