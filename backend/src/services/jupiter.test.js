@@ -45,8 +45,8 @@ describe('Token API V2 rows', () => {
     assert.strictEqual(t.marketCap, 2100000);
     assert.strictEqual(t.volume24h, 50000);
     assert.strictEqual(t.priceChange24h, -4.5);
-    const priceCall = calls.find(c => c.url === '/price/v3');
-    assert.strictEqual(priceCall?.params?.ids, MINT, 'prices requested for the V2 id');
+    // The V2 search row already carries the market figures, so search makes no /price/v3 call
+    assert.strictEqual(calls.find(c => c.url === '/price/v3'), undefined);
   });
 
   test('getTokenInfo matches the row by id and keeps its name', async () => {

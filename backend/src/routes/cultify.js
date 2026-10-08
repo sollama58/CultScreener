@@ -8,7 +8,7 @@ const {
   validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache,
   verifyWalletSignature, checkAndMarkSignature, validateDeviceSession
 } = require('../middleware/validation');
-const { strictLimiter, walletLimiter } = require('../middleware/rateLimit');
+const { strictLimiter, walletLimiter, pollLimiter } = require('../middleware/rateLimit');
 const jobQueue = require('../services/jobQueue');
 const { checkBurnTransaction } = require('../services/burnTxPolicy');
 const {
@@ -85,6 +85,18 @@ function verifyBurnTransaction(tx, walletAddress, requiredRaw, requiredLabel) {
     };
   }
   return { ok: true, rawAmount: burnedByWallet };
+}
+
+// The parsed burn transaction, kept for 5 minutes so a verify-burn retry (or the other
+// verify route) does not fetch the same transaction again.
+const BURN_TX_CACHE_TTL = 300000;
+async function getBurnTransaction(signature) {
+  const key = `cultify:tx:${signature}`;
+  const cached = await cache.get(key);
+  if (cached) return cached;
+  const tx = await solanaService.getTransaction(signature);
+  if (tx) await Promise.resolve(cache.set(key, tx, BURN_TX_CACHE_TTL)).catch(() => {});
+  return tx;
 }
 
 // Generate a short-lived access token for a wallet+mint pair
@@ -180,6 +192,24 @@ async function isSameBurnClaim(signature, walletAddress, mint, utilityType) {
     (row.utility_type || 'cultify') === utilityType;
 }
 
+// Access tokens issued from the wallet-based checks are remembered per wallet+mint
+// (`<prefix>:access-by:<wallet>:<mint>` -> { token, expiresAt }) so a repeat check returns
+// the token that is still valid instead of writing a new Redis key every time. prefix is
+// 'cultify' or 'hb'. A token is handed back only while more than half its lifetime remains,
+// so the client never gets one that is about to expire mid-session.
+const accessByKey = (prefix, walletAddress, mint) => `${prefix}:access-by:${walletAddress}:${mint}`;
+
+async function rememberIssuedToken(prefix, walletAddress, mint, token, ttlMs) {
+  await cache.set(accessByKey(prefix, walletAddress, mint), { token, expiresAt: Date.now() + ttlMs }, ttlMs);
+}
+
+async function findIssuedToken(prefix, walletAddress, mint, ttlMs) {
+  const issued = await cache.get(accessByKey(prefix, walletAddress, mint));
+  if (!issued || !issued.token || !(issued.expiresAt - Date.now() > ttlMs / 2)) return null;
+  const data = await cache.get(`${prefix}:access:${issued.token}`);
+  return data && data.mint === mint && data.wallet === walletAddress ? issued.token : null;
+}
+
 // POST /api/cultify/verify-burn — verify a burn transaction on-chain
 // Body: { signature, mint, wallet, claimSignature } where claimSignature is the wallet's base64
 // signature of createCultifyBurnClaimMessage(signature, mint, wallet).
@@ -221,7 +251,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   // Fetch and verify the transaction on-chain
   let tx;
   try {
-    tx = await solanaService.getTransaction(signature);
+    tx = await getBurnTransaction(signature);
   } catch (err) {
     return res.status(502).json({ error: 'Failed to fetch transaction from Solana. Try again shortly.' });
   }
@@ -297,9 +327,12 @@ router.get('/check-access/:mint', walletLimiter, validateMint, validateDeviceSes
       // The burn record is public; only the wallet's owner gets a token from it
       const proof = await hasAccessProof(req, walletAddress, mint);
       if (!proof.ok) return res.json(accessProofRefusal(proof));
-      // Issue a fresh access token so subsequent analyze calls work
+      // Hand back the token issued earlier while it is valid, else issue a fresh one
+      const existing = await findIssuedToken('cultify', walletAddress, mint, ACCESS_TOKEN_TTL);
+      if (existing) return res.json({ access: true, reason: 'burned', accessToken: existing });
       const newToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      await rememberIssuedToken('cultify', walletAddress, mint, newToken, ACCESS_TOKEN_TTL);
       return res.json({ access: true, reason: 'burned', accessToken: newToken });
     }
   }
@@ -355,7 +388,13 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
       if (dasDecimals == null) {
         return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
       }
-      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, dasDecimals);
+      // Cap the DAS fallback at 10s like the tokens /holders route; a timeout is treated
+      // as "no accounts" (rpc_unavailable below)
+      let dasTimer;
+      largestAccounts = await Promise.race([
+        solanaService.getTokenLargestAccountsDAS(mint, dasDecimals),
+        new Promise(resolve => { dasTimer = setTimeout(() => resolve(null), 10000); })
+      ]).finally(() => clearTimeout(dasTimer));
     }
 
     if (!largestAccounts || largestAccounts.length === 0) {
@@ -427,6 +466,11 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
       if (!job) {
         await cache.delete(pendingKey);
       }
+    } else {
+      // Enrichment is already queued (by the worker or another request): cache the fast
+      // result too, so polls in that window are served from cache instead of repeating the
+      // RPCs. setNX never replaces a result the worker has written.
+      await cache.setNX(cacheKey, fastResult, 120000);
     }
 
     res.json(fastResult);
@@ -438,7 +482,7 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
 
 // GET /api/cultify/diamond-hands/:mint — diamond hands distribution
 // Uses the SAME cache keys and worker flow as the main tokens endpoint.
-router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(async (req, res) => {
+router.get('/diamond-hands/:mint', pollLimiter, validateMint, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   // Verify access
@@ -458,7 +502,9 @@ router.get('/diamond-hands/:mint', walletLimiter, validateMint, asyncHandler(asy
     }
 
     const resultCacheKey = `diamond-hands:${mint}`;
-    const fresh = req.query.fresh === 'true';
+    // ?fresh=true evicts the result the token page also reads, so like /analyze it is
+    // honoured only for admin sessions and API-key callers
+    const fresh = req.query.fresh === 'true' && await canBypassCache(req);
 
     if (fresh) {
       await cache.delete(resultCacheKey);
@@ -579,7 +625,7 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
 }));
 
 // GET /api/cultify/tx-status/:signature — check transaction confirmation status
-router.get('/tx-status/:signature', walletLimiter, asyncHandler(async (req, res) => {
+router.get('/tx-status/:signature', pollLimiter, asyncHandler(async (req, res) => {
   const { signature } = req.params;
   if (!signature || signature.length < 80 || signature.length > 90) {
     return res.status(400).json({ error: 'Invalid signature' });
@@ -591,12 +637,15 @@ router.get('/tx-status/:signature', walletLimiter, asyncHandler(async (req, res)
   if (confirmed != null) return res.json(confirmed);
 
   try {
-    const tx = await solanaService.getTransaction(signature);
-    if (!tx) {
+    // Only the status is needed here, not the full parsed transaction
+    const result = await solanaService.rpcCall('getSignatureStatuses', [[signature], { searchTransactionHistory: true }]);
+    const status = result?.value?.[0];
+    // No confirmationStatus on old nodes: confirmations === null means finalized
+    const level = status && (status.confirmationStatus || (status.confirmations === null ? 'finalized' : 'processed'));
+    if (level !== 'confirmed' && level !== 'finalized') {
       return res.json({ confirmed: false });
     }
-    const failed = tx.meta && tx.meta.err;
-    const payload = { confirmed: true, failed: !!failed };
+    const payload = { confirmed: true, failed: !!status.err };
     // Cache confirmed results for 5 minutes so repeated polls are cheap
     await cache.set(cacheKey, payload, 300000);
     res.json(payload);
@@ -614,11 +663,19 @@ const HB_BURN_RAW_AMOUNT = BigInt(HB_BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const HB_ACCESS_TTL = 259200 * 1000;  // 3 days (72 hours)
 // HB_ANALYSIS_CACHE_TTL and HB_PENDING_TTL imported from services/holderBehaviorAnalysis
 
-// Store an HB access token and update the per-wallet index for "My Utilities"
-async function storeHBAccess(walletAddress, mint) {
+// Store an HB access token and update the per-wallet index for "My Utilities".
+// reuse: return the token already issued for this wallet+mint while more than half its
+// lifetime remains (repeat access checks); a new burn always gets a fresh token with the
+// full TTL.
+async function storeHBAccess(walletAddress, mint, { reuse = false } = {}) {
+  if (reuse) {
+    const existing = await findIssuedToken('hb', walletAddress, mint, HB_ACCESS_TTL);
+    if (existing) return existing;
+  }
   const accessToken = generateAccessToken(walletAddress, mint);
   const expiresAt = Date.now() + HB_ACCESS_TTL;
   await cache.set(`hb:access:${accessToken}`, { wallet: walletAddress, mint, expiresAt }, HB_ACCESS_TTL);
+  await rememberIssuedToken('hb', walletAddress, mint, accessToken, HB_ACCESS_TTL);
 
   // Maintain a per-wallet index so "My Utilities" can enumerate active accesses
   const idxKey = `hb:wallet-idx:${walletAddress}`;
@@ -670,7 +727,7 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
 
   let tx;
   try {
-    tx = await solanaService.getTransaction(signature);
+    tx = await getBurnTransaction(signature);
   } catch (err) {
     return res.status(502).json({ error: 'Failed to fetch transaction. Try again shortly.' });
   }
@@ -726,7 +783,7 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, v
       const proof = await hasAccessProof(req, walletAddress, mint, createHBAccessMessage);
       if (!proof.ok) return res.json(accessProofRefusal(proof));
       // Issue an access token so the analyze route can validate normally
-      const newToken = await storeHBAccess(walletAddress, mint);
+      const newToken = await storeHBAccess(walletAddress, mint, { reuse: true });
       return res.json({ access: true, reason: isWhitelisted ? 'whitelisted' : 'burned', accessToken: newToken });
     }
   }

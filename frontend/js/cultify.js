@@ -75,6 +75,46 @@
   // Cached token metadata for the current preview
   let previewData = null;
   let previewAbort = null;
+  let previewTimer = null;
+  let lastPreviewMint = null;
+
+  // DexScreener metadata per mint, shared by the preview and the My Tokens list
+  // ({ name, symbol, logo, pairCreatedAt, price, priceChange24h, ts }).
+  const tokenMetaCache = new Map();
+  const TOKEN_META_TTL = 5 * 60 * 1000;
+  const DEXSCREENER_BATCH = 30; // /tokens/v1/solana/{a,b,c} takes up to 30 addresses
+
+  function getCachedMeta(mint) {
+    const meta = tokenMetaCache.get(mint);
+    return meta && Date.now() - meta.ts < TOKEN_META_TTL ? meta : null;
+  }
+
+  // Build metadata for one mint from a DexScreener pairs array. In a batched response the
+  // array holds pairs for several mints, so only this mint's pairs are considered.
+  function metaFromPairs(pairs, mint, onlyOwnPairs) {
+    if (!Array.isArray(pairs)) return null;
+    const own = onlyOwnPairs
+      ? pairs.filter(p => p?.baseToken?.address === mint || p?.quoteToken?.address === mint)
+      : pairs;
+    if (own.length === 0) return null;
+    // The pair's priceUsd, priceChange and info belong to its base token, which is not
+    // this mint when it trades as the quote (e.g. ZEC / TOKEN)
+    const picked = utils.pickDexScreenerPair(own, mint);
+    if (!picked) return null;
+    const pair = picked.pair;
+    const isBase = picked.side === 'base';
+    const meta = {
+      name: picked.token?.name || null,
+      symbol: picked.token?.symbol || null,
+      logo: (isBase ? utils.proxyImageUrl(pair.info?.imageUrl) : null) || null,
+      pairCreatedAt: pair.pairCreatedAt || null,
+      price: picked.priceUsd,
+      priceChange24h: isBase && pair.priceChange?.h24 != null ? parseFloat(pair.priceChange.h24) : null,
+      ts: Date.now(),
+    };
+    tokenMetaCache.set(mint, meta);
+    return meta;
+  }
 
   // ── Helpers ───────────────────────────────────────
 
@@ -113,6 +153,7 @@
     previewEl.innerHTML = '';
     previewEl.classList.remove('visible');
     previewData = null;
+    lastPreviewMint = null;
   }
 
   const defaultLogo = typeof utils !== 'undefined' ? utils.getDefaultLogo() :
@@ -122,31 +163,28 @@
     // Cancel previous fetch
     if (previewAbort) previewAbort.abort();
     previewAbort = new AbortController();
+    lastPreviewMint = mint;
 
-    showPreview('<div class="cultify-preview-loading">Loading token info...</div>');
+    let meta = getCachedMeta(mint);
+    if (!meta) showPreview('<div class="cultify-preview-loading">Loading token info...</div>');
 
     try {
-      const resp = await fetch(
-        `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
-        { signal: previewAbort.signal, headers: {} }
-      );
+      if (!meta) {
+        const resp = await fetch(
+          `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`,
+          { signal: previewAbort.signal, headers: {} }
+        );
 
-      if (!resp.ok) throw new Error('not found');
-      const pairs = await resp.json();
-      if (!Array.isArray(pairs) || pairs.length === 0) throw new Error('not found');
+        if (!resp.ok) throw new Error('not found');
+        const pairs = await resp.json();
+        meta = metaFromPairs(pairs, mint, false);
+        if (!meta) throw new Error('not found');
+      }
 
-      // The pair's priceUsd, priceChange and info belong to its base token, which is not
-      // this mint when it trades as the quote (e.g. ZEC / TOKEN)
-      const picked = utils.pickDexScreenerPair(pairs, mint);
-      const pair = picked.pair;
-      const isBase = picked.side === 'base';
-      const name = picked.token?.name || 'Unknown';
-      const symbol = picked.token?.symbol || '???';
-      const logo = (isBase ? utils.proxyImageUrl(pair.info?.imageUrl) : null) || defaultLogo;
-
-      const pairCreatedAt = pair.pairCreatedAt || null;
-      const price = picked.priceUsd;
-      const priceChange24h = isBase && pair.priceChange?.h24 != null ? parseFloat(pair.priceChange.h24) : null;
+      const name = meta.name || 'Unknown';
+      const symbol = meta.symbol || '???';
+      const logo = meta.logo || defaultLogo;
+      const { pairCreatedAt, price, priceChange24h } = meta;
       previewData = { name, symbol, logo, pairCreatedAt, price, priceChange24h };
 
       showPreview(`<div class="cultify-preview-card">
@@ -158,6 +196,7 @@
       </div>`);
     } catch (err) {
       if (err.name === 'AbortError') return;
+      lastPreviewMint = null; // allow a later retry of the same address
       // Couldn't load metadata — show minimal preview with just the address
       previewData = null;
       const short = mint.slice(0, 6) + '...' + mint.slice(-4);
@@ -171,10 +210,15 @@
     }
   }
 
-  function handleInputChange() {
+  // Debounced (input and paste both fire for a paste, and typing matches the address
+  // regex at several lengths); the same mint is not fetched twice in a row.
+  function handleInputChange(immediate) {
+    clearTimeout(previewTimer);
     const mint = mintInput.value.trim();
     if (SOLANA_ADDR_RE.test(mint)) {
-      fetchTokenPreview(mint);
+      if (mint === lastPreviewMint) return;
+      if (immediate === true) fetchTokenPreview(mint);
+      else previewTimer = setTimeout(() => fetchTokenPreview(mint), 200);
     } else {
       hidePreview();
     }
@@ -191,31 +235,36 @@
     try {
       const resp = await fetch(`${baseUrl}/api/cultify/my-tokens/${wallet.address}`);
       if (!resp.ok) return;
-      const { tokens } = await resp.json();
-      if (!tokens || tokens.length === 0) {
+      const { tokens: rows } = await resp.json();
+      if (!rows || rows.length === 0) {
         myTokensEl.classList.remove('visible');
         return;
       }
 
-      // Fetch DexScreener metadata for all mints in parallel
-      const metaMap = {};
-      await Promise.all(tokens.map(async (t) => {
+      // One row per mint (repeat burns return several), keeping the latest burn
+      const byMint = new Map();
+      rows.forEach(t => {
+        const prev = byMint.get(t.mint);
+        if (!prev || new Date(t.createdAt) > new Date(prev.createdAt)) byMint.set(t.mint, t);
+      });
+      const tokens = [...byMint.values()];
+
+      // Fetch DexScreener metadata for mints not already known, up to 30 per request
+      const missing = tokens.map(t => t.mint).filter(m => !getCachedMeta(m));
+      const chunks = [];
+      for (let i = 0; i < missing.length; i += DEXSCREENER_BATCH) chunks.push(missing.slice(i, i + DEXSCREENER_BATCH));
+      await Promise.all(chunks.map(async (chunk) => {
         try {
-          const r = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(t.mint)}`,
+          const r = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${chunk.map(encodeURIComponent).join(',')}`,
             { signal: AbortSignal.timeout(5000) });
           if (r.ok) {
             const pairs = await r.json();
-            const picked = utils.pickDexScreenerPair(pairs, t.mint);
-            if (picked) {
-              metaMap[t.mint] = {
-                name: picked.token?.name || null,
-                symbol: picked.token?.symbol || null,
-                logo: picked.side === 'base' ? (utils.proxyImageUrl(picked.pair.info?.imageUrl) || null) : null,
-              };
-            }
+            chunk.forEach(m => metaFromPairs(pairs, m, true));
           }
         } catch { /* skip */ }
       }));
+      const metaMap = {};
+      tokens.forEach(t => { const meta = getCachedMeta(t.mint); if (meta) metaMap[t.mint] = meta; });
 
       let html = '<div class="cultify-my-tokens-header">Your Analyzed Tokens (12hr access)</div>';
       html += '<div class="cultify-my-tokens-list">';
@@ -253,13 +302,34 @@
         el.addEventListener('click', () => {
           const m = el.dataset.mint;
           mintInput.value = m;
-          handleInputChange();
+          handleInputChange(true);
           handleCultify();
         });
       });
     } catch (err) {
       console.error('[Cultify] Failed to load my tokens:', err);
     }
+  }
+
+  // ── Poll lifecycle ────────────────────────────────
+  // Each analysis/burn gate gets a run id; polls capture it and stop once a newer run
+  // starts, so a previous mint's polls can neither keep going nor write into the new results.
+  let runId = 0;
+  function startNewRun() {
+    runId++;
+    if (diamondPollTimer) { clearTimeout(diamondPollTimer); diamondPollTimer = null; }
+    if (analysisPollTimer) { clearTimeout(analysisPollTimer); analysisPollTimer = null; }
+  }
+
+  // Run fn now, or once the tab is visible again (polls pause in hidden tabs).
+  function whenVisible(fn) {
+    if (!document.hidden) { fn(); return; }
+    const onVisible = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVisible);
+      fn();
+    };
+    document.addEventListener('visibilitychange', onVisible);
   }
 
   // ── Main flow ─────────────────────────────────────
@@ -274,6 +344,7 @@
 
     goBtn.disabled = true;
     burnGateMint = null;
+    startNewRun();
     hideResults();
     showStatus('<div class="cultify-gate"><p class="cultify-loading">Checking token...</p></div>');
 
@@ -359,6 +430,32 @@
     document.getElementById('cultify-sign-again-btn').addEventListener('click', () => handleCultify());
   }
 
+  // ── Solana web3 (loaded on demand) ────────────────
+  // Only the burn needs @solana/web3.js (~106 KB gzip), so it is not a page script:
+  // prefetched when the burn gate opens for a connected wallet, awaited by executeBurn.
+  let web3Promise = null;
+  function loadWeb3() {
+    if (typeof solanaWeb3 !== 'undefined') return Promise.resolve();
+    if (!web3Promise) {
+      web3Promise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/@solana/web3.js@1.98.0/lib/index.iife.min.js';
+        script.integrity = 'sha384-1/Ll6ABlJDlMx1URcif2stL9Fxod/1rg71YHzGqTl6Bwzi0Vq993Jt/oVLFXfUgQ';
+        script.crossOrigin = 'anonymous';
+        const fail = () => {
+          web3Promise = null; // allow a retry on the next attempt
+          script.remove();
+          reject(new Error('Failed to load the Solana library. Check your connection and try again.'));
+        };
+        // A script that loads without defining the global (e.g. a proxy error page) is a failure too
+        script.onload = () => (typeof solanaWeb3 !== 'undefined' ? resolve() : fail());
+        script.onerror = fail;
+        document.head.appendChild(script);
+      });
+    }
+    return web3Promise;
+  }
+
   // ── Burn gate UI ──────────────────────────────────
 
   // Fetch user's ASDFASDFA balance via backend (uses Helius RPC, keeps API key server-side)
@@ -391,6 +488,7 @@
 
   async function showBurnGate(mint) {
     burnGateMint = mint;
+    startNewRun();
     const connected = typeof wallet !== 'undefined' && wallet.connected;
     const gateAddress = connected ? wallet.address : null;
     burnGateAddress = gateAddress;
@@ -415,6 +513,7 @@
       // Connecting dispatches walletConnected, which re-renders the gate (listener above)
       document.getElementById('cultify-connect-btn').addEventListener('click', () => wallet.connect());
     } else {
+      loadWeb3().catch(() => {}); // prefetch for executeBurn
       // Fetch and display balance
       const balData = await fetchBurnTokenBalance();
       const balEl = document.getElementById('cultify-balance');
@@ -589,6 +688,7 @@
     errorEl.innerHTML = '';
 
     try {
+      await loadWeb3();
       const { PublicKey, Transaction, TransactionInstruction } = solanaWeb3;
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
 
@@ -665,9 +765,11 @@
 
       // Step 6: Poll for confirmation
       burnBtn.textContent = 'Confirming burn...';
+      // Back off 1, 2, 4, then every 5 s for up to ~60 s (it shares a per-IP rate limit)
       let confirmed = false;
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 2000));
+      const confirmDeadline = Date.now() + 60000;
+      for (let delay = 1000; Date.now() < confirmDeadline; delay = Math.min(delay * 2, 5000)) {
+        await new Promise(r => setTimeout(r, delay));
         try {
           const statusResp = await fetch(`${baseUrl}/api/cultify/tx-status/${signature}`);
           if (statusResp.ok) {
@@ -715,6 +817,7 @@
   let analysisPollTimer = null;
 
   async function loadAnalysis(mint, isCurated) {
+    const run = runId;
     try {
       const baseUrl = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
       const tokenParam = currentAccessToken ? `?token=${currentAccessToken}` : '';
@@ -728,6 +831,7 @@
       }
 
       const data = await resp.json();
+      if (run !== runId) return; // a newer analysis started meanwhile
 
       if (data.error === 'rpc_unavailable' || data.error === 'no_holders') {
         showStatus('<div class="cultify-gate"><p class="cultify-error">Holder data temporarily unavailable. Try again later.</p></div>');
@@ -742,13 +846,16 @@
       if (!data.supply && !analysisPollTimer) {
         let enrichAttempt = 0;
         const pollEnriched = async () => {
+          if (run !== runId) return; // superseded: leave the current run's timer alone
           analysisPollTimer = null;
           enrichAttempt++;
           if (enrichAttempt > 5) return; // give up after 5 attempts (~25s)
           try {
             const enrichedResp = await fetch(url);
+            if (run !== runId) return;
             if (enrichedResp.ok) {
               const enriched = await enrichedResp.json();
+              if (run !== runId) return;
               if (enriched.supply || (enriched.metrics && enriched.metrics.holderCount)) {
                 updateEnrichedMetrics(enriched);
                 return; // done
@@ -756,11 +863,12 @@
             }
           } catch (_) {}
           // Not enriched yet — try again
-          analysisPollTimer = setTimeout(pollEnriched, 5000);
+          analysisPollTimer = setTimeout(() => whenVisible(pollEnriched), 5000);
         };
-        analysisPollTimer = setTimeout(pollEnriched, 4000);
+        analysisPollTimer = setTimeout(() => whenVisible(pollEnriched), 4000);
       }
     } catch (err) {
+      if (run !== runId) return; // a stale analysis's error must not cover the newer run
       showStatus(`<div class="cultify-gate"><p class="cultify-error">${escapeHtml(err.message)}</p></div>`);
     }
   }
@@ -923,9 +1031,10 @@
     const shareBtn = document.getElementById('cultify-share-btn');
     if (shareBtn) shareBtn.addEventListener('click', () => shareCultifyAnalytics(mint));
 
-    // Start polling for diamond hands data (fresh=true on first poll to clear stale data)
+    // Start polling for diamond hands data. No fresh=true here: it evicts the shared
+    // diamond-hands result the token page reads; only an explicit Retry asks for it.
     diamondPollCount = 0;
-    diamondFreshRequested = true;
+    diamondFreshRequested = false;
     pollDiamondHands(mint);
   }
 
@@ -1110,8 +1219,11 @@
   const MAX_DIAMOND_POLLS_ACTIVE = 60;  // ~3 min at 3s — actively computing
   const MAX_DIAMOND_POLLS_QUEUED = 120; // ~10 min at 5s — waiting in queue
 
-  async function pollDiamondHands(mint) {
+  async function pollDiamondHands(mint, run = runId) {
+    // Stale check first: a superseded poll must not touch the current run's timer
+    if (run !== runId) return;
     if (diamondPollTimer) clearTimeout(diamondPollTimer);
+    diamondPollTimer = null;
     diamondCurrentMint = mint;
     diamondPollCount++;
 
@@ -1126,6 +1238,7 @@
 
     try {
       const resp = await fetch(`${baseUrl}/api/cultify/diamond-hands/${mint}${qs ? '?' + qs : ''}`);
+      if (run !== runId) return; // a newer analysis started meanwhile
 
       if (resp.status === 403) {
         currentAccessToken = null; _clearAccessToken(mint);
@@ -1135,11 +1248,12 @@
       }
 
       if (!resp.ok) {
-        diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
+        diamondPollTimer = setTimeout(() => whenVisible(() => pollDiamondHands(mint, run)), 5000);
         return;
       }
 
       const data = await resp.json();
+      if (run !== runId) return;
 
       // Terminal: computed with no distribution
       if (data.computed && !data.distribution) {
@@ -1196,6 +1310,7 @@
             : 'Analysis timed out. <button class="dh-retry-btn" id="dh-retry-cultify">Retry</button>';
           document.getElementById('dh-retry-cultify')?.addEventListener('click', () => {
             diamondPollCount = 0;
+            diamondFreshRequested = true;
             if (sampleEl) sampleEl.textContent = 'Retrying...';
             if (diamondCurrentMint) pollDiamondHands(diamondCurrentMint);
           });
@@ -1206,9 +1321,9 @@
 
       // Poll again — slower when queued
       const pollDelay = isQueued ? 5000 : 3000;
-      diamondPollTimer = setTimeout(() => pollDiamondHands(mint), pollDelay);
+      diamondPollTimer = setTimeout(() => whenVisible(() => pollDiamondHands(mint, run)), pollDelay);
     } catch {
-      diamondPollTimer = setTimeout(() => pollDiamondHands(mint), 5000);
+      diamondPollTimer = setTimeout(() => whenVisible(() => pollDiamondHands(mint, run)), 5000);
     }
   }
 

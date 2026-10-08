@@ -368,6 +368,8 @@ async function getTokenHolderCount(mintAddress, opts = {}) {
     try {
       const cached = await cache.get(`holder-total:${mintAddress}`);
       if (cached && cached > 0) return cached;
+      // No count last time (no holders, or DAS failing): don't page again for a while
+      if (await cache.get(`holder-total-none:${mintAddress}`)) return null;
     } catch (_) {}
 
     if (_holderCountInFlight.has(mintAddress)) {
@@ -381,6 +383,9 @@ async function getTokenHolderCount(mintAddress, opts = {}) {
     // so capped values don't persist for curated tokens that need accurate counts.
     if (count && count > 0) {
       await cache.set(`holder-total:${mintAddress}`, count, TTL.HOLDER_COUNT).catch(() => {});
+    } else {
+      // Remember the miss so every token-page cache miss doesn't re-queue the scan
+      await cache.set(`holder-total-none:${mintAddress}`, 1, TTL.HOUR).catch(() => {});
     }
     return count;
   }).finally(() => {
@@ -393,62 +398,27 @@ async function getTokenHolderCount(mintAddress, opts = {}) {
 
 // Returns { count, isExact }.
 // isExact=false when we hit maxPages — used for logging; count is cached regardless.
+// A page that keeps failing throws, and the count is discarded (null): a partial
+// count is an undercount, and caching it would make the daily job skip this mint.
 async function _doGetTokenHolderCount(mintAddress, maxPages = 100) {
   try {
-    return await circuitBreakers.heliusDas.execute(async () => {
-      // Unique owner wallets, burn and known LP authorities excluded: the same
-      // definition holder snapshots use (services/holderCounts.js).
-      const { BURN_WALLETS, LP_AUTHORITIES, LP_PROGRAMS } = require('../constants');
-      const owners = new Set();
-      let page = 1;
-      let isExact = false;
+    // Unique owner wallets, burn and known LP authorities excluded: the same
+    // definition holder snapshots use (services/holderCounts.js).
+    const { BURN_WALLETS, LP_AUTHORITIES, LP_PROGRAMS } = require('../constants');
+    // Same paged reader as holder snapshots (several pages at a time, per-page retry)
+    const { accounts, pages, complete: isExact } = await getAllTokenAccounts(mintAddress, { maxPages });
+    const owners = new Set();
+    for (const a of accounts) {
+      if (!a?.owner || BURN_WALLETS.has(a.owner) || LP_AUTHORITIES.has(a.owner) || LP_PROGRAMS.has(a.owner)) continue;
+      if (a.amount != null && Number(a.amount) <= 0) continue;
+      owners.add(a.owner);
+    }
 
-      while (page <= maxPages) {
-        countCredits('getTokenAccounts', DAS_CREDITS);
-        const response = await rateLimitedRequest('helius', () =>
-          axios.post(HELIUS_DAS_URL, {
-            jsonrpc: '2.0',
-            id: `holder-count-p${page}`,
-            method: 'getTokenAccounts',
-            params: {
-              mint: mintAddress,
-              page,
-              limit: 1000,
-              options: { showZeroBalance: false }
-            }
-          }, {
-            timeout: 15000,
-            headers: HELIUS_HEADERS,
-            httpsAgent
-          })
-        );
-
-        if (response.data.error) {
-          // A partial count is an undercount: returning it would cache it for
-          // TTL.HOLDER_COUNT and make the daily job skip this mint as "known".
-          console.warn(`[Solana] Holder count page ${page} error for ${mintAddress.slice(0, 8)}...: ${response.data.error.message || response.data.error.code} — discarding partial count (${owners.size})`);
-          return { count: null, isExact: false };
-        }
-
-        const accounts = response.data.result?.token_accounts;
-        if (!accounts || accounts.length === 0) { isExact = true; break; }
-
-        for (const a of accounts) {
-          if (!a?.owner || BURN_WALLETS.has(a.owner) || LP_AUTHORITIES.has(a.owner) || LP_PROGRAMS.has(a.owner)) continue;
-          if (a.amount != null && Number(a.amount) <= 0) continue;
-          owners.add(a.owner);
-        }
-
-        if (accounts.length < 1000) { isExact = true; break; }
-        page++;
-      }
-
-      const totalCount = owners.size;
-      if (totalCount > 0) {
-        console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} wallets (${page} pages${isExact ? '' : ', capped at maxPages'})`);
-      }
-      return { count: totalCount > 0 ? totalCount : null, isExact };
-    }); // end circuitBreakers.heliusDas.execute
+    const totalCount = owners.size;
+    if (totalCount > 0) {
+      console.log(`[Solana] Helius holder count for ${mintAddress.slice(0, 8)}...: ${totalCount} wallets (${pages} pages${isExact ? '' : ', capped at maxPages'})`);
+    }
+    return { count: totalCount > 0 ? totalCount : null, isExact };
   } catch (error) {
     console.error('[Solana] Helius holder count error:', error.message);
     return { count: null, isExact: false };
@@ -925,11 +895,12 @@ async function getTokenHolderSample(mintAddress, count = 250, excludeAddresses =
  * Page through every token account of a mint (Helius DAS getTokenAccounts, 1000
  * per page). Used by the holder snapshot job. Throws on any page error so a
  * half-read holder list is never mistaken for a full one; hitting maxPages is
- * the only way to get complete=false.
+ * the only way to get complete=false. With partial=true a page that keeps
+ * failing ends the read there instead (complete=false, the pages before it).
  *
  * @returns {Promise<{accounts: Array<{owner, address, amount}>, pages: number, complete: boolean}>}
  */
-async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1, accounts: already = [], concurrency = DAS_PAGE_CONCURRENCY } = {}) {
+async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1, accounts: already = [], concurrency = DAS_PAGE_CONCURRENCY, partial = false } = {}) {
   if (!HELIUS_DAS_URL) throw new Error('Helius DAS not configured');
   // startPage/accounts continue a read whose earlier pages the caller already has
   const accounts = already.slice();
@@ -974,22 +945,43 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
   };
 
   // Pages are numbered, so several can be read at once. A big token's snapshot
-  // used to read up to 250 pages one after another. Past the last page a read
-  // returns nothing, so the most a wave wastes is concurrency-1 empty pages.
-  let page = startPage;
+  // used to read up to 250 pages one after another. A sliding window keeps
+  // `concurrency` pages in flight: a slot starts the next page as soon as its
+  // last one is back, so one slow or retrying page doesn't idle the others.
+  // Past the last page a read returns nothing, so the most it wastes is
+  // concurrency-1 empty pages. Pages are appended in order afterwards.
+  const got = new Map(); // page -> batch
+  const failed = new Map(); // page -> error
+  let next = startPage;
+  let shortPage = Infinity; // first page seen with fewer than 1000 accounts
+  const slot = async () => {
+    while (failed.size === 0) {
+      const p = next;
+      if (p > maxPages || p > shortPage) return;
+      next++;
+      try {
+        const batch = await fetchPage(p);
+        got.set(p, batch);
+        if (batch.length < 1000 && p < shortPage) shortPage = p;
+      } catch (err) {
+        failed.set(p, err);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, slot));
+
   let lastPage = Math.max(startPage - 1, 0);
   let complete = false;
-  while (page <= maxPages && !complete) {
-    const wave = [];
-    for (let p = page; p < page + Math.max(1, concurrency) && p <= maxPages; p++) wave.push(p);
-    const batches = await Promise.all(wave.map(fetchPage));
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
-      lastPage = wave[i];
-      if (batch.length < 1000) { complete = true; break; }
+  for (let p = startPage; p <= maxPages && (got.has(p) || failed.has(p)); p++) {
+    if (failed.has(p)) {
+      // partial: the pages before the failed one, as a capped read
+      if (partial) break;
+      throw failed.get(p);
     }
-    page += wave.length;
+    const batch = got.get(p);
+    for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
+    lastPage = p;
+    if (batch.length < 1000) { complete = true; break; }
   }
   return { accounts, pages: lastPage, complete };
 }
@@ -1045,6 +1037,24 @@ function isTransactionHistoryAvailable() {
   return !!HELIUS_API_KEY && Date.now() >= gtfaUnavailableUntil;
 }
 
+// Large getTransactionsForAddress pages (limit > 100: backfill continuation
+// pages of 500 full transactions, Holder Behavior pages of 250) are several MB of
+// JSON each. Cap how many are in flight at once, below the Helius-wide limit.
+const BIG_GTFA_PAGE_CONCURRENCY = Math.max(1, parseInt(process.env.HELIUS_BIG_PAGE_CONCURRENCY, 10) || 4);
+let bigPagesInFlight = 0;
+const bigPageWaiters = [];
+async function withBigPageSlot(fn) {
+  while (bigPagesInFlight >= BIG_GTFA_PAGE_CONCURRENCY) await new Promise(r => bigPageWaiters.push(r));
+  bigPagesInFlight++;
+  try {
+    return await fn();
+  } finally {
+    bigPagesInFlight--;
+    const next = bigPageWaiters.shift();
+    if (next) next();
+  }
+}
+
 /**
  * One page of an account's succeeded transactions with full meta (pre/post token
  * balances), newest first, via getTransactionsForAddress.
@@ -1066,7 +1076,8 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
   if (paginationToken) opts.paginationToken = paginationToken;
   try {
     // A large page of full transactions is a big response; give it longer
-    const result = await rpcCall('getTransactionsForAddress', [address, opts], 0, { timeout: opts.limit > 100 ? 40000 : 15000 });
+    const call = () => rpcCall('getTransactionsForAddress', [address, opts], 0, { timeout: opts.limit > 100 ? 40000 : 15000 });
+    const result = await (opts.limit > 100 ? withBigPageSlot(call) : call());
     if (!result || !Array.isArray(result.data)) throw new Error('Unexpected getTransactionsForAddress response');
     const extra = Math.ceil(result.data.length / 100) - 1;
     if (extra > 0) countCredits('getTransactionsForAddress', extra * 10, 0);
@@ -1178,6 +1189,13 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
 // process sees them) and in a small local map for speed.
 const streamflowCache = new Map();
 const STREAMFLOW_CACHE_TTL = TTL.DAY;
+// Entries expire logically on read; sweep the expired ones so mints that are no
+// longer looked up don't stay in memory for the life of the process
+const _streamflowSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [mint, entry] of streamflowCache) if (entry.expiry <= now) streamflowCache.delete(mint);
+}, 10 * 60 * 1000);
+if (_streamflowSweep.unref) _streamflowSweep.unref();
 
 async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
   // Check local cache first, then the shared cache

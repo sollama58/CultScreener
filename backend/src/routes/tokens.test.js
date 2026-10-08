@@ -63,7 +63,8 @@ stub('../services/database', new Proxy(dbStub, {
 stub('../services/geckoTerminal', {
   getTrendingTokens: async ({ page }) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
   getNewTokens: async (_l, _s, page) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
-  getTokenPools: async (mint, { limit }) => { S.poolCalls.push(limit); return S.pools.slice(0, limit); }
+  getTokenPools: async (mint, { limit }) => { S.poolCalls.push(limit); return S.pools.slice(0, limit); },
+  OHLCV_TIMEFRAMES: { '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '12h': 1, '1d': 1 }
 });
 stub('../services/jupiter', { getTrendingTokens: async () => [] });
 stub('../services/solana', {
@@ -189,8 +190,8 @@ describe('POST /:mint/view', () => {
 });
 
 describe('query parameter types', () => {
-  test('repeated chart interval is a 400, not a 500', async () => {
-    const r = await get(`/api/tokens/${CURATED}/chart?interval=1h&interval=4h`);
+  test('repeated ohlcv interval is a 400, not a 500', async () => {
+    const r = await get(`/api/tokens/${CURATED}/ohlcv?interval=1h&interval=4h`);
     assert.strictEqual(r.status, 400);
   });
 

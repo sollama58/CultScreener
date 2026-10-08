@@ -74,6 +74,18 @@ const walletLimiter = rateLimit({
   }
 });
 
+// Looser per-IP limiter for read-only status polls (Cultify diamond-hands, tx-status), kept
+// apart from walletLimiter so a running poll cannot use up the budget the burn flow's
+// balance / blockhash / check-access calls need
+const pollLimiter = rateLimit({
+  windowMs: 60000, // 1 minute
+  max: 90,         // a 3s and a 2s poll together are 50/min; leaves room for a second tab
+  message: { error: 'Too many requests, please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip
+});
+
 // Limiter for API key requests (higher limits than default)
 // Uses IP as key to prevent per-key rate limit circumvention
 const apiKeyLimiter = rateLimit({
@@ -95,5 +107,6 @@ module.exports = {
   veryStrictLimiter,
   searchLimiter,
   walletLimiter,
+  pollLimiter,
   apiKeyLimiter
 };

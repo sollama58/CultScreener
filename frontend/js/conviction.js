@@ -6,6 +6,11 @@ const convictionPage = {
   totalItems: 0,
   tokens: [],
   _allTokens: [],
+  // Unfiltered leaderboard (shuffled once per load); search/mcap/minSample filter it client-side.
+  _boardTokens: null,
+  _loadedTier: null,
+  _holderRefreshTimer: null,
+  _holderRefreshTries: 0,
   _searchTimeout: null,
   // Default order: the daily Diamond Hands score (the King of the Pill ranking), highest
   // first. The score itself is not shown in the table; the rank column carries the order.
@@ -232,9 +237,46 @@ const convictionPage = {
     return params;
   },
 
+  // Client-side search/mcap/minSample filter over the loaded leaderboard. Mirrors the
+  // server's leaderboard filters; the list is already the full curated set.
+  _filterBoard() {
+    const all = this._boardTokens || [];
+    const f = this.getFilters();
+    const q = f.search ? f.search.toLowerCase() : '';
+    const minMcap = f.minMcap != null ? Number(f.minMcap) : null;
+    const maxMcap = f.maxMcap != null ? Number(f.maxMcap) : null;
+    const minSample = f.minSample != null ? Number(f.minSample) : null;
+    if (!q && minMcap == null && maxMcap == null && minSample == null) return all.slice();
+    return all.filter(t => {
+      if (q && !(
+        (t.name || '').toLowerCase().includes(q) ||
+        (t.symbol || '').toLowerCase().includes(q) ||
+        (t.mintAddress || '').toLowerCase().includes(q)
+      )) return false;
+      if (minMcap != null && !(t.marketCap != null && t.marketCap >= minMcap)) return false;
+      if (maxMcap != null && !(t.marketCap != null && t.marketCap <= maxMcap)) return false;
+      if (minSample != null && !((t.sampleSize || 0) >= minSample)) return false;
+      return true;
+    });
+  },
+
+  // Re-filter the loaded leaderboard in place: no request, no spinner.
+  _renderBoardFiltered() {
+    this._allTokens = this._filterBoard();
+    this.totalItems = this._allTokens.length;
+    this.sortAndRender();
+    this.updateTerminalStats();
+    this.updatePagination();
+  },
+
   applyFilters() {
     this.currentPage = 1;
-    this.loadData();
+    if (this._activeTier !== 'watchlist' && this._loadedTier === this._activeTier &&
+        this._boardTokens && !this._loading) {
+      this._renderBoardFiltered();
+    } else {
+      this.loadData();
+    }
     const resetBtn = document.getElementById('conviction-filter-reset');
     const hasFilters = Object.keys(this.getFilters()).length > 0 || this._activeTier !== 'all' || this._activeMcap;
     if (resetBtn) resetBtn.style.display = hasFilters ? '' : 'none';
@@ -261,8 +303,7 @@ const convictionPage = {
       if (allPill) allPill.classList.add('active');
     }
 
-    this.currentPage = 1;
-    this.loadData();
+    this.applyFilters();
   },
 
   async loadData() {
@@ -382,29 +423,21 @@ const convictionPage = {
           } catch (_) { /* leaderboard enrichment non-critical */ }
         }
       } else {
-        // Fetch all tokens, shuffle client-side for random order
-        const params = { limit: 100, offset: 0, ...this.getFilters() };
-        const result = await api.tokens.leaderboardConviction(params);
+        // Fetch all tokens (unfiltered, the same request the other home tabs make),
+        // shuffle client-side for random order, then filter client-side.
+        const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
         const all = [...(result.tokens || [])]; // clone to avoid mutating the cached array
 
         this._shuffle(all);
         all.forEach((t, i) => { t._originalIndex = i; });
-        this._allTokens = all;
-        this.totalItems = all.length;
+        this._boardTokens = all;
+        this._allTokens = this._filterBoard();
+        this.totalItems = this._allTokens.length;
 
-        // If some tokens are missing holder counts, schedule a silent re-fetch
-        const missingHolders = all.some(t => !t.holders);
-        if (missingHolders && !this._holderRefreshPending) {
-          this._holderRefreshPending = true;
-          setTimeout(() => {
-            this._holderRefreshPending = false;
-            if (!this._loading) {
-              apiCache.clearPattern('tokens:leaderboard:conviction');
-              this.loadData();
-            }
-          }, 8000);
-        }
+        // If some tokens are missing holder counts, schedule a bounded silent refresh
+        if (all.some(t => !t.holders)) this._scheduleHolderRefresh();
       }
+      this._loadedTier = this._activeTier;
 
       this.sortAndRender();
       this.updateTerminalStats();
@@ -440,6 +473,43 @@ const convictionPage = {
         this.loadData();
       }
     }
+  },
+
+  // Holder counts for newly curated tokens fill in once the worker job runs. Re-fetch the
+  // leaderboard at most twice, quietly: patch holders in place (no reshuffle, no spinner)
+  // and wait while the tab is hidden.
+  _scheduleHolderRefresh() {
+    if (this._holderRefreshTimer || this._holderRefreshTries >= 2) return;
+    this._holderRefreshTimer = setTimeout(() => {
+      this._holderRefreshTimer = null;
+      if (document.hidden) {
+        document.addEventListener('visibilitychange', () => this._scheduleHolderRefresh(), { once: true });
+        return;
+      }
+      this._refreshHolders();
+    }, 8000);
+  },
+
+  async _refreshHolders() {
+    if (!this._boardTokens) return;
+    this._holderRefreshTries++;
+    try {
+      const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 }, { fresh: true });
+      const byMint = new Map((result?.tokens || []).map(t => [t.mintAddress, t]));
+      let changed = false;
+      this._boardTokens.forEach(t => {
+        const f = byMint.get(t.mintAddress);
+        if (f && f.holders && f.holders !== t.holders) {
+          t.holders = f.holders;
+          t.holderVelocity = f.holderVelocity;
+          changed = true;
+        }
+      });
+      if (changed && !this._loading && this._activeTier !== 'watchlist' && this._loadedTier === this._activeTier) {
+        this.sortAndRender();
+      }
+      if (this._boardTokens.some(t => !t.holders)) this._scheduleHolderRefresh();
+    } catch (_) { /* silent refresh is best-effort */ }
   },
 
   updateTerminalStats() {

@@ -13,6 +13,13 @@ const geckoService = require('./geckoTerminal');
 const { cache } = require('./cache');
 const { pickDexScreenerPair } = require('./poolPricing');
 
+// GET /api/curated caches the whole list under this key (routes/curated.js); every change to
+// the curated set or its DexScreener data drops it so the change shows at once.
+const CURATED_LIST_KEY = 'curated:list';
+function invalidateCuratedList() {
+  return cache.delete(CURATED_LIST_KEY).catch(() => {});
+}
+
 /**
  * Fetch banner image and social links from DexScreener for a given mint.
  * Returns null if the API call fails or no data is found.
@@ -109,6 +116,7 @@ async function addCuratedTokenFully(mintAddress) {
       symbol: dexData?.symbol ?? null,
     }).catch(() => { /* non-critical — worker will backfill on next run */ });
   }
+  await invalidateCuratedList();
 
   // Take the first holder snapshot now (then the backfill and diamond hands follow)
   // instead of waiting for someone to open the token page or for the hourly job.
@@ -123,4 +131,4 @@ async function addCuratedTokenFully(mintAddress) {
   return { token, dexScreenerEnriched: !!dexData };
 }
 
-module.exports = { addCuratedTokenFully, fetchDexScreenerData };
+module.exports = { addCuratedTokenFully, fetchDexScreenerData, CURATED_LIST_KEY, invalidateCuratedList };

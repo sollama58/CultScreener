@@ -81,6 +81,8 @@ const CONFIG = {
 
 const keys = {
   result: mint => `diamond-hands:${mint}`,
+  // computed hold times cached by GET /:mint/holders/hold-times (routes/tokens.js)
+  holdTimes: mint => `hold-times:${mint}`,
   snapshotPending: mint => `holder-snapshot-pending:${mint}`,
   backfillPending: mint => `holder-backfill-pending:${mint}`,
   // when a cheap pre-check last found the previous snapshot still accurate
@@ -156,7 +158,10 @@ async function detectLpWallets(holders) {
   const lp = new Set();
   const candidates = holders.slice(0, CONFIG.lpCheckN).map(h => h.wallet).filter(w => !BURN_WALLETS.has(w));
   for (const w of candidates) if (LP_AUTHORITIES.has(w) || LP_PROGRAMS.has(w)) lp.add(w);
-  for (let i = 0; i < candidates.length; i += 100) {
+  // The batches (100 wallets each) are independent: read them at once
+  const starts = [];
+  for (let i = 0; i < candidates.length; i += 100) starts.push(i);
+  await Promise.all(starts.map(async i => {
     const batch = candidates.slice(i, i + 100);
     // No answer means vaults would go unflagged: into the sample and the holder
     // count. Fail the snapshot instead (the job retries) of writing it that way.
@@ -166,7 +171,7 @@ async function detectLpWallets(holders) {
     (res?.value || []).forEach((acct, j) => {
       if (isProgramOwned(acct)) lp.add(batch[j]);
     });
-  }
+  }));
   return lp;
 }
 
@@ -241,7 +246,11 @@ async function takeSnapshot(mint) {
     // and percentage is derived from these two; a snapshot written with decimals
     // defaulted to 0 and no supply showed raw balances as tokens and holder shares
     // in the millions of percent.
-    const supplyRes = await solanaService.getTokenSupply(mint);
+    // Supply and the pre-check's first DAS page (below) are independent: read both at once
+    const [supplyRes, first] = await Promise.all([
+      solanaService.getTokenSupply(mint),
+      solanaService.getAllTokenAccounts(mint, { maxPages: 1 }),
+    ]);
     const decimals = supplyRes?.value?.decimals;
     const supply = supplyRes?.value?.amount ?? null;
     if (!Number.isInteger(decimals) || supply == null) {
@@ -254,7 +263,6 @@ async function takeSnapshot(mint) {
     // than one page that only proves the first page is unchanged, so a multi-page
     // token still gets a full snapshot at least once a day.
     const prevFingerprint = prev?.sample_meta?.fingerprint;
-    const first = await solanaService.getAllTokenAccounts(mint, { maxPages: 1 });
     const fingerprint = holderFingerprint(supply, first.accounts);
     const prevUsable = prev && prev.supply != null && prev.decimals === decimals
       && (first.complete || Date.now() - new Date(prev.taken_at).getTime() < CONFIG.staleSnapshotMs);
@@ -282,6 +290,11 @@ async function takeSnapshot(mint) {
     if (!complete) await mergeLargestAccounts(mint, accounts);
     const takenAt = Date.now();
     const holders = aggregateHolders(accounts);
+    // The raw account list (one object per token account, tens of MB for a big
+    // token) isn't needed past aggregation; let it go before the LP check and the DB write
+    const accountCount = accounts.length;
+    accounts = null;
+    first.accounts = null;
     if (holders.length === 0) {
       await cache.delete(keys.snapshotPending(mint)).catch(() => {});
       return { status: 'empty' };
@@ -306,16 +319,17 @@ async function takeSnapshot(mint) {
     );
 
     const snapshotId = await store.writeSnapshot({
-      mint, takenAt, complete, pages, accountCount: accounts.length, holders, decimals, supply,
+      mint, takenAt, complete, pages, accountCount, holders, decimals, supply,
       sample, sampleMeta: meta, topN: CONFIG.topN, newAcquisition,
     });
     await store.pruneSnapshots(mint).catch(err => console.warn(`[Holders] Prune failed for ${mint.slice(0, 8)}:`, err.message));
 
-    await recordSnapshotPoint(mint, { takenAt, complete, holders, exclude, decimals, supply, accountCount: accounts.length });
+    await recordSnapshotPoint(mint, { takenAt, complete, holders, exclude, decimals, supply, accountCount });
     await cache.delete(keys.result(mint)).catch(() => {});
+    await cache.delete(keys.holdTimes(mint)).catch(() => {});
     await cache.delete(keys.snapshotVerified(mint)).catch(() => {});
 
-    console.log(`[Holders] Snapshot ${snapshotId} for ${mint.slice(0, 8)}: ${holders.length} wallets from ${accounts.length} accounts, ` +
+    console.log(`[Holders] Snapshot ${snapshotId} for ${mint.slice(0, 8)}: ${holders.length} wallets from ${accountCount} accounts, ` +
       `${pages} page(s)${complete ? '' : ' (capped)'}, sample ${sample.length} (${meta.method}), new wallets: ${newAcquisition.source}, ${Date.now() - startedAt}ms`);
 
     await ensureBackfill(mint);
@@ -537,18 +551,22 @@ async function runBackfill(mint) {
     await cache.set(keys.backfillPending(mint), Date.now(), CONFIG.backfillLockTtl).catch(() => {});
     const snap = await store.getLatestSnapshot(mint);
     if (!snap) return { status: 'no-snapshot' };
-    slot = await acquireBackfillSlot(mint);
-    if (!slot) {
-      // Other tokens hold every slot: wait a few seconds rather than share the
-      // Helius concurrency so thinly that every token slows down
-      remaining = 1;
-      retryDelay = CONFIG.backfillSlotWaitMs;
-      return { status: 'waiting' };
-    }
     const entries = await store.getSnapshotEntries(snap.id, CONFIG.listN);
     const wallets = walletsOfInterest(snap, entries);
     const positions = await store.getPositions(mint, wallets);
     const pendingAtStart = wallets.filter(w => positions.get(w)?.acquired_source === 'pending');
+    // A slot only for runs that read history: with nothing pending the run just
+    // re-stores diamond hands (database only) and must not wait behind real backfills
+    if (pendingAtStart.length > 0) {
+      slot = await acquireBackfillSlot(mint);
+      if (!slot) {
+        // Other tokens hold every slot: wait a few seconds rather than share the
+        // Helius concurrency so thinly that every token slows down
+        remaining = 1;
+        retryDelay = CONFIG.backfillSlotWaitMs;
+        return { status: 'waiting' };
+      }
+    }
 
     // Listed top holders show their exact hold time, so only sample-only wallets
     // stop reading once their history is older than the oldest bucket.
@@ -648,6 +666,7 @@ async function runBackfill(mint) {
       `${stats.errors ? `, ${stats.errors} errors (${stats.transient} transient)` : ''}${stats.pushbacks ? `, ${stats.pushbacks} pushbacks` : ''}${stats.backoff ? ', backing off' : ''}`);
     if (remaining === 0) {
       await cache.delete(keys.result(mint)).catch(() => {});
+      await cache.delete(keys.holdTimes(mint)).catch(() => {});
       const dh = await getDiamondHands(mint, { dispatch: false });
       if (dh.computed && pendingAtStart.length > 0) {
         const sinceSnapshot = Date.now() - new Date(snap.taken_at).getTime();

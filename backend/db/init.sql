@@ -24,14 +24,9 @@ CREATE TABLE IF NOT EXISTS tokens (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Hash index for exact mint lookups
-CREATE INDEX IF NOT EXISTS idx_tokens_mint ON tokens USING hash(mint_address);
-CREATE INDEX IF NOT EXISTS idx_tokens_symbol ON tokens(symbol);
--- Trigram indexes for fast fuzzy search (requires pg_trgm extension)
-CREATE INDEX IF NOT EXISTS idx_tokens_name_trgm ON tokens USING gin(name gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_tokens_symbol_trgm ON tokens USING gin(symbol gin_trgm_ops);
--- Conviction ranking
-CREATE INDEX IF NOT EXISTS idx_tokens_conviction_1m ON tokens(conviction_1m DESC);
+-- Token indexes (search trigram, conviction ranking) are owned by initializeDatabase
+-- in src/services/database.js; creating them here under the same names took the
+-- names with different definitions. mint_address lookups use its UNIQUE index.
 
 -- =====================================================
 -- TOKEN VIEWS TABLE
@@ -46,7 +41,6 @@ CREATE TABLE IF NOT EXISTS token_views (
     UNIQUE(token_mint)
 );
 
-CREATE INDEX IF NOT EXISTS idx_token_views_mint ON token_views(token_mint);
 CREATE INDEX IF NOT EXISTS idx_token_views_count ON token_views(view_count DESC);
 
 -- =====================================================
@@ -92,8 +86,6 @@ CREATE TABLE IF NOT EXISTS curated_tokens (
     is_tech_coin BOOLEAN DEFAULT FALSE
 );
 
-CREATE INDEX IF NOT EXISTS idx_curated_tokens_mint ON curated_tokens(mint_address);
-
 -- =====================================================
 -- WATCHLIST TABLE
 -- Per-wallet token watchlists
@@ -105,9 +97,6 @@ CREATE TABLE IF NOT EXISTS watchlist (
     added_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(wallet_address, token_mint)
 );
-
-CREATE INDEX IF NOT EXISTS idx_watchlist_wallet ON watchlist(wallet_address);
-CREATE INDEX IF NOT EXISTS idx_watchlist_mint ON watchlist(token_mint);
 
 -- =====================================================
 -- FUNCTIONS & TRIGGERS

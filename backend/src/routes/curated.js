@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { cache } = require('../services/cache');
-const { addCuratedTokenFully, fetchDexScreenerData } = require('../services/curatedTokens');
+const { cache, TTL } = require('../services/cache');
+const { addCuratedTokenFully, fetchDexScreenerData, CURATED_LIST_KEY, invalidateCuratedList } = require('../services/curatedTokens');
 const { asyncHandler, requireDatabase, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { strictLimiter } = require('../middleware/rateLimit');
 
@@ -44,12 +44,14 @@ async function refreshAllDexScreener() {
     }
   }
 
+  await invalidateCuratedList();
   return results;
 }
 
 // GET /api/curated - Get all curated tokens with DexScreener data
+// Cached for a minute; add/remove/refresh and the admin label toggles drop the key.
 router.get('/', asyncHandler(async (req, res) => {
-  const tokens = await db.getCuratedTokens();
+  const tokens = await cache.getOrSet(CURATED_LIST_KEY, () => db.getCuratedTokens(), TTL.MEDIUM);
   res.json({ tokens });
 }));
 
@@ -101,6 +103,7 @@ router.delete('/:mint', strictLimiter, requireAdmin, asyncHandler(async (req, re
   if (!result) {
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
+  await invalidateCuratedList();
 
   // Invalidate all caches that could contain this token
   try {
@@ -162,6 +165,7 @@ router.post('/:mint/refresh', strictLimiter, requireAdmin, asyncHandler(async (r
   }
 
   await db.updateCuratedTokenDexScreener(mint, dexData);
+  await invalidateCuratedList();
   const updatedToken = await db.getCuratedToken(mint);
 
   res.json({

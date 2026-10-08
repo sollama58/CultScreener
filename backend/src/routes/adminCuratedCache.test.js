@@ -20,10 +20,15 @@ let router;
 
 before(() => {
   stub('../services/cache', {
+    // Modules loaded through admin.js read TTL presets at load time
+    TTL: new Proxy({}, { get: () => 60000 }),
+    keys: new Proxy({}, { get: () => (...a) => a.join(':') }),
     cache: {
       clearPattern: async (p) => { calls.push(['clearPattern', p]); },
       delete: async (k) => { calls.push(['delete', k]); },
       get: async () => null,
+      scanKeys: async () => [],
+      deleteMany: async (ks) => ks.length,
       set: async () => {},
     },
   });
@@ -32,6 +37,7 @@ before(() => {
   });
   stub('../services/curatedTokens', {
     addCuratedTokenFully: async (mint) => ({ token: { mintAddress: mint } }),
+    invalidateCuratedList: async () => {},
   });
   router = require('./admin');
 });

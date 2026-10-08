@@ -60,15 +60,14 @@ _statsTimer = setInterval(() => {
 }, statsInterval);
 if (_statsTimer.unref) _statsTimer.unref();
 
-// Graceful shutdown
+// Graceful shutdown. Called by the process's own shutdown once it has drained, NOT on the signal
+// itself: a SIGTERM handler here ran before any drain and reset the in-flight upstream calls of
+// requests and jobs that were still finishing.
 function destroy() {
   if (_statsTimer) clearInterval(_statsTimer);
   httpAgent.destroy();
   httpsAgent.destroy();
 }
-
-process.on('SIGTERM', destroy);
-process.on('SIGINT', destroy);
 
 module.exports = {
   httpAgent,

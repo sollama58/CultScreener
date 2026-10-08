@@ -78,5 +78,16 @@ if (!DB_URL) {
       const { rows } = await db.pool.query('SELECT price_ref_7d FROM curated_tokens WHERE mint_address = $1', [UP]);
       assert.strictEqual(parseFloat(rows[0].price_ref_7d), 4);
     });
+
+    test('leaderboard total counts every match, including on a page past the end', async () => {
+      const first = await db.getTopConvictionTokens(100, 0, { search: 'VelUpMint' });
+      assert.strictEqual(first.total, first.tokens.length);
+      assert.ok(first.total >= 1);
+      assert.ok(first.tokens.every(r => !('total_count_' in r)));
+      const past = await db.getTopConvictionTokens(100, first.total, { search: 'VelUpMint' });
+      assert.deepStrictEqual(past, { tokens: [], total: first.total });
+      const none = await db.getTopConvictionTokens(100, 0, { search: 'no-such-token-xyz' });
+      assert.deepStrictEqual(none, { tokens: [], total: 0 });
+    });
   });
 }

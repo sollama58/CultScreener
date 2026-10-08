@@ -93,6 +93,15 @@ class MemoryCache {
     this.stats.sets++;
   }
 
+  /** Raw-bytes variants (see RedisCache). In memory a Buffer is stored as-is. */
+  async getBuffer(key) {
+    return this.get(key);
+  }
+
+  async setBuffer(key, buffer, ttlMs = 60000) {
+    return this.set(key, buffer, ttlMs);
+  }
+
   /**
    * Set-if-not-exists. Returns true if the key was set (did not exist), false otherwise.
    */
@@ -116,6 +125,21 @@ class MemoryCache {
 
   async delete(key) {
     this.cache.delete(key);
+  }
+
+  /** Values for several keys in one call, undefined for each miss (see RedisCache.mget). */
+  async mget(keyList) {
+    return Promise.all(keyList.map(k => this.get(k)));
+  }
+
+  /** Delete several keys; returns how many existed. */
+  async deleteMany(keyList) {
+    let n = 0;
+    for (const k of keyList) {
+      if (await this.has(k)) n++;
+      this.cache.delete(k);
+    }
+    return n;
   }
 
   async has(key) {
@@ -288,6 +312,41 @@ class RedisCache {
   }
 
   /**
+   * Raw-bytes get/set: the Buffer goes to Redis as a binary string, with none of the base64 +
+   * JSON overhead (+33% size, plus a parse and decode per hit) that set/get would add.
+   * Returns undefined on a miss, like get.
+   */
+  async getBuffer(key) {
+    if (!this.isConnected) {
+      this.stats.misses++;
+      return undefined;
+    }
+    try {
+      const data = await this.client.getBuffer(this._prefixKey(key));
+      if (data === null) {
+        this.stats.misses++;
+        return undefined;
+      }
+      this.stats.hits++;
+      return data;
+    } catch (err) {
+      console.error('[Redis] GetBuffer error:', err.message);
+      this.stats.misses++;
+      return undefined;
+    }
+  }
+
+  async setBuffer(key, buffer, ttlMs = 60000) {
+    if (!this.isConnected) return;
+    try {
+      await this.client.setex(this._prefixKey(key), Math.ceil(ttlMs / 1000), buffer);
+      this.stats.sets++;
+    } catch (err) {
+      console.error('[Redis] SetBuffer error:', err.message);
+    }
+  }
+
+  /**
    * Set-if-not-exists (atomic). Returns true if the key was set, false if it already existed.
    */
   async setNX(key, value, ttlMs = 60000) {
@@ -326,6 +385,38 @@ class RedisCache {
       await this.client.del(this._prefixKey(key));
     } catch (err) {
       console.error('[Redis] Delete error:', err.message);
+    }
+  }
+
+  /** One MGET for several keys: values in key order, undefined for each miss. */
+  async mget(keyList) {
+    if (keyList.length === 0) return [];
+    if (!this.isConnected) {
+      this.stats.misses += keyList.length;
+      return keyList.map(() => undefined);
+    }
+    try {
+      const rows = await this.client.mget(...keyList.map(k => this._prefixKey(k)));
+      return rows.map(data => {
+        if (data === null) { this.stats.misses++; return undefined; }
+        this.stats.hits++;
+        try { return JSON.parse(data); } catch { return undefined; }
+      });
+    } catch (err) {
+      console.error('[Redis] Mget error:', err.message);
+      this.stats.misses += keyList.length;
+      return keyList.map(() => undefined);
+    }
+  }
+
+  /** One multi-key DEL; returns how many of the keys existed. */
+  async deleteMany(keyList) {
+    if (!this.isConnected || keyList.length === 0) return 0;
+    try {
+      return await this.client.del(...keyList.map(k => this._prefixKey(k)));
+    } catch (err) {
+      console.error('[Redis] Delete error:', err.message);
+      return 0;
     }
   }
 
@@ -388,9 +479,10 @@ class RedisCache {
     let size = 0;
 
     try {
-      // Count only keys with our cache prefix to exclude non-cache keys (e.g. BullMQ)
-      const cacheKeys = await this._scanKeys(this._prefixKey('*'));
-      size = cacheKeys.length;
+      // DBSIZE is O(1). A SCAN of the HolDEX:* keys walks the whole keyspace (BullMQ's keys
+      // included) in COUNT-100 round trips, which is too much for an unauthenticated endpoint.
+      // So this counts every key in the Redis DB, not only the cache's own.
+      size = await this.client.dbsize();
     } catch (err) {
       console.error('[Redis] Stats error:', err.message);
     }
@@ -484,6 +576,14 @@ class CacheService {
     return this.backend.set(key, value, ttlMs);
   }
 
+  getBuffer(key) {
+    return this.backend.getBuffer(key);
+  }
+
+  setBuffer(key, buffer, ttlMs = 60000) {
+    return this.backend.setBuffer(key, buffer, ttlMs);
+  }
+
   setNX(key, value, ttlMs = 60000) {
     return this.backend.setNX(key, value, ttlMs);
   }
@@ -506,6 +606,14 @@ class CacheService {
 
   clearPattern(pattern) {
     return this.backend.clearPattern(pattern);
+  }
+
+  mget(keyList) {
+    return this.backend.mget(keyList || []);
+  }
+
+  deleteMany(keyList) {
+    return this.backend.deleteMany(keyList || []);
   }
 
   /**
@@ -553,18 +661,28 @@ class CacheService {
     // 30s timeout ensures the in-flight map entry is always cleaned up even if fetchFn hangs.
     const INFLIGHT_TIMEOUT_MS = 30000;
     const fetchPromise = (async () => {
+      let timer;
       try {
+        const valuePromise = Promise.resolve(fetchFn());
         const value = await Promise.race([
-          fetchFn(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('getOrSet timeout')), INFLIGHT_TIMEOUT_MS)
-          )
+          valuePromise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              // The callers give up, but fetchFn keeps running: let a late result still fill the
+              // cache, so the next request does not start the same fetch over again.
+              valuePromise
+                .then((late) => (late != null ? this.set(key, late, ttlMs) : undefined))
+                .catch(() => {});
+              reject(new Error('getOrSet timeout'));
+            }, INFLIGHT_TIMEOUT_MS);
+          })
         ]);
         if (value != null) {
           await this.set(key, value, ttlMs);
         }
         return value;
       } finally {
+        clearTimeout(timer);
         // Clean up in-flight tracking
         this.inFlightFetches.delete(key);
       }

@@ -1,6 +1,9 @@
 /* global api, utils, wallet, watchlist */
 
 const communityPage = {
+  // Bumped on every loadMyWatchlist call so a slower, older call cannot re-render.
+  _wlGen: 0,
+
   init() {
     // Bind connect wallet button (replaces inline onclick for CSP compliance)
     const connectBtn = document.getElementById('watchlist-connect-btn');
@@ -9,6 +12,8 @@ const communityPage = {
     this.loadMyWatchlist();
     this.loadWatchlistLeaderboard();
 
+    // On walletConnected the wallet's own list comes from watchlist.js (watchlistReady);
+    // this call only shows the loading state, it does not fetch.
     window.addEventListener('walletConnected', () => this.loadMyWatchlist());
     window.addEventListener('walletDisconnected', () => this.loadMyWatchlist());
     // Fires when a phone paired over Mobile Connect confirms which wallet it belongs to.
@@ -26,6 +31,7 @@ const communityPage = {
 
     // viewerAddress rather than address: a phone linked from a desktop has no wallet of its own
     // but is entitled to see this wallet's watchlist. Reading is all this does.
+    const gen = ++this._wlGen;
     const viewer = typeof wallet !== 'undefined' ? wallet.viewerAddress?.() : null;
     if (!viewer) {
       connectEl.style.display = '';
@@ -38,8 +44,29 @@ const communityPage = {
     tbody.innerHTML = '<tr><td colspan="5"><div class="loading-state"><div class="loading-spinner"></div><span>Loading your watchlist...</span></div></td></tr>';
 
     try {
-      const data = await api.watchlist.get(viewer);
-      const tokens = data?.tokens || [];
+      // A connected wallet's list is already loaded by watchlist.js: reuse it instead of a
+      // second GET. Only a linked phone (no wallet of its own) or a failed load asks the API.
+      const ownWallet = typeof watchlist !== 'undefined' && wallet.connected && viewer === wallet.address;
+      let tokens;
+      if (ownWallet && (watchlist.isLoading || !watchlist.isLoaded)) {
+        // watchlistReady re-runs this on success; on failure isLoading clears without an
+        // event, so check back until it settles.
+        if (!watchlist.isLoading) watchlist.init();
+        const waitForLoad = () => {
+          if (gen !== this._wlGen) return;
+          if (watchlist.isLoading) { setTimeout(waitForLoad, 300); return; }
+          this.loadMyWatchlist();
+        };
+        setTimeout(waitForLoad, 300);
+        return;
+      }
+      if (ownWallet && !watchlist._loadFailed) {
+        tokens = [...watchlist.items.values()];
+      } else {
+        const data = await api.watchlist.get(viewer);
+        if (gen !== this._wlGen) return;
+        tokens = data?.tokens || [];
+      }
 
       if (tokens.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state" style="padding:1.5rem;">Your watchlist is empty. Visit token pages and click the star to add tokens.</div></td></tr>';
@@ -54,6 +81,7 @@ const communityPage = {
           batchData.forEach(t => { if (t) enriched[t.address || t.mintAddress] = t; });
         }
       } catch (_) {}
+      if (gen !== this._wlGen) return;
 
       const defaultLogo = utils.getDefaultLogo();
       // Removing needs the wallet itself (a signed request); a linked phone can only read,
@@ -96,8 +124,20 @@ const communityPage = {
           const mint = btn.dataset.removeWl;
           btn.disabled = true;
           btn.textContent = '...';
-          await watchlist.remove(mint);
-          this.loadMyWatchlist();
+          const removed = await watchlist.remove(mint);
+          if (!removed) {
+            btn.disabled = false;
+            btn.textContent = 'Remove';
+            return;
+          }
+          // Drop just this row and renumber, instead of reloading the whole list
+          btn.closest('tr')?.remove();
+          const rows = tbody.querySelectorAll('.token-row[data-mint]');
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state" style="padding:1.5rem;">Your watchlist is empty. Visit token pages and click the star to add tokens.</div></td></tr>';
+          } else {
+            rows.forEach((row, i) => { const rank = row.querySelector('.cell-rank'); if (rank) rank.textContent = i + 1; });
+          }
         });
       });
     } catch (err) {

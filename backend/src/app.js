@@ -331,10 +331,13 @@ app.get('/api/utilities/my-access', publicEndpointLimiter, async (req, res) => {
   }
 });
 
-// Public announcements endpoint (no auth required)
+// Public announcements endpoint (no auth required). Every page view asks for this, and it only
+// changes when an admin edits it, so it is cached for 60s; the admin announcement routes delete
+// the key on every write (routes/admin.js, ANNOUNCEMENTS_CACHE_KEY).
 app.get('/api/announcements', publicEndpointLimiter, async (req, res) => {
   try {
-    const announcements = await db.getActiveAnnouncements();
+    const { cache } = require('./services/cache');
+    const announcements = await cache.getOrSet('announcements:active', () => db.getActiveAnnouncements(), 60000);
     res.json({ announcements });
   } catch (err) {
     console.warn('[API] /api/announcements error:', err.message);
@@ -403,16 +406,17 @@ const IMAGE_PROXY_GONE_TTL_MS = 30 * 60 * 1000;      // 30m — the source reall
 const IMAGE_PROXY_FAIL_TTL_MS = 45 * 1000;           // 45s — a blip; recover quickly
 const IMAGE_PROXY_MAX_BYTES = 3 * 1024 * 1024;       // 3MB — logos/banners only, reject anything larger
 const IMAGE_PROXY_CACHE_TIMEOUT_MS = 2000;           // Redis read budget — see withTimeout below
-// Largest image body kept in Redis. Resized raster images are tens of KB; what is bigger is a
-// passthrough GIF/SVG (or an image sharp could not decode) of up to IMAGE_PROXY_MAX_BYTES, stored
-// base64 (~4MB). A handful of those fill a small volatile-lru Redis and evict TTL'd keys that
-// matter far more (signature replay markers, access tokens), so they are served but not cached.
-const IMAGE_PROXY_CACHE_MAX_BYTES = 512 * 1024;
+// The cache shares a small (25 MB free-plan, volatile-lru) Redis with every other HolDEX key, so
+// only entries that are small after the downscale are kept there. A downscaled WebP logo is tens
+// of KB; anything past this is a passthrough GIF/SVG or an image that would not shrink, and is
+// served without a Redis copy (the browser still caches it for a day).
+const IMAGE_PROXY_CACHE_MAX_BYTES = 150 * 1024;
+// Passthrough types skip the downscale, so even under the cap they are the heaviest entries.
+const IMAGE_PROXY_PASSTHROUGH_TTL_MS = 60 * 60 * 1000; // 1h
 // The per-entry cap alone does not bound the total: resized images are small but their keys are
 // any URL a client names, at 600 requests/min per IP. So everything this proxy writes to Redis in
-// one TTL window is capped too (base64 bytes, this process). Past it, images are still served,
-// just not cached, and the rest of the instance keeps its room. Override with
-// IMAGE_PROXY_CACHE_BUDGET_MB.
+// one TTL window is capped too (bytes, this process). Past it, images are still served, just not
+// cached, and the rest of the instance keeps its room. Override with IMAGE_PROXY_CACHE_BUDGET_MB.
 const imageProxyCacheBudget = require('./services/cache').createByteBudget({
   limitBytes: (Number(process.env.IMAGE_PROXY_CACHE_BUDGET_MB) || 8) * 1024 * 1024,
   windowMs: IMAGE_PROXY_TTL_MS
@@ -442,6 +446,10 @@ const IMAGE_PROXY_WEBP_QUALITY = 82;     // visually lossless at these sizes
 let sharp = null;
 try {
   sharp = require('sharp');
+  // The API runs on a 0.5 CPU / 512 MB instance alongside every other route. One libvips thread
+  // per resize, and a small operation cache rather than the 50 MB default.
+  sharp.concurrency(1);
+  sharp.cache({ memory: 16, files: 0, items: 50 });
 } catch {
   console.warn('[ImageProxy] sharp unavailable - serving artwork at original size');
 }
@@ -462,7 +470,9 @@ const IMAGE_PROXY_PASSTHROUGH = /^image\/(svg\+xml|gif)/i;
 async function downscaleImage(buffer, contentType, maxDimension = IMAGE_PROXY_DEFAULT_WIDTH) {
   if (!sharp || IMAGE_PROXY_PASSTHROUGH.test(contentType)) return { buffer, contentType };
   try {
-    const out = await sharp(buffer)
+    // A 3 MB upload can still decode to a huge bitmap; anything over 4096x4096 fails fast here
+    // and falls back to the original bytes below.
+    const out = await sharp(buffer, { limitInputPixels: 4096 * 4096 })
       .rotate() // honour EXIF orientation before resizing, or a phone photo comes out sideways
       .resize({
         width: maxDimension,
@@ -499,6 +509,48 @@ function withTimeout(promise, ms, fallback) {
 // cold. Without this, each one triggers its own axios fetch; with it, they all share
 // one upstream request instead of stampeding the origin (and each other, via Redis).
 const imageProxyInFlight = new Map();
+
+// The in-flight map only de-dups the SAME image. A cold cache (a Redis restart, several visitors
+// at once) can still ask for dozens of different images together, each holding up to 3 MB of
+// source bytes and a resize, so at most this many fetch+resize jobs run at once; the rest queue.
+const IMAGE_PROXY_MAX_CONCURRENT = 4;
+let imageProxyActive = 0;
+const imageProxyQueue = [];
+async function withImageProxySlot(fn) {
+  if (imageProxyActive >= IMAGE_PROXY_MAX_CONCURRENT) {
+    await new Promise((resolve) => imageProxyQueue.push(resolve));
+  } else {
+    imageProxyActive++;
+  }
+  try {
+    return await fn();
+  } finally {
+    // Hand the slot straight to the next waiter (the count stays the same), or release it.
+    const next = imageProxyQueue.shift();
+    if (next) next();
+    else imageProxyActive--;
+  }
+}
+
+// Cache entries are raw bytes (cache.getBuffer/setBuffer, no base64 or JSON): one header line,
+// then the body. The header is the image's content type, or one of these markers for a
+// remembered failure. Content types never contain a newline (they come from sniffing, or from a
+// header value with its parameters stripped).
+const IMAGE_PROXY_FAIL_MARK = '!fail';
+const IMAGE_PROXY_GONE_MARK = '!gone';
+function encodeImageEntry(header, body) {
+  return body ? Buffer.concat([Buffer.from(header + '\n'), body]) : Buffer.from(header + '\n');
+}
+function decodeImageEntry(raw) {
+  if (!Buffer.isBuffer(raw)) return null;
+  const nl = raw.indexOf(0x0a);
+  if (nl <= 0) return null;
+  const header = raw.toString('latin1', 0, nl);
+  if (header === IMAGE_PROXY_FAIL_MARK || header === IMAGE_PROXY_GONE_MARK) {
+    return { notFound: true, gone: header === IMAGE_PROXY_GONE_MARK };
+  }
+  return { contentType: header, buffer: raw.subarray(nl + 1) };
+}
 
 // One upstream fetch for the image proxy: bytes plus a content type judged from the bytes.
 async function fetchImageBytes(target, signal) {
@@ -568,9 +620,12 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   const { cache } = require('./services/cache');
   // v3: v2 entries are all 512px wide and carry no width in the key, so they would be served for
   // backdrop requests too. Bumping the prefix retires them rather than mixing the two.
-  const cacheKey = `image-proxy:v3:${width}:${url}`;
+  // v4: raw-bytes entries (see encodeImageEntry) replace v3's base64 JSON.
+  const cacheKey = `image-proxy:v4:${width}:${url}`;
 
-  const cached = await withTimeout(cache.get(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null);
+  const cached = decodeImageEntry(
+    await withTimeout(cache.getBuffer(cacheKey).catch(() => null), IMAGE_PROXY_CACHE_TIMEOUT_MS, null)
+  );
   // A remembered transient failure (not a 404/410) is skipped for the browser's one retry
   // (?retry=1, see utils.handleImageError): that retry lands seconds after the failure, inside
   // the 45s window, and would otherwise be answered with the same cached 502 every time.
@@ -579,14 +634,14 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    return res.send(Buffer.from(cached.data, 'base64'));
+    return res.send(cached.buffer);
   }
 
   // Share one in-flight fetch across concurrent requests for the same URL AT THE SAME WIDTH -
   // keyed on the cache key rather than the URL, since the two widths produce different bytes.
   let fetchPromise = imageProxyInFlight.get(cacheKey);
   if (!fetchPromise) {
-    fetchPromise = (async () => {
+    fetchPromise = withImageProxySlot(async () => {
       // An IPFS image races its original URL against the other gateways and Helius's image CDN
       // (see imageSourceFallbacks): ipfs.io refuses or stalls on requests from cloud servers often
       // enough that waiting for it first made those logos slow at best. Anything else tries its
@@ -615,8 +670,15 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
       }
       // Downscaled BEFORE the cache write, so the expensive part happens once per image rather
       // than once per request, and every cache hit is already small.
-      return downscaleImage(image.buffer, image.contentType, width);
-    })();
+      const result = await downscaleImage(image.buffer, image.contentType, width);
+      // Written once here, by the shared fetch, rather than by every request that joined it.
+      // Fire-and-forget: a slow Redis write must never stall (or fail) the response.
+      if (result.buffer.length <= IMAGE_PROXY_CACHE_MAX_BYTES && imageProxyCacheBudget.tryConsume(result.buffer.length)) {
+        const ttl = IMAGE_PROXY_PASSTHROUGH.test(result.contentType) ? IMAGE_PROXY_PASSTHROUGH_TTL_MS : IMAGE_PROXY_TTL_MS;
+        cache.setBuffer(cacheKey, encodeImageEntry(result.contentType, result.buffer), ttl).catch(() => {});
+      }
+      return result;
+    });
     // then(fn, fn) rather than .finally(fn): `.finally` returns a NEW promise that rejects
     // whenever the original does, and nothing was awaiting that one. Every failed image fetch -
     // a dead IPFS link, a 429, a timeout - therefore surfaced as an unhandledRejection, which
@@ -630,14 +692,10 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
 
   try {
     const { contentType, buffer } = await fetchPromise;
-    // Fire-and-forget — the response doesn't need to wait on the cache write, and a
-    // slow Redis write must never be able to stall (or fail) the response itself.
-    if (buffer.length <= IMAGE_PROXY_CACHE_MAX_BYTES) {
-      const data = buffer.toString('base64');
-      if (imageProxyCacheBudget.tryConsume(data.length)) {
-        cache.set(cacheKey, { contentType, data }, IMAGE_PROXY_TTL_MS).catch(() => {});
-      }
-    }
+    // A fetch that queued for a slot (withImageProxySlot) can outlast the request-timeout
+    // middleware, which has already sent a 503. Writing headers now would throw, and from the
+    // catch below that becomes an unhandledRejection, which restarts the API.
+    if (res.headersSent) return;
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -647,8 +705,9 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     const gone = upstreamStatus === 404 || upstreamStatus === 410;
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
     cache
-      .set(cacheKey, { notFound: true, gone }, gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
+      .setBuffer(cacheKey, encodeImageEntry(gone ? IMAGE_PROXY_GONE_MARK : IMAGE_PROXY_FAIL_MARK), gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
       .catch(() => {});
+    if (res.headersSent) return;
     res.status(502).send('Bad Gateway');
   }
 });
@@ -777,6 +836,14 @@ async function gracefulShutdown(signal) {
   const isError = signal === 'uncaughtException' || signal === 'unhandledRejection';
   const exitCode = isError ? 1 : 0;
 
+  // Force exit after 35 seconds if shutdown takes too long. Started before the drain so it bounds
+  // that too: admin routes raise their response timeout to 5-10 minutes.
+  const forceTimer = setTimeout(() => {
+    console.error('[Shutdown] Forced exit after timeout');
+    process.exit(exitCode);
+  }, 35000);
+  forceTimer.unref();
+
   // Stop accepting new connections and await in-flight request drain
   if (httpServer) {
     await new Promise(resolve => {
@@ -786,13 +853,6 @@ async function gracefulShutdown(signal) {
       });
     }).catch(() => {});
   }
-
-  // Force exit after 35 seconds if cleanup takes too long
-  const forceTimer = setTimeout(() => {
-    console.error('[Shutdown] Forced exit after timeout');
-    process.exit(exitCode);
-  }, 35000);
-  forceTimer.unref();
 
   // Clear cleanup interval (fallback mode)
   if (cleanupIntervalId) {
@@ -805,6 +865,14 @@ async function gracefulShutdown(signal) {
     const { stopSignatureCleanup } = require('./middleware/validation');
     stopSignatureCleanup();
   } catch (_) {}
+
+  // Write buffered API key usage before the pool closes
+  try {
+    const { flushApiKeyUsage } = require('./middleware/validation');
+    await flushApiKeyUsage();
+  } catch (err) {
+    console.error('[Shutdown] API key usage flush error:', err.message);
+  }
 
   // Shutdown job queue (handles view count flushing internally)
   try {

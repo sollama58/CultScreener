@@ -337,23 +337,40 @@ async function getLatestPoints(mints) {
 /**
  * Holder counts for display (home tables, token hero): the Redis value when warm,
  * else the latest stored point, which also re-warms Redis. Exact counts only.
+ * Mints Postgres could not resolve are remembered for MISS_TTL_MS so a table that
+ * keeps asking (the home page's holder retry) does not query Postgres every time;
+ * the Redis read is still made each call, so a count the worker writes shows at once.
  * @returns {Object<string, number>} mint → holders
  */
+const MISS_TTL_MS = 60 * 1000;
 async function getDisplayCounts(mints) {
   const { cache, TTL } = require('./cache');
   const out = {};
   const missing = [];
-  await Promise.all((mints || []).map(async mint => {
-    const v = await cache.get(`holder-total:${mint}`).catch(() => null);
+  const list = mints || [];
+  if (list.length === 0) return out;
+  // One MGET for the warm counts plus the negative-cache markers
+  const values = await cache.mget([
+    ...list.map(mint => `holder-total:${mint}`),
+    ...list.map(mint => `holder-total-miss:${mint}`),
+  ]).catch(() => []);
+  list.forEach((mint, i) => {
+    const v = values[i];
     if (typeof v === 'number' && v > 0) out[mint] = v;
-    else missing.push(mint);
-  }));
+    else if (!values[list.length + i]) missing.push(mint);
+  });
   if (missing.length > 0 && db().pool) {
-    const latest = await getLatestPoints(missing).catch(() => ({}));
-    for (const [mint, p] of Object.entries(latest)) {
-      if (!p.complete || !(p.holders > 0)) continue;
-      out[mint] = p.holders;
-      await cache.set(`holder-total:${mint}`, p.holders, TTL.HOLDER_COUNT).catch(() => {});
+    const latest = await getLatestPoints(missing).catch(() => null);
+    if (latest) {
+      for (const mint of missing) {
+        const p = latest[mint];
+        if (!p || !p.complete || !(p.holders > 0)) {
+          await cache.set(`holder-total-miss:${mint}`, 1, MISS_TTL_MS).catch(() => {});
+          continue;
+        }
+        out[mint] = p.holders;
+        await cache.set(`holder-total:${mint}`, p.holders, TTL.HOLDER_COUNT).catch(() => {});
+      }
     }
   }
   return out;

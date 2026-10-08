@@ -23,7 +23,8 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 // Database configuration
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 2 // Runs sequential statements; don't compete with the app pools for connections
 });
 
 // Parse command line arguments
@@ -85,8 +86,6 @@ async function runMigrations() {
         recorded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
         UNIQUE(mint_address, recorded_date)
       )`,
-      `CREATE INDEX IF NOT EXISTS idx_holder_history_mint_date
-        ON holder_history(mint_address, recorded_date DESC)`,
     ];
     for (const sql of columnMigrations) {
       await client.query(sql);

@@ -7,7 +7,7 @@ const db = require('./database');
 
 const UPSERT_CHUNK = 5000;
 const KEEP_ENTRY_SNAPSHOTS = 3;        // per mint, the newest snapshots keep their ranked entries
-const SNAPSHOT_RETENTION_DAYS = 30;    // headers (and their samples) older than this are pruned
+const SNAPSHOT_RETENTION_DAYS = 30;    // headers older than this are pruned (only the newest keeps its sample)
 
 function pool() {
   if (!db.pool) throw new Error('Database not available');
@@ -179,6 +179,14 @@ async function pruneSnapshots(mint) {
         AND taken_at < NOW() - make_interval(days => $2)
         AND id <> (SELECT id FROM holder_snapshots WHERE mint_address = $1 ORDER BY taken_at DESC LIMIT 1)`,
     [mint, SNAPSHOT_RETENTION_DAYS]
+  );
+  // Only the newest header's sample is ever read (getLatestSnapshot); older headers
+  // keep sample_meta (counts, strata, fingerprint, lpWallets) but drop the ~30 KB sample.
+  await pool().query(
+    `UPDATE holder_snapshots SET sample = NULL
+      WHERE mint_address = $1 AND sample IS NOT NULL
+        AND id <> (SELECT id FROM holder_snapshots WHERE mint_address = $1 ORDER BY taken_at DESC LIMIT 1)`,
+    [mint]
   );
 }
 

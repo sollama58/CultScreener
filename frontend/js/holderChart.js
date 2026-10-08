@@ -237,6 +237,23 @@ const holderChart = (() => {
     return data;
   }
 
+  // The panel sits well below the fold, so the chart library is loaded and the chart
+  // built only once the panel first scrolls into view. Resolves at once without
+  // IntersectionObserver, and on destroy() so a pending show() can bail out.
+  function whenVisible(me) {
+    if (!me.visible) {
+      me.visible = new Promise((resolve) => {
+        if (typeof IntersectionObserver === 'undefined') { resolve(); return; }
+        me.unobserve = () => { io.disconnect(); resolve(); };
+        const io = new IntersectionObserver((entries) => {
+          if (entries.some(e => e.isIntersecting)) me.unobserve();
+        }, { rootMargin: '200px 0px' });
+        io.observe(me.root);
+      });
+    }
+    return me.visible;
+  }
+
   async function show(range) {
     st.range = range;
     savePrefs();
@@ -251,6 +268,8 @@ const holderChart = (() => {
       me.data = data;
       renderTop();
       if (!me.chart) {
+        await whenVisible(me);
+        if (stale()) return;
         const LWC = await loadLib();
         if (stale()) return;
         if (!me.chart) buildChart(LWC);
@@ -325,8 +344,10 @@ const holderChart = (() => {
     if (!st) return;
     st.root.removeEventListener('click', onClick);
     st.root.removeEventListener('change', onChange);
+    const unobserve = st.unobserve;
     try { st.chart?.remove(); } catch { /* already gone */ }
     st = null;
+    if (unobserve) unobserve();
   }
 
   return { load, destroy, _test: { fmtAxis, fmtCount } };

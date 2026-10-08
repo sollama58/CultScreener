@@ -512,8 +512,19 @@ if (!DB_URL) {
         assert.ok(await cache.setNX(key, `OtherMint${i}`, 60_000));
         held.push(key);
       }
-      const before = queued.length;
       try {
+        // nothing pending: the database-only refresh needs no slot and runs anyway
+        const idle = await pipeline.runBackfill(MINT);
+        assert.strictEqual(idle.status, 'ok');
+        assert.strictEqual(idle.remaining, 0);
+        // a wallet to backfill: that run needs a slot, so it waits
+        const snap = await store.getLatestSnapshot(MINT);
+        const lp = new Set(snap.sample_meta.lpWallets || []);
+        const w = snap.sample.map(x => x.wallet).find(x => !lp.has(x) && chain[x] && chain[x].amount > 0n && chain[x].history.length > 0);
+        assert.ok(w, 'a sampled wallet with history');
+        await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = NULL,
+          backfill_balance = NULL, backfill_attempts = 0 WHERE mint_address = $1 AND wallet = $2`, [MINT, w]);
+        const before = queued.length;
         const r = await pipeline.runBackfill(MINT);
         assert.strictEqual(r.status, 'waiting');
         const job = queued[queued.length - 1];
@@ -614,6 +625,18 @@ if (!DB_URL) {
         `SELECT COUNT(DISTINCT e.snapshot_id)::int AS n FROM holder_snapshot_entries e
            JOIN holder_snapshots s ON s.id = e.snapshot_id WHERE s.mint_address = $1`, [MINT]);
       assert.strictEqual(rows[0].n, 3);
+    });
+
+    test('only the newest snapshot keeps its sample; older headers keep their meta', async () => {
+      const { rows } = await db.pool.query(
+        `SELECT sample IS NOT NULL AS has_sample, sample_meta IS NOT NULL AS has_meta
+           FROM holder_snapshots WHERE mint_address = $1 ORDER BY taken_at DESC`, [MINT]);
+      assert.ok(rows.length > 1);
+      assert.strictEqual(rows[0].has_sample, true);
+      assert.ok(rows.slice(1).every(r => !r.has_sample));
+      assert.ok(rows.every(r => r.has_meta));
+      const snap = await store.getLatestSnapshot(MINT);
+      assert.strictEqual(snap.sample.length, 250);
     });
 
     test('conviction is persisted with its sample method', async () => {
@@ -764,6 +787,31 @@ if (!DB_URL) {
       const lastExact = [...points].reverse().find(p => p.holders != null && p.complete);
       assert.strictEqual(counts[MINT], lastExact.holders);
       assert.strictEqual(await cache.get(`holder-total:${MINT}`), lastExact.holders);
+    });
+
+    test('a mint with no stored count is not looked up in Postgres again for a minute, but Redis still is', async () => {
+      const NONE = 'TestMintNoPoints11111111111111111111111111';
+      await cache.delete(`holder-total:${NONE}`);
+      await cache.delete(`holder-total-miss:${NONE}`);
+      let queries = 0;
+      const realQuery = db.pool.query;
+      db.pool.query = function (...args) { queries++; return realQuery.apply(this, args); };
+      try {
+        assert.deepStrictEqual(await holderCounts.getDisplayCounts([NONE]), {});
+        assert.strictEqual(queries, 1);
+        assert.deepStrictEqual(await holderCounts.getDisplayCounts([NONE]), {});
+        assert.strictEqual(queries, 1, 'second call skips the Postgres lookup');
+        // A count the worker writes to Redis shows up straight away
+        await cache.set(`holder-total:${NONE}`, 1234, 60_000);
+        const counts = await holderCounts.getDisplayCounts([NONE, MINT]);
+        assert.strictEqual(counts[NONE], 1234);
+        assert.ok(counts[MINT] > 0);
+        assert.strictEqual(queries, 1);
+      } finally {
+        db.pool.query = realQuery;
+        await cache.delete(`holder-total:${NONE}`);
+        await cache.delete(`holder-total-miss:${NONE}`);
+      }
     });
 
     test('imported history only fills time before our first point and never overwrites', async () => {
