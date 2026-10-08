@@ -870,9 +870,10 @@
     const shareBtn = document.getElementById('cultify-share-btn');
     if (shareBtn) shareBtn.addEventListener('click', () => shareCultifyAnalytics(mint));
 
-    // Start polling for diamond hands data (fresh=true on first poll to clear stale data)
+    // Start polling for diamond hands data. No fresh=true here: it evicts the shared
+    // diamond-hands result the token page reads; only an explicit Retry asks for it.
     diamondPollCount = 0;
-    diamondFreshRequested = true;
+    diamondFreshRequested = false;
     pollDiamondHands(mint);
   }
 
@@ -1146,6 +1147,7 @@
             : 'Analysis timed out. <button class="dh-retry-btn" id="dh-retry-cultify">Retry</button>';
           document.getElementById('dh-retry-cultify')?.addEventListener('click', () => {
             diamondPollCount = 0;
+            diamondFreshRequested = true;
             if (sampleEl) sampleEl.textContent = 'Retrying...';
             if (diamondCurrentMint) pollDiamondHands(diamondCurrentMint);
           });
