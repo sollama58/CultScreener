@@ -500,8 +500,9 @@ async function getTokenOverview(mintAddress) {
     let price = view.price || 0;
     let fdv = view.fdv || 0;
     let marketCap = view.marketCap || fdv;
-    // The provider only publishes 24h change for a pool's base token
-    const priceChange24h = view.priceChange24h ?? geckoBaseSideChange(ownPools, mintAddress) ?? 0;
+    // The provider only publishes 24h change for a pool's base token. When the token is
+    // never a base, leave it null ("unknown") rather than reporting a flat 0%.
+    const priceChange24h = view.priceChange24h ?? geckoBaseSideChange(ownPools, mintAddress) ?? null;
     const liquidity = view.liquidity || 0;
     // Token volume is every pool it trades in, not just the one we priced from
     const volume24h = ownPools.reduce((sum, p) => sum + (parseFloat(p.attributes?.volume_usd?.h24) || 0), 0);

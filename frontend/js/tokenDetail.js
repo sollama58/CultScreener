@@ -481,6 +481,8 @@ const tokenDetail = {
     // Price is now always a direct number from the API
     const price = this.token.price || 0;
     const change = this.token.priceChange24h || 0;
+    // null = the provider publishes no 24h change for this token (shown as --, not 0.00%)
+    const changeUnknown = this.token.priceChange24h == null;
     const partial = !!this.token.geckoPartial;
 
     if (typeof config !== 'undefined' && config.app?.debug) console.log('[TokenDetail] Price display:', { price, change, token: this.token });
@@ -490,7 +492,7 @@ const tokenDetail = {
 
     if (priceEl) priceEl.textContent = partial && !price ? '--' : utils.formatPrice(price);
     if (changeEl) {
-      if (partial && !change) {
+      if ((partial && !change) || changeUnknown) {
         changeEl.textContent = '--';
         changeEl.className = 'price-change-badge';
       } else {
