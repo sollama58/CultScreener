@@ -83,6 +83,18 @@ function verifyBurnTransaction(tx, walletAddress, requiredRaw, requiredLabel) {
   return { ok: true, rawAmount: burnedByWallet };
 }
 
+// The parsed burn transaction, kept for 5 minutes so a verify-burn retry (or the other
+// verify route) does not fetch the same transaction again.
+const BURN_TX_CACHE_TTL = 300000;
+async function getBurnTransaction(signature) {
+  const key = `cultify:tx:${signature}`;
+  const cached = await cache.get(key);
+  if (cached) return cached;
+  const tx = await solanaService.getTransaction(signature);
+  if (tx) await Promise.resolve(cache.set(key, tx, BURN_TX_CACHE_TTL)).catch(() => {});
+  return tx;
+}
+
 // Generate a short-lived access token for a wallet+mint pair
 function generateAccessToken(walletAddress, mint) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -114,7 +126,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   // Fetch and verify the transaction on-chain
   let tx;
   try {
-    tx = await solanaService.getTransaction(signature);
+    tx = await getBurnTransaction(signature);
   } catch (err) {
     return res.status(502).json({ error: 'Failed to fetch transaction from Solana. Try again shortly.' });
   }
@@ -477,12 +489,15 @@ router.get('/tx-status/:signature', walletLimiter, asyncHandler(async (req, res)
   if (confirmed != null) return res.json(confirmed);
 
   try {
-    const tx = await solanaService.getTransaction(signature);
-    if (!tx) {
+    // Only the status is needed here, not the full parsed transaction
+    const result = await solanaService.rpcCall('getSignatureStatuses', [[signature], { searchTransactionHistory: true }]);
+    const status = result?.value?.[0];
+    // No confirmationStatus on old nodes: confirmations === null means finalized
+    const level = status && (status.confirmationStatus || (status.confirmations === null ? 'finalized' : 'processed'));
+    if (level !== 'confirmed' && level !== 'finalized') {
       return res.json({ confirmed: false });
     }
-    const failed = tx.meta && tx.meta.err;
-    const payload = { confirmed: true, failed: !!failed };
+    const payload = { confirmed: true, failed: !!status.err };
     // Cache confirmed results for 5 minutes so repeated polls are cheap
     await cache.set(cacheKey, payload, 300000);
     res.json(payload);
@@ -540,7 +555,7 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
 
   let tx;
   try {
-    tx = await solanaService.getTransaction(signature);
+    tx = await getBurnTransaction(signature);
   } catch (err) {
     return res.status(502).json({ error: 'Failed to fetch transaction. Try again shortly.' });
   }
