@@ -161,6 +161,9 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: npm run worker
+    # On deploy the worker drains active jobs (backfill runs take up to 4 min)
+    # before exiting; worker.js force-closes at 270 s (WORKER_SHUTDOWN_DEADLINE_MS).
+    maxShutdownDelaySeconds: 300
     envVars:
       # Database connection (auto-populated from Render PostgreSQL)
       - key: DATABASE_URL

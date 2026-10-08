@@ -955,35 +955,69 @@ async function start() {
 
 /**
  * Graceful shutdown
+ *
+ * All queue workers stop taking jobs at once and get `deadlineMs` to finish the
+ * active ones. Past the deadline they are force-closed (their jobs are re-run by
+ * BullMQ's stalled check). A hard timer exits the process if closing hangs.
+ * Render waits maxShutdownDelaySeconds (render.yaml) before SIGKILL, so the
+ * signal deadline stays under it.
  */
-async function shutdown(signal) {
-  console.log(`\n[Worker] ${signal} received. Shutting down gracefully...`);
+const SIGNAL_SHUTDOWN_MS = parseInt(process.env.WORKER_SHUTDOWN_DEADLINE_MS) || 270000;
+const CRASH_SHUTDOWN_MS = 10000;
+let shuttingDown = false;
+
+async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 } = {}) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[Worker] ${signal} received. Shutting down gracefully (deadline ${Math.round(deadlineMs / 1000)}s)...`);
   if (scheduleCheckTimer) clearInterval(scheduleCheckTimer);
 
-  // Close all workers
-  for (const worker of workers) {
-    await worker.close();
+  // Exits even if a close below never settles
+  const forceExit = setTimeout(() => {
+    console.error('[Worker] Shutdown timed out, forcing exit');
+    process.exit(exitCode || 1);
+  }, deadlineMs + 10000);
+  if (forceExit.unref) forceExit.unref();
+
+  try {
+    // Close all workers in parallel: none keeps picking up jobs while another drains
+    let deadlineTimer;
+    const drained = await Promise.race([
+      Promise.all(workers.map(w => w.close().catch(err => console.error('[Worker] Close error:', err.message)))).then(() => true),
+      new Promise(r => { deadlineTimer = setTimeout(() => r(false), deadlineMs); }),
+    ]);
+    clearTimeout(deadlineTimer);
+    if (!drained) {
+      console.warn('[Worker] Active jobs still running at the shutdown deadline; force-closing workers');
+      await Promise.all(workers.map(w => w.close(true).catch(() => {})));
+    }
+  } catch (err) {
+    console.error('[Worker] Error closing workers:', err.message);
   }
 
-  await telegramBot.stopBot();
+  await telegramBot.stopBot().catch(() => {});
+
+  // Only now: in-flight jobs used these sockets until their workers closed
+  try { require('./services/httpAgent').destroy(); } catch (_) {}
 
   console.log('[Worker] All workers stopped');
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 // Handle shutdown signals
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Handle uncaught errors
+// Handle uncaught errors: close the workers (short deadline) so finished jobs
+// don't stay locked, then exit non-zero
 process.on('uncaughtException', (err) => {
   console.error('[Worker] Uncaught exception:', err);
-  process.exit(1);
+  shutdown('uncaughtException', { deadlineMs: CRASH_SHUTDOWN_MS, exitCode: 1 });
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Worker] Unhandled rejection at:', promise, 'reason:', reason);
-  process.exit(1);
+  shutdown('unhandledRejection', { deadlineMs: CRASH_SHUTDOWN_MS, exitCode: 1 });
 });
 
 // Start the worker
