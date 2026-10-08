@@ -911,21 +911,31 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     ? 'WHERE ' + filterConditions.join(' AND ')
     : '';
 
-  const countResult = await pool.query(
-    `${baseCte} SELECT COUNT(*) FROM combined ${outerConditions}`,
-    params
-  );
-  const total = parseInt(countResult.rows[0].count) || 0;
-
+  // One pass over the CTE: the window count is the total before LIMIT/OFFSET.
   const result = await pool.query(
     `${baseCte}
-     SELECT * FROM combined
+     SELECT *, COUNT(*) OVER() AS total_count_ FROM combined
      ${outerConditions}
      ORDER BY conviction_1m DESC NULLS LAST
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     [...params, limit, offset]
   );
-  return { tokens: result.rows, total };
+
+  let total;
+  if (result.rows.length > 0) {
+    total = parseInt(result.rows[0].total_count_) || 0;
+  } else if (offset > 0) {
+    // Page past the end returns no rows to carry the window count; count separately.
+    const countResult = await pool.query(
+      `${baseCte} SELECT COUNT(*) FROM combined ${outerConditions}`,
+      params
+    );
+    total = parseInt(countResult.rows[0].count) || 0;
+  } else {
+    total = 0;
+  }
+  const tokens = result.rows.map(({ total_count_, ...row }) => row);
+  return { tokens, total };
 }
 
 // Get conviction leaderboard rank for a single token.
