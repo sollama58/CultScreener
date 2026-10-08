@@ -231,8 +231,10 @@ const api = {
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       try {
+        // Only declare a JSON body when there is one: on a bodiless GET the
+        // non-safelisted Content-Type forces a CORS preflight per URL.
         const headers = {
-          'Content-Type': 'application/json',
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
           ...options.headers
         };
 
