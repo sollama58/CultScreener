@@ -514,7 +514,9 @@ const jobProcessors = {
       }
 
       const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
-      await cache.set(`holder-analytics:${mint}`, result, 3 * TTL.HOUR);
+      // Outlives the next curated snapshot (every refreshMs), which re-runs this job;
+      // a shorter TTL left a gap where page views re-queued it for the same list
+      await cache.set(`holder-analytics:${mint}`, result, require('./services/holderPipeline').CONFIG.refreshMs + 2 * TTL.HOUR);
       await cache.delete(`holder-classify-pending:${mint}`);
 
       console.log(`[Worker] Holder analytics done for ${mint}: ${holders.length} holders, ${lpIndices.size} LP, ${burntIndices.size} burnt`);
@@ -536,7 +538,9 @@ const jobProcessors = {
     const holderPipeline = require('./services/holderPipeline');
     const result = await holderPipeline.takeSnapshot(mint);
 
-    if ((result.status === 'ok' || result.status === 'unchanged') && !(await cache.get(`holder-classify-pending:${mint}`))) {
+    // An unchanged holder list whose classification is still cached needs no re-run
+    const classified = result.status === 'unchanged' && !!(await cache.get(`holder-analytics:${mint}`).catch(() => null));
+    if ((result.status === 'ok' || result.status === 'unchanged') && !classified && !(await cache.get(`holder-classify-pending:${mint}`))) {
       const list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
       if (list) {
         await cache.set(`holder-classify-pending:${mint}`, Date.now(), 120000);
