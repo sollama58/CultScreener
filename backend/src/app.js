@@ -527,6 +527,12 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // to prevent, instead of a plain, inspectable 403/400.
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  // SVG passes through untouched (see IMAGE_PROXY_PASSTHROUGH), and an SVG is a document that can
+  // carry script. Opened directly, it would run with this API's origin under the app-wide CSP,
+  // which allows scripts from public CDNs. A sandboxed, script-less policy on this route keeps it
+  // an inert picture; <img> rendering ignores a subresource's CSP, so the app's logos are unaffected.
+  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
