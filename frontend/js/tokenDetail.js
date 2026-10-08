@@ -2088,7 +2088,8 @@ const tokenDetail = {
       }
       const result = await api.tokens.recordView(this.mint);
       // Update display with returned view count
-      if (result && result.views !== undefined) {
+      // Ignore failures and zero counts so a failed POST can't blank the real count
+      if (result && typeof result.views === 'number' && result.views > 0) {
         this.updateViewCount(result.views);
       }
     } catch (error) {

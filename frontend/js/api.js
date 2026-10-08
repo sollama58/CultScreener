@@ -288,7 +288,8 @@ const api = {
         // Global 429/503 awareness: suppress background fetches for the retry-after window.
         // A 503 'rpc_unavailable' (holders endpoint) means an upstream RPC failed, not that
         // our server is overloaded — the caller shows its own retry message.
-        if ((error.status === 429 || error.status === 503) && error.message !== 'rpc_unavailable') {
+        // Fire-and-forget callers (page-view POST) opt out with options.noGlobalBackoff.
+        if ((error.status === 429 || error.status === 503) && error.message !== 'rpc_unavailable' && !options.noGlobalBackoff) {
           const wasAlreadyLimited = isRateLimited();
           const backoff = (error.retryAfter || 60) * 1000;
           _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + backoff);
@@ -532,11 +533,14 @@ const api = {
     // Record a page view for a token (fire-and-forget, non-blocking)
     async recordView(mint) {
       try {
-        return await api.request(`/api/tokens/${mint}/view`, { method: 'POST' });
+        // Single attempt, no global "Server is busy" backoff: a rate-limited view
+        // POST should not pause price refresh or toast the user
+        return await api.request(`/api/tokens/${mint}/view`, { method: 'POST', retries: 1, noGlobalBackoff: true });
       } catch (error) {
-        // Non-critical - silently fail
+        // Non-critical - silently fail. Return null (not { views: 0 }) so the
+        // caller keeps the real count it already shows.
         console.warn('View tracking failed:', error.message);
-        return { views: 0 };
+        return null;
       }
     },
 
