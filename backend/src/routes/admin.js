@@ -12,6 +12,15 @@ const { veryStrictLimiter, strictLimiter } = require('../middleware/rateLimit');
 
 router.use(requireDatabase);
 
+// One SCAN pass over the cache's keys, deleting every key `match` accepts with multi-key
+// DELs (not a SCAN per pattern and a DEL per key). Returns how many keys were deleted.
+async function deleteCacheKeysWhere(match) {
+  const found = (await cache.scanKeys('*')).filter(match);
+  let deleted = 0;
+  for (let i = 0; i < found.length; i += 1000) deleted += await cache.deleteMany(found.slice(i, i + 1000));
+  return deleted;
+}
+
 // ==========================================
 // Authentication
 // ==========================================
@@ -104,67 +113,30 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
   }
 }));
 
+// "Refresh All Holder Counts": queue a holder snapshot for every curated token, like
+// "Snapshot Holders Now". Each snapshot writes the canonical count to holder-total and the
+// history (holderPipeline). This used to wipe holder-total and re-page Helius DAS for every
+// mint inside the request, which ran past the admin timeout, kept running after the 503,
+// and cached a capped, dust-inclusive count over the snapshot one.
 router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
-  const { cache, keys, TTL } = require('../services/cache');
-  const solanaService = require('../services/solana');
-
-  // Collect all token mints: curated + leaderboard
-  const mintSet = new Set();
-  try {
-    const curated = await db.getCuratedTokens();
-    curated.forEach(t => { if (t.mintAddress || t.mint_address) mintSet.add(t.mintAddress || t.mint_address); });
-  } catch (_) {}
-
-  try {
-    const { tokens } = await db.getTopConvictionTokens(100, 0, {});
-    tokens.forEach(t => { if (t.mint_address) mintSet.add(t.mint_address); });
-  } catch (_) {}
-
-  const mints = [...mintSet];
-  let updated = 0;
+  const holderPipeline = require('../services/holderPipeline');
+  const curatedTokens = await db.getCuratedTokens().catch(() => []);
+  const mints = [...new Set(curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean))];
+  let queued = 0;
+  let alreadyQueued = 0;
   let failed = 0;
-  const results = {};
-
-  // Clear ALL old holder count caches first so stale data isn't served
-  for (const mint of mints) {
-    await cache.delete(`holder-total:${mint}`).catch(() => {});
-    await cache.delete(keys.holderCount(mint)).catch(() => {});
-  }
-
-  // Fetch fresh counts (unique wallets) from Helius DAS
   for (const mint of mints) {
     try {
-      const count = await solanaService.getTokenHolderCount(mint);
-      if (count && count > 0) {
-        await cache.set(`holder-total:${mint}`, count, TTL.HOLDER_COUNT);
-        results[mint] = count;
-        updated++;
-      } else {
-        failed++;
-      }
+      // false = one is already queued or running for this mint
+      if (await holderPipeline.ensureSnapshot(mint)) queued++;
+      else alreadyQueued++;
     } catch {
       failed++;
     }
-    // Space out the DAS pagination: 500ms between tokens
-    if (updated + failed < mints.length) {
-      await new Promise(r => setTimeout(r, 500));
-    }
   }
-
-  // Clear all caches that display holder counts so new data appears immediately
-  try {
-    // Leaderboard cache
-    const lbKeys = await cache.scanKeys('leaderboard:conviction:*');
-    for (const key of lbKeys) await cache.delete(key);
-    // Token detail page caches
-    for (const mint of mints) {
-      await cache.delete(`token:${mint}`).catch(() => {});
-      await cache.delete(`holder-analytics:${mint}`).catch(() => {});
-    }
-  } catch (_) {}
-
-  console.log(`[Admin] Refreshed holder counts from Helius DAS: ${updated} updated, ${failed} failed, ${mints.length} total`);
-  res.json({ success: true, updated, failed, total: mints.length });
+  console.log(`[Admin] Refresh holder counts: ${queued} snapshots queued, ${alreadyQueued} already queued, ${failed} failed, ${mints.length} total`);
+  // updated: mints with a snapshot on the way (the panel shows updated/failed/total)
+  res.json({ success: true, updated: queued + alreadyQueued, failed, total: mints.length, queued, alreadyQueued });
 }));
 
 // "Snapshot Holders Now": queue a fresh holder snapshot for every curated token.
@@ -296,44 +268,22 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
       `similar-pending:${addr}`,
       `submissions:${addr}`,
       `cultify:dh-progress:${addr}`,
+      `hold-times:${addr}`,
+      `diamond-hands-partial:${addr}`,
+      `holder-total-miss:${addr}`,
     ];
 
-    for (const key of directKeys) {
-      const existed = await cache.get(key);
-      if (existed != null) {
-        await cache.delete(key);
-        deleted++;
-      }
+    // OHLCV candles for every interval and both cached sizes (routes/tokens.js /:mint/ohlcv)
+    for (const interval of Object.keys(geckoService.OHLCV_TIMEFRAMES || {})) {
+      directKeys.push(`ohlcv:${addr}:${interval}:100`, `ohlcv:${addr}:${interval}:1000`);
     }
 
-    // Scan for wildcard patterns containing this mint
-    // wallet-token-hold:{wallet}:{mint} — per-wallet hold times for this token
-    const walletTokenKeys = (await cache.scanKeys(`wallet-token-hold:*:${addr}`)).slice(0, 10000);
-    for (const key of walletTokenKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
+    // One multi-key DEL; it returns how many of the keys existed
+    deleted += await cache.deleteMany(directKeys);
 
-    // Chart data: chart:{mint}:{interval}
-    const chartKeys = await cache.scanKeys(`chart:${addr}:*`);
-    for (const key of chartKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
-
-    // Leaderboard caches (conviction pages reference this token's data)
-    const lbKeys = await cache.scanKeys('leaderboard:conviction:*');
-    for (const key of lbKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
-
-    // List caches (token may appear in list pages)
-    const listKeys = await cache.scanKeys('list:*');
-    for (const key of listKeys) {
-      await cache.delete(key);
-      deleted++;
-    }
+    // Leaderboard caches (conviction pages reference this token's data) and list caches
+    // (token may appear in list pages), in one SCAN pass
+    deleted += await deleteCacheKeysWhere(k => k.startsWith('leaderboard:conviction:') || k.startsWith('list:'));
 
     console.log(`[Admin] Wiped ${deleted} cache entries for token ${addr}`);
     res.json({ success: true, deleted, mint: addr });
@@ -565,21 +515,17 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
   const result = await db.removeCuratedToken(mint);
   console.log(`[Admin] removeCuratedToken result:`, result ? 'deleted' : 'not found');
   if (!result) return res.status(404).json({ error: 'Token not found in curated list' });
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   // Invalidate all caches that could contain this token
   try {
-    await cache.clearPattern('list:*');
-    await cache.clearPattern('search:*');
-    await cache.delete(`token:${mint}`);
-    await cache.delete(`price:${mint}`);
-    await cache.delete(`pools:${mint}`);
-    await cache.delete(`holders:${mint}`);
-    await cache.delete(`batch:${mint}`);
-    await cache.clearPattern(`*${mint}*`);
     // Leaderboard keys do not contain the mint; without this the home table keeps listing a
     // token that now answers 403 NOT_CURATED until the entry expires
     await cache.clearPattern('leaderboard:conviction:*');
     await cache.delete('king-of-pill:featured');
+    // list:*, search:* and every key containing the mint (token:, price:, pools:,
+    // holders:, batch: ...) in one SCAN pass
+    await deleteCacheKeysWhere(k => k.startsWith('list:') || k.startsWith('search:') || k.includes(mint));
     console.log(`[Admin] Cache cleared for ${mint.slice(0, 8)}...`);
   } catch (cacheErr) {
     console.error(`[Admin] Cache clear failed:`, cacheErr.message);
@@ -700,6 +646,7 @@ router.patch('/curated/:mint/mcap', strictLimiter, asyncHandler(async (req, res)
   if (!updated) {
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, token: updated });
 }));
@@ -721,6 +668,7 @@ router.patch('/curated/:mint/ath', strictLimiter, asyncHandler(async (req, res) 
   if (!updated) {
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, token: updated });
 }));
@@ -744,6 +692,7 @@ router.patch('/curated/:mint/emerging-cult', strictLimiter, asyncHandler(async (
 
   // Invalidate token cache so the label shows immediately
   await cache.delete(`token:${mint}`).catch(() => {});
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, emergingCult: value });
 }));
@@ -767,6 +716,7 @@ router.patch('/curated/:mint/tech-coin', strictLimiter, asyncHandler(async (req,
 
   // Invalidate token cache so the label shows immediately
   await cache.delete(`token:${mint}`).catch(() => {});
+  await require('../services/curatedTokens').invalidateCuratedList();
 
   res.json({ success: true, techCoin: value });
 }));
@@ -799,6 +749,7 @@ router.post('/curated/refresh', strictLimiter, (req, res, next) => {
     // Rate limit: 1 second between DexScreener calls
     if (i < tokens.length - 1) await new Promise(r => setTimeout(r, 1000));
   }
+  await require('../services/curatedTokens').invalidateCuratedList();
   if (!res.headersSent) res.json({ success: true, ...results });
 }));
 

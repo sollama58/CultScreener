@@ -24,6 +24,8 @@ before(() => {
       clearPattern: async (p) => { calls.push(['clearPattern', p]); },
       delete: async (k) => { calls.push(['delete', k]); },
       get: async () => null,
+      scanKeys: async () => [],
+      deleteMany: async (ks) => ks.length,
       set: async () => {},
     },
   });
@@ -32,6 +34,7 @@ before(() => {
   });
   stub('../services/curatedTokens', {
     addCuratedTokenFully: async (mint) => ({ token: { mintAddress: mint } }),
+    invalidateCuratedList: async () => {},
   });
   router = require('./admin');
 });

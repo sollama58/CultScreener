@@ -13,6 +13,8 @@ const holderCounts = require('../services/holderCounts');
 const priceChanges = require('../services/priceChanges');
 const { resolveMintDecimals } = require('../services/mintDecimals');
 const axios = require('axios');
+const crypto = require('crypto');
+const { rateLimitedRequest } = require('../services/rateLimiter');
 
 // Require database for all token routes
 router.use(requireDatabase);
@@ -74,6 +76,26 @@ function mergeViewCounts(dbCounts, addresses) {
   return merged;
 }
 
+// Stampede guard for GET /api/tokens, whose miss path responds from several branches and
+// stores a setWithTimestamp envelope (so it can't sit inside cache.getOrSet): the first
+// miss for a key claims it, and concurrent misses wait for that response to finish and
+// then re-read the cache instead of each running the Gecko/Helius/DB pipeline.
+const listMissInFlight = new Map();
+const LIST_MISS_WAIT_MS = 30000;
+
+function claimListMiss(key, res) {
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const done = () => {
+    if (listMissInFlight.get(key) === pending) listMissInFlight.delete(key);
+    release();
+  };
+  listMissInFlight.set(key, pending);
+  res.once('finish', done);
+  res.once('close', done);
+  setTimeout(done, LIST_MISS_WAIT_MS).unref();
+}
+
 // GET /api/tokens - List tokens (trending, new, gainers, losers)
 // Optimized: Uses Helius batch API for metadata enrichment instead of extra GeckoTerminal calls
 router.get('/', validatePagination, asyncHandler(async (req, res) => {
@@ -96,8 +118,9 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
 
   // Try cache first - use getWithMeta since we store with setWithTimestamp
   // Note: We refresh view counts even for cached responses since they're cheap to fetch
-  const cachedMeta = await cache.getWithMeta(cacheKey);
-  if (cachedMeta && cachedMeta.value) {
+  const serveCached = async () => {
+    const cachedMeta = await cache.getWithMeta(cacheKey);
+    if (!cachedMeta || !cachedMeta.value) return false;
     // Privacy: Don't log cache details
 
     // Refresh view counts from database + buffer (cheap query, keeps views up-to-date)
@@ -111,8 +134,16 @@ router.get('/', validatePagination, asyncHandler(async (req, res) => {
       }));
     }
 
-    return res.json(tokens);
+    res.json(tokens);
+    return true;
+  };
+  if (await serveCached()) return;
+  // Another request is already computing this key: wait for it, then serve what it cached
+  if (listMissInFlight.has(cacheKey)) {
+    await listMissInFlight.get(cacheKey);
+    if (await serveCached()) return;
   }
+  claimListMiss(cacheKey, res);
 
   let tokens;
   let geckoError = null;
@@ -600,30 +631,38 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
 
     // Batch fetch uncached tokens
     if (uncachedMints.length > 0) {
-      // Fetch from Helius and local DB in parallel (independent sources)
-      // Helius has priority; DB is fallback for mints Helius doesn't cover
-      const [heliusData, dbRows] = await Promise.all([
-        solanaService.isHeliusConfigured()
-          ? solanaService.getTokenMetadataBatch(uncachedMints).catch(catchUnlessOverloaded({}))
-          : Promise.resolve({}),
-        db.getTokensBatch(uncachedMints).catch(() => [])
-      ]);
+      // Local DB first: curated and previously seen tokens have a row with metadata and the
+      // worker's market data. Helius (getAssetBatch, credits and a shared queue) is asked
+      // only for mints the DB has no usable name for.
+      const dbRows = await db.getTokensBatch(uncachedMints).catch(() => []);
 
+      const num = v => (v != null && v !== '' && Number.isFinite(parseFloat(v)) ? parseFloat(v) : null);
       const localTokens = {};
       if (dbRows) {
         for (const local of dbRows) {
-          if (local && local.mint_address && !heliusData[local.mint_address]) {
+          if (local && local.mint_address) {
             localTokens[local.mint_address] = {
               mintAddress: local.mint_address,
               address: local.mint_address,
               name: local.name,
               symbol: local.symbol,
               decimals: local.decimals,
-              logoUri: local.logo_uri
+              logoUri: local.logo_uri,
+              logoURI: local.logo_uri || null,
+              price: num(local.price) || 0,
+              priceChange24h: num(local.price_change_24h),
+              volume24h: num(local.volume_24h) || 0,
+              marketCap: num(local.market_cap)
             };
           }
         }
       }
+      const hasName = t => !!(t?.name && !PLACEHOLDER_NAMES.has(t.name.toLowerCase()));
+      // A DB row with a name but no logo still asks Helius, for the logo only
+      const needHelius = uncachedMints.filter(m => !hasName(localTokens[m]) || !localTokens[m].logoUri);
+      const heliusData = needHelius.length > 0 && solanaService.isHeliusConfigured()
+        ? await solanaService.getTokenMetadataBatch(needHelius).catch(catchUnlessOverloaded({}))
+        : {};
 
       // Priority 3: Try GeckoTerminal batch (market data) for mints still unresolved
       let geckoData = {};
@@ -643,11 +682,17 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
         const mintShort = `${mint.slice(0, 4)}...${mint.slice(-4)}`;
         const mintSymbol = mint.slice(0, 5).toUpperCase();
 
-        const heliusHasName = heliusData[mint]?.name && !PLACEHOLDER_NAMES.has(heliusData[mint].name.toLowerCase());
-        const localHasName = localTokens[mint]?.name && !PLACEHOLDER_NAMES.has(localTokens[mint].name.toLowerCase());
-        const geckoHasName = geckoData[mint]?.name && !PLACEHOLDER_NAMES.has(geckoData[mint].name.toLowerCase());
+        const heliusHasName = hasName(heliusData[mint]);
+        const localHasName = hasName(localTokens[mint]);
+        const geckoHasName = hasName(geckoData[mint]);
 
-        if (heliusHasName) {
+        if (localHasName) {
+          tokenData = localTokens[mint];
+          if (!tokenData.logoUri && heliusData[mint]?.logoUri) {
+            tokenData.logoUri = heliusData[mint].logoUri;
+            tokenData.logoURI = heliusData[mint].logoUri;
+          }
+        } else if (heliusHasName) {
           const h = heliusData[mint];
           tokenData = {
             mintAddress: mint,
@@ -662,8 +707,6 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
             volume24h: 0,
             marketCap: 0
           };
-        } else if (localHasName) {
-          tokenData = localTokens[mint];
         } else if (geckoHasName) {
           const g = geckoData[mint];
           tokenData = {
@@ -1100,92 +1143,94 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
 
   const filterKey = JSON.stringify(filters);
   const resultCacheKey = `leaderboard:conviction:${limit}:${offset}:${filterKey}`;
-  const cached = await cache.get(resultCacheKey);
-  if (cached) {
-    // Enrich cached result with any holder counts fetched since this result was cached
-    if (cached.tokens && cached.tokens.length > 0) {
-      const need = cached.tokens.filter(t => !t.holders);
-      const counts = need.length ? await holderCounts.getDisplayCounts(need.map(t => t.mintAddress)).catch(() => ({})) : {};
-      for (const t of need) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+  // A search result is a one-off subset of the unfiltered page: keep it only briefly
+  const resultTtl = filters.search ? TTL.MEDIUM : TTL.LONG;
+  let computed = false;
+  // getOrSet: concurrent misses (several viewers at expiry) share one computation
+  const result = await cache.getOrSet(resultCacheKey, async () => {
+    computed = true;
+    // Primary source: DB (persistent, survives cache expiry)
+    const { tokens: dbRows, total } = await db.getTopConvictionTokens(limit, offset, filters).catch(() => ({ tokens: [], total: 0 }));
+
+    const tokens = dbRows.map(row => {
+      let distribution = {};
+      try {
+        distribution = typeof row.conviction_data === 'string'
+          ? JSON.parse(row.conviction_data)
+          : row.conviction_data || {};
+      } catch { /* malformed JSON — use empty */ }
+      return {
+        mintAddress: row.mint_address,
+        address: row.mint_address,
+        name: row.name || `${row.mint_address.slice(0, 4)}...${row.mint_address.slice(-4)}`,
+        symbol: row.symbol || row.mint_address.slice(0, 5).toUpperCase(),
+        price: parseFloat(row.price) || 0,
+        // 24h, 7d and 30d change against stored reference prices (services/priceChanges.js)
+        ...priceChanges.changesForRow(row),
+        volume24h: parseFloat(row.volume_24h) || 0,
+        marketCap: parseFloat(row.market_cap) || null,
+        logoUri: row.logo_uri || null,
+        logoURI: row.logo_uri || null,
+        conviction: distribution,
+        conviction1m: parseFloat(row.conviction_1m) || 0,
+        sampleSize: row.conviction_sample_size || 0,
+        analyzed: row.conviction_sample_size || 0,
+        convictionUpdatedAt: row.conviction_computed_at || null,
+        // Token age for the home tables: under 3 months there are no 3-month holders to count
+        pairCreatedAt: row.pair_created_at || null,
+        mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
+        mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
+        emergingCult: row.is_emerging_cult || false,
+        techCoin: row.is_tech_coin || false,
+        holders: null,
+        holderVelocity: null,
+        // Latest daily Diamond Hands score (services/kingOfPill.js); the table's default order
+        diamondHandsScore: null,
+        diamondHandsScoreDate: null
+      };
+    });
+
+    if (tokens.length > 0 && db.pool) {
+      const scores = await require('../services/kingOfPill').getLatestScores(tokens.map(t => t.mintAddress)).catch(() => ({}));
+      for (const t of tokens) {
+        const s = scores[t.mintAddress];
+        if (s) { t.diamondHandsScore = s.score; t.diamondHandsScoreDate = s.date; }
+      }
     }
-    return res.json(cached);
-  }
 
-  // Primary source: DB (persistent, survives cache expiry)
-  const { tokens: dbRows, total } = await db.getTopConvictionTokens(limit, offset, filters).catch(() => ({ tokens: [], total: 0 }));
-
-  const tokens = dbRows.map(row => {
-    let distribution = {};
-    try {
-      distribution = typeof row.conviction_data === 'string'
-        ? JSON.parse(row.conviction_data)
-        : row.conviction_data || {};
-    } catch { /* malformed JSON — use empty */ }
-    return {
-      mintAddress: row.mint_address,
-      address: row.mint_address,
-      name: row.name || `${row.mint_address.slice(0, 4)}...${row.mint_address.slice(-4)}`,
-      symbol: row.symbol || row.mint_address.slice(0, 5).toUpperCase(),
-      price: parseFloat(row.price) || 0,
-      // 24h, 7d and 30d change against stored reference prices (services/priceChanges.js)
-      ...priceChanges.changesForRow(row),
-      volume24h: parseFloat(row.volume_24h) || 0,
-      marketCap: parseFloat(row.market_cap) || null,
-      logoUri: row.logo_uri || null,
-      logoURI: row.logo_uri || null,
-      conviction: distribution,
-      conviction1m: parseFloat(row.conviction_1m) || 0,
-      sampleSize: row.conviction_sample_size || 0,
-      analyzed: row.conviction_sample_size || 0,
-      convictionUpdatedAt: row.conviction_computed_at || null,
-      // Token age for the home tables: under 3 months there are no 3-month holders to count
-      pairCreatedAt: row.pair_created_at || null,
-      mcapAtAdded: row.mcap_at_added != null ? parseFloat(row.mcap_at_added) : null,
-      mcapAth: row.mcap_ath != null ? parseFloat(row.mcap_ath) : null,
-      emergingCult: row.is_emerging_cult || false,
-      techCoin: row.is_tech_coin || false,
-      holders: null,
-      holderVelocity: null,
-      // Latest daily Diamond Hands score (services/kingOfPill.js); the table's default order
-      diamondHandsScore: null,
-      diamondHandsScoreDate: null
-    };
-  });
-
-  if (tokens.length > 0 && db.pool) {
-    const scores = await require('../services/kingOfPill').getLatestScores(tokens.map(t => t.mintAddress)).catch(() => ({}));
-    for (const t of tokens) {
-      const s = scores[t.mintAddress];
-      if (s) { t.diamondHandsScore = s.score; t.diamondHandsScoreDate = s.date; }
+    // Holder counts: Redis, else the latest holder snapshot's count from Postgres.
+    // Velocity: 24h change between holder snapshots (holderCounts.holderVelocity).
+    if (tokens.length > 0) {
+      const mints = tokens.map(t => t.mintAddress);
+      const [counts, velocity] = await Promise.all([
+        holderCounts.getDisplayCounts(mints).catch(() => ({})),
+        db.pool ? holderCounts.getHolderVelocity(mints).catch(() => ({})) : {},
+      ]);
+      for (const t of tokens) {
+        if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+        t.holderVelocity = velocity[t.mintAddress] || { level: null };
+      }
     }
-  }
 
-  // Holder counts: Redis, else the latest holder snapshot's count from Postgres.
-  // Velocity: 24h change between holder snapshots (holderCounts.holderVelocity).
-  if (tokens.length > 0) {
-    const mints = tokens.map(t => t.mintAddress);
-    const [counts, velocity] = await Promise.all([
-      holderCounts.getDisplayCounts(mints).catch(() => ({})),
-      db.pool ? holderCounts.getHolderVelocity(mints).catch(() => ({})) : {},
-    ]);
-    for (const t of tokens) {
-      if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
-      t.holderVelocity = velocity[t.mintAddress] || { level: null };
+    // Queue background Helius fetches for any tokens still missing holder counts
+    if (solanaService.isHeliusConfigured()) {
+      const missing = tokens.filter(t => !t.holders);
+      if (missing.length > 0) {
+        jobQueue.addAnalyticsJob('fetch-holder-counts-batch', {
+          mints: missing.map(t => t.mintAddress)
+        }).catch(() => {});
+      }
     }
-  }
 
-  // Queue background Helius fetches for any tokens still missing holder counts
-  if (solanaService.isHeliusConfigured()) {
-    const missing = tokens.filter(t => !t.holders);
-    if (missing.length > 0) {
-      jobQueue.addAnalyticsJob('fetch-holder-counts-batch', {
-        mints: missing.map(t => t.mintAddress)
-      }).catch(() => {});
-    }
-  }
+    return { tokens, total };
+  }, resultTtl);
 
-  const result = { tokens, total };
-  await cache.set(resultCacheKey, result, TTL.LONG);
+  // Enrich cached result with any holder counts fetched since this result was cached
+  if (!computed && result.tokens && result.tokens.length > 0) {
+    const need = result.tokens.filter(t => !t.holders);
+    const counts = need.length ? await holderCounts.getDisplayCounts(need.map(t => t.mintAddress)).catch(() => ({})) : {};
+    for (const t of need) if (counts[t.mintAddress]) t.holders = counts[t.mintAddress];
+  }
   res.json(result);
 }));
 
@@ -1194,49 +1239,48 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
 // rotation rule) unless an admin override mint is set, which always wins.
 router.get('/king-of-pill', asyncHandler(async (req, res) => {
   const cacheKey = 'king-of-pill:featured';
-  const cached = await cache.get(cacheKey);
-  if (cached) return res.json(cached);
-
-  const manual = await db.getSetting('king_of_pill_mint');
-  let mint = manual || null;
-  let kotp = null;
-  if (manual) {
-    kotp = { mode: 'manual' };
-  } else {
-    const king = await require('../services/kingOfPill').getCurrentKing().catch(err => {
-      console.error('[KotP] Read failed:', err.message);
-      return null;
-    });
-    if (king) {
-      mint = king.mint;
-      kotp = { mode: 'auto', score: king.score, scoreDate: king.scoreDate, reignDay: king.reignDay, crownedOn: king.crownedOn,
-               contenders: king.contenders.map(c => ({ name: c.name, symbol: c.symbol, score: c.score })) };
+  // getOrSet: concurrent misses share one read. No King is not cached (null), as before.
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const manual = await db.getSetting('king_of_pill_mint');
+    let mint = manual || null;
+    let kotp = null;
+    if (manual) {
+      kotp = { mode: 'manual' };
+    } else {
+      const king = await require('../services/kingOfPill').getCurrentKing().catch(err => {
+        console.error('[KotP] Read failed:', err.message);
+        return null;
+      });
+      if (king) {
+        mint = king.mint;
+        kotp = { mode: 'auto', score: king.score, scoreDate: king.scoreDate, reignDay: king.reignDay, crownedOn: king.crownedOn,
+                 contenders: king.contenders.map(c => ({ name: c.name, symbol: c.symbol, score: c.score })) };
+      }
     }
-  }
-  if (!mint) return res.json({ token: null });
+    if (!mint) return null;
 
-  // Fetch basic token data from DB (name, symbol, logo)
-  const row = await db.getToken(mint);
-  if (!row) return res.json({ token: null });
+    // Fetch basic token data from DB (name, symbol, logo)
+    const row = await db.getToken(mint);
+    if (!row) return null;
 
-  // Layer in live price/change from cache if available.
-  // Price cache uses setWithTimestamp so we need getWithMeta to unwrap the _data envelope.
-  const priceMeta = await cache.getWithMeta(`price:${mint}`);
-  const priceData = priceMeta?.value;
+    // Layer in live price/change from cache if available.
+    // Price cache uses setWithTimestamp so we need getWithMeta to unwrap the _data envelope.
+    const priceMeta = await cache.getWithMeta(`price:${mint}`);
+    const priceData = priceMeta?.value;
 
-  const token = {
-    mintAddress: mint,
-    name: row.name || null,
-    symbol: row.symbol || null,
-    logoUri: row.logo_uri || null,
-    price: priceData?.price ?? (row.price ? parseFloat(row.price) : null),
-    priceChange24h: priceData?.priceChange24h ?? (row.price_change_24h != null ? parseFloat(row.price_change_24h) : null),
-    kotp,
-  };
+    const token = {
+      mintAddress: mint,
+      name: row.name || null,
+      symbol: row.symbol || null,
+      logoUri: row.logo_uri || null,
+      price: priceData?.price ?? (row.price ? parseFloat(row.price) : null),
+      priceChange24h: priceData?.priceChange24h ?? (row.price_change_24h != null ? parseFloat(row.price_change_24h) : null),
+      kotp,
+    };
 
-  const result = { token };
-  await cache.set(cacheKey, result, TTL.LONG);
-  res.json(result);
+    return { token };
+  }, TTL.LONG);
+  res.json(result || { token: null });
 }));
 
 // GET /api/tokens/benchmarks - SOL and BTC 24h price change used by the "vs SOL" tab
@@ -1245,39 +1289,41 @@ router.get('/benchmarks', asyncHandler(async (req, res) => {
   const cacheKey    = 'benchmarks:sol-btc';
   const lastGoodKey = 'benchmarks:sol-btc:last-good';
 
-  const cached = await cache.get(cacheKey);
-  if (cached) return res.json(cached);
-
   try {
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price',
-      {
-        params: { ids: 'solana,bitcoin', vs_currencies: 'usd', include_24hr_change: true },
-        timeout: 8000,
-        headers: { Accept: 'application/json' }
-      }
-    );
-    const data = response.data || {};
+    // getOrSet: concurrent misses share one CoinGecko call. The last-good fallback stays
+    // on the catch path below so stale data is never cached under the 5-minute key.
+    const result = await cache.getOrSet(cacheKey, async () => {
+      // Public CoinGecko API (a few req/min per IP): spaced by the default limiter
+      const response = await rateLimitedRequest('coingeckoPublic', () => axios.get(
+        'https://api.coingecko.com/api/v3/simple/price',
+        {
+          params: { ids: 'solana,bitcoin', vs_currencies: 'usd', include_24hr_change: true },
+          timeout: 8000,
+          headers: { Accept: 'application/json' }
+        }
+      ));
+      const data = response.data || {};
 
-    // Merge with last-good data so a partial response (price OK, change null) doesn't
-    // wipe a previously-known price_change_24h value out of the active cache.
-    const lastGood = await cache.get(lastGoodKey);
-    const result = {
-      sol: {
-        price: data.solana?.usd ?? lastGood?.sol?.price ?? null,
-        priceChange24h: data.solana?.usd_24h_change ?? lastGood?.sol?.priceChange24h ?? null
-      },
-      btc: {
-        price: data.bitcoin?.usd ?? lastGood?.btc?.price ?? null,
-        priceChange24h: data.bitcoin?.usd_24h_change ?? lastGood?.btc?.priceChange24h ?? null
-      },
-      updatedAt: Date.now(),
-    };
-    await cache.set(cacheKey, result, TTL.LONG);
-    // Keep a long-lived copy so CoinGecko outages can serve stale-but-real data
-    if (result.sol.price != null || result.btc.price != null) {
-      await cache.set(lastGoodKey, result, TTL.DAY);
-    }
+      // Merge with last-good data so a partial response (price OK, change null) doesn't
+      // wipe a previously-known price_change_24h value out of the active cache.
+      const lastGood = await cache.get(lastGoodKey);
+      const result = {
+        sol: {
+          price: data.solana?.usd ?? lastGood?.sol?.price ?? null,
+          priceChange24h: data.solana?.usd_24h_change ?? lastGood?.sol?.priceChange24h ?? null
+        },
+        btc: {
+          price: data.bitcoin?.usd ?? lastGood?.btc?.price ?? null,
+          priceChange24h: data.bitcoin?.usd_24h_change ?? lastGood?.btc?.priceChange24h ?? null
+        },
+        updatedAt: Date.now(),
+      };
+      // Keep a long-lived copy so CoinGecko outages can serve stale-but-real data
+      if (result.sol.price != null || result.btc.price != null) {
+        await cache.set(lastGoodKey, result, TTL.DAY);
+      }
+      return result;
+    }, TTL.LONG);
     res.json(result);
   } catch (err) {
     console.warn('[benchmarks] CoinGecko fetch failed:', err.message);
@@ -1305,181 +1351,177 @@ router.get('/spikes', searchLimiter, asyncHandler(async (req, res) => {
   const resultLimit = Math.max(1, Math.min(50, parseInt(limit) || 30));
 
   const cacheKey = `spikes:${minAgeDays}:${resultLimit}`;
-  const cached = await cache.get(cacheKey);
-  if (cached) {
-    return res.json(cached);
-  }
-
   try {
-    // Step 1: Fetch trending pools from GeckoTerminal
-    // First try to reuse token list cache (populated by /api/tokens?filter=trending)
-    // to avoid redundant GeckoTerminal calls that compete for the shared rate limiter.
-    const useHeliusEnrichment = solanaService.isHeliusConfigured();
-    let allTokens = [];
+    // getOrSet: concurrent misses share one scan of the trending pools
+    const result = await cache.getOrSet(cacheKey, async () => {
+      // Step 1: Fetch trending pools from GeckoTerminal
+      // First try to reuse token list cache (populated by /api/tokens?filter=trending)
+      // to avoid redundant GeckoTerminal calls that compete for the shared rate limiter.
+      const useHeliusEnrichment = solanaService.isHeliusConfigured();
+      let allTokens = [];
 
-    // Check if the main token list already has cached trending data
-    // Deep-copy to avoid mutating the cached objects (we modify pairCreatedAt, name, etc. below)
-    const cachedList = await cache.getWithMeta(keys.tokenList('trending-volume-desc-50', 0));
-    if (cachedList && cachedList.value && cachedList.value.length > 0) {
-      allTokens = cachedList.value.map(t => ({ ...t }));
-    } else {
-      // No cached trending data — fetch from GeckoTerminal (2 pages, not 3, to reduce load)
-      const pageFetches = [1, 2].map(page =>
-        geckoService.getTrendingTokens({ limit: 20, skipEnrichment: useHeliusEnrichment, page })
-          .catch(catchUnlessOverloaded([]))
-      );
-      const pages = await Promise.all(pageFetches);
-      for (const pageTokens of pages) {
-        if (pageTokens) allTokens = allTokens.concat(pageTokens);
-      }
-    }
-
-    // Deduplicate by address
-    const seen = new Set();
-    allTokens = allTokens.filter(t => {
-      const addr = t.address || t.mintAddress;
-      if (!addr || seen.has(addr)) return false;
-      seen.add(addr);
-      return true;
-    });
-
-    if (allTokens.length === 0) {
-      const result = { tokens: [], updatedAt: Date.now() };
-      await cache.set(cacheKey, result, TTL.MEDIUM);
-      return res.json(result);
-    }
-
-    // Step 2: Get pool creation dates for age filtering
-    // GeckoTerminal trending pools don't always include pool_created_at,
-    // so fetch token overviews for tokens missing creation dates
-    const minAgeMs = minAgeDays * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-
-    // For tokens without pairCreatedAt, try to get it from DB or GeckoTerminal overview
-    const needsCreationDate = allTokens.filter(t => !t.pairCreatedAt && !t.createdAt);
-    if (needsCreationDate.length > 0) {
-      const dbTokens = await db.getTokensBatch(needsCreationDate.map(t => t.address || t.mintAddress)).catch(() => []);
-      const dbMap = {};
-      if (dbTokens) {
-        dbTokens.forEach(t => {
-          if (t && t.mint_address && t.pair_created_at) {
-            dbMap[t.mint_address] = t.pair_created_at;
-          }
-        });
-      }
-      for (const token of needsCreationDate) {
-        const addr = token.address || token.mintAddress;
-        if (dbMap[addr]) {
-          token.pairCreatedAt = dbMap[addr];
+      // Check if the main token list already has cached trending data
+      // Deep-copy to avoid mutating the cached objects (we modify pairCreatedAt, name, etc. below)
+      const cachedList = await cache.getWithMeta(keys.tokenList('trending-volume-desc-50', 0));
+      if (cachedList && cachedList.value && cachedList.value.length > 0) {
+        allTokens = cachedList.value.map(t => ({ ...t }));
+      } else {
+        // No cached trending data — fetch from GeckoTerminal (2 pages, not 3, to reduce load)
+        const pageFetches = [1, 2].map(page =>
+          geckoService.getTrendingTokens({ limit: 20, skipEnrichment: useHeliusEnrichment, page })
+            .catch(catchUnlessOverloaded([]))
+        );
+        const pages = await Promise.all(pageFetches);
+        for (const pageTokens of pages) {
+          if (pageTokens) allTokens = allTokens.concat(pageTokens);
         }
       }
-    }
 
-    // Step 3: Filter to tokens older than minAge
-    const established = allTokens.filter(t => {
-      const createdStr = t.pairCreatedAt || t.createdAt;
-      if (!createdStr) return false; // Skip tokens with unknown age
-      const createdMs = new Date(createdStr).getTime();
-      if (isNaN(createdMs)) return false;
-      return (now - createdMs) >= minAgeMs;
-    });
+      // Deduplicate by address
+      const seen = new Set();
+      allTokens = allTokens.filter(t => {
+        const addr = t.address || t.mintAddress;
+        if (!addr || seen.has(addr)) return false;
+        seen.add(addr);
+        return true;
+      });
 
-    if (established.length === 0) {
-      const result = { tokens: [], updatedAt: Date.now() };
-      await cache.set(cacheKey, result, TTL.MEDIUM);
-      return res.json(result);
-    }
+      if (allTokens.length === 0) {
+        const result = { tokens: [], updatedAt: Date.now() };
+        return result;
+      }
 
-    // Step 4: Enrich with Helius metadata (name, symbol, logo)
-    if (useHeliusEnrichment) {
-      const needsEnrichment = established.filter(t => !t.name || !t.symbol || (!t.logoUri && !t.logoURI));
-      if (needsEnrichment.length > 0) {
-        try {
-          const addresses = needsEnrichment.map(t => t.address || t.mintAddress);
-          const metadata = await solanaService.getTokenMetadataBatch(addresses);
-          for (const token of needsEnrichment) {
-            const addr = token.address || token.mintAddress;
-            const meta = metadata[addr];
-            if (meta) {
-              if (!token.name || token.name === token.symbol) token.name = meta.name || token.name;
-              if (!token.symbol || token.symbol === '???' || token.symbol === (addr || '').slice(0, 5).toUpperCase()) token.symbol = meta.symbol || token.symbol;
-              if (!token.logoUri && !token.logoURI) {
-                token.logoUri = meta.logoUri || null;
-                token.logoURI = meta.logoUri || null;
+      // Step 2: Get pool creation dates for age filtering
+      // GeckoTerminal trending pools don't always include pool_created_at,
+      // so fetch token overviews for tokens missing creation dates
+      const minAgeMs = minAgeDays * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      // For tokens without pairCreatedAt, try to get it from DB or GeckoTerminal overview
+      const needsCreationDate = allTokens.filter(t => !t.pairCreatedAt && !t.createdAt);
+      if (needsCreationDate.length > 0) {
+        const dbTokens = await db.getTokensBatch(needsCreationDate.map(t => t.address || t.mintAddress)).catch(() => []);
+        const dbMap = {};
+        if (dbTokens) {
+          dbTokens.forEach(t => {
+            if (t && t.mint_address && t.pair_created_at) {
+              dbMap[t.mint_address] = t.pair_created_at;
+            }
+          });
+        }
+        for (const token of needsCreationDate) {
+          const addr = token.address || token.mintAddress;
+          if (dbMap[addr]) {
+            token.pairCreatedAt = dbMap[addr];
+          }
+        }
+      }
+
+      // Step 3: Filter to tokens older than minAge
+      const established = allTokens.filter(t => {
+        const createdStr = t.pairCreatedAt || t.createdAt;
+        if (!createdStr) return false; // Skip tokens with unknown age
+        const createdMs = new Date(createdStr).getTime();
+        if (isNaN(createdMs)) return false;
+        return (now - createdMs) >= minAgeMs;
+      });
+
+      if (established.length === 0) {
+        const result = { tokens: [], updatedAt: Date.now() };
+        return result;
+      }
+
+      // Step 4: Enrich with Helius metadata (name, symbol, logo)
+      if (useHeliusEnrichment) {
+        const needsEnrichment = established.filter(t => !t.name || !t.symbol || (!t.logoUri && !t.logoURI));
+        if (needsEnrichment.length > 0) {
+          try {
+            const addresses = needsEnrichment.map(t => t.address || t.mintAddress);
+            const metadata = await solanaService.getTokenMetadataBatch(addresses);
+            for (const token of needsEnrichment) {
+              const addr = token.address || token.mintAddress;
+              const meta = metadata[addr];
+              if (meta) {
+                if (!token.name || token.name === token.symbol) token.name = meta.name || token.name;
+                if (!token.symbol || token.symbol === '???' || token.symbol === (addr || '').slice(0, 5).toUpperCase()) token.symbol = meta.symbol || token.symbol;
+                if (!token.logoUri && !token.logoURI) {
+                  token.logoUri = meta.logoUri || null;
+                  token.logoURI = meta.logoUri || null;
+                }
               }
             }
-          }
-        } catch (e) { /* non-critical */ }
+          } catch (e) { /* non-critical */ }
+        }
       }
-    }
 
-    // Step 5: Fetch holder counts from Birdeye using batch endpoint
-    // Uses getMultiTokenPrices which accepts up to 100 addresses in a single call,
-    // then falls back to individual getTokenOverview only for the top 5 candidates
-    // that need holder data (getMultiTokenPrices returns mc but not holder count).
-    const prelimScored = established.map(t => {
-      const volMcapRatio = (t.marketCap > 0) ? (t.volume24h || 0) / t.marketCap : 0;
-      const absChange = Math.abs(t.priceChange24h || 0);
-      const txns = t.transactions24h || 0;
-      return { ...t, _prelimScore: volMcapRatio * 30 + absChange + txns * 0.01 };
-    }).sort((a, b) => b._prelimScore - a._prelimScore);
+      // Step 5: Fetch holder counts from Birdeye using batch endpoint
+      // Uses getMultiTokenPrices which accepts up to 100 addresses in a single call,
+      // then falls back to individual getTokenOverview only for the top 5 candidates
+      // that need holder data (getMultiTokenPrices returns mc but not holder count).
+      const prelimScored = established.map(t => {
+        const volMcapRatio = (t.marketCap > 0) ? (t.volume24h || 0) / t.marketCap : 0;
+        const absChange = Math.abs(t.priceChange24h || 0);
+        const txns = t.transactions24h || 0;
+        return { ...t, _prelimScore: volMcapRatio * 30 + absChange + txns * 0.01 };
+      }).sort((a, b) => b._prelimScore - a._prelimScore);
 
-// Step 6: Calculate spike scores
-    const scored = prelimScored.map(token => {
-      const addr = token.address || token.mintAddress;
-      const volume = token.volume24h || 0;
-      const mcap = token.marketCap || 0;
-      const priceChange = token.priceChange24h || 0;
-      const txns = token.transactions24h || 0;
+  // Step 6: Calculate spike scores
+      const scored = prelimScored.map(token => {
+        const addr = token.address || token.mintAddress;
+        const volume = token.volume24h || 0;
+        const mcap = token.marketCap || 0;
+        const priceChange = token.priceChange24h || 0;
+        const txns = token.transactions24h || 0;
 
-      // Volume/MCap ratio — a $500K mcap token with $2M volume is spiking hard
-      const volMcapRatio = mcap > 0 ? volume / mcap : 0;
+        // Volume/MCap ratio — a $500K mcap token with $2M volume is spiking hard
+        const volMcapRatio = mcap > 0 ? volume / mcap : 0;
 
-      // Score components (weighted)
-      const volumeScore = Math.min(volMcapRatio * 30, 40);        // 0-40 points
-      const priceScore = Math.min(Math.abs(priceChange) / 2, 30); // 0-30 points
-      const txnScore = Math.min(txns / 100, 20);                  // 0-20 points
+        // Score components (weighted)
+        const volumeScore = Math.min(volMcapRatio * 30, 40);        // 0-40 points
+        const priceScore = Math.min(Math.abs(priceChange) / 2, 30); // 0-30 points
+        const txnScore = Math.min(txns / 100, 20);                  // 0-20 points
 
-      const spikeScore = Math.round((volumeScore + priceScore + txnScore) * 10) / 10;
+        const spikeScore = Math.round((volumeScore + priceScore + txnScore) * 10) / 10;
 
-      // Determine spike types
-      const spikeTypes = [];
-      if (volMcapRatio > 0.5) spikeTypes.push('volume');
-      if (Math.abs(priceChange) > 15) spikeTypes.push('price');
-      if (txns > 500) spikeTypes.push('transactions');
+        // Determine spike types
+        const spikeTypes = [];
+        if (volMcapRatio > 0.5) spikeTypes.push('volume');
+        if (Math.abs(priceChange) > 15) spikeTypes.push('price');
+        if (txns > 500) spikeTypes.push('transactions');
 
-      // Calculate age in days
-      const createdStr = token.pairCreatedAt || token.createdAt;
-      const ageDays = createdStr ? Math.round((now - new Date(createdStr).getTime()) / 86400000 * 10) / 10 : null;
+        // Calculate age in days
+        const createdStr = token.pairCreatedAt || token.createdAt;
+        const ageDays = createdStr ? Math.round((now - new Date(createdStr).getTime()) / 86400000 * 10) / 10 : null;
 
-      return {
-        mintAddress: addr,
-        address: addr,
-        name: token.name || `${addr.slice(0, 4)}...${addr.slice(-4)}`,
-        symbol: token.symbol || addr.slice(0, 5).toUpperCase(),
-        logoUri: token.logoUri || token.logoURI || null,
-        price: token.price || 0,
-        priceChange24h: priceChange,
-        volume24h: volume,
-        marketCap: mcap,
-        fdv: token.fdv || 0,
-        liquidity: token.liquidity || 0,
-        holders: null,
-        transactions24h: txns,
-        volMcapRatio: Math.round(volMcapRatio * 1000) / 1000,
-        ageDays,
-        spikeScore,
-        spikeTypes,
-        poolAddress: token.poolAddress || null
-      };
-    });
+        return {
+          mintAddress: addr,
+          address: addr,
+          name: token.name || `${addr.slice(0, 4)}...${addr.slice(-4)}`,
+          symbol: token.symbol || addr.slice(0, 5).toUpperCase(),
+          logoUri: token.logoUri || token.logoURI || null,
+          price: token.price || 0,
+          priceChange24h: priceChange,
+          volume24h: volume,
+          marketCap: mcap,
+          fdv: token.fdv || 0,
+          liquidity: token.liquidity || 0,
+          holders: null,
+          transactions24h: txns,
+          volMcapRatio: Math.round(volMcapRatio * 1000) / 1000,
+          ageDays,
+          spikeScore,
+          spikeTypes,
+          poolAddress: token.poolAddress || null
+        };
+      });
 
-    // Sort by spike score descending, return top N
-    scored.sort((a, b) => b.spikeScore - a.spikeScore);
-    const results = scored.slice(0, resultLimit);
+      // Sort by spike score descending, return top N
+      scored.sort((a, b) => b.spikeScore - a.spikeScore);
+      const results = scored.slice(0, resultLimit);
 
-    const result = { tokens: results, updatedAt: Date.now(), totalScanned: allTokens.length, totalEstablished: established.length };
-    await cache.set(cacheKey, result, TTL.MEDIUM);
+      const result = { tokens: results, updatedAt: Date.now(), totalScanned: allTokens.length, totalEstablished: established.length };
+      return result;
+    }, TTL.MEDIUM);
     res.json(result);
   } catch (error) {
     if (error.isOverloaded || error.isCircuitBreakerError) throw error;
@@ -1506,9 +1548,13 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       await cache.delete(cacheKey);
     }
 
+    // A full detail entry is served from the read above (requireFresh is off, so
+    // getOrSetWithFreshness would only read and parse the same value again).
+    const hit = existing && existing.value && existing.value.submissions ? existing.value : null;
+
     // Use getOrSetWithFreshness for stampede prevention
     // If multiple requests come in for the same token, they share one API fetch
-    const result = await cache.getOrSetWithFreshness(cacheKey, async () => {
+    const result = hit || await cache.getOrSetWithFreshness(cacheKey, async () => {
       // Fetch core data in parallel — holder count uses cache-first to avoid
       // blocking on paginated Helius DAS calls (which can take 2-30s for popular tokens).
       let geckoTimedOut = false;
@@ -1532,11 +1578,14 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
           return null;
         }),
         db.getApprovedSubmissions(mint).catch(() => []),
-        holderCounts.getDisplayCounts([mint]).then(c => c[mint] || null).catch(() => null)
+        holderCounts.getDisplayCounts([mint]).then(c => c[mint] || null).catch(() => null),
+        // View count and curated data: independent of the above, so fetched alongside them
+        db.getTokenViews(mint).catch(() => null),
+        db.getCuratedToken(mint).catch(() => null)
       ];
 
       const results = await Promise.all(fetchPromises);
-      const [heliusMetadata, geckoOverview, submissions, cachedHolders] = results;
+      const [heliusMetadata, geckoOverview, submissions, cachedHolders, dbViews, curated] = results;
 
       // Use cached holder count; if missing, queue a background fetch via worker
       let holders = (typeof cachedHolders === 'number' && cachedHolders > 0) ? cachedHolders : null;
@@ -1614,7 +1663,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
 
       // Include view count so the frontend can display it immediately
       try {
-        const dbViews = await db.getTokenViews(mint);
+        if (dbViews == null) throw new Error('view count unavailable');
         const buffered = jobQueue.getBufferedViewCounts([mint]);
         tokenResult.views = dbViews + (buffered[mint] || 0);
       } catch {
@@ -1622,7 +1671,6 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       }
 
       // Include curated token DexScreener data (banner + socials) and mcap tracking if available
-      const curated = await db.getCuratedToken(mint).catch(() => null);
       if (curated) {
         if (curated.bannerUrl) tokenResult.bannerUrl = curated.bannerUrl;
         if (curated.socials && Object.keys(curated.socials).length > 0) {
@@ -1707,60 +1755,6 @@ router.get('/:mint/price', validateMint, requireAllowedToken, asyncHandler(async
   }
 }));
 
-// GET /api/tokens/:mint/chart - Get price history for charts
-// Uses getOrSet for automatic caching with stampede prevention
-router.get('/:mint/chart', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
-  const { mint } = req.params;
-  const { interval = '1h', limit = 100 } = req.query;
-
-  // Validate interval
-  const validIntervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
-  const normalizedInterval = String(interval).toLowerCase();
-
-  if (!validIntervals.includes(normalizedInterval)) {
-    return res.status(400).json({
-      error: 'Invalid interval',
-      validIntervals
-    });
-  }
-
-  const normalizedLimit = Math.min(Math.max(1, parseInt(limit) || 100), 500);
-  const cacheKey = keys.tokenChart(mint, normalizedInterval, normalizedLimit);
-  // Use longer TTL for chart data - minute intervals cache 1min, others cache 2min
-  const cacheTTL = normalizedInterval.includes('m') ? TTL.MEDIUM : TTL.OHLCV;
-
-  try {
-    // Use getOrSet for caching with stampede prevention
-    const chartData = await cache.getOrSet(cacheKey, async () => {
-      // Try GeckoTerminal with 4s timeout, fall back to Jupiter on failure/empty
-      let data = null;
-      try {
-        data = await Promise.race([
-          geckoService.getPriceHistory(mint, { interval: normalizedInterval }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Chart timeout')), 4000))
-        ]);
-      } catch (err) {
-        if (err.isOverloaded || err.isCircuitBreakerError) throw err;
-        // GeckoTerminal failed or timed out — fall through to Jupiter
-      }
-
-      if (!data || !data.data || data.data.length === 0) {
-        data = await jupiterService.getPriceHistory(mint, {
-          interval: normalizedInterval,
-          limit: normalizedLimit
-        });
-      }
-
-      return data;
-    }, cacheTTL);
-
-    if (!res.headersSent) res.json(chartData);
-  } catch (error) {
-    if (error.isOverloaded || error.isCircuitBreakerError) throw error;
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch chart data' });
-  }
-}));
-
 // GET /api/tokens/:mint/ohlcv - Get OHLCV data for candlestick charts
 // Feeds the token page's chart modal. ?interval=1m|5m|15m|1h|4h|12h|1d, ?limit=1..1000.
 // Uses getOrSet for automatic caching with stampede prevention
@@ -1778,8 +1772,10 @@ router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async
   const limit = parseInt(req.query.limit) > 100 ? 1000 : 100;
 
   const cacheKey = `ohlcv:${mint}:${normalizedInterval}:${limit}`;
-  // Minute candles go stale quickly; hour/day candles can sit for the full OHLCV TTL
-  const cacheTTL = normalizedInterval.endsWith('m') ? TTL.MEDIUM : TTL.OHLCV;
+  // Minute candles go stale quickly; hour/day candles can sit for the full OHLCV TTL.
+  // 2 minutes, not 1: the chart modal polls every 60s, so a 60s TTL made nearly every
+  // poll an upstream GeckoTerminal request per (mint, interval).
+  const cacheTTL = normalizedInterval.endsWith('m') ? 2 * TTL.MEDIUM : TTL.OHLCV;
 
   try {
     const ohlcvData = await cache.getOrSet(cacheKey, async () => {
@@ -2423,7 +2419,21 @@ router.get('/:mint/holders/hold-times', validateMint, requireAllowedToken, async
       return res.json({ holdTimes: {}, tokenHoldTimes: {}, floors: [], computed: true });
     }
 
+    // A computed result is cached for the diamond-hands result TTL, tagged with the wallet
+    // list it was computed for (the list changes when classification or a new snapshot
+    // lands); holderPipeline drops the key on a new snapshot or a finished backfill.
+    const holdTimesKey = `hold-times:${mint}`;
+    const walletsHash = crypto.createHash('sha1').update(wallets.join(',')).digest('hex');
+    const cachedHoldTimes = await cache.get(holdTimesKey).catch(() => undefined);
+    if (cachedHoldTimes && cachedHoldTimes.walletsHash === walletsHash) {
+      const { holdTimes, floors } = cachedHoldTimes;
+      return res.json({ holdTimes, tokenHoldTimes: holdTimes, floors, computed: true });
+    }
+
     const { holdTimes, floors, computed } = await holderPipeline.getHoldTimes(mint, wallets);
+    if (computed) {
+      await cache.set(holdTimesKey, { walletsHash, holdTimes, floors }, holderPipeline.CONFIG.resultTtl).catch(() => {});
+    }
     // holdTimes and tokenHoldTimes are the same thing (time holding this token);
     // both keys are kept for the frontend. floors: wallets whose time is a lower
     // bound (the history read stopped before the streak start).
@@ -2446,7 +2456,14 @@ router.get('/:mint/holders/diamond-hands', validateMint, requireAllowedToken, as
     if (!solanaService.isHeliusConfigured()) {
       return res.json({ distribution: null, sampleSize: 0, analyzed: 0, computed: true });
     }
+    // While the backfill runs every poll would re-read the snapshot and positions; an
+    // in-progress result is shared for 5s. Its own key: cultify treats any hit on
+    // diamond-hands:<mint> as the final result.
+    const partialKey = `diamond-hands-partial:${mint}`;
+    const partial = await cache.get(partialKey).catch(() => undefined);
+    if (partial) return res.json(partial);
     const result = await holderPipeline.getDiamondHands(mint);
+    if (result && !result.computed) await cache.set(partialKey, result, 5000).catch(() => {});
     if (!res.headersSent) res.json(result);
   } catch (error) {
     console.error('[DiamondHands] Error:', error.message);

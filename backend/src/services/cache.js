@@ -127,6 +127,21 @@ class MemoryCache {
     this.cache.delete(key);
   }
 
+  /** Values for several keys in one call, undefined for each miss (see RedisCache.mget). */
+  async mget(keyList) {
+    return Promise.all(keyList.map(k => this.get(k)));
+  }
+
+  /** Delete several keys; returns how many existed. */
+  async deleteMany(keyList) {
+    let n = 0;
+    for (const k of keyList) {
+      if (await this.has(k)) n++;
+      this.cache.delete(k);
+    }
+    return n;
+  }
+
   async has(key) {
     const entry = this.cache.get(key);
     if (!entry) return false;
@@ -373,6 +388,38 @@ class RedisCache {
     }
   }
 
+  /** One MGET for several keys: values in key order, undefined for each miss. */
+  async mget(keyList) {
+    if (keyList.length === 0) return [];
+    if (!this.isConnected) {
+      this.stats.misses += keyList.length;
+      return keyList.map(() => undefined);
+    }
+    try {
+      const rows = await this.client.mget(...keyList.map(k => this._prefixKey(k)));
+      return rows.map(data => {
+        if (data === null) { this.stats.misses++; return undefined; }
+        this.stats.hits++;
+        try { return JSON.parse(data); } catch { return undefined; }
+      });
+    } catch (err) {
+      console.error('[Redis] Mget error:', err.message);
+      this.stats.misses += keyList.length;
+      return keyList.map(() => undefined);
+    }
+  }
+
+  /** One multi-key DEL; returns how many of the keys existed. */
+  async deleteMany(keyList) {
+    if (!this.isConnected || keyList.length === 0) return 0;
+    try {
+      return await this.client.del(...keyList.map(k => this._prefixKey(k)));
+    } catch (err) {
+      console.error('[Redis] Delete error:', err.message);
+      return 0;
+    }
+  }
+
   async has(key) {
     if (!this.isConnected) return false;
     try {
@@ -559,6 +606,14 @@ class CacheService {
 
   clearPattern(pattern) {
     return this.backend.clearPattern(pattern);
+  }
+
+  mget(keyList) {
+    return this.backend.mget(keyList || []);
+  }
+
+  deleteMany(keyList) {
+    return this.backend.deleteMany(keyList || []);
   }
 
   /**

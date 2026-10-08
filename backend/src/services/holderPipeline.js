@@ -81,6 +81,8 @@ const CONFIG = {
 
 const keys = {
   result: mint => `diamond-hands:${mint}`,
+  // computed hold times cached by GET /:mint/holders/hold-times (routes/tokens.js)
+  holdTimes: mint => `hold-times:${mint}`,
   snapshotPending: mint => `holder-snapshot-pending:${mint}`,
   backfillPending: mint => `holder-backfill-pending:${mint}`,
   // when a cheap pre-check last found the previous snapshot still accurate
@@ -324,6 +326,7 @@ async function takeSnapshot(mint) {
 
     await recordSnapshotPoint(mint, { takenAt, complete, holders, exclude, decimals, supply, accountCount });
     await cache.delete(keys.result(mint)).catch(() => {});
+    await cache.delete(keys.holdTimes(mint)).catch(() => {});
     await cache.delete(keys.snapshotVerified(mint)).catch(() => {});
 
     console.log(`[Holders] Snapshot ${snapshotId} for ${mint.slice(0, 8)}: ${holders.length} wallets from ${accountCount} accounts, ` +
@@ -663,6 +666,7 @@ async function runBackfill(mint) {
       `${stats.errors ? `, ${stats.errors} errors (${stats.transient} transient)` : ''}${stats.pushbacks ? `, ${stats.pushbacks} pushbacks` : ''}${stats.backoff ? ', backing off' : ''}`);
     if (remaining === 0) {
       await cache.delete(keys.result(mint)).catch(() => {});
+      await cache.delete(keys.holdTimes(mint)).catch(() => {});
       const dh = await getDiamondHands(mint, { dispatch: false });
       if (dh.computed && pendingAtStart.length > 0) {
         const sinceSnapshot = Date.now() - new Date(snap.taken_at).getTime();
