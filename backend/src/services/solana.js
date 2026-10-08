@@ -1177,6 +1177,13 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
 // process sees them) and in a small local map for speed.
 const streamflowCache = new Map();
 const STREAMFLOW_CACHE_TTL = TTL.DAY;
+// Entries expire logically on read; sweep the expired ones so mints that are no
+// longer looked up don't stay in memory for the life of the process
+const _streamflowSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [mint, entry] of streamflowCache) if (entry.expiry <= now) streamflowCache.delete(mint);
+}, 10 * 60 * 1000);
+if (_streamflowSweep.unref) _streamflowSweep.unref();
 
 async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
   // Check local cache first, then the shared cache
