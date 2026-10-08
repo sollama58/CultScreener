@@ -262,7 +262,13 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     let largestAccounts = rpcAccounts;
     if (!largestAccounts && solanaService.isHeliusConfigured()) {
       const decimals = supplyResult?.value?.decimals || 0;
-      largestAccounts = await solanaService.getTokenLargestAccountsDAS(mint, decimals);
+      // Cap the DAS fallback at 10s like the tokens /holders route; a timeout is treated
+      // as "no accounts" (rpc_unavailable below)
+      let dasTimer;
+      largestAccounts = await Promise.race([
+        solanaService.getTokenLargestAccountsDAS(mint, decimals),
+        new Promise(resolve => { dasTimer = setTimeout(() => resolve(null), 10000); })
+      ]).finally(() => clearTimeout(dasTimer));
     }
 
     if (!largestAccounts || largestAccounts.length === 0) {
