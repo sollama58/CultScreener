@@ -4,13 +4,21 @@
 const rateLimit = require('express-rate-limit');
 
 // Default rate limiter
-const defaultLimiter = rateLimit({
+const baseDefaultLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 60000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false
 });
+
+// app.js already runs defaultLimiter on every /api request, and some routes mount it again.
+// Count each request once, so those routes don't spend two units of the shared IP budget.
+function defaultLimiter(req, res, next) {
+  if (req._defaultLimiterCounted) return next();
+  req._defaultLimiterCounted = true;
+  return baseDefaultLimiter(req, res, next);
+}
 
 // Strict limiter for write operations (submissions, votes)
 const strictLimiter = rateLimit({
