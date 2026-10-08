@@ -29,6 +29,19 @@ const strictLimiter = rateLimit({
   legacyHeaders: false
 });
 
+// Page-view recording (POST /api/tokens/:mint/view), fired on every token page load.
+// Its own budget per IP and token, so browsing doesn't eat the write-action limit. Over the
+// limit the view is simply not counted: answering 200 without a `views` field keeps the
+// client from treating it as a site-wide 429 and from redrawing the count.
+const viewLimiter = rateLimit({
+  windowMs: 60000, // 1 minute
+  max: 10,         // 10 counted views per minute per IP per token
+  standardHeaders: false,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}:${req.params.mint}`,
+  handler: (req, res) => res.json({ recorded: false })
+});
+
 // Very strict limiter for sensitive operations (e.g. admin login)
 const veryStrictLimiter = rateLimit({
   windowMs: parseInt(process.env.VERY_STRICT_RATE_LIMIT_WINDOW_MS, 10) || 3600000,
@@ -78,6 +91,7 @@ const apiKeyLimiter = rateLimit({
 module.exports = {
   defaultLimiter,
   strictLimiter,
+  viewLimiter,
   veryStrictLimiter,
   searchLimiter,
   walletLimiter,

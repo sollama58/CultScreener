@@ -6,7 +6,7 @@ const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey, canBypassCache } = require('../middleware/validation');
-const { searchLimiter, strictLimiter } = require('../middleware/rateLimit');
+const { searchLimiter, viewLimiter } = require('../middleware/rateLimit');
 const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
@@ -1824,7 +1824,9 @@ router.get('/:mint/submissions', validateMint, requireAllowedToken, asyncHandler
 // POST /api/tokens/:mint/view - Record a page view for a token
 // Called when the token detail page loads
 // Uses job queue to batch view updates for better performance
-router.post('/:mint/view', strictLimiter, validateMint, asyncHandler(async (req, res) => {
+// Curated tokens only: anything else would land in token_views and the most_viewed list.
+// viewLimiter (not the shared write-action strictLimiter) so page loads never see a 429.
+router.post('/:mint/view', validateMint, requireAllowedToken, viewLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
   try {
