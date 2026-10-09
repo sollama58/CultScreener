@@ -1049,11 +1049,13 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     : '';
 
   // One pass over the CTE: the window count is the total before LIMIT/OFFSET.
+  // mint_address breaks ties (every curated token without a score sits at 0) so pages,
+  // queried and cached separately, neither repeat nor skip tokens.
   const result = await pool.query(
     `${baseCte}
      SELECT *, COUNT(*) OVER() AS total_count_ FROM combined
      ${outerConditions}
-     ORDER BY conviction_1m DESC NULLS LAST
+     ORDER BY conviction_1m DESC NULLS LAST, mint_address
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     [...params, limit, offset]
   );
@@ -1659,18 +1661,36 @@ async function getPendingSubmissions(limit = 50) {
 // Watchlist operations
 // ==========================================
 
-// Atomic watchlist add with limit enforcement (prevents TOCTOU race condition)
+// Advisory lock namespaces (first key of the two-key form) for per-row serialisation
+const WATCHLIST_LOCK_NS = 0x57544c53; // 'WTLS'
+const SENTIMENT_LOCK_NS = 0x53454e54; // 'SENT'
+const lockKeyOf = (text) => crypto.createHash('sha256').update(text).digest().readInt32BE(0);
+
+// Watchlist add with limit enforcement. The count and the insert run under a per-wallet
+// lock: on their own, two concurrent adds both counted 99 and both inserted.
 async function addToWatchlistAtomic(walletAddress, tokenMint, maxItems = 100) {
   if (!pool) return { limitReached: true };
 
-  const result = await pool.query(
-    `INSERT INTO watchlist (wallet_address, token_mint)
-     SELECT $1::text, $2::text
-     WHERE (SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1::text) < $3::int
-     ON CONFLICT (wallet_address, token_mint) DO NOTHING
-     RETURNING *`,
-    [walletAddress, tokenMint, maxItems]
-  );
+  const client = await pool.connect();
+  let result;
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [WATCHLIST_LOCK_NS, lockKeyOf(walletAddress)]);
+    result = await client.query(
+      `INSERT INTO watchlist (wallet_address, token_mint)
+       SELECT $1::text, $2::text
+       WHERE (SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1::text) < $3::int
+       ON CONFLICT (wallet_address, token_mint) DO NOTHING
+       RETURNING *`,
+      [walletAddress, tokenMint, maxItems]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   if (result.rows.length === 0) {
     const exists = await isInWatchlist(walletAddress, tokenMint);
     if (exists) return { wallet_address: walletAddress, token_mint: tokenMint, exists: true };
@@ -2443,7 +2463,8 @@ async function getTokenViewsBatch(tokenMints) {
     const result = await pool.query({
       text: `SELECT token_mint, view_count FROM token_views WHERE token_mint = ANY($1)`,
       values: [tokenMints],
-      statement_timeout: 5000 // 5 second timeout for view counts
+      // Per-query client timeout; statement_timeout is a connection setting and is ignored here
+      query_timeout: 5000 // 5 second timeout for view counts
     });
 
     const viewsMap = {};
@@ -3257,6 +3278,10 @@ async function castSentimentVote(tokenMint, voterWallet, sentiment) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // One vote change at a time per wallet and token. Two concurrent requests both read the
+    // same previous vote and each applied its tally delta, so the tally drifted from the votes.
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)',
+      [SENTIMENT_LOCK_NS, lockKeyOf(`${tokenMint}:${voterWallet}`)]);
 
     const existing = await client.query(
       'SELECT sentiment FROM sentiment_votes WHERE token_mint = $1 AND voter_wallet = $2',

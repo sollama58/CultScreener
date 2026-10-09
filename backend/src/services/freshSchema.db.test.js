@@ -310,6 +310,71 @@ if (!DB_URL) {
     });
   });
 
+  describe('concurrent writes', () => {
+    test('the watchlist cap holds against simultaneous adds', async () => {
+      const WALLET = 'FreshCap11111111111111111111111111111111111';
+      await db.pool.query(
+        `INSERT INTO watchlist (wallet_address, token_mint)
+         SELECT $1, 'CapMint' || g FROM generate_series(1, 98) g`, [WALLET]);
+      const results = await Promise.all([1, 2, 3, 4, 5].map(i => db.addToWatchlistAtomic(WALLET, `CapNew${i}`, 100)));
+      const { rows } = await db.pool.query('SELECT COUNT(*)::int AS n FROM watchlist WHERE wallet_address = $1', [WALLET]);
+      assert.strictEqual(rows[0].n, 100);
+      assert.strictEqual(results.filter(r => r.limitReached).length, 3);
+    });
+
+    test('simultaneous sentiment changes from one wallet keep the tally in step with the votes', async () => {
+      const WALLET = 'FreshSent1111111111111111111111111111111111';
+      for (let round = 0; round < 5; round++) {
+        const MINT = `FreshSentMint${round}`.padEnd(44, '1');
+        await db.castSentimentVote(MINT, WALLET, 'bullish');
+        // Toggle off and switch at once: both used to read 'bullish' and both applied a delta
+        await Promise.all([
+          db.castSentimentVote(MINT, WALLET, 'bullish'),
+          db.castSentimentVote(MINT, WALLET, 'bearish'),
+        ]);
+        const votes = await db.pool.query(
+          `SELECT COUNT(*) FILTER (WHERE sentiment = 'bullish')::int AS bullish,
+                  COUNT(*) FILTER (WHERE sentiment = 'bearish')::int AS bearish
+             FROM sentiment_votes WHERE token_mint = $1`, [MINT]);
+        const tally = await db.pool.query('SELECT bullish, bearish, score FROM sentiment_tallies WHERE token_mint = $1', [MINT]);
+        const { bullish, bearish } = votes.rows[0];
+        assert.deepStrictEqual(tally.rows[0], { bullish, bearish, score: bullish - bearish });
+      }
+    });
+  });
+
+  describe('conviction leaderboard paging', () => {
+    test('tokens tied on score come back once each, in a stable order', async () => {
+      const mints = ['E', 'B', 'D', 'A', 'C'].map(t => `FreshTie${t}`.padEnd(44, '1'));
+      for (const m of mints) await db.addCuratedToken(m);
+      const seen = [];
+      for (let offset = 0; ; offset++) {
+        const page = await db.getTopConvictionTokens(1, offset, { search: 'FreshTie' });
+        if (page.tokens.length === 0) break;
+        seen.push(page.tokens[0].mint_address);
+      }
+      assert.deepStrictEqual(seen, [...mints].sort());
+    });
+  });
+
+  describe('view counts', () => {
+    test('the 5-second limit is a per-query timeout node-postgres honours', async () => {
+      const configs = [];
+      const query = db.pool.query;
+      db.pool.query = function (config, values) {
+        configs.push(config);
+        return query.call(this, config, values);
+      };
+      try {
+        await db.getTokenViewsBatch(['FreshViews11111111111111111111111111111111']);
+      } finally {
+        db.pool.query = query;
+      }
+      assert.strictEqual(configs[0].query_timeout, 5000);
+      assert.strictEqual(configs[0].statement_timeout, undefined);
+    });
+  });
+
   // Last: it drops every table in the schema
   describe('db:reset', () => {
     test('drops every table, so submissions work again after the app recreates them', async () => {
