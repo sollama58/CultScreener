@@ -3637,6 +3637,14 @@ async function removeCuratedToken(mintAddress) {
   await pool.query('DELETE FROM holder_snapshots WHERE mint_address = $1', [mintAddress]).catch(() => {});
   await pool.query('DELETE FROM holder_positions WHERE mint_address = $1', [mintAddress]).catch(() => {});
 
+  // End its King of the Pill reign: the banner reads the open reign, and kept featuring the
+  // removed token (linking to a page that now answers 403) until the next daily crowning.
+  // The table is created lazily by services/kingOfPill.js, so it may not exist yet.
+  await pool.query(
+    "UPDATE kotp_reigns SET ended_on = (NOW() AT TIME ZONE 'UTC')::date WHERE mint_address = $1 AND ended_on IS NULL", // UTC days, as the crowning uses
+    [mintAddress]
+  ).catch(() => {});
+
   return result.rows[0];
 }
 

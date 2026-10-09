@@ -184,5 +184,14 @@ if (!DB_URL) {
       assert.ok(Number.isFinite(rows[0].components.momentum));
       assert.strictEqual(rows[0].components.retention > 0, true);
     });
+
+    test('removing the king from the curated list ends its reign', async () => {
+      assert.strictEqual((await kotp.getCurrentKing({ now: T0 + (PARAMS.maxReignDays + 1) * DAY })).mint, C);
+      assert.ok(await db.removeCuratedToken(C));
+      // Used to stay featured, linking to a page that answers 403, until the next crowning
+      assert.strictEqual(await kotp.getCurrentKing({ now: T0 + (PARAMS.maxReignDays + 1) * DAY }), null);
+      const { rows } = await db.pool.query('SELECT ended_on FROM kotp_reigns WHERE mint_address = $1', [C]);
+      assert.ok(rows.every(r => r.ended_on != null));
+    });
   });
 }
