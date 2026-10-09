@@ -785,6 +785,8 @@ async function getTrendingTokens(options = {}) {
         marketCap: listed.marketCap || listed.fdv || 0,
         fdv: listed.fdv || 0,
         poolAddress: attrs.address,
+        // Pool age: /api/tokens/spikes filters on it (unknown age drops the token)
+        pairCreatedAt: attrs.pool_created_at || null,
         transactions24h: (attrs.transactions?.h24?.buys || 0) + (attrs.transactions?.h24?.sells || 0)
       });
     }

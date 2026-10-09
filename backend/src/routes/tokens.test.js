@@ -180,6 +180,123 @@ describe('GET /api/tokens (trending)', () => {
   });
 });
 
+describe('GET /api/tokens list cache and cost bounds', () => {
+  const page = (from, n, extra = {}) => Array.from({ length: n }, (_, i) => ({ ...tok(from + i), logoUri: null, ...extra }));
+
+  test('sort/order/limit/offset variations reuse one list and ask Helius about each mint once', async () => {
+    S.helius = true;
+    S.trendingPages = { 1: page(10, 20), 2: page(40, 20) };
+    const windows = [
+      '?limit=10&offset=0', '?limit=10&offset=0&sort=price&order=asc', '?limit=37&offset=3',
+      '?limit=20&offset=20&sort=marketCap', '?limit=5&offset=33', '?limit=40&offset=0&order=asc'
+    ];
+    for (const w of windows) {
+      const r = await get('/api/tokens' + w);
+      assert.strictEqual(r.status, 200);
+    }
+    const asked = S.metaCalls.flat();
+    assert.strictEqual(asked.length, new Set(asked).size, 'no mint is sent to Helius twice');
+    assert.strictEqual(asked.length, 40);
+    // A single list key per filter, not one per window
+    const listKeys = (await cache.scanKeys('list:*')).filter(k => k.includes('trending'));
+    assert.deepStrictEqual(listKeys, ['list:gecko-trending:0']);
+  });
+
+  test('short Gecko pages: later windows fetch more pages instead of coming back short', async () => {
+    // Each page yields 16 tokens after skipped pools
+    S.trendingPages = { 1: page(10, 16), 2: page(30, 16), 3: page(50, 16), 4: page(70, 16) };
+    const all = await get('/api/tokens?limit=60&offset=0');
+    assert.strictEqual(all.body.length, 60);
+    const third = await get('/api/tokens?limit=20&offset=40');
+    assert.deepStrictEqual(third.body.map(t => t.address), all.body.slice(40, 60).map(t => t.address));
+    assert.strictEqual(S.jupiterCalls, 0);
+  });
+
+  test('a window past the end of the Gecko list is empty, not a Jupiter page', async () => {
+    S.trendingPages = { 1: page(10, 20) };
+    const r = await get('/api/tokens?limit=20&offset=40');
+    assert.deepStrictEqual(r.body, []);
+    assert.strictEqual(S.jupiterCalls, 0);
+  });
+
+  test('gainers: consecutive pages slice one ranking (no repeats, no gaps)', async () => {
+    let n = 0;
+    S.trendingPages = {};
+    for (let p = 1; p <= 5; p++) {
+      S.trendingPages[p] = page(p * 20, 20).map(t => ({ ...t, priceChange24h: ((n++ * 37) % 100) - 50 }));
+    }
+    const first = await get('/api/tokens?filter=gainers&limit=20&offset=0');
+    const second = await get('/api/tokens?filter=gainers&limit=20&offset=20');
+    const a = first.body.map(t => t.address);
+    const b = second.body.map(t => t.address);
+    assert.strictEqual(a.length, 20);
+    assert.strictEqual(b.length, 20);
+    assert.ok(!a.some(x => b.includes(x)), 'no token on both pages');
+    const minFirst = Math.min(...first.body.map(t => t.priceChange24h));
+    const maxSecond = Math.max(...second.body.map(t => t.priceChange24h));
+    assert.ok(minFirst >= maxSecond, 'page 1 outranks page 2');
+  });
+
+  test('an empty result (Gecko and Jupiter both empty) is not cached', async () => {
+    const empty = await get('/api/tokens?filter=trending');
+    assert.deepStrictEqual(empty.body, []);
+    S.trendingPages = { 1: page(10, 20) };
+    const after = await get('/api/tokens?filter=trending');
+    assert.strictEqual(after.body.length, 20);
+  });
+
+  test('most_viewed returns DECIMAL columns as numbers', async () => {
+    dbStub.getMostViewedTokens = async () => [{ token_mint: CURATED, view_count: 3 }];
+    dbStub.getTokensBatch = async () => [{
+      mint_address: CURATED, name: 'Cult', symbol: 'CULT', price: '0.00012300',
+      volume_24h: '15234.5', price_change_24h: '1.5', market_cap: '1000'
+    }];
+    const r = await get('/api/tokens?filter=most_viewed');
+    assert.strictEqual(r.body[0].price, 0.000123);
+    assert.strictEqual(r.body[0].volume24h, 15234.5);
+  });
+});
+
+describe('POST /api/tokens/batch', () => {
+  const postJson = (p, body) => fetch(base + p, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+  }).then(async r => ({ status: r.status, body: await r.json() }));
+
+  test('unknown non-curated mints cost no Helius/Gecko call and are not cached', async () => {
+    S.helius = true;
+    let geckoAsked = null;
+    geckoStub.getMultiTokenInfo = async (m) => { geckoAsked = m; return {}; };
+    dbStub.getTokensBatch = async () => [];
+    const r = await postJson('/api/tokens/batch', { mints: [OTHER, WALLET] });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.length, 2);
+    assert.deepStrictEqual(S.metaCalls, []);
+    assert.strictEqual(geckoAsked, null);
+    assert.strictEqual(await cache.get(`batch:${OTHER}`), undefined);
+  });
+
+  test('a curated mint with no DB row gets Gecko market data next to its Helius name', async () => {
+    S.helius = true;
+    S.meta = () => ({ [CURATED]: { name: 'Cult', symbol: 'CULT', logoUri: 'l' } });
+    geckoStub.getMultiTokenInfo = async () => ({ [CURATED]: { name: 'Cult', price: 2, marketCap: 500 } });
+    dbStub.getTokensBatch = async () => [];
+    const r = await postJson('/api/tokens/batch', { mints: [CURATED] });
+    assert.strictEqual(r.body[0].name, 'Cult');
+    assert.strictEqual(r.body[0].price, 2);
+    assert.strictEqual(r.body[0].marketCap, 500);
+  });
+
+  test('entries built while the DB read failed are served but not cached', async () => {
+    dbStub.getTokensBatch = async () => { throw new Error('pool timeout'); };
+    const r = await postJson('/api/tokens/batch', { mints: [CURATED] });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(await cache.get(`batch:${CURATED}`), undefined);
+    dbStub.getTokensBatch = async () => [{ mint_address: CURATED, name: 'Cult', symbol: 'CULT', logo_uri: 'l', price: '3' }];
+    const again = await postJson('/api/tokens/batch', { mints: [CURATED] });
+    assert.strictEqual(again.body[0].price, 3);
+  });
+});
+
 describe('GET /api/tokens/leaderboard/conviction', () => {
   test('a failed DB read is a 500 and is not cached as an empty board', async () => {
     dbStub.getTopConvictionTokens = async () => { throw new Error('statement timeout'); };
@@ -189,6 +306,22 @@ describe('GET /api/tokens/leaderboard/conviction', () => {
     const good = await get('/api/tokens/leaderboard/conviction?limit=100&offset=0');
     assert.strictEqual(good.status, 200);
     assert.strictEqual(good.body.tokens.length, 1);
+  });
+});
+
+describe('GET /api/tokens/leaderboard/watchlist', () => {
+  test('unnamed mints are looked up on Helius once across offsets; offset is bounded', async () => {
+    S.helius = true;
+    const offsets = [];
+    dbStub.getMostWatchlistedTokens = async (limit, offset) => {
+      offsets.push(offset);
+      return { tokens: [{ token_mint: OTHER, watchlist_count: '2' }], total: 1 };
+    };
+    await get('/api/tokens/leaderboard/watchlist?offset=1');
+    await get('/api/tokens/leaderboard/watchlist?offset=2');
+    await get('/api/tokens/leaderboard/watchlist?offset=999999');
+    assert.strictEqual(S.metaCalls.length, 1);
+    assert.ok(Math.max(...offsets) <= 1000);
   });
 });
 
@@ -211,6 +344,34 @@ describe('GET /api/tokens/search', () => {
     await get(`/api/tokens/search?q=${CURATED}`);
     await new Promise(r => setImmediate(r));
     assert.deepStrictEqual(upserts, [CURATED]);
+  });
+});
+
+describe('GET /api/tokens/spikes', () => {
+  test('trending tokens carry their pool age, and one scan serves every minAge', async () => {
+    const day = 86400000;
+    S.trendingPages = {
+      1: [
+        { ...tok(10), pairCreatedAt: new Date(Date.now() - 10 * day).toISOString(), volume24h: 100, marketCap: 50 },
+        { ...tok(11), pairCreatedAt: new Date(Date.now() - 3 * day).toISOString(), volume24h: 10, marketCap: 50 },
+        { ...tok(12), pairCreatedAt: new Date(Date.now() - 3600000).toISOString() }
+      ]
+    };
+    const one = await get('/api/tokens/spikes');
+    assert.deepStrictEqual(one.body.tokens.map(t => t.address).sort(), [addr(10), addr(11)].sort());
+    const callsAfterFirst = S.geckoCalls.length;
+    const five = await get('/api/tokens/spikes?minAge=5&limit=10');
+    assert.deepStrictEqual(five.body.tokens.map(t => t.address), [addr(10)]);
+    assert.strictEqual(five.body.totalEstablished, 1);
+    assert.strictEqual(S.geckoCalls.length, callsAfterFirst);
+  });
+
+  test('an empty scan is not cached', async () => {
+    const empty = await get('/api/tokens/spikes');
+    assert.deepStrictEqual(empty.body.tokens, []);
+    S.trendingPages = { 1: [{ ...tok(10), pairCreatedAt: new Date(Date.now() - 5 * 86400000).toISOString() }] };
+    const after = await get('/api/tokens/spikes');
+    assert.strictEqual(after.body.tokens.length, 1);
   });
 });
 

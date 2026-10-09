@@ -53,6 +53,7 @@ before(() => {
     inst.get = async (url, opts = {}) => {
       calls.push({ url, params: opts.params });
       if (url.endsWith(`/tokens/${TOKEN}/pools`)) return { data: { data: POOLS } };
+      if (url.endsWith('/trending_pools')) return { data: { data: POOLS } };
       if (url.endsWith(`/tokens/${QUOTE_ONLY}/pools`)) return { data: { data: QUOTE_ONLY_POOLS } };
       if (url.endsWith(`/tokens/${QUOTE_ONLY}`)) {
         return { data: { data: { id: `solana_${QUOTE_ONLY}`, type: 'token', attributes: {
@@ -123,5 +124,14 @@ describe('token that only trades as the quote', () => {
     assert.strictEqual(o.price, 0.5);
     assert.strictEqual(o.poolSide, 'quote');
     assert.strictEqual(o.priceChange24h, null);
+  });
+});
+
+describe('trending list', () => {
+  test('each token carries its pool\'s creation date (the spikes route filters on it)', async () => {
+    const tokens = await gecko.getTrendingTokens({ limit: 20, skipEnrichment: true, page: 1 });
+    const foo = tokens.find(t => t.address === TOKEN);
+    assert.ok(foo);
+    assert.strictEqual(foo.pairCreatedAt, '2026-08-01T00:00:00Z');
   });
 });
