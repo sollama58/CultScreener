@@ -4,7 +4,8 @@
   "private": true,
   "description": "Root package for the HolDEX static site. The site is hand-authored static files under frontend/ with no build step. The build script is a no-op kept so a Render static site still configured with `npm ci && npm run build` keeps deploying.",
   "scripts": {
-    "build": "echo \"HolDEX frontend has no build step\""
+    "build": "echo \"HolDEX frontend has no build step\"",
+    "test": "node --test frontend/*.test.js frontend/js/*.test.js"
   },
   "engines": {
     "node": ">=20"

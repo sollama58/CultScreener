@@ -19,7 +19,11 @@ function render(walletState) {
     document: { getElementById: el, addEventListener() {} },
     window: { addEventListener() {} },
     wallet: { ...walletState, viewerAddress() { return this.address || this.linkedAddress || null; } },
-    watchlist: { remove: async () => false },
+    // A connected wallet's list comes from watchlist.js's cache (already loaded here)
+    watchlist: {
+      remove: async () => false, isLoaded: true, isLoading: false, _loadFailed: false,
+      items: new Map([['M1', { mint: 'M1', name: 'One', symbol: 'ONE' }]])
+    },
     api: { watchlist: { get: async () => ({ tokens: [{ mint: 'M1', name: 'One', symbol: 'ONE' }] }) }, tokens: { getBatch: async () => [] } },
     utils: {
       escapeHtml: s => String(s), proxyImageUrl: u => u, getDefaultLogo: () => 'x.svg',

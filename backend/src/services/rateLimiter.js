@@ -82,10 +82,11 @@ const RATE_LIMITS = {
   },
   helius: {
     // Requests per second this process may start. The Developer plan allows 50/s per
-    // key and the API and worker processes each run their own limiter, so the two
-    // must add up to under 50: the worker keeps the default 40, the API (which makes
-    // few Helius calls now that holder data comes from snapshots) is set to 10 in
-    // render.yaml.
+    // key and the API and worker processes each run their own limiter, so they must
+    // add up to under 50, including during a deploy, when the old worker still drains
+    // its jobs (at WORKER_DRAIN_HELIUS_RPS, see worker.js) beside the new one. render.yaml
+    // sets the worker to 25 and the API (few Helius calls now that holder data comes
+    // from snapshots) to 10: 25 + 15 draining + 10 = 50.
     minInterval: Math.round(1000 / HELIUS_RPS),
     maxJitter: 10,
     // Per-1s-window cap from the same HELIUS_RPS, so it can't silently hold the
@@ -137,6 +138,16 @@ function geckoFreeTierLimits(rpm = parseInt(process.env.GECKO_FREE_RPM, 10) || 3
 
 function useGeckoFreeTierLimits() {
   Object.assign(RATE_LIMITS.geckoTerminal, geckoFreeTierLimits());
+}
+
+// Change this process's Helius rate at runtime. A worker draining jobs after SIGTERM drops
+// to a small share, because during a deploy the new worker is already running at the full
+// rate on the same key (render.yaml sizes the per-process rates for that overlap).
+function setHeliusRps(rps) {
+  const n = Math.max(1, parseInt(rps, 10) || 1);
+  RATE_LIMITS.helius.minInterval = Math.round(1000 / n);
+  RATE_LIMITS.helius.burstLimit = n;
+  return n;
 }
 
 // Requests currently running per queued API, and the queue loops waiting for a free slot
@@ -537,5 +548,6 @@ module.exports = {
   RATE_LIMITS,
   geckoFreeTierLimits,
   useGeckoFreeTierLimits,
+  setHeliusRps,
   stopCleanup
 };

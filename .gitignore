@@ -50,6 +50,8 @@ temp/
 # Database
 *.sqlite
 *.db
+# Redis snapshots (redis-server writes dump.rdb to its working directory)
+*.rdb
 # telegram-bot/data/ (removed)
 
 # Frontend env
