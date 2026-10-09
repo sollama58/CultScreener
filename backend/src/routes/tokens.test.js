@@ -397,10 +397,16 @@ describe('GET /api/tokens/spikes', () => {
     assert.strictEqual(S.geckoCalls.length, callsAfterFirst);
   });
 
-  test('an empty scan is not cached', async () => {
+  test('an empty scan is remembered only briefly, and does not re-fetch in the meantime', async () => {
     const empty = await get('/api/tokens/spikes');
     assert.deepStrictEqual(empty.body.tokens, []);
+    const callsAfterEmpty = S.geckoCalls.length;
     S.trendingPages = { 1: [{ ...tok(10), pairCreatedAt: new Date(Date.now() - 5 * 86400000).toISOString() }] };
+    const again = await get('/api/tokens/spikes');
+    assert.deepStrictEqual(again.body.tokens, []);
+    assert.strictEqual(S.geckoCalls.length, callsAfterEmpty, 'no fresh Gecko fetch while the empty scan is remembered');
+    // Once the short entry expires, the next good scan is served (and not held for TTL.MEDIUM)
+    await cache.delete('spikes:empty');
     const after = await get('/api/tokens/spikes');
     assert.strictEqual(after.body.tokens.length, 1);
   });

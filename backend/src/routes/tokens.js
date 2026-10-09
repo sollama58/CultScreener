@@ -1494,7 +1494,13 @@ router.get('/spikes', searchLimiter, asyncHandler(async (req, res) => {
   // One scan serves every minAge/limit: it keeps each token at least a day old with its age,
   // and the request filters and slices it (a key per minAge x limit multiplied Helius calls)
   const cacheKey = 'spikes:scan';
+  // An empty scan is not stored under cacheKey (it is usually an upstream blip, and the next
+  // good scan should replace it at once), but it is remembered briefly here: during a
+  // GeckoTerminal 429 every request would otherwise run fresh trending fetches through the
+  // shared limiter (the breaker does not open on 429s, and empty pages are not cached).
+  const emptyKey = 'spikes:empty';
   try {
+    if (await cache.get(emptyKey)) return res.json({ tokens: [], updatedAt: Date.now() });
     // getOrSet: concurrent misses share one scan of the trending pools
     const scan = await cache.getOrSet(cacheKey, async () => {
       // Step 1: Fetch trending pools from GeckoTerminal
@@ -1660,7 +1666,10 @@ router.get('/spikes', searchLimiter, asyncHandler(async (req, res) => {
       return { tokens: scored, updatedAt: Date.now(), totalScanned: allTokens.length };
     }, TTL.MEDIUM);
 
-    if (!scan) return res.json({ tokens: [], updatedAt: Date.now() });
+    if (!scan) {
+      await cache.set(emptyKey, true, TTL.SHORT);
+      return res.json({ tokens: [], updatedAt: Date.now() });
+    }
     const established = scan.tokens.filter(t => t.ageDays != null && t.ageDays >= minAgeDays);
     res.json({
       tokens: established.slice(0, resultLimit),
