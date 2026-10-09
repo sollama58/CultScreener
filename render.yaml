@@ -5,9 +5,9 @@
 # The frontend static site IS defined here (see HolDEX-frontend below). An older revision of
 # this file said static sites couldn't be blueprint-managed; that hasn't been true for a while.
 # It matters: frontend/_headers and frontend/_redirects are Netlify/Cloudflare Pages conventions
-# that Render does not read - verified in production, where the site was serving no CSP, no
-# X-Frame-Options and no Referrer-Policy at all. Header and
-# rewrite config for a Render static site lives in this file (or the Dashboard), nowhere else.
+# that Render does not read. Header and rewrite config for a Render static site lives in this
+# file (or the Dashboard), nowhere else. The live site is not linked to this Blueprint yet, so
+# what production serves is whatever was typed into its Dashboard - see step 2 at the bottom.
 
 services:
   # =====================================================
@@ -73,14 +73,12 @@ services:
       - key: RATE_LIMIT_MAX_REQUESTS
         value: "100"
 
-      # Cache settings (seconds)
-      - key: CACHE_TOKEN_TTL
-        value: "300"
-      - key: CACHE_PRICE_TTL
-        value: "60"
+      # (Cache TTLs are fixed in services/cache.js; there is no env var for them.)
 
-      # Helius requests per second this process may start. The worker keeps the
-      # default (40); together they stay under the plan's 50/s per key.
+      # Helius requests per second this process may start. Each process has its own
+      # limiter, and the plan allows 50/s per key across all of them. During a deploy the
+      # old worker drains its jobs beside the new one, so the budget is: worker 35 (set on
+      # HolDEX-worker) + draining worker 5 (WORKER_DRAIN_HELIUS_RPS) + API 10 = 50.
       - key: HELIUS_RPS
         value: "10"
 
@@ -107,10 +105,10 @@ services:
       - type: redirect
         source: /trenches/*
         destination: https://trenchscanner.app
-      # Extensionless URLs for the hand-authored pages.
-      - type: rewrite
-        source: /token/*
-        destination: /token.html
+      # Extensionless URLs for the hand-authored pages. There is deliberately no /token/*
+      # rewrite: token.html loads its css/ and js/ with relative paths and reads the mint from
+      # ?mint=, so under /token/<mint> it rendered unstyled, scriptless and blank. Every link
+      # in the site is token.html?mint=<mint>.
       - type: rewrite
         source: /community
         destination: /community.html
@@ -204,11 +202,17 @@ services:
       - key: NODE_ENV
         value: production
 
-      # Worker performance tuning (starter plan has limited CPU — keep concurrency modest)
+      # Worker performance tuning (starter plan has limited CPU — keep concurrency modest).
+      # Both are set on purpose: the code defaults are 2 and 3.
       - key: WORKER_CONCURRENCY
         value: "10"
       - key: WORKER_LIMITER_MAX
         value: "10"
+
+      # Helius requests per second (see HELIUS_RPS on HolDEX-api for the 50/s budget). Set
+      # below the code default of 40 so a deploy's draining worker fits beside the new one.
+      - key: HELIUS_RPS
+        value: "35"
 
       # Helius credit controls (see services/holderPipeline.js). Curated tokens are
       # re-snapshotted every HOLDER_SNAPSHOT_REFRESH_HOURS, and only after a one-page
@@ -233,9 +237,15 @@ services:
     name: HolDEX-redis
     region: oregon
     plan: free
-    # volatile-lru: when memory runs out, evict only keys with a TTL (the cache).
-    # allkeys-lru also evicted BullMQ's queue data and job schedules, which
-    # silently stopped background jobs.
+    # volatile-lru: when memory runs out, evict only keys with a TTL. allkeys-lru also
+    # evicted BullMQ's queue data and job schedules, which silently stopped background jobs.
+    # This is NOT full protection for BullMQ: its job locks (bull:<queue>:<id>:lock) and
+    # limiter key also carry a TTL, so under memory pressure a running job's lock can be
+    # evicted and the stalled check runs that job a second time. LRU strongly prefers the
+    # cache's long-idle keys over a lock renewed every 150 s, so this is rare, but BullMQ
+    # itself asks for noeviction (it warns at startup). The real fix is a Dashboard/plan
+    # change: give BullMQ its own Redis with maxmemoryPolicy noeviction and keep the cache
+    # on this one.
     maxmemoryPolicy: volatile-lru
     ipAllowList: [] # Allow only internal Render services
 
@@ -274,14 +284,19 @@ databases:
 #        /trenches    ->  https://trenchscanner.app
 #        /trenches/*  ->  https://trenchscanner.app
 #      and these as Rewrite:
-#        /token/*     ->  /token.html
 #        /community   ->  /community.html
 #        /about       ->  /about.html
 #      Settings > Headers - path /* for each, copying the values from the `headers:` block
 #      above (Content-Security-Policy, X-Content-Type-Options, X-Frame-Options,
 #      Referrer-Policy, Strict-Transport-Security, Permissions-Policy).
 #
-#    Until then the site serves NO security headers at all - confirmed in production.
+#    Until then the Dashboard copy is what is live, and it has drifted from this file
+#    (checked 2026-10-08): its CSP connect-src adds https://api.holdex.live and
+#    https://solana-rpc.publicnode.com and lacks the two Google Fonts hosts; the /trenches
+#    redirects are missing (/trenches returns 404); and it still has a /token/* -> /token.html
+#    rewrite, which serves a broken page (relative assets 404 under /token/) and should be
+#    deleted. This file is meant to be the source of truth: change headers and routes here,
+#    and copy any change into the Dashboard by hand until the site is linked.
 #
 #    The static site has no real build step. The root package.json keeps a no-op `build`
 #    script so a site still configured with `npm ci && npm run build` deploys unchanged.

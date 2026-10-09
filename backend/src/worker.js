@@ -981,6 +981,8 @@ async function start() {
  */
 const SIGNAL_SHUTDOWN_MS = parseInt(process.env.WORKER_SHUTDOWN_DEADLINE_MS) || 270000;
 const CRASH_SHUTDOWN_MS = 10000;
+// Helius requests/s while draining (see shutdown); render.yaml budgets for it
+const DRAIN_HELIUS_RPS = parseInt(process.env.WORKER_DRAIN_HELIUS_RPS, 10) || 5;
 let shuttingDown = false;
 
 async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 } = {}) {
@@ -988,6 +990,11 @@ async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 
   shuttingDown = true;
   console.log(`\n[Worker] ${signal} received. Shutting down gracefully (deadline ${Math.round(deadlineMs / 1000)}s)...`);
   if (scheduleCheckTimer) clearInterval(scheduleCheckTimer);
+
+  // On a deploy the new worker is already running at the full Helius rate on the same key;
+  // finish the active jobs at a small share so the two stay inside the plan's limit.
+  const drainRps = require('./services/rateLimiter').setHeliusRps(DRAIN_HELIUS_RPS);
+  console.log(`[Worker] Helius rate lowered to ${drainRps}/s while draining`);
 
   // Exits even if a close below never settles
   const forceExit = setTimeout(() => {

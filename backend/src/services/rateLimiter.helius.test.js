@@ -15,3 +15,16 @@ test('the helius burst cap follows HELIUS_RPS instead of a fixed 20 (audit #49)'
   assert.strictEqual(h.burstLimit, 40);
   assert.ok(h.burstLimit * h.minInterval <= h.burstWindow, 'the burst cap must not bind below the configured rate');
 });
+
+test('setHeliusRps moves the spacing and the burst cap together (audit #192)', () => {
+  const h = limiter.RATE_LIMITS.helius;
+  try {
+    assert.strictEqual(limiter.setHeliusRps(5), 5);
+    assert.strictEqual(h.minInterval, 200);
+    assert.strictEqual(h.burstLimit, 5);
+    assert.strictEqual(limiter.setHeliusRps('junk'), 1, 'a bad value falls back to 1/s, never 0');
+    assert.strictEqual(h.burstLimit, 1);
+  } finally {
+    limiter.setHeliusRps(40);
+  }
+});
