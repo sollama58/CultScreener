@@ -372,15 +372,35 @@ describe('device link signatures name their action', () => {
     }
   });
 
-  test('a pairing signature is refused by list and unlink', async () => {
+  test('a pairing signature is refused by list and unlink once the legacy fallback is off', async () => {
     const kp = nacl.sign.keyPair();
     const wallet = bs58.encode(kp.publicKey);
     const ts = Date.now();
     const signature = signed(validation.createDeviceLinkSignatureMessage(wallet, ts), kp);
-    const list = await run(validation.validateDeviceListSignature, { body: { wallet, signature, signatureTimestamp: ts } });
-    assert.strictEqual(list.status, 401);
-    const revoke = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, all: true } });
-    assert.strictEqual(revoke.status, 401);
+    process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES = 'false';
+    try {
+      const list = await run(validation.validateDeviceListSignature, { body: { wallet, signature, signatureTimestamp: ts } });
+      assert.strictEqual(list.status, 401);
+      const revoke = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, all: true } });
+      assert.strictEqual(revoke.status, 401);
+    } finally {
+      delete process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES;
+    }
+  });
+
+  test('during the rollout the old page\'s pairing signature still lists and unlinks', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts1 = Date.now();
+    const ts2 = ts1 + 1;
+    const list = await run(validation.validateDeviceListSignature, {
+      body: { wallet, signature: signed(validation.createDeviceLinkSignatureMessage(wallet, ts1), kp), signatureTimestamp: ts1 }
+    });
+    assert.strictEqual(list.next, true);
+    const revoke = await run(validation.validateDeviceRevokeSignature, {
+      body: { wallet, signature: signed(validation.createDeviceLinkSignatureMessage(wallet, ts2), kp), signatureTimestamp: ts2, deviceId: 7 }
+    });
+    assert.strictEqual(revoke.next, true);
   });
 
   test('unlinking is bound to the device it names', async () => {

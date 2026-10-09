@@ -768,22 +768,37 @@ function hashDeviceToken(token) {
  * bound to its own action's message above: messageFor(req, wallet, timestamp) returns the text
  * the wallet must have signed, or null when the request does not say what it is for.
  */
-function deviceSignatureValidator(messageFor) {
-  return (req, res, next) => checkDeviceSignature(messageFor, req, res, next);
+function deviceSignatureValidator(messageFor, legacyMessageFor = null) {
+  return (req, res, next) => checkDeviceSignature(messageFor, req, res, next, legacyMessageFor);
+}
+
+/**
+ * Transitional: the API and the static site deploy separately, and a tab left open keeps running
+ * the old JS, which signed the pairing message to list or unlink phones and the 'register'
+ * message to view an API key. Those old texts are still accepted on the read-only or low-harm
+ * routes that used to take them (each signature still single-use through the replay store).
+ * API key rotate and revoke stay strict: a 'register' signature there would hand a phishing page
+ * a fresh key, which is what binding the action closed; an old tab must reload for those.
+ * Deploy the API before the static site. Set ACCEPT_LEGACY_SIGNATURE_MESSAGES=false to turn the
+ * fallback off; remove it in the release after the action-named messages went out.
+ */
+function acceptLegacySignatureMessages() {
+  return process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES !== 'false';
 }
 
 const validateDeviceLinkSignature = deviceSignatureValidator(
   (req, wallet, timestamp) => createDeviceLinkSignatureMessage(wallet, timestamp));
 const validateDeviceListSignature = deviceSignatureValidator(
-  (req, wallet, timestamp) => createDeviceListSignatureMessage(wallet, timestamp));
+  (req, wallet, timestamp) => createDeviceListSignatureMessage(wallet, timestamp),
+  createDeviceLinkSignatureMessage);
 const validateDeviceRevokeSignature = deviceSignatureValidator((req, wallet, timestamp) => {
   const { all, deviceId } = req.body || {};
   if (all === true) return createDeviceRevokeSignatureMessage(wallet, timestamp, 'all');
   if (Number.isInteger(deviceId)) return createDeviceRevokeSignatureMessage(wallet, timestamp, deviceId);
   return null;
-});
+}, createDeviceLinkSignatureMessage);
 
-async function checkDeviceSignature(messageFor, req, res, next) {
+async function checkDeviceSignature(messageFor, req, res, next, legacyMessageFor = null) {
   const { wallet, signature, signatureTimestamp } = req.body || {};
 
   if (!signature || !signatureTimestamp || !wallet) {
@@ -817,7 +832,10 @@ async function checkDeviceSignature(messageFor, req, res, next) {
   if (!expectedMessage) {
     return res.status(400).json({ error: 'deviceId required' });
   }
-  if (!verifyWalletSignature(expectedMessage, signature, wallet)) {
+  const valid = verifyWalletSignature(expectedMessage, signature, wallet) ||
+    (legacyMessageFor !== null && acceptLegacySignatureMessages() &&
+      verifyWalletSignature(legacyMessageFor(wallet, timestamp), signature, wallet));
+  if (!valid) {
     return res.status(401).json({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' });
   }
 
@@ -1770,7 +1788,11 @@ async function validateApiKeySignatureFor(action, req, res, next) {
   const sigKey = signature.join(',');
 
   const expectedMessage = createApiKeySignatureMessage(wallet, timestamp, action);
-  const isValid = verifyWalletSignature(expectedMessage, signature, wallet);
+  // Transitional fallback (see acceptLegacySignatureMessages): the old page signed 'register'
+  // to view the key. Not for rotate/revoke.
+  const isValid = verifyWalletSignature(expectedMessage, signature, wallet) ||
+    (action === 'view' && acceptLegacySignatureMessages() &&
+      verifyWalletSignature(createApiKeySignatureMessage(wallet, timestamp, 'register'), signature, wallet));
 
   if (!isValid) {
     return res.status(401).json({ error: 'Invalid signature', message: 'Wallet signature verification failed', code: 'INVALID_SIGNATURE' });

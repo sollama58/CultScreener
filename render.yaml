@@ -226,6 +226,11 @@ services:
       # The drain rate (WORKER_DRAIN_HELIUS_RPS, default 15) is a trade-off: lower it and
       # Helius-heavy jobs (large holder snapshots) drain slower, risk passing the 270s
       # shutdown deadline and are re-run from the start by the new worker.
+      # ONE-TIME ROLLOUT NOTE: the drain throttle exists only in the new worker. On the first
+      # deploy of it, the worker being replaced still runs the old code at the old default of
+      # 40/s while it drains (up to 270s), so old 40 + new 25 + API 10 = 75/s for that window.
+      # Before that deploy, set HELIUS_RPS=25 on HolDEX-worker in the Dashboard and restart it
+      # (or deploy at a quiet time). Later deploys stay within 25 + 15 + 10 = 50.
       - key: HELIUS_RPS
         value: "25"
 
@@ -281,6 +286,12 @@ databases:
 #    - HELIUS_API_KEY (required for holder analysis)
 #    - ADMIN_PASSWORD (required for curated token management)
 #    - COINGECKO_API_KEY (optional — higher rate limits)
+#
+# 1b. Deploy order: HolDEX-api before the static site. Signed wallet messages name their action
+#    (device list/unlink, API key view/rotate/revoke), and the new page's messages are refused
+#    by an older API. The API still accepts the old page's messages for device list/unlink and
+#    API key view during the rollout (ACCEPT_LEGACY_SIGNATURE_MESSAGES, on unless "false"), but
+#    API key rotate/revoke from a tab running the old page fail until it is reloaded.
 #
 # 2. The frontend Static Site (HolDEX-frontend) is now defined in this file, including its
 #    headers and rewrites. HOWEVER: the live site was created by hand in the Dashboard and is

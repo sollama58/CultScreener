@@ -101,7 +101,7 @@ test('a signature for one API key action is refused by the others', async () => 
   keysByWallet.set(wallet, { key_prefix: 'cult_old', created_at: '2026-01-01T00:00:00.000Z', is_active: true });
 
   // A "register" signature (the wording a phishing page would copy) cannot rotate or revoke.
-  for (const [method, path] of [['POST', '/api/keys/rotate'], ['DELETE', '/api/keys/me'], ['POST', '/api/keys/me']]) {
+  for (const [method, path] of [['POST', '/api/keys/rotate'], ['DELETE', '/api/keys/me']]) {
     const res = await send(method, path, signedBody(kp, 'register'));
     assert.strictEqual(res.status, 401, `${method} ${path}`);
     assert.strictEqual((await res.json()).code, 'INVALID_SIGNATURE');
@@ -113,6 +113,23 @@ test('a signature for one API key action is refused by the others', async () => 
   const data = await res.json();
   assert.ok(data.key);
   assert.notStrictEqual(keysByWallet.get(wallet).key_prefix, 'cult_old');
+});
+
+test('POST /me still takes the old page\'s "register" signature, unless the fallback is off', async () => {
+  const kp = nacl.sign.keyPair();
+  const wallet = bs58.encode(kp.publicKey);
+  keysByWallet.set(wallet, { key_prefix: 'cult_view', created_at: '2026-01-01T00:00:00.000Z', is_active: true });
+  let res = await send('POST', '/api/keys/me', signedBody(kp, 'register'));
+  assert.strictEqual(res.status, 200);
+  res = await send('POST', '/api/keys/me', signedBody(kp, 'view'));
+  assert.strictEqual(res.status, 200);
+  process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES = 'false';
+  try {
+    res = await send('POST', '/api/keys/me', signedBody(kp, 'register'));
+    assert.strictEqual(res.status, 401);
+  } finally {
+    delete process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES;
+  }
 });
 
 test('an admin-revoked key cannot be rotated or deleted and re-registered by its owner', async () => {
