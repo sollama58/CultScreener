@@ -361,6 +361,12 @@ async function initializeDatabase() {
 
       CREATE INDEX IF NOT EXISTS idx_token_views_count ON token_views(view_count DESC);
 
+      -- batch-view-counts jobs already applied, so a redelivered job adds nothing twice
+      CREATE TABLE IF NOT EXISTS view_count_batches (
+        batch_id VARCHAR(64) PRIMARY KEY,
+        processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+
       -- Announcements table for admin-broadcast site-wide messages
       CREATE TABLE IF NOT EXISTS announcements (
         id SERIAL PRIMARY KEY,

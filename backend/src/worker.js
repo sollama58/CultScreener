@@ -87,6 +87,9 @@ const jobProcessors = {
     // they are individually trivial and collectively unbounded - a QR regenerated a few times a
     // day by every user adds up to a table nobody ever looks at.
     const devices = await db.cleanupExpiredDeviceSessions();
+    // Applied view-count batch ids only matter while BullMQ could still re-run that job
+    await db.pool.query(`DELETE FROM view_count_batches WHERE processed_at < NOW() - INTERVAL '1 day'`)
+      .catch(err => console.warn('[Worker] view_count_batches prune failed:', err.message));
     console.log(`[Worker] Cleaned up ${count} expired sessions, ${devices} expired device sessions`);
 
     return { cleanedSessions: count, cleanedDeviceSessions: devices };
@@ -111,7 +114,7 @@ const jobProcessors = {
    * Receives buffered view increments and writes to database in one transaction
    */
   'batch-view-counts': async (job) => {
-    const { updates } = job.data;
+    const { updates, batchId } = job.data;
 
     if (!updates || updates.length === 0) {
       return { updated: 0 };
@@ -127,6 +130,19 @@ const jobProcessors = {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
+
+      // A batch is applied once: BullMQ re-runs a job that stalled after COMMIT
+      // (and an add ioredis resent is the same job id), so record it in the same
+      // transaction. Batches queued before batch ids existed have none.
+      if (batchId) {
+        const { rowCount } = await client.query(
+          'INSERT INTO view_count_batches (batch_id) VALUES ($1) ON CONFLICT (batch_id) DO NOTHING', [batchId]);
+        if (rowCount === 0) {
+          await client.query('ROLLBACK');
+          console.log(`[Worker] View count batch ${batchId} was already applied; skipped`);
+          return { updated: 0, duplicate: true };
+        }
+      }
 
       const mints = updates.map(u => u.tokenMint);
       const counts = updates.map(u => u.count);

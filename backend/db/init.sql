@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS token_views (
 
 CREATE INDEX IF NOT EXISTS idx_token_views_count ON token_views(view_count DESC);
 
+-- batch-view-counts jobs already applied, so a redelivered job adds nothing twice
+-- (rows older than a day are pruned by the worker's cleanup-sessions job)
+CREATE TABLE IF NOT EXISTS view_count_batches (
+    batch_id VARCHAR(64) PRIMARY KEY,
+    processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- =====================================================
 -- SENTIMENT VOTES TABLE
 -- Community bullish/bearish votes (one per wallet per token)
