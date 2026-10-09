@@ -43,9 +43,12 @@ const holderChart = (() => {
   }
   function fmtTick(t, tickType) {
     const d = new Date(t * 1000);
-    if (tickType === 0) return String(d.getFullYear());
-    if (tickType === 1) return d.toLocaleString(undefined, { month: 'short' });
-    if (tickType === 2) return d.toLocaleString(undefined, { month: 'short', day: 'numeric' });
+    // Lightweight Charts places Year/Month/Day ticks on UTC boundaries, so label those
+    // in UTC too: in local time a tick on Oct 1 00:00 UTC reads "Sep" west of UTC.
+    // Time-of-day ticks stay in the viewer's zone, like the crosshair label.
+    if (tickType === 0) return String(d.getUTCFullYear());
+    if (tickType === 1) return d.toLocaleString(undefined, { month: 'short', timeZone: 'UTC' });
+    if (tickType === 2) return d.toLocaleString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
     return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
   function ago(t) {
@@ -254,10 +257,14 @@ const holderChart = (() => {
     return me.visible;
   }
 
-  async function show(range) {
+  function markRange(range) {
     st.range = range;
     savePrefs();
     st.root.querySelectorAll('.hc-range button').forEach(b => b.classList.toggle('on', b.dataset.range === range));
+  }
+
+  async function show(range) {
+    markRange(range);
     const me = st;
     const seq = ++me.seq;
     const stale = () => st !== me || seq !== me.seq; // destroyed, or a newer range click won
@@ -266,6 +273,7 @@ const holderChart = (() => {
       const data = await fetchRange(range);
       if (stale()) return;
       me.data = data;
+      me.dataRange = range;
       renderTop();
       if (!me.chart) {
         await whenVisible(me);
@@ -281,6 +289,11 @@ const holderChart = (() => {
       if (!st.data) {
         renderTop();
         setMsg('Holder history is unavailable right now.');
+      } else if (me.dataRange && me.dataRange !== range) {
+        // The chart still shows the previous range: point the buttons (and the saved
+        // preference) back at it rather than labelling old data with the new range
+        markRange(me.dataRange);
+        if (typeof toast !== 'undefined') toast.error('Could not load that range. Try again in a moment.');
       }
     }
   }
@@ -350,5 +363,5 @@ const holderChart = (() => {
     if (unobserve) unobserve();
   }
 
-  return { load, destroy, _test: { fmtAxis, fmtCount } };
+  return { load, destroy, _test: { fmtAxis, fmtCount, fmtTick } };
 })();
