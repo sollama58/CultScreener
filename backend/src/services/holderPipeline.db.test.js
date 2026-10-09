@@ -470,6 +470,49 @@ if (!DB_URL) {
         [MINT, new Date(T0 - 11 * DAY)]);
     });
 
+    test('a failed wallet on a token that never changes is retried by the backfill run', async () => {
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'failed', backfill_attempts = 3,
+        backfill_updated_at = $2 WHERE mint_address = $1 AND wallet = 'W009'`, [MINT, new Date(now - 25 * HOUR)]);
+      // No snapshot is written (the pre-check would find nothing changed); the backfill run alone
+      // used to leave it failed until an admin flush
+      await drainBackfill();
+      assert.strictEqual((await position('W009')).acquired_source, 'backfill');
+    });
+
+    test('a holder the page read missed keeps its position and streak', async () => {
+      const before = await position('W020');
+      assert.ok(before);
+      const realAll = solana.getAllTokenAccounts;
+      const realMulti = solana.getMultipleAccounts;
+      // An account closed between two page reads shifted W020 off both pages
+      solana.getAllTokenAccounts = async (...args) => {
+        const r = await realAll(...args);
+        return { ...r, accounts: r.accounts.filter(a => a.owner !== 'W020') };
+      };
+      const checked = [];
+      solana.getMultipleAccounts = async addrs => {
+        checked.push(...addrs);
+        const res = await realMulti(addrs);
+        return { value: addrs.map((a, i) => (a === ata('W020')
+          ? { data: { parsed: { info: { mint: MINT, owner: 'W020', tokenAmount: { amount: chain.W020.amount.toString() } } } } }
+          : res.value[i])) };
+      };
+      try {
+        now += 10 * 60 * 1000;
+        const r = await pipeline.takeSnapshot(MINT);
+        assert.strictEqual(r.status, 'ok');
+        assert.strictEqual(r.complete, true);
+      } finally {
+        solana.getAllTokenAccounts = realAll;
+        solana.getMultipleAccounts = realMulti;
+      }
+      assert.ok(checked.includes(ata('W020')));
+      const after = await position('W020');
+      assert.ok(after, 'position kept');
+      assert.strictEqual(after.acquired_source, before.acquired_source);
+      assert.strictEqual(String(after.acquired_at), String(before.acquired_at));
+    });
+
     test('rate limiting keeps a wallet pending past the normal attempt limit, then it settles', async () => {
       const snap = await store.getLatestSnapshot(MINT);
       const lp = new Set(snap.sample_meta.lpWallets || []);

@@ -190,6 +190,39 @@ async function mergeLargestAccounts(mint, accounts) {
   });
 }
 
+// DAS pages are offset windows over a live account list. An account closed between two page
+// reads shifts the later pages down by one, so the account at the boundary is on neither
+// page; a complete snapshot then deleted its holder's position as departed, and the wallet
+// came back next time as a newcomer with its streak reset. Before that, re-read the stored
+// accounts of wallets that vanished and put back the ones still holding (one call per 100
+// wallets, capped so a mass exit can't run up credits). A failed read changes nothing:
+// those wallets count as departed, as before.
+const MAX_DEPARTURE_CHECKS = 2000;
+
+async function restoreMissedHolders(mint, accounts) {
+  const present = new Set(accounts.map(a => a.owner));
+  const gone = (await store.getPositionAccounts(mint))
+    .filter(p => p.token_account && !present.has(p.wallet))
+    .slice(0, MAX_DEPARTURE_CHECKS);
+  let restored = 0;
+  for (let i = 0; i < gone.length; i += 100) {
+    const batch = gone.slice(i, i + 100);
+    const res = await solanaService.getMultipleAccounts(batch.map(p => p.token_account)).catch(() => null);
+    (res?.value || []).forEach((acct, j) => {
+      const info = acct?.data?.parsed?.info;
+      if (!info || info.mint !== mint || info.owner !== batch[j].wallet) return;
+      const amount = info.tokenAmount?.amount;
+      if (!/^\d+$/.test(amount || '') || BigInt(amount) <= 0n) return;
+      accounts.push({ owner: info.owner, address: batch[j].token_account, amount });
+      restored++;
+    });
+  }
+  if (restored > 0) {
+    console.log(`[Holders] ${mint.slice(0, 8)}: ${restored} holder(s) missing from the page read still hold; kept`);
+  }
+  return restored;
+}
+
 // ── Holder count history ─────────────────────────────────────────────────────
 
 /**
@@ -288,6 +321,8 @@ async function takeSnapshot(mint) {
       }));
     }
     if (!complete) await mergeLargestAccounts(mint, accounts);
+    // Only a complete snapshot deletes departed positions
+    else if (prev) await restoreMissedHolders(mint, accounts);
     const takenAt = Date.now();
     const holders = aggregateHolders(accounts);
     // The raw account list (one object per token account, tens of MB for a big
@@ -551,6 +586,9 @@ async function runBackfill(mint) {
     await cache.set(keys.backfillPending(mint), Date.now(), CONFIG.backfillLockTtl).catch(() => {});
     const snap = await store.getLatestSnapshot(mint);
     if (!snap) return { status: 'no-snapshot' };
+    // Gave up a day or more ago: try again (writeSnapshot does this too, but an unchanged
+    // token never writes one)
+    await store.requeueFailedBackfills(mint, Date.now());
     const entries = await store.getSnapshotEntries(snap.id, CONFIG.listN);
     const wallets = walletsOfInterest(snap, entries);
     const positions = await store.getPositions(mint, wallets);
