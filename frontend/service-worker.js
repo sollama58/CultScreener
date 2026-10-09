@@ -86,6 +86,7 @@
 // podium order and keyboard sorting, retry after a failed tab load, phone ATH columns -
 // tokenTable.js v9, conviction.js v23, tech.js v7, emerging.js v7, performance.js v29,
 // versus.js v18, mainViewTabs.js v3, home.css v2.
+// v88: API key Refresh details signs the 'view' action - apiKeys.js v6.
 const CACHE_VERSION = 'holdex-v88';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
