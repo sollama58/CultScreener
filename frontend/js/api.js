@@ -199,6 +199,9 @@ const latencyTracker = {
 // gets a chance to respond with an error rather than the client aborting first.
 const DEFAULT_REQUEST_TIMEOUT = (typeof config !== 'undefined' && config.api?.timeout) || 35000;
 
+// Most mints POST /api/tokens/batch accepts in one call (backend routes/tokens.js MAX_BATCH_SIZE)
+const TOKEN_BATCH_MAX = 50;
+
 // Global 429 rate-limit awareness: when set, auto-refresh and background requests should back off
 let _rateLimitedUntil = 0;
 function isRateLimited() { return Date.now() < _rateLimitedUntil; }
@@ -437,13 +440,26 @@ const api = {
         return mints.map(mint => cachedResults.find(t => t.address === mint || t.mintAddress === mint)).filter(Boolean);
       }
 
-      // Fetch uncached tokens via batch endpoint
+      // Fetch uncached tokens via batch endpoint, in chunks: the server refuses more than
+      // TOKEN_BATCH_MAX mints per call (400), and a watchlist may hold 100
       try {
-        const batchData = await api.request('/api/tokens/batch', {
+        const chunks = [];
+        for (let i = 0; i < uncached.length; i += TOKEN_BATCH_MAX) {
+          chunks.push(uncached.slice(i, i + TOKEN_BATCH_MAX));
+        }
+        // One failed chunk keeps the others' tokens
+        const settled = await Promise.allSettled(chunks.map(chunk => api.request('/api/tokens/batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mints: uncached })
-        });
+          body: JSON.stringify({ mints: chunk })
+        })));
+        const batchData = [];
+        for (const r of settled) {
+          if (r.status === 'fulfilled' && Array.isArray(r.value)) batchData.push(...r.value);
+        }
+        if (batchData.length === 0 && settled.some(r => r.status === 'rejected')) {
+          throw settled.find(r => r.status === 'rejected').reason;
+        }
 
         // Cache each result under a batch-specific key to avoid polluting the
         // detail cache (batch tokens lack liquidity, holders, supply, age, etc.)
@@ -608,9 +624,12 @@ const api = {
 
     // auth = { signature, signatureTimestamp } - the server requires a wallet
     // signature over `HolDEX Watchlist: add|remove <mint> for <wallet> at <ts>`
+    // retries: 1 - the signature is single-use server-side, so a retry of the same body is
+    // always refused as SIGNATURE_REPLAY, even when the first attempt went through
     async add(wallet, tokenMint, auth = {}) {
       return api.request('/api/watchlist', {
         method: 'POST',
+        retries: 1,
         body: JSON.stringify({ wallet, tokenMint, ...auth })
       });
     },
@@ -618,6 +637,7 @@ const api = {
     async remove(wallet, tokenMint, auth = {}) {
       return api.request('/api/watchlist', {
         method: 'DELETE',
+        retries: 1,
         body: JSON.stringify({ wallet, tokenMint, ...auth })
       });
     },
@@ -652,6 +672,7 @@ const api = {
     async cast(mint, sentimentType, wallet, auth = {}) {
       return api.request(`/api/sentiment/${mint}`, {
         method: 'POST',
+        retries: 1, // single-use signature: a retry is always a replay (see watchlist.add)
         body: JSON.stringify({ voterWallet: wallet, sentiment: sentimentType, ...auth })
       });
     }

@@ -107,11 +107,22 @@ const wallet = {
     return null;
   },
 
-  // Show wallet selection modal
+  // Show wallet selection modal. Returns a promise that settles when the modal ends: true once
+  // a wallet from it connects, false when it is closed (or replaced by another selector).
   showWalletSelector() {
     // Remove any existing modal
     const existingModal = document.querySelector('.wallet-selector-modal');
     if (existingModal) existingModal.remove();
+    if (this._selectorSettle) this._selectorSettle(false);
+
+    let settle;
+    const outcome = new Promise((resolve) => { settle = resolve; });
+    const finish = (connected) => {
+      if (this._selectorSettle === finish) this._selectorSettle = null;
+      settle(connected);
+    };
+    this._selectorSettle = finish;
+    const close = () => { modal.remove(); finish(false); };
 
     const installedWallets = this.getInstalledWallets();
     const notInstalledWallets = this.supportedWallets.filter(w => !w.isInstalled());
@@ -121,7 +132,7 @@ const wallet = {
 
     const overlay = document.createElement('div');
     overlay.className = 'wallet-selector-overlay';
-    overlay.onclick = () => modal.remove();
+    overlay.onclick = close;
 
     const content = document.createElement('div');
     content.className = 'wallet-selector-content';
@@ -136,7 +147,7 @@ const wallet = {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'wallet-selector-close';
     closeBtn.innerHTML = '&times;';
-    closeBtn.onclick = () => modal.remove();
+    closeBtn.onclick = close;
 
     header.appendChild(title);
     header.appendChild(closeBtn);
@@ -164,6 +175,7 @@ const wallet = {
           const success = await this.connectToWallet(walletConfig.id);
           if (success) {
             modal.remove();
+            finish(true);
           } else {
             walletBtn.disabled = false;
             walletBtn.classList.remove('connecting');
@@ -305,6 +317,8 @@ const wallet = {
     // Focus trap for accessibility
     content.setAttribute('tabindex', '-1');
     content.focus();
+
+    return outcome;
   },
 
   // Connect to a specific wallet
@@ -372,9 +386,9 @@ const wallet = {
       return this.connectToWallet(installedWallets[0].id);
     }
 
-    // Otherwise show selector
-    this.showWalletSelector();
-    return false; // Connection happens asynchronously via modal
+    // Otherwise show selector, and answer once the user has picked a wallet or closed it:
+    // callers such as watchlist.add carry on after a connect made from the modal
+    return this.showWalletSelector();
   },
 
   // Disconnect wallet
@@ -753,6 +767,9 @@ const wallet = {
       this.linkedAddress = null;
       menu.remove();
       this.updateUI();
+      // Views showing the linked wallet's data (home Watchlist tier, community 'My watchlist')
+      // drop it on walletDisconnected, exactly as for a wallet that disconnects
+      window.dispatchEvent(new CustomEvent('walletDisconnected', { detail: { unlinked: true } }));
       toast.info('This phone is no longer linked');
     };
 
@@ -869,7 +886,12 @@ const wallet = {
         wallet: this.providerName,
         timestamp: Date.now()
       };
-      sessionStorage.setItem(this._getStorageKey('walletConnection'), JSON.stringify(connectionData));
+      // Storage can throw (site data blocked, some embedded contexts). Remembering the connection
+      // is a convenience: a throw here used to turn a successful connect into 'Failed to connect
+      // wallet' with walletConnected never dispatched.
+      try {
+        sessionStorage.setItem(this._getStorageKey('walletConnection'), JSON.stringify(connectionData));
+      } catch (e) { /* storage unavailable */ }
     }
     // Clear any legacy localStorage data for privacy
     this._clearLegacyStorage();
@@ -877,7 +899,10 @@ const wallet = {
 
   // Clear saved connection
   clearConnection() {
-    sessionStorage.removeItem(this._getStorageKey('walletConnection'));
+    // Guarded for the same reason as saveConnection: disconnect() must still announce itself
+    try {
+      sessionStorage.removeItem(this._getStorageKey('walletConnection'));
+    } catch (e) { /* storage unavailable */ }
     this._clearLegacyStorage();
   },
 
@@ -1139,18 +1164,32 @@ const wallet = {
       window.dispatchEvent(new CustomEvent('walletDisconnected'));
     });
 
-    provider.on('accountChanged', (publicKey) => {
-      if (publicKey) {
-        this.address = publicKey.toString();
-        this.updateUI();
-        this.saveConnection();
-        this.broadcastConnectionChange('connected');
-        window.dispatchEvent(new CustomEvent('walletConnected', {
-          detail: { address: this.address, wallet: walletId }
-        }));
-      } else {
-        this.disconnect();
+    provider.on('accountChanged', async (publicKey) => {
+      // Listeners sit on every installed wallet: only the one in use speaks for this page
+      if (!this.connected || this.provider !== provider) return;
+      if (!publicKey) {
+        // Phantom sends null when the account switched to has not connected to this site yet.
+        // Ask for it without a prompt; failing that, forget the connection locally. Never
+        // provider.disconnect(): that revoked the site in the wallet and logged out every tab.
+        try {
+          const response = await provider.connect({ onlyIfTrusted: true });
+          publicKey = response && response.publicKey;
+        } catch (e) { publicKey = null; }
+        if (this.provider !== provider) return; // disconnected or switched meanwhile
+        if (!publicKey) {
+          this.clearConnection();
+          this.silentDisconnect();
+          if (typeof toast !== 'undefined') toast.info('Wallet account changed. Connect again to use it here.');
+          return;
+        }
       }
+      this.address = publicKey.toString();
+      this.updateUI();
+      this.saveConnection();
+      this.broadcastConnectionChange('connected');
+      window.dispatchEvent(new CustomEvent('walletConnected', {
+        detail: { address: this.address, wallet: walletId }
+      }));
     });
   },
 

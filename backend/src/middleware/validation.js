@@ -736,6 +736,23 @@ function createDeviceLinkSignatureMessage(wallet, timestamp) {
 }
 
 /**
+ * Listing and unlinking phones get their own wording for the same reason: they used to sign the
+ * pairing message, so the wallet prompt for "Disconnect all phones" asked the user to approve
+ * linking a device, and a signature given to list or revoke was also accepted by /pair (which
+ * mints a pairing code, and so a session). Unlinking names the device (or "all"), so a signature
+ * for one phone cannot disconnect another.
+ */
+function createDeviceListSignatureMessage(wallet, timestamp) {
+  return `HolDEX List Linked Devices: ${wallet} at ${timestamp}`;
+}
+
+function createDeviceRevokeSignatureMessage(wallet, timestamp, deviceId) {
+  return deviceId === 'all'
+    ? `HolDEX Unlink All Devices: ${wallet} at ${timestamp}`
+    : `HolDEX Unlink Device ${deviceId}: ${wallet} at ${timestamp}`;
+}
+
+/**
  * Device tokens are stored hashed, never raw - a pairing code and a device session token are both
  * bearer credentials, so a dump of the table would otherwise be a pile of working sessions.
  * Unsalted SHA-256 is the right tool and would not be for a password: the input is 32 bytes of
@@ -746,12 +763,28 @@ function hashDeviceToken(token) {
 }
 
 /**
- * Proves the caller holds the wallet it claims, for device pairing and revocation. Same shape as
- * validateWalletSignature (timestamp window, replay window, 64-byte signature) but bound to the
- * pairing message above.
+ * Proves the caller holds the wallet it claims, for device pairing, listing and revocation. Same
+ * shape as validateWalletSignature (timestamp window, replay window, 64-byte signature), each
+ * bound to its own action's message above: messageFor(req, wallet, timestamp) returns the text
+ * the wallet must have signed, or null when the request does not say what it is for.
  */
-async function validateDeviceLinkSignature(req, res, next) {
-  const { wallet, signature, signatureTimestamp } = req.body;
+function deviceSignatureValidator(messageFor) {
+  return (req, res, next) => checkDeviceSignature(messageFor, req, res, next);
+}
+
+const validateDeviceLinkSignature = deviceSignatureValidator(
+  (req, wallet, timestamp) => createDeviceLinkSignatureMessage(wallet, timestamp));
+const validateDeviceListSignature = deviceSignatureValidator(
+  (req, wallet, timestamp) => createDeviceListSignatureMessage(wallet, timestamp));
+const validateDeviceRevokeSignature = deviceSignatureValidator((req, wallet, timestamp) => {
+  const { all, deviceId } = req.body || {};
+  if (all === true) return createDeviceRevokeSignatureMessage(wallet, timestamp, 'all');
+  if (Number.isInteger(deviceId)) return createDeviceRevokeSignatureMessage(wallet, timestamp, deviceId);
+  return null;
+});
+
+async function checkDeviceSignature(messageFor, req, res, next) {
+  const { wallet, signature, signatureTimestamp } = req.body || {};
 
   if (!signature || !signatureTimestamp || !wallet) {
     return res.status(400).json({
@@ -780,7 +813,10 @@ async function validateDeviceLinkSignature(req, res, next) {
     return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
   }
 
-  const expectedMessage = createDeviceLinkSignatureMessage(wallet, timestamp);
+  const expectedMessage = messageFor(req, wallet, timestamp);
+  if (!expectedMessage) {
+    return res.status(400).json({ error: 'deviceId required' });
+  }
   if (!verifyWalletSignature(expectedMessage, signature, wallet)) {
     return res.status(401).json({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' });
   }
@@ -1947,7 +1983,11 @@ async function canBypassCache(req) {
 module.exports = {
   canBypassCache,
   createDeviceLinkSignatureMessage,
+  createDeviceListSignatureMessage,
+  createDeviceRevokeSignatureMessage,
   validateDeviceLinkSignature,
+  validateDeviceListSignature,
+  validateDeviceRevokeSignature,
   hashDeviceToken,
   validateMint,
   validateWallet,

@@ -91,24 +91,62 @@
       return;
     }
 
+    await redeem(siteToken);
+  }
+
+  async function redeem(siteToken) {
     let wallet = null;
     let siteOk = false;
+    let codeRefused = false;
 
     try {
       wallet = await deviceLink.redeemSiteCode(siteToken);
       siteOk = true;
       addResult('HolDEX', 'Connected. Your watchlist and holdings are here.', true);
     } catch (err) {
+      // Only a 400 means the code itself is spent or expired. A network error, rate limit or
+      // server error leaves it unspent, so the page must not say it was used.
+      codeRefused = err.status === 400;
       addResult('HolDEX', err.message || 'Could not connect', false);
     }
 
     dom.spinner.remove();
 
-    if (!siteOk) {
+    if (!siteOk && codeRefused) {
       setIcon('error');
       dom.heading.textContent = 'That code has been used';
       dom.message.textContent = 'Each code works once and lasts two minutes. Generate a new one on your desktop.';
       addAction('Open HolDEX', '/', true);
+      return;
+    }
+
+    if (!siteOk) {
+      setIcon('error');
+      dom.heading.textContent = 'Could not reach HolDEX';
+      dom.message.textContent = 'Your code was not used and still works until it expires (two minutes). Check your connection and try again.';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'btn btn-primary';
+      retry.textContent = 'Try again';
+      retry.onclick = () => {
+        dom.results.textContent = '';
+        dom.results.hidden = true;
+        dom.actions.textContent = '';
+        dom.actions.hidden = true;
+        dom.spinner = document.createElement('div');
+        dom.spinner.className = 'dl-spinner';
+        dom.icon.dataset.state = 'working';
+        dom.icon.textContent = '';
+        dom.icon.appendChild(dom.spinner);
+        dom.heading.textContent = 'Connecting your phone';
+        dom.message.textContent = '';
+        redeem(siteToken).catch(() => {
+          fail('Something went wrong', 'We could not reach HolDEX. Check your connection and scan a fresh code.');
+        });
+      };
+      dom.actions.appendChild(retry);
+      dom.actions.hidden = false;
+      addAction('Open HolDEX', '/', false);
       return;
     }
 
