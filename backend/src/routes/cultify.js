@@ -862,8 +862,16 @@ router.get('/holder-behavior/my-access', walletLimiter, asyncHandler(async (req,
   if (!walletAddress || !SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     return res.json({ items: [] });
   }
+  const active = await getActiveHBAccess(walletAddress);
+  res.json({ items: active.map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' })) });
+}));
+
+// A wallet's unexpired Holder Behavior accesses as [{ mint, expiresAt }], from the Redis wallet
+// index, rebuilt from cultify_burns when the index is empty (Redis restart, eviction, TTL).
+// Shared with /api/utilities/my-access (app.js), which the My Utilities modal calls.
+async function getActiveHBAccess(walletAddress) {
   const idxKey = `hb:wallet-idx:${walletAddress}`;
-  let entries = (await cache.get(idxKey)) || [];
+  const entries = (await cache.get(idxKey)) || [];
   const now = Date.now();
   let active = entries.filter(e => e.expiresAt > now);
 
@@ -878,11 +886,11 @@ router.get('/holder-behavior/my-access', walletLimiter, asyncHandler(async (req,
       }
     }
   }
-
-  res.json({ items: active.map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' })) });
-}));
+  return active;
+}
 
 module.exports = router;
+module.exports.getActiveHBAccess = getActiveHBAccess;
 // Exposed for tests only - lets the burn verification be exercised against captured transaction
 // fixtures without standing up the whole route (and its DB/cache/RPC dependencies).
 module.exports._verifyBurnTransaction = verifyBurnTransaction;

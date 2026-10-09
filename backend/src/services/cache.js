@@ -840,21 +840,64 @@ function createByteBudget({ limitBytes, windowMs, buckets = 24, now = Date.now }
   const sliceMs = windowMs / buckets;
   let slices = []; // [{ start, bytes }], oldest first
   const prune = (t) => { slices = slices.filter((s) => s.start + windowMs > t); };
+  const add = (t, bytes) => {
+    const start = Math.floor(t / sliceMs) * sliceMs;
+    const last = slices[slices.length - 1];
+    if (last && last.start === start) last.bytes += bytes;
+    else slices.push({ start, bytes });
+  };
   return {
     tryConsume(bytes) {
       const t = now();
       prune(t);
       const used = slices.reduce((sum, s) => sum + s.bytes, 0);
       if (used + bytes > limitBytes) return false;
-      const start = Math.floor(t / sliceMs) * sliceMs;
-      const last = slices[slices.length - 1];
-      if (last && last.start === start) last.bytes += bytes;
-      else slices.push({ start, bytes });
+      add(t, bytes);
       return true;
+    },
+    // Count bytes that were spent whether or not they fit (e.g. bytes already downloaded)
+    record(bytes) {
+      const t = now();
+      prune(t);
+      add(t, bytes);
     },
     used() {
       prune(now());
       return slices.reduce((sum, s) => sum + s.bytes, 0);
+    },
+    exhausted() {
+      return this.used() >= limitBytes;
+    }
+  };
+}
+
+/**
+ * createByteBudget, but counted in the cache itself (one INCRBY counter per slice) instead of
+ * process memory. For a budget that guards what is written to that same cache: the count then
+ * survives API restarts and deploys (a per-process count started from zero each time while the
+ * earlier entries were still there), and is lost together with the entries when the cache itself
+ * restarts empty (a per-process count kept refusing writes for a whole window). Async; refuses
+ * when the cache cannot answer, since the write it guards would not land either.
+ */
+function createSharedByteBudget({ store, prefix, limitBytes, windowMs, buckets = 24, now = Date.now }) {
+  const sliceMs = windowMs / buckets;
+  const sliceKeys = (t) => {
+    const current = Math.floor(t / sliceMs);
+    return Array.from({ length: buckets }, (_, i) => `${prefix}:${current - i}`);
+  };
+  const usedAt = async (keyList) => (await store.mget(keyList)).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  return {
+    async tryConsume(bytes) {
+      try {
+        const keyList = sliceKeys(now());
+        if ((await usedAt(keyList)) + bytes > limitBytes) return false;
+        return (await store.incrBy(keyList[0], bytes, windowMs + sliceMs)) != null;
+      } catch {
+        return false;
+      }
+    },
+    async used() {
+      return usedAt(sliceKeys(now()));
     }
   };
 }
@@ -864,5 +907,6 @@ module.exports = {
   CacheService,
   TTL,
   keys,
-  createByteBudget
+  createByteBudget,
+  createSharedByteBudget
 };

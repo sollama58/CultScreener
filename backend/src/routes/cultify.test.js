@@ -521,3 +521,22 @@ describe('GET /analyze/:mint DAS fallback decimals', () => {
     assert.strictEqual(job.data.usedDAS, true);
   });
 });
+
+describe('getActiveHBAccess (My Utilities)', () => {
+  const WALLET = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+
+  test('rebuilds from the DB when the Redis wallet index is gone, and repopulates it', async () => {
+    const expiresAt = Date.now() + 3600000;
+    db.getHBAccessByWallet = async (w) => (w === WALLET ? [{ mint: MINT, expiresAt }, { mint: 'Old', expiresAt: Date.now() - 1 }] : []);
+    const active = await cultifyRoutes.getActiveHBAccess(WALLET);
+    assert.deepStrictEqual(active, [{ mint: MINT, expiresAt }]);
+    assert.deepStrictEqual(store.get(`hb:wallet-idx:${WALLET}`), [{ mint: MINT, expiresAt }]);
+  });
+
+  test('uses the Redis index when it has live entries', async () => {
+    const expiresAt = Date.now() + 3600000;
+    store.set(`hb:wallet-idx:${WALLET}`, [{ mint: MINT, expiresAt }]);
+    db.getHBAccessByWallet = async () => { throw new Error('should not be called'); };
+    assert.deepStrictEqual(await cultifyRoutes.getActiveHBAccess(WALLET), [{ mint: MINT, expiresAt }]);
+  });
+});
