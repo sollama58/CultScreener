@@ -233,7 +233,7 @@ async function ensureRecurringJobs({ now = Date.now() } = {}) {
         const existing = await queue.getJobScheduler(id).catch(() => true);
         if (!existing) {
           const day = new Date(now).toISOString().slice(0, 10);
-          await queue.add(id, { catchUp: true }, { jobId: `${id}-catchup-${day}` });
+          await queue.add(id, { catchUp: true, day }, { jobId: `${id}-catchup-${day}` });
           console.warn(`[JobQueue] ${id} schedule was missing after today's run time; queued a catch-up run`);
         }
       }
@@ -347,11 +347,12 @@ async function flushViewCounts() {
     }
 
     // Try job queue first if available
+    let batchId = null;
     if (isInitialized) {
       try {
         // The batch id is also the job id: an add that ioredis resends is the same
         // job, and the worker records it so a re-run (stalled job) adds nothing twice
-        const batchId = `views-${crypto.randomUUID()}`;
+        batchId = `views-${crypto.randomUUID()}`;
         const job = await addAnalyticsJob('batch-view-counts', { updates: viewUpdates, batchId }, { ...VIEW_COUNT_JOB_OPTIONS, jobId: batchId });
         if (job) {
           console.log(`[JobQueue] Queued ${viewUpdates.length} view count updates`);
@@ -363,7 +364,10 @@ async function flushViewCounts() {
     }
 
     // Fallback: Write directly to database — re-add failed entries back to buffer
-    const successfulMints = new Set(await flushViewCountsDirect(viewUpdates));
+    // An add that timed out may still land in Redis later, so record its batch id
+    // as applied: the worker then skips that job instead of counting it again.
+    // Mints that fail here go back to the buffer and are flushed under a new id.
+    const successfulMints = new Set(await flushViewCountsDirect(viewUpdates, batchId));
     for (const [tokenMint, count] of snapshot) {
       if (!successfulMints.has(tokenMint)) {
         // Re-add failed entries back to the live buffer
@@ -386,11 +390,23 @@ async function flushViewCounts() {
  * Direct database write fallback for view counts
  * Used when Redis/job queue is unavailable
  */
-async function flushViewCountsDirect(viewUpdates) {
+async function flushViewCountsDirect(viewUpdates, batchId = null) {
   const database = getDb();
   if (!database.isReady()) {
     console.warn('[JobQueue] Database not ready, view counts will be retained in buffer');
     return [];
+  }
+
+  if (batchId) {
+    try {
+      const { rowCount } = await database.pool.query(
+        'INSERT INTO view_count_batches (batch_id) VALUES ($1) ON CONFLICT (batch_id) DO NOTHING', [batchId]);
+      // The late job already landed and was applied: nothing left to write
+      if (rowCount === 0) return viewUpdates.map(u => u.tokenMint);
+    } catch (err) {
+      console.warn('[JobQueue] Could not record view count batch, retaining in buffer:', err.message);
+      return [];
+    }
   }
 
   console.log(`[JobQueue] Writing ${viewUpdates.length} view counts directly to DB...`);
@@ -547,5 +563,7 @@ module.exports = {
   getQueueStats,
   isWorkerActive,
   shutdown,
-  QUEUE_NAMES
+  QUEUE_NAMES,
+  // exported for tests
+  flushViewCountsDirect,
 };

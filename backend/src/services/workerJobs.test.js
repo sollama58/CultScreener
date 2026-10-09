@@ -89,10 +89,21 @@ describe('compute-holder-analytics', () => {
 describe('snapshot-holders', () => {
   test('an unchanged snapshot renews a full classification instead of letting it lapse (audit #125)', async () => {
     pipeline.takeSnapshot = async () => ({ status: 'unchanged' });
-    await realSet(`holder-analytics:${MINT}`, { holders: [], supply: { total: 1 } }, 1000);
+    pipeline.getSnapshotHolderList = async () => ({ rawAccounts: holderAccounts(30, 'S'), totalSupply: 1e9, decimals: 6 });
+    await realSet(`holder-analytics:${MINT}`, { holders: holderAccounts(30, 'S'), supply: { total: 1 } }, 1000);
     await jobProcessors['snapshot-holders']({ data: { mint: MINT } });
     assert.strictEqual(ttls.get(`holder-analytics:${MINT}`), 4 * 3600000 + 2 * TTL.HOUR);
-    assert.strictEqual(await cache.get(`holder-classify-pending:${MINT}`), undefined, 'no classification queued');
+    assert.strictEqual(ttls.has(`holder-classify-pending:${MINT}`), false, 'no classification queued');
+  });
+
+  test('a short inline classification is not renewed; the snapshot list is classified (audit #125)', async () => {
+    pipeline.takeSnapshot = async () => ({ status: 'unchanged' });
+    pipeline.getSnapshotHolderList = async () => ({ rawAccounts: holderAccounts(100, 'S'), totalSupply: 1e9, decimals: 6 });
+    // The API's inline fallback: 20 RPC accounts, with a supply
+    await realSet(`holder-analytics:${MINT}`, { holders: holderAccounts(20, 'R'), supply: { total: 1 } }, TTL.HOUR);
+    await jobProcessors['snapshot-holders']({ data: { mint: MINT } });
+    assert.strictEqual(ttls.get(`holder-analytics:${MINT}`), undefined, 'the short result is left to expire');
+    assert.ok(ttls.has(`holder-classify-pending:${MINT}`), 'a classification was attempted');
   });
 
   test('a failed classification add releases the pending lock at once (audit #126); a fast result is not a classification', async () => {

@@ -605,17 +605,24 @@ const jobProcessors = {
     }
 
     // An unchanged holder list whose classification is still cached needs no re-run.
-    // Only a full classification counts (the API's 2-minute fast result has no supply).
+    // Only a full classification counts: the API's 2-minute fast result has no supply,
+    // and its inline fallback (20 RPC accounts) is shorter than the snapshot list.
     const cachedAnalytics = result.status === 'unchanged'
       ? await cache.get(`holder-analytics:${mint}`).catch(() => null) : null;
-    const classified = !!cachedAnalytics?.supply;
+    let list;
+    let classified = false;
+    if (cachedAnalytics?.supply) {
+      list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
+      const listed = list ? list.rawAccounts.filter(a => a.uiAmount > 0).length : 0;
+      classified = !!list && (cachedAnalytics.holders?.length || 0) >= Math.min(listed, holderPipeline.CONFIG.listN);
+    }
     if (classified) {
       // Still accurate, so renew it: written once, it expired 2h before the tick
       // after next, and page views in that gap re-queued the classification
       await cache.set(`holder-analytics:${mint}`, cachedAnalytics, holderAnalyticsTtl()).catch(() => {});
     }
     if ((result.status === 'ok' || result.status === 'unchanged') && !classified && !(await cache.get(`holder-classify-pending:${mint}`))) {
-      const list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
+      if (list === undefined) list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
       if (list) {
         await cache.set(`holder-classify-pending:${mint}`, Date.now(), 120000);
         // addAnalyticsJob returns null on failure (it never rejects): release the lock
@@ -671,6 +678,9 @@ const jobProcessors = {
     // A catch-up run (jobQueue.ensureRecurringJobs) is only for a day the schedule missed
     if (job?.data?.catchUp) {
       const today = new Date().toISOString().slice(0, 10);
+      // Queued for a day that has since ended: that day can't be crowned now, and
+      // today's crowning belongs to the 00:20 run
+      if (job.data.day && job.data.day !== today) return { skipped: `catch-up for ${job.data.day} ran after that day ended` };
       const done = await db.pool.query('SELECT 1 FROM diamond_hands_scores WHERE score_date = $1 LIMIT 1', [today])
         .then(r => r.rows.length > 0).catch(() => false);
       if (done) return { skipped: 'already crowned today' };

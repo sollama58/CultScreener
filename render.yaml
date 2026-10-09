@@ -206,11 +206,12 @@ services:
 
       # Worker performance tuning (starter plan has limited CPU — keep concurrency modest).
       # WORKER_CONCURRENCY is the analytics queue's job slots; the search queue has 2
-      # (WORKER_SEARCH_CONCURRENCY) and maintenance/notifications 1 each, so 14 in all
-      # against DB_POOL_MAX 15. Full holder snapshots are capped separately at
-      # HOLDER_SNAPSHOT_MAX_CONCURRENT (default 3) for memory.
+      # (WORKER_SEARCH_CONCURRENCY) and maintenance/notifications 1 each, so 10 in all
+      # against DB_POOL_MAX 15. A hold-time backfill job runs 12 wallet lookups at once,
+      # so analytics slots stay at 6 to leave pool headroom. Full holder snapshots are
+      # capped separately at HOLDER_SNAPSHOT_MAX_CONCURRENT (default 3) for memory.
       - key: WORKER_CONCURRENCY
-        value: "10"
+        value: "6"
       - key: WORKER_LIMITER_MAX
         value: "10"
 

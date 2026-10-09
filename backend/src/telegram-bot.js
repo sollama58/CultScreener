@@ -298,7 +298,15 @@ function startBot(token) {
   stopping = false;
   console.log('[TelegramBot] Bot started');
   const current = bot;
-  Promise.resolve().then(() => current.getMe()).then((me) => { botUsername = me?.username || null; }).catch(() => {});
+  // Retry getMe with backoff: until it succeeds, commands addressed to any bot are answered
+  const loadUsername = (delayMs) => {
+    Promise.resolve().then(() => current.getMe()).then((me) => { botUsername = me?.username || null; }).catch(() => {
+      if (bot !== current || stopping) return;
+      const t = setTimeout(() => { if (bot === current && !stopping) loadUsername(Math.min(delayMs * 2, 300000)); }, delayMs);
+      if (t.unref) t.unref();
+    });
+  };
+  loadUsername(5000);
 
   // /start
   bot.onText(commandPattern('start'), tracked(async (msg, match) => {

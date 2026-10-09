@@ -57,6 +57,21 @@ if (!DB_URL) {
     assert.strictEqual(await views(MINT), 5, 'a new batch still counts');
   });
 
+  test('a direct write records its batch id, so an add that lands late is skipped (audit #179)', async () => {
+    const MINT = 'ViewBatchMint333333333333333333333333333333';
+    const { flushViewCountsDirect } = require('./jobQueue');
+    const updates = [{ tokenMint: MINT, count: 2 }];
+    assert.deepStrictEqual(await flushViewCountsDirect(updates, 'views-test-late'), [MINT]);
+    assert.strictEqual(await views(MINT), 2);
+    // The timed-out add reaches Redis after all and the worker runs it
+    assert.deepStrictEqual(await jobProcessors['batch-view-counts']({ data: { batchId: 'views-test-late', updates } }),
+      { updated: 0, duplicate: true });
+    // And a job already applied before the fallback ran is not written again
+    await jobProcessors['batch-view-counts']({ data: { batchId: 'views-test-early', updates } });
+    assert.deepStrictEqual(await flushViewCountsDirect(updates, 'views-test-early'), [MINT]);
+    assert.strictEqual(await views(MINT), 4);
+  });
+
   test('a batch queued before batch ids existed is applied as before', async () => {
     const MINT = 'ViewBatchMint222222222222222222222222222222';
     await jobProcessors['batch-view-counts']({ data: { updates: [{ tokenMint: MINT, count: 4 }] } });
