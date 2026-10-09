@@ -416,8 +416,8 @@
           <div class="admin-stat-card"><div class="label">Total Votes</div><div class="value" id="stat-votes">--</div></div>
           <div class="admin-stat-card"><div class="label">Pending Submissions</div><div class="value" id="stat-pending">--</div></div>
           <div class="admin-stat-card"><div class="label">Approved</div><div class="value" id="stat-approved">--</div></div>
-          <div class="admin-stat-card"><div class="label">New Bug Reports</div><div class="value" id="stat-bugs">--</div></div>
-          <div class="admin-stat-card"><div class="label">Submissions (24h)</div><div class="value" id="stat-recent-subs">--</div></div>
+          <div class="admin-stat-card"><div class="label">New Bug Reports (legacy)</div><div class="value" id="stat-bugs">--</div></div>
+          <div class="admin-stat-card"><div class="label">Submissions (24h, legacy)</div><div class="value" id="stat-recent-subs">--</div></div>
           <div class="admin-stat-card"><div class="label">Votes (24h)</div><div class="value" id="stat-recent-votes">--</div></div>
         </div>
         <div style="margin-top:1.25rem;">
@@ -521,6 +521,7 @@
 
       <!-- Bug Reports -->
       <div id="tab-bugs" class="tab-panel">
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:1rem;">Read-only archive: the site no longer has a public bug-report form or route, so no new reports arrive here. Only reports filed before that route was removed are listed.</p>
         <div class="admin-form">
           <div class="field">
             <label for="bugs-status-filter">Status Filter</label>
@@ -541,6 +542,7 @@
 
       <!-- Submissions -->
       <div id="tab-submissions" class="tab-panel">
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:1rem;">The public submission route has been removed, so no new submissions arrive. Approved submissions filed earlier are still shown on token pages (banners, socials); use this tab to reject or reopen them.</p>
         <div class="admin-form">
           <div class="field">
             <label for="subs-status-filter">Status Filter</label>
@@ -642,7 +644,7 @@
 
   <script src="js/config.js?v=4"></script>
   <script src="js/api.js?v=17"></script>
-  <script src="js/admin.js?v=20"></script>
+  <script src="js/admin.js?v=21"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>
