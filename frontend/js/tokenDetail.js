@@ -294,10 +294,27 @@ const tokenDetail = {
       if (data.marketCap != null) this.token.marketCap = data.marketCap;
       if (data.fdv != null) this.token.fdv = data.fdv;
       if (data.pairCreatedAt) this.token.pairCreatedAt = data.pairCreatedAt;
-      // Clear the partial flag so renderToken shows real values
-      delete this.token.geckoPartial;
+      // Clear the partial flag so renderToken shows real values, but only when market data
+      // came back: a price-only (Jupiter) answer has null market cap/volume/liquidity, and
+      // clearing the flag then showed $0 for them instead of '--'
+      if (data.marketCap != null || data.volume24h != null || data.liquidity != null) {
+        delete this.token.geckoPartial;
+      }
       this.renderToken();
     } catch { /* silently ignore — normal price refresh will pick it up later */ }
+  },
+
+  // Circulating supply in the facts box: total less Streamflow-locked and burn-wallet supply,
+  // as the holders panel computes them (the token response may only have the total)
+  _updateCirculating(supply) {
+    if (!supply || !(supply.total > 0)) return;
+    const circ = Math.max(0, supply.total - (supply.locked || 0) - (supply.deadWalletBurnt || 0));
+    if (this.token) this.token.circulatingSupply = circ;
+    const el = document.getElementById('stat-circulating');
+    if (el) {
+      el.textContent = utils.formatNumber(circ, '');
+      el.classList.remove('stat-placeholder');
+    }
   },
 
   startPriceRefresh() {
@@ -898,6 +915,7 @@ const tokenDetail = {
         // started above when metrics are pending; metrics can also be null here.
         if (!(metrics && metrics.top5Pct == null)) this._pollForFullMetrics();
       } else {
+        this._updateCirculating(data.supply);
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
           : v >= 1e3 ? (v / 1e3).toFixed(2) + 'K'
@@ -1065,6 +1083,7 @@ const tokenDetail = {
 
       // Update locked & burnt supply
       if (data.supply) {
+        this._updateCirculating(data.supply);
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
           : v >= 1e3 ? (v / 1e3).toFixed(2) + 'K'

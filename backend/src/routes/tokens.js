@@ -57,6 +57,22 @@ const VALID_ORDERS = ['asc', 'desc'];
 const GECKO_MAX_PAGES = 10;
 // GeckoTerminal returns at most 20 pools per token page
 const POOLS_PAGE_SIZE = 20;
+// How old a snapshot may be to stand in for the top holders when the RPC is down
+const STALE_SNAPSHOT_MAX_AGE_MS = 24 * 3_600_000;
+
+// First candidate that is a real decimals value (0 included), else 9. `a || b || 9` turned a
+// 0-decimal mint into 9.
+function pickDecimals(...candidates) {
+  for (const d of candidates) if (Number.isInteger(d) && d >= 0) return d;
+  return 9;
+}
+
+// Circulating supply from a holder-analytics `supply` block: total minus Streamflow-locked
+// and burn-wallet amounts (SPL burns are already out of the on-chain total). null when unknown.
+function circulatingFromAnalytics(supply) {
+  if (!supply || !(supply.total > 0)) return null;
+  return Math.max(0, supply.total - (supply.locked || 0) - (supply.deadWalletBurnt || 0));
+}
 
 // BURN_WALLETS, LP_AUTHORITIES and SYSTEM_PROGRAM_ID imported from ../constants (shared with worker.js)
 const VALID_SUBMISSION_TYPES = ['banner', 'twitter', 'telegram', 'discord', 'tiktok', 'website'];
@@ -699,7 +715,7 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
             address: mint,
             name: h.name,
             symbol: h.symbol || mintSymbol,
-            decimals: h.decimals || 9,
+            decimals: pickDecimals(h.decimals),
             logoUri: h.logoUri || null,
             logoURI: h.logoUri || null,
             price: 0,
@@ -714,7 +730,7 @@ router.post('/batch', searchLimiter, asyncHandler(async (req, res) => {
             address: mint,
             name: g.name,
             symbol: g.symbol || mintSymbol,
-            decimals: g.decimals || 9,
+            decimals: pickDecimals(g.decimals),
             logoUri: g.logoUri || null,
             logoURI: g.logoUri || null,
             price: g.price || 0,
@@ -1552,12 +1568,20 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
     // getOrSetWithFreshness would only read and parse the same value again).
     const hit = existing && existing.value && existing.value.submissions ? existing.value : null;
 
+    // Set only by the request that ran the fetch below: a degraded result is re-cached
+    // briefly by that request alone, never again on later cache hits (which would keep
+    // pushing its expiry out and stop the retry from ever happening).
+    let degraded = false;
+
     // Use getOrSetWithFreshness for stampede prevention
     // If multiple requests come in for the same token, they share one API fetch
     const result = hit || await cache.getOrSetWithFreshness(cacheKey, async () => {
       // Fetch core data in parallel — holder count uses cache-first to avoid
       // blocking on paginated Helius DAS calls (which can take 2-30s for popular tokens).
       let geckoTimedOut = false;
+      // A failed DB side-read builds a page without banner/socials/curated stats/views
+      let dbFailed = false;
+      const dbFallback = (value) => () => { dbFailed = true; return value; };
       const fetchPromises = [
         // Helius provides: metadata, supply, price (for top 10k tokens)
         solanaService.isHeliusConfigured()
@@ -1577,15 +1601,17 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
           console.warn(`[Tokens] GeckoTerminal unavailable (${err.message}) for ${mint.slice(0, 8)}... — serving partial data`);
           return null;
         }),
-        db.getApprovedSubmissions(mint).catch(() => []),
+        db.getApprovedSubmissions(mint).catch(dbFallback([])),
         holderCounts.getDisplayCounts([mint]).then(c => c[mint] || null).catch(() => null),
         // View count and curated data: independent of the above, so fetched alongside them
-        db.getTokenViews(mint).catch(() => null),
-        db.getCuratedToken(mint).catch(() => null)
+        db.getTokenViews(mint).catch(dbFallback(null)),
+        db.getCuratedToken(mint).catch(dbFallback(null)),
+        // Locked/burnt amounts for the circulating figure, when the holders panel has them
+        cache.get(`holder-analytics:${mint}`).catch(() => null)
       ];
 
       const results = await Promise.all(fetchPromises);
-      const [heliusMetadata, geckoOverview, submissions, cachedHolders, dbViews, curated] = results;
+      const [heliusMetadata, geckoOverview, submissions, cachedHolders, dbViews, curated, holderAnalytics] = results;
 
       // Use cached holder count; if missing, queue a background fetch via worker
       let holders = (typeof cachedHolders === 'number' && cachedHolders > 0) ? cachedHolders : null;
@@ -1603,14 +1629,15 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
       const gecko = geckoOverview || {};
 
       // Calculate supply - prefer Helius (more accurate), fallback to GeckoTerminal
+      const decimals = pickDecimals(helius.decimals, gecko.decimals);
       let supply = helius.supply || null;
-      let circulatingSupply = supply;
       if (!supply && gecko.totalSupply) {
-        const decimals = helius.decimals || gecko.decimals || 9;
         const rawSupply = parseFloat(gecko.totalSupply);
         supply = rawSupply / Math.pow(10, decimals);
-        circulatingSupply = supply;
       }
+      // Circulating = total less Streamflow-locked and burn-wallet supply, as the holders
+      // panel computes it; until that classification exists it can only be the total.
+      const circulatingSupply = circulatingFromAnalytics(holderAnalytics?.supply) ?? supply;
 
       const usdPrice = gecko.price || helius.price || 0;
       const impliedFdv = usdPrice > 0 && supply > 0 ? usdPrice * supply : null;
@@ -1631,7 +1658,7 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
         // Metadata: prefer Helius (faster, from RPC) then GeckoTerminal then Jupiter
         name: helius.name || gecko.name || jup.name || `${mint.slice(0, 4)}...${mint.slice(-4)}`,
         symbol: helius.symbol || gecko.symbol || jup.symbol || mint.slice(0, 5).toUpperCase(),
-        decimals: helius.decimals || gecko.decimals || 9,
+        decimals,
         logoUri: helius.logoUri || gecko.logoUri || null,
         logoURI: helius.logoUri || gecko.logoURI || null,
         // Price: prefer GeckoTerminal (more accurate), fallback to Helius
@@ -1695,20 +1722,22 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
           mintAddress: mint,
           name: tokenName,
           symbol: tokenSymbol,
-          decimals: helius.decimals || gecko.decimals || 9,
+          decimals,
           logoUri: helius.logoUri || gecko.logoUri,
           pairCreatedAt: gecko.pairCreatedAt || null,
         }).catch(() => { /* Privacy: Don't log error details */ });
       }
 
       if (geckoTimedOut) tokenResult.geckoPartial = true;
+      degraded = geckoTimedOut || dbFailed;
 
       return tokenResult;
     }); // Use standard caching with stampede prevention (was requireFresh=true)
 
-    // Partial result (Gecko rate-limited): re-cache with 30s TTL so the next
-    // request retries Gecko rather than serving stale zero-valued market data.
-    if (result && result.geckoPartial) {
+    // Partial result (Gecko rate-limited or a DB read failed): re-cache with a 30s TTL so
+    // a request after that retries, rather than serving zeroed market data or a page
+    // without its banner/socials for the full 10 minutes.
+    if (degraded && result) {
       await cache.set(cacheKey, result, 30_000).catch(() => {});
     }
 
@@ -1742,7 +1771,16 @@ router.get('/:mint/price', validateMint, requireAllowedToken, asyncHandler(async
       }
 
       if (!data) {
-        data = await jupiterService.getTokenPrice(mint);
+        const jup = await jupiterService.getTokenPrice(mint);
+        // getTokenPrice answers {price: 0, error: true} on failure (and price 0 when it has
+        // no quote). Caching that served $0 for the full 10-minute TTL even after Gecko came
+        // back: fail this request instead, so the next one tries again.
+        if (!jup || jup.error || !(jup.price > 0)) {
+          throw new Error('price unavailable');
+        }
+        // Same shape as the Gecko overview: market fields Jupiter can't supply are null
+        // (not missing), so the token page keeps its '--' placeholders instead of $0.
+        data = { ...jup, marketCap: null, fdv: null, volume24h: null, liquidity: null };
       }
 
       return data;
@@ -1811,7 +1849,14 @@ router.get('/:mint/pools', validateMint, requireAllowedToken, asyncHandler(async
     // Use getOrSet for caching with stampede prevention
     // Pools data cached for 3 minutes - pool info rarely changes
     const pools = await cache.getOrSet(cacheKey, async () => {
-      return geckoService.getTokenPools(mint, { limit: POOLS_PAGE_SIZE });
+      const list = await geckoService.getTokenPools(mint, { limit: POOLS_PAGE_SIZE });
+      // null = upstream failure: don't cache it as an empty pool list for the whole TTL
+      if (list == null) {
+        const err = new Error('pools unavailable');
+        err.upstream = true;
+        throw err;
+      }
+      return list;
     }, TTL.POOLS);
 
     if (!res.headersSent) res.json(Array.isArray(pools) ? pools.slice(0, limit) : pools);
@@ -1861,15 +1906,28 @@ router.get('/:mint/submissions', validateMint, requireAllowedToken, asyncHandler
 router.post('/:mint/view', validateMint, requireAllowedToken, viewLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
 
+  // Use job queue for batched view counting (non-blocking)
+  // Falls back to direct DB write if job queue not available
+  let bufferedCount = 0;
+  let buffered = false;
   try {
-    // Use job queue for batched view counting (non-blocking)
-    // Falls back to direct DB write if job queue not available
-    const bufferedCount = await jobQueue.incrementViewCount(mint);
-
-    // Return current known count (may be slightly stale but fast)
-    const dbCount = await db.getTokenViews(mint);
-    res.json({ views: dbCount + (bufferedCount || 0) });
+    bufferedCount = await jobQueue.incrementViewCount(mint);
+    buffered = true;
   } catch (error) {
+    // Queue unavailable: recorded by the direct write below
+  }
+
+  if (buffered) {
+    // The view is buffered (and will be flushed): a failed read here must not write it a
+    // second time, so it only costs the displayed total.
+    try {
+      // Return current known count (may be slightly stale but fast)
+      const dbCount = await db.getTokenViews(mint);
+      res.json({ views: dbCount + (bufferedCount || 0) });
+    } catch (error) {
+      res.json({ recorded: true });
+    }
+  } else {
     // Fallback: Direct database update if job queue fails
     try {
       const viewCount = await db.incrementTokenViews(mint);
