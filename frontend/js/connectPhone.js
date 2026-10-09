@@ -35,6 +35,8 @@
     expiresAt: 0,
     ticker: null,
     minting: false,
+    /** The wallet the showing code and device list belong to (an account switch must re-mint). */
+    mintedFor: null,
     siteDevices: []
   };
 
@@ -108,6 +110,7 @@
     setScope(dom.siteDot, dom.siteNote, 'pending', 'Waiting for your signature…');
 
     let siteToken = null;
+    const forAddress = wallet.address;
     // The server grants the TTL, so the deadline comes from it, not a constant this page made up.
     let expiresAt = Infinity;
 
@@ -125,6 +128,13 @@
     state.minting = false;
     dom.refresh.disabled = false;
     dom.regen.disabled = false;
+
+    // The account changed while this code was being signed: it belongs to the old wallet
+    if (wallet.connected && wallet.address !== forAddress) {
+      mint();
+      return;
+    }
+    state.mintedFor = forAddress;
 
     if (!siteToken) {
       dom.qrFrame.dataset.loading = 'false';
@@ -167,8 +177,9 @@
     const meta = document.createElement('span');
     meta.className = 'dl-device-meta';
     const when = document.createElement('span');
-    const seen = device.lastSeenAt || device.activatedAt || device.createdAt;
-    when.textContent = seen ? `Last used ${deviceLink.timeAgo(seen)}` : 'Never used';
+    // The server records when a phone was linked, not when it was last used, so say that
+    const linked = device.activatedAt || device.createdAt;
+    when.textContent = linked ? `Linked ${deviceLink.timeAgo(linked)}` : 'Linked';
     meta.appendChild(when);
 
     body.appendChild(name);
@@ -288,7 +299,16 @@
   else window.addEventListener('walletReady', boot, { once: true });
 
   window.addEventListener('walletConnected', () => {
-    if (dom.main.hidden) showMain();
+    if (dom.main.hidden) { showMain(); return; }
+    // Phantom's accountChanged arrives as walletConnected with the page already showing a code:
+    // that code and device list belong to the previous wallet, so a phone scanning it would be
+    // paired to an account no longer shown here. Drop both and sign a fresh code.
+    if (!state.minting && wallet.address !== state.mintedFor) {
+      expire();
+      state.siteDevices = [];
+      renderDevices();
+      mint();
+    }
   });
   window.addEventListener('walletDisconnected', showGate);
 })();

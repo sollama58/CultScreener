@@ -77,3 +77,69 @@ describe('validateWalletSignature (data deletion)', () => {
     assert.strictEqual(second.body.code, 'SIGNATURE_REPLAY');
   });
 });
+
+describe('device link signatures name their action', () => {
+  function signed(message, kp) {
+    return Array.from(nacl.sign.detached(new TextEncoder().encode(message), kp.secretKey));
+  }
+
+  test('a signature given to list or unlink phones is refused by /pair', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    for (const message of [
+      validation.createDeviceListSignatureMessage(wallet, ts),
+      validation.createDeviceRevokeSignatureMessage(wallet, ts, 'all'),
+      validation.createDeviceRevokeSignatureMessage(wallet, ts, 7),
+    ]) {
+      const out = await run(validation.validateDeviceLinkSignature, {
+        body: { wallet, signature: signed(message, kp), signatureTimestamp: ts }
+      });
+      assert.strictEqual(out.next, false, message);
+      assert.strictEqual(out.status, 401);
+    }
+  });
+
+  test('a pairing signature is refused by list and unlink', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    const signature = signed(validation.createDeviceLinkSignatureMessage(wallet, ts), kp);
+    const list = await run(validation.validateDeviceListSignature, { body: { wallet, signature, signatureTimestamp: ts } });
+    assert.strictEqual(list.status, 401);
+    const revoke = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, all: true } });
+    assert.strictEqual(revoke.status, 401);
+  });
+
+  test('unlinking is bound to the device it names', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    const signature = signed(validation.createDeviceRevokeSignatureMessage(wallet, ts, 7), kp);
+    const other = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, deviceId: 8 } });
+    assert.strictEqual(other.status, 401);
+    const all = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, all: true } });
+    assert.strictEqual(all.status, 401);
+    const same = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, deviceId: 7 } });
+    assert.strictEqual(same.next, true);
+    assert.strictEqual(same.req.linkedWallet, wallet);
+  });
+
+  test('each action accepts its own message', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    const pair = await run(validation.validateDeviceLinkSignature, {
+      body: { wallet, signature: signed(validation.createDeviceLinkSignatureMessage(wallet, ts), kp), signatureTimestamp: ts }
+    });
+    assert.strictEqual(pair.next, true);
+    const list = await run(validation.validateDeviceListSignature, {
+      body: { wallet, signature: signed(validation.createDeviceListSignatureMessage(wallet, ts), kp), signatureTimestamp: ts }
+    });
+    assert.strictEqual(list.next, true);
+    const all = await run(validation.validateDeviceRevokeSignature, {
+      body: { wallet, signature: signed(validation.createDeviceRevokeSignatureMessage(wallet, ts, 'all'), kp), signatureTimestamp: ts, all: true }
+    });
+    assert.strictEqual(all.next, true);
+  });
+});
