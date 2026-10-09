@@ -95,6 +95,10 @@ const watchlist = {
       const auth = await this._sign('add', tokenMint);
       const result = await api.watchlist.add(wallet.address, tokenMint, auth);
 
+      // A load already in flight (e.g. started by the connect above) may have read the list
+      // before this add and would overwrite it: load again once it ends
+      if (this.isLoading) this._reloadPending = true;
+
       if (!result.alreadyExists) {
         this.items.set(tokenMint, { mint: tokenMint, addedAt: new Date() });
         if (typeof toast !== 'undefined') toast.success('Added to watchlist');
