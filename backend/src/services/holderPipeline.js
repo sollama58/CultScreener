@@ -67,6 +67,11 @@ const CONFIG = {
   // minutes of Helius 502s do not use up every pending wallet's attempts.
   transientBurst: 3,
   outageRetryMs: 60 * 1000,
+  // ...but only for this many such runs in a row (within outageWindowMs): wallets
+  // that fail every time on their own (huge histories timing out) look the same,
+  // and past this their attempts count again so they are given up in the end.
+  outageMaxRuns: 10,
+  outageWindowMs: 60 * 60 * 1000,
   // While the backfill is still running, a partial distribution is shown only once
   // every stratum has this many resolved wallets (or all of its sampled ones), so
   // the first numbers the page shows are not the whales alone.
@@ -104,6 +109,8 @@ const keys = {
   backfillSlot: i => `holder-backfill-slot:${i}`,
   // set when a run found wallets pending but no free slot
   backfillWaiting: mint => `holder-backfill-waiting:${mint}`,
+  // backfill runs in a row that looked like a Helius outage
+  backfillOutageRuns: mint => `holder-backfill-outage-runs:${mint}`,
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -111,7 +118,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Mints with a snapshot or backfill running in this process. The Redis locks are the
 // dispatch dedupe, but they vanish with a Redis restart or eviction while the run
 // carries on; a second job for the same mint must not then read the same pages again.
-const running = { snapshot: new Set(), backfill: new Set(), slots: new Set() };
+const running = { snapshot: new Set(), backfill: new Set(), slots: new Set(), outageRuns: new Map() };
+
+// Count one more outage run for the mint (Redis, or this process when Redis is down)
+async function countOutageRun(mint) {
+  const n = await cache.incrBy(keys.backfillOutageRuns(mint), 1, CONFIG.outageWindowMs).catch(() => null);
+  if (n != null) return n;
+  const local = (running.outageRuns.get(mint) || 0) + 1;
+  running.outageRuns.set(mint, local);
+  return local;
+}
+
+async function clearOutageRuns(mint) {
+  running.outageRuns.delete(mint);
+  await cache.delete(keys.backfillOutageRuns(mint)).catch(() => {});
+}
 
 /**
  * When each mint's holder data was last known to be current: the latest
@@ -682,6 +703,9 @@ async function runBackfillPass(mint) {
     let pausedUntil = 0;
     let pausesInARow = 0;
     let transientInARow = 0;
+    // answers since the last burst of timeouts/5xx: answers from before an outage
+    // began say nothing about the wallets that failed in it
+    let answeredSinceBurst = 0;
     // wallet → position, for timeouts/5xx whose attempt is settled when the run ends
     const deferred = new Map();
     const pushedBack = () => {
@@ -714,6 +738,7 @@ async function runBackfillPass(mint) {
         pausesInARow = 0;
         transientInARow = 0;
         stats.answered++;
+        answeredSinceBurst++;
         deferred.delete(wallet);
         if (ms > stats.slowestMs) { stats.slowestMs = ms; stats.slowestWallet = wallet; }
         if (ms > 15000) console.log(`[Holders] Backfill ${wallet.slice(0, 8)} on ${mint.slice(0, 8)} took ${ms}ms${done ? '' : ' (more history to read)'}`);
@@ -728,12 +753,13 @@ async function runBackfillPass(mint) {
           // counted when the run ends, unless the run turns out to be an outage
           transientInARow++;
           deferred.set(wallet, pos);
+          if (transientInARow === CONFIG.transientBurst) answeredSinceBurst = 0;
           if (transientInARow < CONFIG.transientBurst) return null; // try again on a later run
           // Several in a row: pause and retry, as for a pushback
           pushedBack();
           return stats.backoff ? null : false;
         }
-        if (!transient) stats.answered++;
+        if (!transient) { stats.answered++; answeredSinceBurst++; }
         if (pushback) pushedBack();
         // A pushback says nothing about the wallet: it counts as one attempt per
         // run (when the run gives up on the burst), not one per retry
@@ -775,7 +801,18 @@ async function runBackfillPass(mint) {
 
     // Timeouts/5xx: several wallets failing with no answer for any wallet is Helius
     // being down, which says nothing about them; otherwise each counts one attempt.
-    const outage = deferred.size >= CONFIG.transientBurst && stats.answered === 0;
+    // Past outageMaxRuns such runs in a row the wallets are more likely the cause
+    // than Helius, and their attempts count again.
+    let outage = deferred.size >= CONFIG.transientBurst && answeredSinceBurst === 0;
+    if (outage) {
+      const outageRuns = await countOutageRun(mint);
+      if (outageRuns > CONFIG.outageMaxRuns) {
+        outage = false;
+        console.warn(`[Holders] Backfill ${mint.slice(0, 8)}: ${outageRuns} erroring runs in a row; counting attempts again`);
+      }
+    } else if (stats.answered > 0) {
+      await clearOutageRuns(mint);
+    }
     if (outage) {
       retryDelay = CONFIG.outageRetryMs;
     } else {

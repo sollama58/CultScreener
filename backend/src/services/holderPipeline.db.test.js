@@ -559,6 +559,44 @@ if (!DB_URL) {
       assert.ok(['backfill', 'backfill_capped'].includes((await position(ws[0])).acquired_source));
     });
 
+    test('wallets that 5xx every run on their own are given up in the end (audit #27)', async () => {
+      // A wallet that answered earlier must not keep the counter from a previous test
+      await cache.delete(`holder-backfill-outage-runs:${MINT}`);
+      const snap = await store.getLatestSnapshot(MINT);
+      const lp = new Set(snap.sample_meta.lpWallets || []);
+      const ws = snap.sample.map(x => x.wallet)
+        .filter(x => !lp.has(x) && chain[x] && chain[x].amount > 0n && chain[x].history.length > 0).slice(0, 3);
+      assert.strictEqual(ws.length, 3, 'three sampled wallets with history');
+      // only these three are pending, and they fail every time
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = NULL,
+        backfill_balance = NULL, backfill_attempts = 0 WHERE mint_address = $1 AND wallet = ANY($2)`, [MINT, ws]);
+      const realBalance = solana.getTokenAccountBalance;
+      const prevPause = pipeline.CONFIG.pushbackPauseMs;
+      const prevMaxRuns = pipeline.CONFIG.outageMaxRuns;
+      pipeline.CONFIG.pushbackPauseMs = 5;
+      pipeline.CONFIG.outageMaxRuns = 2;
+      solana.getTokenAccountBalance = async a => {
+        if (ws.includes(walletOfAta(a))) throw Object.assign(new Error('Request failed with status code 502'), { response: { status: 502 } });
+        return realBalance(a);
+      };
+      try {
+        const maxRuns = pipeline.CONFIG.outageMaxRuns + pipeline.CONFIG.backfillMaxTransientAttempts;
+        for (let i = 0; i < maxRuns; i++) {
+          await pipeline.runBackfill(MINT);
+          await cache.delete(`holder-backfill-pending:${MINT}`);
+          if (i < pipeline.CONFIG.outageMaxRuns) {
+            for (const w of ws) assert.strictEqual((await position(w)).backfill_attempts, 0, `run ${i + 1} still treated as an outage`);
+          }
+        }
+        for (const w of ws) assert.strictEqual((await position(w)).acquired_source, 'failed', `${w} given up`);
+      } finally {
+        solana.getTokenAccountBalance = realBalance;
+        pipeline.CONFIG.pushbackPauseMs = prevPause;
+        pipeline.CONFIG.outageMaxRuns = prevMaxRuns;
+        await cache.delete(`holder-backfill-outage-runs:${MINT}`);
+      }
+    });
+
     test('only a few tokens backfill at once; the rest wait and re-queue', async () => {
       const held = [];
       for (let i = 0; i < pipeline.CONFIG.backfillMaxTokens; i++) {
