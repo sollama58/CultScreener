@@ -310,6 +310,28 @@ describe('GET /check-access/:mint with ?wallet=', () => {
     const r = await get(`/check-access/${MINT}?wallet=${bs58.encode(stranger.publicKey)}`);
     assert.deepStrictEqual(r.body, { access: false, reason: 'none' });
   });
+
+  test('another base64 spelling of a used proof is not a fresh proof', async () => {
+    const ts = Date.now();
+    const sig = signB64(burner, cultifyRoutes._createCultifyAccessMessage(MINT, BURNER, ts));
+    const first = await get(`/check-access/${MINT}?wallet=${BURNER}&sig=${encodeURIComponent(sig)}&sigTs=${ts}`);
+    assert.strictEqual(first.body.access, true);
+    // The 86th character carries 4 bits the decoder ignores: flip one of them
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const alt = sig.slice(0, 85) + alphabet[alphabet.indexOf(sig[85]) ^ 1] + '==';
+    assert.ok(Buffer.from(alt, 'base64').equals(Buffer.from(sig, 'base64')));
+    const replay = await get(`/check-access/${MINT}?wallet=${BURNER}&sig=${encodeURIComponent(alt)}&sigTs=${ts}`);
+    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_invalid', detail: 'bad_signature' });
+  });
+
+  test("a token issued late in the burn's window ends with the window", async () => {
+    const until = Date.now() + 60 * 60 * 1000;   // an hour of the 12 left
+    db.hasCultifyAccess = async () => until;
+    const r = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof()}`);
+    assert.strictEqual(r.body.access, true);
+    const issued = store.get(`cultify:access-by:${BURNER}:${MINT}`);
+    assert.ok(issued.expiresAt <= until + 1000 && issued.expiresAt > until - 60_000, JSON.stringify(issued));
+  });
 });
 
 // ── Holder Behavior: the same wallet proofs ─────────────────────────────
@@ -442,6 +464,57 @@ describe('GET /holder-behavior/check-access/:mint with ?wallet=', () => {
   test('a wallet with no burn on record is told to burn', async () => {
     const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${bs58.encode(stranger.publicKey)}`);
     assert.deepStrictEqual(r.body, { access: false, reason: 'none' });
+  });
+
+  test("a token issued late in the burn's window ends with the window", async () => {
+    const until = Date.now() + 60 * 60 * 1000;   // an hour of the 3 days left
+    db.hasHBAccess = async () => until;
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof()}`);
+    assert.strictEqual(r.body.access, true);
+    const data = store.get(`hb:access:${r.body.accessToken}`);
+    assert.ok(data.expiresAt <= until + 1000 && data.expiresAt > until - 60_000, JSON.stringify(data));
+    const idx = store.get(`hb:wallet-idx:${BURNER}`);
+    assert.strictEqual(idx[0].expiresAt, data.expiresAt);
+  });
+
+  test('a whitelisted wallet still gets the full lifetime', async () => {
+    whitelisted = true;
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof()}`);
+    const data = store.get(`hb:access:${r.body.accessToken}`);
+    assert.ok(data.expiresAt > Date.now() + 71 * 3600 * 1000);
+  });
+});
+
+describe('RPC relays', () => {
+  test('tx-status refuses a signature that is not base58', async () => {
+    let calls = 0;
+    solanaService.rpcCall = async () => { calls++; return { value: [null] }; };
+    const r = await get(`/tx-status/${'0'.repeat(88)}`);
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(calls, 0);
+  });
+
+  test('tx-status polls of an unknown signature are not each sent to the RPC', async () => {
+    let calls = 0;
+    solanaService.rpcCall = async () => { calls++; return { value: [null] }; };
+    for (let i = 0; i < 3; i++) {
+      const r = await get(`/tx-status/${BURN_SIG}`);
+      assert.deepStrictEqual(r.body, { confirmed: false });
+    }
+    assert.strictEqual(calls, 1);
+  });
+
+  test('balance is cached briefly per wallet', async () => {
+    let calls = 0;
+    solanaService.getTokenAccountsByOwner = async () => {
+      calls++;
+      return { value: [{ pubkey: 'acct', account: { data: { parsed: { info: { tokenAmount: { amount: '5000000', uiAmountString: '5' } } } } } }] };
+    };
+    const a = await get(`/balance/${BURNER}`);
+    const b = await get(`/balance/${BURNER}`);
+    assert.deepStrictEqual(a.body, { balance: 5000000, uiBalance: 5, tokenAccount: 'acct' });
+    assert.deepStrictEqual(b.body, a.body);
+    assert.strictEqual(calls, 1);
   });
 });
 
