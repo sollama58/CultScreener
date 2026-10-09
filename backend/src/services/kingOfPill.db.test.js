@@ -230,6 +230,17 @@ if (!DB_URL) {
 
     test('a king that loses eligibility is replaced at once', async () => {
       const now = T0 + (PARAMS.maxReignDays + 1) * DAY;
+      // A snapshot outage leaves every token stale: nobody can be judged, so the run
+      // must not use up the day
+      await db.pool.query(`UPDATE tokens SET conviction_meta = conviction_meta || jsonb_build_object('snapshotAt', $2::bigint) WHERE mint_address = ANY($1)`,
+        [MINTS, now - 3 * DAY]);
+      const outage = await kotp.runDailyCrowning({ now: now - 3600_000 });
+      assert.strictEqual(outage.reason, 'no_challenger');
+      assert.strictEqual(outage.changed, false);
+      assert.strictEqual(outage.king, B);
+      const { rows: [dec] } = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'kotp_decided_on'`);
+      assert.ok(!dec || !dec.value.includes('2026-10-09'), dec && dec.value);
+
       await db.pool.query(`UPDATE tokens SET conviction_meta = conviction_meta || jsonb_build_object('snapshotAt', $2::bigint) WHERE mint_address = ANY($1)`,
         [[A, C, D], now - 3600_000]);
       // BETA's snapshot goes stale

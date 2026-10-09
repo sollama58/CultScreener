@@ -322,6 +322,9 @@ describe('GET /check-access/:mint with ?wallet=', () => {
     assert.ok(Buffer.from(alt, 'base64').equals(Buffer.from(sig, 'base64')));
     const replay = await get(`/check-access/${MINT}?wallet=${BURNER}&sig=${encodeURIComponent(alt)}&sigTs=${ts}`);
     assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_invalid', detail: 'bad_signature' });
+    // The replay marker is keyed on the decoded bytes, whichever spelling was sent
+    const { checkAndMarkSignature } = require('../middleware/validation');
+    assert.strictEqual(await checkAndMarkSignature(`access-proof:${Buffer.from(alt, 'base64').toString('hex')}`, 60_000), true);
   });
 
   test("a token issued late in the burn's window ends with the window", async () => {

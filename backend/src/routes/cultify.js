@@ -562,7 +562,7 @@ router.get('/my-tokens/:wallet', walletLimiter, asyncHandler(async (req, res) =>
 // Neither balance nor tx-status needs a burn or a token, so each answer is cached briefly per
 // key: a loop over random wallets or signatures otherwise bills one Helius call per request.
 const BALANCE_CACHE_TTL = 10_000;
-const TX_PENDING_CACHE_TTL = 2_000;   // shorter than the frontends' fastest poll interval
+const TX_PENDING_CACHE_TTL = 2_000;   // a poll may see one stale 'not yet confirmed' answer at most
 const TX_SIGNATURE_REGEX = /^[1-9A-HJ-NP-Za-km-z]{80,90}$/;
 
 // GET /api/cultify/balance/:wallet — get ASDFASDFA balance for a wallet

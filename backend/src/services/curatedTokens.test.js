@@ -12,6 +12,7 @@ const MINT = 'So11111111111111111111111111111111111111112';
 const calls = [];
 let curated;          // mint → row
 let raceInsert;       // the insert finds the row another request just added
+let dbDown;           // the database is unavailable: nothing is inserted
 
 const stub = (file, exports) => {
   require.cache[file] = { id: file, filename: file, loaded: true, exports };
@@ -31,6 +32,7 @@ before(() => {
     getCuratedToken: async (m) => curated.get(m) || null,
     addCuratedToken: async (m) => {
       calls.push(['insert', m]);
+      if (dbDown) return null;
       if (raceInsert || curated.has(m)) { curated.set(m, { mintAddress: m }); return null; }
       curated.set(m, { mintAddress: m });
       return { mint_address: m };
@@ -49,6 +51,7 @@ beforeEach(() => {
   calls.length = 0;
   curated = new Map();
   raceInsert = false;
+  dbDown = false;
 });
 
 describe('addCuratedTokenFully', () => {
@@ -73,5 +76,10 @@ describe('addCuratedTokenFully', () => {
     const r = await addCuratedTokenFully(MINT);
     assert.strictEqual(r.alreadyCurated, true);
     assert.deepStrictEqual(calls.map(c => c[0]), ['gecko', 'insert']);
+  });
+
+  test('an insert that never happened is an error, not "already curated"', async () => {
+    dbDown = true;
+    await assert.rejects(addCuratedTokenFully(MINT), /Failed to add curated token/);
   });
 });

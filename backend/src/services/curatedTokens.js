@@ -93,8 +93,13 @@ async function addCuratedTokenFully(mintAddress) {
     mcapAtAdded = marketData?.marketCap || null;
   } catch { /* non-critical — token can be added without mcap */ }
 
-  // ON CONFLICT DO NOTHING: null when another request added it in the meantime
-  if (!(await db.addCuratedToken(mintAddress, mcapAtAdded))) return already();
+  // ON CONFLICT DO NOTHING: null when another request added it in the meantime (or when the
+  // database is unavailable, in which case nothing was added and the caller must hear so)
+  if (!(await db.addCuratedToken(mintAddress, mcapAtAdded))) {
+    const existing = await db.getCuratedToken(mintAddress).catch(() => null);
+    if (!existing) throw new Error('Failed to add curated token');
+    return { token: existing, dexScreenerEnriched: false, alreadyCurated: true };
+  }
 
   // Set initial ATH to the listing mcap (separate call — safe if column is missing)
   if (mcapAtAdded) {

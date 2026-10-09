@@ -254,7 +254,7 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
       ? { headcount: res.headcount, supply: res.supply, confidence: res.confidence, momentum: res.momentum, retention: res.retention,
           activity: res.activity, volume24h: input.volume24h, marketCap: input.marketCap,
           priceMomentum: res.priceMomentum, priceChanges: input.priceChanges,
-          holders: input.holders, holdersMonthAgo: input.holdersMonthAgo, ageDays: Math.round(input.ageMs / DAY), snapshotAt: input.snapshotAt }
+          holders: input.holders, holdersNow: input.holdersNow, holdersMonthAgo: input.holdersMonthAgo, ageDays: Math.round(input.ageMs / DAY), snapshotAt: input.snapshotAt }
       : { reason: res.reason, holders: input.holders, ageDays: Math.round(input.ageMs / DAY), snapshotAt: input.snapshotAt };
     await pool().query(
       `INSERT INTO diamond_hands_scores (mint_address, score_date, score, core, eligible, components, computed_at)
@@ -283,14 +283,27 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
   }
 
   const alreadyDecided = { mint: king ? king.mint : null, changed: false, reason: 'already_decided', reignDays: 0 };
+  // After losing the claim to a concurrent run, report the crown as that run left it
+  const decidedElsewhere = async () => {
+    const { rows: [r] } = await pool().query(
+      `SELECT mint_address FROM kotp_reigns WHERE ended_on IS NULL ORDER BY crowned_on DESC, id DESC LIMIT 1`);
+    return { ...alreadyDecided, mint: r ? r.mint_address : null };
+  };
   let pick = null;
   const decision = await getDecision();
   if ((king && king.crownedOn === todayIdx) || decision?.date === today) {
     pick = alreadyDecided;
   } else {
     pick = pickKing(scored, king, lastReignEnd, todayIdx, params, reignEnds);
-    if (!pick.changed) {
-      if (!(await claimDecision(pool(), today, pick))) pick = alreadyDecided;
+    // Nobody was there to judge (no one eligible, or an ineligible king with no challenger,
+    // e.g. every snapshot stale after an outage): leave the day open so a later run, or the
+    // admin "Run now", can still fill the crown today.
+    const nothingJudged = !pick.changed && (pick.reason === 'nobody_eligible' ||
+      (pick.reason === 'no_challenger' && !scored.some(s => s.mint === pick.mint)));
+    if (nothingJudged) {
+      // No decision recorded; the crown stays as it is
+    } else if (!pick.changed) {
+      if (!(await claimDecision(pool(), today, pick))) pick = await decidedElsewhere();
     } else {
       const client = await pool().connect();
       try {
@@ -306,7 +319,7 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
         } else {
           // A concurrent run decided today first; keep its decision
           await client.query('ROLLBACK');
-          pick = alreadyDecided;
+          pick = null;
         }
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
@@ -314,6 +327,7 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
       } finally {
         client.release();
       }
+      if (!pick) pick = await decidedElsewhere();
     }
   }
   await cache.delete(FEATURED_CACHE_KEY).catch(() => {});
