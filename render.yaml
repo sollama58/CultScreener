@@ -53,6 +53,11 @@ services:
       - key: DB_SSL_REJECT_UNAUTHORIZED
         value: "false"
 
+      # Day boundaries (King of the Pill dates, daily holder counts, TIMESTAMP columns read back
+      # by node-postgres) assume the process runs in UTC; Render's default, pinned here
+      - key: TZ
+        value: "UTC"
+
       # PostgreSQL pool size (basic-256mb DB is shared with the worker; keep the sum low)
       - key: DB_POOL_MAX
         value: "20"
@@ -193,6 +198,11 @@ services:
       # SSL certificate verification for PostgreSQL (set to 'false' for Render's self-signed certs)
       - key: DB_SSL_REJECT_UNAUTHORIZED
         value: "false"
+
+      # Day boundaries (King of the Pill dates, daily holder counts, TIMESTAMP columns read back
+      # by node-postgres) assume the process runs in UTC; Render's default, pinned here
+      - key: TZ
+        value: "UTC"
 
       # PostgreSQL pool size (basic-256mb DB is shared with the API; keep the sum low)
       - key: DB_POOL_MAX

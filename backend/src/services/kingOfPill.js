@@ -11,7 +11,8 @@
  *
  * Reads only what the pipeline already stores: tokens.conviction_data (holder
  * buckets), conviction_meta (supply buckets, holder count, snapshot time),
- * tokens.pair_created_at and holder_count_points. No RPC.
+ * tokens.pair_created_at, holder_count_points and the latest holder_snapshots header
+ * (for snapshot freshness). No RPC.
  *
  * X's manual pick (app_settings.king_of_pill_mint) is handled by the routes as an
  * override; this module only knows the automatic King.
@@ -23,6 +24,8 @@ const { DAY, PARAMS, scoreToken, pickKing } = require('./kotpScore');
 const priceChanges = require('./priceChanges');
 
 const FEATURED_CACHE_KEY = 'king-of-pill:featured';
+// app_settings key holding the last day the crown was decided: { date, mint, reason }
+const DECISION_KEY = 'kotp_decided_on';
 const MAX_CONTENDERS = 3;
 
 function pool() {
@@ -62,8 +65,14 @@ function ensureSchema() {
   return schemaReady;
 }
 
-const dayIndex = d => Math.floor(new Date(d).getTime() / DAY);
-const isoDate  = d => new Date(d).toISOString().slice(0, 10);
+// node-postgres reads a DATE column as local midnight, so a DATE value is turned back into
+// its 'YYYY-MM-DD' (which Date parses as UTC midnight) before any day arithmetic: the
+// day indexes then hold whatever TZ the process runs in. Timestamps (now) are already UTC.
+const ymd = d => (d instanceof Date
+  ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  : d);
+const dayIndex = d => Math.floor(new Date(ymd(d)).getTime() / DAY);
+const isoDate  = d => new Date(ymd(d)).toISOString().slice(0, 10);
 const num = v => (v == null ? null : Number(v));
 
 // ── Inputs ──────────────────────────────────────────────────────────────────
@@ -136,17 +145,35 @@ async function getPriceRefs(mints) {
   return out;
 }
 
-function buildInput(curated, row, trend, coreWeekAgo, now, refs) {
+/**
+ * mint → { id, freshAt } for the latest holder snapshot: freshAt is its taken_at, or the
+ * later time a pre-check that read every account found it unchanged (verified_at).
+ */
+async function getSnapshotFreshness(mints) {
+  if (!mints.length) return {};
+  const { rows } = await pool().query(
+    `SELECT DISTINCT ON (mint_address) mint_address, id, GREATEST(taken_at, verified_at) AS fresh_at
+       FROM holder_snapshots WHERE mint_address = ANY($1)
+      ORDER BY mint_address, taken_at DESC`, [mints]);
+  const out = {};
+  for (const r of rows) out[r.mint_address] = { id: String(r.id), freshAt: new Date(r.fresh_at).getTime() };
+  return out;
+}
+
+function buildInput(curated, row, trend, coreWeekAgo, now, refs, snapshot) {
   const meta = row?.conviction_meta || {};
   const candidates = [row?.pair_created_at, trend?.firstPointAt, curated.addedAt]
     .map(v => (v ? new Date(v).getTime() : NaN)).filter(Number.isFinite);
   const bornAt = candidates.length ? Math.min(...candidates) : null;
-  // Freshness is the later of the snapshot and the last full recompute: a snapshot the
-  // pre-check verified as unchanged keeps its taken_at, but its diamond hands are
-  // re-stored every hour while it is current.
-  const snapshotAt = Math.max(
-    meta.snapshotAt ? Number(meta.snapshotAt) : 0,
-    row?.conviction_computed_at ? new Date(row.conviction_computed_at).getTime() : 0) || null;
+  // Freshness is the snapshot the stored diamond hands were computed from: its taken_at,
+  // or a later pre-check that verified it unchanged. Not conviction_computed_at: every
+  // diamond hands read re-stores the buckets, however old the snapshot behind them, so
+  // that stamp kept a token whose snapshots had been failing for days looking current.
+  let snapshotAt = meta.snapshotAt ? Number(meta.snapshotAt) : 0;
+  if (snapshot && meta.snapshotId != null && String(meta.snapshotId) === snapshot.id) {
+    snapshotAt = Math.max(snapshotAt, snapshot.freshAt || 0);
+  }
+  snapshotAt = snapshotAt || null;
   const holders = meta.holderCount != null ? Number(meta.holderCount) : trend?.holdersNow ?? null;
   return {
     distribution: row?.conviction_data || null,
@@ -155,6 +182,10 @@ function buildInput(curated, row, trend, coreWeekAgo, now, refs) {
     holders,
     snapshotAgeMs: snapshotAt != null ? now - snapshotAt : Infinity,
     coreWeekAgo: coreWeekAgo ?? null,
+    // Retention compares the two ends of the holder count history, each in the same
+    // definition (getHolderTrend); `holders` above is the snapshot's own count, which
+    // leaves out burn/LP wallets and so can't be set against a legacy account count.
+    holdersNow: trend?.holdersNow ?? null,
     holdersMonthAgo: trend?.holdersMonthAgo ?? null,
     volume24h: row?.volume_24h != null ? Number(row.volume_24h) : null,
     marketCap: row?.market_cap != null ? Number(row.market_cap) : null,
@@ -172,9 +203,31 @@ function priceChangesFor(row, refs, now) {
 
 // ── The daily job ───────────────────────────────────────────────────────────
 
+/** The day the crown was last decided ({ date: 'YYYY-MM-DD', mint, reason }), or null. */
+async function getDecision(q = pool()) {
+  const { rows } = await q.query(`SELECT value FROM app_settings WHERE key = $1`, [DECISION_KEY]);
+  try { return rows[0]?.value ? JSON.parse(rows[0].value) : null; } catch { return null; }
+}
+
+/**
+ * Record today's decision, unless one is already recorded for today. Returns false when
+ * another run got there first, so the caller leaves the crown as that run settled it.
+ */
+async function claimDecision(q, today, pick) {
+  const { rows } = await q.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+      WHERE app_settings.value IS NULL OR app_settings.value NOT LIKE $3
+     RETURNING key`,
+    [DECISION_KEY, JSON.stringify({ date: today, mint: pick.mint || null, reason: pick.reason }), `{"date":"${today}"%`]);
+  return rows.length > 0;
+}
+
 /**
  * Score every curated token for `now`'s UTC date and settle the crown. Idempotent
- * within a day: scores are upserted, and the crown is only decided once per date.
+ * within a day: scores are upserted, and the crown is only decided once per date,
+ * whatever that decision was (a king who defended, or one still inside his minimum
+ * reign, is not re-judged on fresher intraday numbers by a second run that day).
  */
 async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
   await ensureSchema();
@@ -183,8 +236,9 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
 
   const curated = await db.getCuratedTokens();
   const mints = curated.map(t => t.mintAddress).filter(Boolean);
-  const [rows, trends, coresWeekAgo, priceRefs] = await Promise.all([
+  const [rows, trends, coresWeekAgo, priceRefs, snapshots] = await Promise.all([
     db.getTokensBatch(mints), getHolderTrend(mints, now), getCoreWeekAgo(mints, today), getPriceRefs(mints),
+    getSnapshotFreshness(mints),
   ]);
   const rowMap = {};
   for (const r of rows) rowMap[r.mint_address] = r;
@@ -194,7 +248,7 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
   for (const t of curated) {
     const mint = t.mintAddress;
     if (!mint) continue;
-    const input = buildInput(t, rowMap[mint], trends[mint], coresWeekAgo[mint], now, priceRefs[mint]);
+    const input = buildInput(t, rowMap[mint], trends[mint], coresWeekAgo[mint], now, priceRefs[mint], snapshots[mint]);
     const res = scoreToken(input, params);
     const components = res.eligible
       ? { headcount: res.headcount, supply: res.supply, confidence: res.confidence, momentum: res.momentum, retention: res.retention,
@@ -228,22 +282,32 @@ async function runDailyCrowning({ now = Date.now(), params = PARAMS } = {}) {
     (reignEnds[r.mint_address] = reignEnds[r.mint_address] || []).push(e);
   }
 
+  const alreadyDecided = { mint: king ? king.mint : null, changed: false, reason: 'already_decided', reignDays: 0 };
   let pick = null;
-  if (king && king.crownedOn === todayIdx) {
-    pick = { mint: king.mint, changed: false, reason: 'already_decided', reignDays: 0 };
+  const decision = await getDecision();
+  if ((king && king.crownedOn === todayIdx) || decision?.date === today) {
+    pick = alreadyDecided;
   } else {
     pick = pickKing(scored, king, lastReignEnd, todayIdx, params, reignEnds);
-    if (pick.changed) {
+    if (!pick.changed) {
+      if (!(await claimDecision(pool(), today, pick))) pick = alreadyDecided;
+    } else {
       const client = await pool().connect();
       try {
         await client.query('BEGIN');
-        if (king) await client.query(`UPDATE kotp_reigns SET ended_on = $1 WHERE ended_on IS NULL`, [today]);
-        await client.query(
-          `INSERT INTO kotp_reigns (mint_address, crowned_on, score, reason) VALUES ($1, $2, $3, $4)
-           ON CONFLICT (mint_address, crowned_on) DO UPDATE SET ended_on = NULL, score = EXCLUDED.score, reason = EXCLUDED.reason`,
-          [pick.mint, today, pick.score, pick.reason]
-        );
-        await client.query('COMMIT');
+        if (await claimDecision(client, today, pick)) {
+          if (king) await client.query(`UPDATE kotp_reigns SET ended_on = $1 WHERE ended_on IS NULL`, [today]);
+          await client.query(
+            `INSERT INTO kotp_reigns (mint_address, crowned_on, score, reason) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (mint_address, crowned_on) DO UPDATE SET ended_on = NULL, score = EXCLUDED.score, reason = EXCLUDED.reason`,
+            [pick.mint, today, pick.score, pick.reason]
+          );
+          await client.query('COMMIT');
+        } else {
+          // A concurrent run decided today first; keep its decision
+          await client.query('ROLLBACK');
+          pick = alreadyDecided;
+        }
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
         throw err;
@@ -281,7 +345,9 @@ async function getCurrentKing({ now = Date.now() } = {}) {
   if (scoreDate) {
     const { rows } = await pool().query(
       `SELECT s.mint_address, s.score, t.name, t.symbol
-         FROM diamond_hands_scores s LEFT JOIN tokens t ON t.mint_address = s.mint_address
+         FROM diamond_hands_scores s
+         JOIN curated_tokens c ON c.mint_address = s.mint_address
+         LEFT JOIN tokens t ON t.mint_address = s.mint_address
         WHERE s.score_date = $1 AND s.eligible AND s.score IS NOT NULL
         ORDER BY s.score DESC LIMIT $2`,
       [scoreDate, MAX_CONTENDERS + 1]
@@ -292,10 +358,14 @@ async function getCurrentKing({ now = Date.now() } = {}) {
     contenders = rows.filter(r => r.mint_address !== reign.mint_address).slice(0, MAX_CONTENDERS)
       .map(r => ({ mintAddress: r.mint_address, name: r.name || null, symbol: r.symbol || null, score: num(r.score) }));
   }
+  // The reign day as of the latest scored day, not the wall clock: between midnight and
+  // the 00:20 crowning (or while that job is failing) nothing has been decided for today,
+  // and a reign due to end then would otherwise read as a day past the maximum.
+  const asOf = scoreDate ? Math.min(dayIndex(scoreDate), dayIndex(now)) : dayIndex(now);
   return {
     mint: reign.mint_address,
     crownedOn: isoDate(reign.crowned_on),
-    reignDay: Math.max(1, dayIndex(now) - dayIndex(reign.crowned_on) + 1),
+    reignDay: Math.max(1, asOf - dayIndex(reign.crowned_on) + 1),
     score,
     scoreDate: scoreDate ? isoDate(scoreDate) : null,
     reason: reign.reason || null,
