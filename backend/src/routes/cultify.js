@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
+const { recordIssuedToken } = require('../services/accessTokens');
 const {
   validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache,
   verifyWalletSignature, checkAndMarkSignature, validateDeviceSession
@@ -259,6 +260,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
     if (ttl > 0) {
       const accessToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ttl);
+      await recordIssuedToken('cultify', walletAddress, mint, accessToken, ttl);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
     return res.status(409).json({ error: 'This burn transaction has already been claimed' });
@@ -296,6 +298,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
       }
       const accessToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      await recordIssuedToken('cultify', walletAddress, mint, accessToken, ACCESS_TOKEN_TTL);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
     throw err;
@@ -306,6 +309,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   const accessToken = generateAccessToken(walletAddress, mint);
   const accessKey = `cultify:access:${accessToken}`;
   await cache.set(accessKey, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+  await recordIssuedToken('cultify', walletAddress, mint, accessToken, ACCESS_TOKEN_TTL);
 
   res.json({ success: true, accessToken });
 }));
@@ -350,6 +354,7 @@ router.get('/check-access/:mint', walletLimiter, validateMint, validateDeviceSes
       if (existing) return res.json({ access: true, reason: 'burned', accessToken: existing });
       const newToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ttl);
+      await recordIssuedToken('cultify', walletAddress, mint, newToken, ttl);
       await rememberIssuedToken('cultify', walletAddress, mint, newToken, ttl);
       return res.json({ access: true, reason: 'burned', accessToken: newToken });
     }
@@ -721,6 +726,7 @@ async function storeHBAccess(walletAddress, mint, { reuse = false, ttlMs = HB_AC
   const accessToken = generateAccessToken(walletAddress, mint);
   const expiresAt = Date.now() + ttlMs;
   await cache.set(`hb:access:${accessToken}`, { wallet: walletAddress, mint, expiresAt }, ttlMs);
+  await recordIssuedToken('hb', walletAddress, mint, accessToken, ttlMs);
   await rememberIssuedToken('hb', walletAddress, mint, accessToken, ttlMs);
 
   // Maintain a per-wallet index so "My Utilities" can enumerate active accesses
