@@ -60,6 +60,17 @@ test('loadBoard keeps each mint once when rows shift between pages', async () =>
   assert.strictEqual(result.tokens.length, 101);
 });
 
+test('loadBoard keeps the pages that loaded when a later page fails', async () => {
+  const all = Array.from({ length: 230 }, (_, i) => tok(i));
+  const { ctx } = load(({ limit, offset }) => {
+    if (offset === 100) throw new Error('429');
+    return { tokens: all.slice(offset, offset + limit), total: all.length };
+  });
+  const result = await ctx.tokenTable.loadBoard();
+  assert.strictEqual(result.tokens.length, 130);
+  assert.strictEqual(result.total, 230);
+});
+
 test('a plain rank cell has no top-3 highlight', () => {
   const { ctx } = load(() => ({ tokens: [], total: 0 }));
   assert.match(ctx.tokenTable.rankCell(1), /tt-rank-top/);

@@ -310,9 +310,10 @@ const tokenTable = {
       rest.push(api.tokens.leaderboardConviction({ limit: page, offset }, options));
     }
     if (rest.length) {
-      // Rows can shift between pages while scores update; keep each mint once.
+      // Rows can shift between pages while scores update; keep each mint once. A later page
+      // that fails is skipped so the tab still shows what loaded instead of an error.
       const seen = new Set(tokens.map(t => t.mintAddress));
-      (await Promise.all(rest)).forEach(r => (r?.tokens || []).forEach(t => {
+      (await Promise.allSettled(rest)).forEach(r => (r.status === 'fulfilled' && r.value?.tokens || []).forEach(t => {
         if (seen.has(t.mintAddress)) return;
         seen.add(t.mintAddress);
         tokens.push(t);

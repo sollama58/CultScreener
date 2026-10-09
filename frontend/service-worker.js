@@ -77,7 +77,7 @@
 // podium order and keyboard sorting, retry after a failed tab load, phone ATH columns -
 // tokenTable.js v9, conviction.js v23, tech.js v7, emerging.js v7, performance.js v29,
 // versus.js v18, mainViewTabs.js v3, home.css v2.
-const CACHE_VERSION = 'holdex-v86';
+const CACHE_VERSION = 'holdex-v87';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -93,7 +93,7 @@ const APP_SHELL = [
   '/js/api.js?v=17',
   '/js/deviceLink.js?v=3',
   '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=9',
+  '/js/tokenTable.js?v=10',
   '/js/conviction.js?v=23',
   '/js/tech.js?v=7',
   '/js/emerging.js?v=7',

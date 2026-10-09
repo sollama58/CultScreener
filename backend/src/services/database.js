@@ -964,7 +964,7 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     `${baseCte}
      SELECT *, COUNT(*) OVER() AS total_count_ FROM combined
      ${outerConditions}
-     ORDER BY conviction_1m DESC NULLS LAST
+     ORDER BY conviction_1m DESC NULLS LAST, mint_address
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     [...params, limit, offset]
   );
