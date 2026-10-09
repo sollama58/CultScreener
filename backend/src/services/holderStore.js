@@ -271,8 +271,9 @@ async function pruneAbandonedMints() {
 /**
  * The same day-later retry as writeSnapshot's, for the backfill run. A token whose pre-check
  * keeps finding it unchanged never writes a snapshot, so its 'failed' wallets otherwise
- * stayed failed until an admin flush. Positions only hold current holders, so no
- * snapshot check is needed here.
+ * stayed failed until an admin flush. No snapshot check here: on a complete token positions
+ * only hold current holders. On a capped token a wallet that has since left can be requeued
+ * until the attempt cap, which costs little since runBackfill only works walletsOfInterest.
  */
 async function requeueFailedBackfills(mint, at = Date.now()) {
   const { rowCount } = await pool().query(REQUEUE_FAILED_SQL,

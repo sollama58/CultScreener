@@ -122,6 +122,9 @@ if (pool) {
     probing = true;
     pool.query('SELECT 1')
       .catch((probeErr) => {
+        // A pool checkout timeout only means every connection is busy (the database is
+        // answering them); treating it as an outage turned load into 503s on every DB route.
+        if (/timeout exceeded when trying to connect/.test(probeErr.message)) return;
         isConnected = false;
         console.error('[Database] Connection lost:', probeErr.message);
       })
@@ -178,7 +181,9 @@ async function initializeDatabase() {
   }
 
   connectionAttempts++;
-  console.log(`Database connection attempt ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}...`);
+  const attemptLabel = connectionAttempts <= MAX_CONNECTION_ATTEMPTS
+    ? `${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}` : `${connectionAttempts}`;
+  console.log(`Database connection attempt ${attemptLabel}...`);
 
   let client;
   try {
@@ -260,7 +265,7 @@ async function initializeDatabase() {
         ALTER TABLE votes ADD COLUMN IF NOT EXISTS voter_percentage DECIMAL(12,6) DEFAULT 0;
         ALTER TABLE votes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
         ALTER TABLE vote_tallies ADD COLUMN IF NOT EXISTS weighted_score DECIMAL(10,2) DEFAULT 0;
-      EXCEPTION WHEN lock_not_available THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
       WHEN OTHERS THEN NULL;
       END $$;
 
@@ -337,7 +342,7 @@ async function initializeDatabase() {
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
         CREATE INDEX IF NOT EXISTS idx_tokens_name_lower_trgm ON tokens USING gin (LOWER(name) gin_trgm_ops);
         CREATE INDEX IF NOT EXISTS idx_tokens_symbol_lower_trgm ON tokens USING gin (LOWER(symbol) gin_trgm_ops);
-      EXCEPTION WHEN lock_not_available THEN RAISE; -- lock_timeout: fail the attempt, don't fall back
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't fall back
       WHEN OTHERS THEN
         -- pg_trgm might not be available on some hosts, fall back to btree indexes
         CREATE INDEX IF NOT EXISTS idx_tokens_name_lower ON tokens(LOWER(name) varchar_pattern_ops);
@@ -536,7 +541,7 @@ async function initializeDatabase() {
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_at_added DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath_at TIMESTAMP WITH TIME ZONE;
-      EXCEPTION WHEN lock_not_available THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
       WHEN OTHERS THEN NULL;
       END $mca$;
 
@@ -554,7 +559,7 @@ async function initializeDatabase() {
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_at TIMESTAMP WITH TIME ZONE;
         -- Last refresh attempt, failed ones included; price_refs_at is when the refs were computed
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_tried_at TIMESTAMP WITH TIME ZONE;
-      EXCEPTION WHEN lock_not_available THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
       WHEN OTHERS THEN NULL;
       END $pref$;
 
@@ -714,7 +719,7 @@ async function initializeDatabase() {
     if (client) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore rollback errors */ }
     }
-    console.error(`Database connection failed (attempt ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}):`, error.message);
+    console.error(`Database connection failed (attempt ${attemptLabel}):`, error.message);
 
     // Keep retrying: isReady() stays false until the schema is in place, so giving up after a
     // few attempts left the process serving nothing (or, before schemaReady, serving against

@@ -34,6 +34,8 @@ if (!DB_URL) {
     process.env.DATABASE_URL = withOptions(DB_URL);
     delete process.env.REDIS_URL;
     db = require('./database');
+    // Not ready to serve until the schema step has committed
+    assert.strictEqual(db.isReady(), false);
     assert.strictEqual(await db.getInitializationPromise(), true);
   });
 
@@ -291,6 +293,23 @@ if (!DB_URL) {
       assert.strictEqual(db.isReady(), true);
       await new Promise(r => setTimeout(r, 100)); // the probe query succeeds
       assert.strictEqual(db.isReady(), true);
+    });
+
+    test('an idle connection failing while every connection is busy does not take the database offline', async () => {
+      const opts = db.pool.options;
+      const savedTimeout = opts.connectionTimeoutMillis;
+      opts.connectionTimeoutMillis = 200;
+      const held = [];
+      try {
+        while (db.pool.totalCount < opts.max || db.pool.idleCount > 0) held.push(await db.pool.connect());
+        db.pool.emit('error', new Error('Connection terminated unexpectedly'));
+        // The probe's checkout times out: the pool is busy, not the database gone
+        await new Promise(r => setTimeout(r, 500));
+        assert.strictEqual(db.isReady(), true);
+      } finally {
+        opts.connectionTimeoutMillis = savedTimeout;
+        for (const c of held) c.release();
+      }
     });
 
     test('a connection dropped mid-transaction fails that transaction, not the process', async () => {

@@ -232,8 +232,8 @@ router.delete('/user-data',
       if (!result) {
         return res.status(500).json({ error: 'Failed to delete user data' });
       }
-      await forgetWalletAccess(wallet).catch(() => {
-        console.warn('[GDPR] Could not clear cached utility access');
+      await forgetWalletAccess(wallet).catch((err) => {
+        console.warn('[GDPR] Could not clear cached utility access:', err.message);
       });
 
       res.json({
