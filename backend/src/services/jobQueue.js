@@ -6,6 +6,7 @@
  */
 
 const { Queue } = require('bullmq');
+const crypto = require('crypto');
 
 // Redis connection config (reuses existing REDIS_URL)
 const REDIS_URL = process.env.REDIS_URL;
@@ -17,6 +18,11 @@ const QUEUE_NAMES = {
   NOTIFICATIONS: 'notifications', // Future: email, webhooks
   SEARCH: 'search'              // Similar-tokens computation
 };
+
+// How long an add may take before it counts as failed (null). Covers what
+// enableOfflineQueue doesn't: the first connect (BullMQ waits for it) and a
+// connection that hangs without closing. API requests await these adds.
+const QUEUE_ADD_TIMEOUT_MS = parseInt(process.env.QUEUE_ADD_TIMEOUT_MS) || 3000;
 
 // Queues (initialized lazily)
 let queues = {};
@@ -35,7 +41,12 @@ function getRedisConfig() {
       username: url.username || undefined,
       // TLS for production Redis (Render, Railway, etc.)
       tls: url.protocol === 'rediss:' ? {} : undefined,
-      maxRetriesPerRequest: null // Required for BullMQ
+      maxRetriesPerRequest: null, // Required for BullMQ
+      // Producers only (the worker has its own connection config). While Redis is
+      // down an add fails at once instead of waiting in ioredis's offline queue,
+      // so callers' `if (!job)` fallbacks run and nothing piles up to be sent as
+      // duplicate jobs when Redis comes back.
+      enableOfflineQueue: false
     };
   } catch (err) {
     console.error('[JobQueue] Failed to parse REDIS_URL:', err.message);
@@ -94,6 +105,27 @@ function initialize() {
 }
 
 /**
+ * Add a job, giving up after QUEUE_ADD_TIMEOUT_MS. Returns the job, or null on
+ * any failure (callers treat null as "no queue").
+ */
+async function addToQueue(queueName, jobName, data, options, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      queues[queueName].add(jobName, data, options),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Redis did not accept the job within ${QUEUE_ADD_TIMEOUT_MS}ms`)), QUEUE_ADD_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (err) {
+    console.error(`[JobQueue] Failed to add ${label} job ${jobName}:`, err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Add a job to the maintenance queue
  */
 async function addMaintenanceJob(jobName, data = {}, options = {}) {
@@ -102,13 +134,7 @@ async function addMaintenanceJob(jobName, data = {}, options = {}) {
     return null;
   }
 
-  try {
-    const job = await queues[QUEUE_NAMES.MAINTENANCE].add(jobName, data, options);
-    return job;
-  } catch (err) {
-    console.error(`[JobQueue] Failed to add maintenance job ${jobName}:`, err.message);
-    return null;
-  }
+  return addToQueue(QUEUE_NAMES.MAINTENANCE, jobName, data, options, 'maintenance');
 }
 
 /**
@@ -128,13 +154,7 @@ async function addAnalyticsJob(jobName, data = {}, options = {}) {
     options = { ...options, jobId: `holder-count-${data.mints[0]}`, removeOnComplete: true, removeOnFail: true };
   }
 
-  try {
-    const job = await queues[QUEUE_NAMES.ANALYTICS].add(jobName, data, options);
-    return job;
-  } catch (err) {
-    console.error(`[JobQueue] Failed to add analytics job ${jobName}:`, err.message);
-    return null;
-  }
+  return addToQueue(QUEUE_NAMES.ANALYTICS, jobName, data, options, 'analytics');
 }
 
 /**
@@ -146,13 +166,7 @@ async function addSearchJob(jobName, data = {}, options = {}) {
     return null;
   }
 
-  try {
-    const job = await queues[QUEUE_NAMES.SEARCH].add(jobName, data, options);
-    return job;
-  } catch (err) {
-    console.error(`[JobQueue] Failed to add search job ${jobName}:`, err.message);
-    return null;
-  }
+  return addToQueue(QUEUE_NAMES.SEARCH, jobName, data, options, 'search');
 }
 
 /**
@@ -170,9 +184,9 @@ const RECURRING_JOBS = [
   // Curated prices 1, 7 and 30 days ago, for the home table's 7d/30d change (a few tokens per run)
   { id: 'refresh-curated-price-refs', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 15 * 60 * 1000 }, phaseMs: 194_000 },
   // Daily holder counts, 00:05 UTC (tz pinned: a cron pattern is otherwise read in the process's local time)
-  { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *', tz: 'UTC' } },
+  { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *', tz: 'UTC' }, catchUp: true },
   // Daily Diamond Hands scores and the King of the Pill, 00:20 UTC
-  { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *', tz: 'UTC' } },
+  { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *', tz: 'UTC' }, catchUp: true },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
 ];
@@ -184,12 +198,22 @@ const RETIRED_JOBS = [
 ];
 
 /**
+ * True when a daily 'M H * * *' (UTC) pattern's slot for today has already passed.
+ */
+function dailySlotPassed(pattern, now = Date.now()) {
+  const m = /^(\d+) (\d+) \* \* \*$/.exec(pattern || '');
+  if (!m) return false;
+  const d = new Date(now);
+  return d.getUTCHours() * 60 + d.getUTCMinutes() >= parseInt(m[2], 10) * 60 + parseInt(m[1], 10);
+}
+
+/**
  * Make sure every recurring job is scheduled. Safe to call at any time and from
  * any process: the worker calls it at startup and then every few minutes, so the
  * schedules come back on their own if Redis restarts or evicts them (the free
  * Render Redis keeps no data across restarts). Returns how many are scheduled.
  */
-async function ensureRecurringJobs() {
+async function ensureRecurringJobs({ now = Date.now() } = {}) {
   if (!isInitialized && !initialize()) return 0;
   let scheduled = 0;
   for (const { id, queue: queueName } of RETIRED_JOBS) {
@@ -199,9 +223,20 @@ async function ensureRecurringJobs() {
       for (const j of (await queue.getRepeatableJobs()).filter(j => j.name === id)) await queue.removeRepeatableByKey(j.key);
     } catch (_) { /* nothing to remove */ }
   }
-  for (const { id, queue: queueName, repeat, phaseMs } of RECURRING_JOBS) {
+  for (const { id, queue: queueName, repeat, phaseMs, catchUp } of RECURRING_JOBS) {
     const queue = queues[queueName];
     try {
+      // A daily scheduler re-created after its slot (Redis lost it, e.g. a restart
+      // at 00:17) would next fire tomorrow, skipping today's run: run it once now.
+      // The job id makes that once per day; the jobs are safe to repeat.
+      if (catchUp && dailySlotPassed(repeat.pattern, now)) {
+        const existing = await queue.getJobScheduler(id).catch(() => true);
+        if (!existing) {
+          const day = new Date(now).toISOString().slice(0, 10);
+          await queue.add(id, { catchUp: true, day }, { jobId: `${id}-catchup-${day}` });
+          console.warn(`[JobQueue] ${id} schedule was missing after today's run time; queued a catch-up run`);
+        }
+      }
       // Drop schedules made by the older queue.add({ repeat }) API, which stored
       // them under a composite key instead of the scheduler id.
       const legacy = (await queue.getRepeatableJobs()).filter(j => j.name === id && j.key !== id);
@@ -229,6 +264,9 @@ async function ensureRecurringJobs() {
  * Buffer is capped to prevent unbounded memory growth
  */
 const viewCountBuffer = new Map(); // tokenMint -> count
+// Counts taken out of the buffer by a flush that is still queueing or writing
+// them; still counted by getBufferedViewCounts so displayed totals don't dip
+const inFlightViewCounts = new Map(); // tokenMint -> count
 const VIEW_BUFFER_MAX_SIZE = parseInt(process.env.VIEW_BUFFER_MAX_SIZE) || 50000;
 const VIEW_FLUSH_INTERVAL_MS = parseInt(process.env.VIEW_FLUSH_INTERVAL_MS) || 5000;
 let viewFlushScheduled = false;
@@ -293,11 +331,15 @@ async function flushViewCounts() {
     return;
   }
   isFlushing = true;
+  let snapshot = null;
 
   try {
     // Atomic snapshot: swap buffer with a fresh Map so new writes don't collide
-    const snapshot = new Map(viewCountBuffer);
+    snapshot = new Map(viewCountBuffer);
     viewCountBuffer.clear();
+    for (const [tokenMint, count] of snapshot) {
+      inFlightViewCounts.set(tokenMint, (inFlightViewCounts.get(tokenMint) || 0) + count);
+    }
 
     const viewUpdates = [];
     for (const [tokenMint, count] of snapshot) {
@@ -305,9 +347,13 @@ async function flushViewCounts() {
     }
 
     // Try job queue first if available
+    let batchId = null;
     if (isInitialized) {
       try {
-        const job = await addAnalyticsJob('batch-view-counts', { updates: viewUpdates }, VIEW_COUNT_JOB_OPTIONS);
+        // The batch id is also the job id: an add that ioredis resends is the same
+        // job, and the worker records it so a re-run (stalled job) adds nothing twice
+        batchId = `views-${crypto.randomUUID()}`;
+        const job = await addAnalyticsJob('batch-view-counts', { updates: viewUpdates, batchId }, { ...VIEW_COUNT_JOB_OPTIONS, jobId: batchId });
         if (job) {
           console.log(`[JobQueue] Queued ${viewUpdates.length} view count updates`);
           return;
@@ -318,7 +364,10 @@ async function flushViewCounts() {
     }
 
     // Fallback: Write directly to database — re-add failed entries back to buffer
-    const successfulMints = new Set(await flushViewCountsDirect(viewUpdates));
+    // An add that timed out may still land in Redis later, so record its batch id
+    // as applied: the worker then skips that job instead of counting it again.
+    // Mints that fail here go back to the buffer and are flushed under a new id.
+    const successfulMints = new Set(await flushViewCountsDirect(viewUpdates, batchId));
     for (const [tokenMint, count] of snapshot) {
       if (!successfulMints.has(tokenMint)) {
         // Re-add failed entries back to the live buffer
@@ -327,6 +376,12 @@ async function flushViewCounts() {
       }
     }
   } finally {
+    if (snapshot) {
+      for (const [tokenMint, count] of snapshot) {
+        const left = (inFlightViewCounts.get(tokenMint) || 0) - count;
+        if (left > 0) inFlightViewCounts.set(tokenMint, left); else inFlightViewCounts.delete(tokenMint);
+      }
+    }
     isFlushing = false;
   }
 }
@@ -335,11 +390,23 @@ async function flushViewCounts() {
  * Direct database write fallback for view counts
  * Used when Redis/job queue is unavailable
  */
-async function flushViewCountsDirect(viewUpdates) {
+async function flushViewCountsDirect(viewUpdates, batchId = null) {
   const database = getDb();
   if (!database.isReady()) {
     console.warn('[JobQueue] Database not ready, view counts will be retained in buffer');
     return [];
+  }
+
+  if (batchId) {
+    try {
+      const { rowCount } = await database.pool.query(
+        'INSERT INTO view_count_batches (batch_id) VALUES ($1) ON CONFLICT (batch_id) DO NOTHING', [batchId]);
+      // The late job already landed and was applied: nothing left to write
+      if (rowCount === 0) return viewUpdates.map(u => u.tokenMint);
+    } catch (err) {
+      console.warn('[JobQueue] Could not record view count batch, retaining in buffer:', err.message);
+      return [];
+    }
   }
 
   console.log(`[JobQueue] Writing ${viewUpdates.length} view counts directly to DB...`);
@@ -476,7 +543,7 @@ async function shutdown() {
 function getBufferedViewCounts(tokenMints) {
   const result = {};
   for (const mint of tokenMints) {
-    const count = viewCountBuffer.get(mint);
+    const count = (viewCountBuffer.get(mint) || 0) + (inFlightViewCounts.get(mint) || 0);
     if (count) result[mint] = count;
   }
   return result;
@@ -489,11 +556,14 @@ module.exports = {
   addSearchJob,
   ensureRecurringJobs,
   RECURRING_JOBS,
+  dailySlotPassed,
   incrementViewCount,
   getBufferedViewCounts,
   flushViewCounts,
   getQueueStats,
   isWorkerActive,
   shutdown,
-  QUEUE_NAMES
+  QUEUE_NAMES,
+  // exported for tests
+  flushViewCountsDirect,
 };

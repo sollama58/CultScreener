@@ -20,7 +20,7 @@
  */
 
 require('dotenv').config();
-const { Worker } = require('bullmq');
+const { Worker, DelayedError } = require('bullmq');
 const telegramBot = require('./telegram-bot');
 
 // Import services for job processing
@@ -30,6 +30,7 @@ const solanaService = require('./services/solana');
 const heliusCredits = require('./services/heliusCredits');
 const { cache, TTL, keys } = require('./services/cache');
 const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('./constants');
+const { inferSplBurn } = require('./services/splBurn');
 
 // Allowed DEXes for similar-tokens anti-spoofing filter
 const SIMILAR_TOKEN_DEX_PREFIXES = ['raydium', 'pump', 'bonk'];
@@ -55,6 +56,19 @@ function getRedisConfig() {
     return null;
   }
 }
+
+// A full holder classification stays cached past the next curated snapshot
+// (every refreshMs), which re-runs or renews it; a shorter TTL left a gap where
+// page views re-queued it for the same list
+const holderAnalyticsTtl = () => require('./services/holderPipeline').CONFIG.refreshMs + 2 * TTL.HOUR;
+
+// Full holder snapshots running at once. Each pages DAS (several pages in flight)
+// and holds the whole account list in memory, then a long DB transaction; the
+// analytics queue's concurrency alone let ten run together on a 512 MB instance.
+// Snapshot jobs past the cap wait in BullMQ's delayed set, not in a worker slot.
+const SNAPSHOT_MAX_CONCURRENT = parseInt(process.env.HOLDER_SNAPSHOT_MAX_CONCURRENT) || 3;
+const SNAPSHOT_SLOT_RETRY_MS = 15000;
+let activeSnapshots = 0;
 
 // Most mints fetch-holder-counts-batch pages DAS for in one job
 const HOLDER_COUNT_SCANS_PER_JOB = 20;
@@ -87,6 +101,9 @@ const jobProcessors = {
     // they are individually trivial and collectively unbounded - a QR regenerated a few times a
     // day by every user adds up to a table nobody ever looks at.
     const devices = await db.cleanupExpiredDeviceSessions();
+    // Applied view-count batch ids only matter while BullMQ could still re-run that job
+    await db.pool.query(`DELETE FROM view_count_batches WHERE processed_at < NOW() - INTERVAL '1 day'`)
+      .catch(err => console.warn('[Worker] view_count_batches prune failed:', err.message));
     console.log(`[Worker] Cleaned up ${count} expired sessions, ${devices} expired device sessions`);
 
     return { cleanedSessions: count, cleanedDeviceSessions: devices };
@@ -111,7 +128,7 @@ const jobProcessors = {
    * Receives buffered view increments and writes to database in one transaction
    */
   'batch-view-counts': async (job) => {
-    const { updates } = job.data;
+    const { updates, batchId } = job.data;
 
     if (!updates || updates.length === 0) {
       return { updated: 0 };
@@ -127,6 +144,19 @@ const jobProcessors = {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
+
+      // A batch is applied once: BullMQ re-runs a job that stalled after COMMIT
+      // (and an add ioredis resent is the same job id), so record it in the same
+      // transaction. Batches queued before batch ids existed have none.
+      if (batchId) {
+        const { rowCount } = await client.query(
+          'INSERT INTO view_count_batches (batch_id) VALUES ($1) ON CONFLICT (batch_id) DO NOTHING', [batchId]);
+        if (rowCount === 0) {
+          await client.query('ROLLBACK');
+          console.log(`[Worker] View count batch ${batchId} was already applied; skipped`);
+          return { updated: 0, duplicate: true };
+        }
+      }
 
       const mints = updates.map(u => u.tokenMint);
       const counts = updates.map(u => u.count);
@@ -293,6 +323,11 @@ const jobProcessors = {
     // DEX filtering: only check local results that need dexId verification
     // Limit to top 8 local results to cap API calls (only 5 needed in final)
     const localResults = results.filter(t => t.source === 'local').slice(0, 8);
+    // getTokenOverview returns null both for "not on GeckoTerminal" and for any
+    // failure (timeout, 5xx, rate limit, open breaker). When every lookup came back
+    // null, GeckoTerminal is down or throttling: keep the look-alikes unverified
+    // instead of dropping them all, and cache that only briefly.
+    let dexCheckFailed = false;
     if (localResults.length > 0) {
       try {
         const overviewResults = await Promise.allSettled(
@@ -306,16 +341,18 @@ const jobProcessors = {
               localResults[i].pairCreatedAt = result.value.pairCreatedAt;
             }
           } else {
-            localResults[i]._dexIds = [];
+            localResults[i]._dexIds = null; // unknown
           }
         }
       } catch (err) {
-        for (const t of localResults) t._dexIds = [];
+        for (const t of localResults) t._dexIds = null;
       }
+      dexCheckFailed = localResults.every(t => t._dexIds == null);
 
       results = results.filter(t => {
         if (t.source !== 'local') return true;
-        if (!t._dexIds || t._dexIds.length === 0) return false;
+        if (t._dexIds == null) return dexCheckFailed;
+        if (t._dexIds.length === 0) return false;
         return t._dexIds.some(dex =>
           SIMILAR_TOKEN_DEX_PREFIXES.some(prefix => dex.startsWith(prefix))
         );
@@ -328,7 +365,7 @@ const jobProcessors = {
     for (const t of final) { delete t._dexIds; delete t._enriched; }
 
     // Store enriched result in cache and clear pending flag
-    const cacheTTL = final.length > 0 ? TTL.HOUR : TTL.PRICE_DATA;
+    const cacheTTL = final.length > 0 && !dexCheckFailed ? TTL.HOUR : TTL.PRICE_DATA;
     await cache.set(`similar:${mint}`, { results: final, enriched: true }, cacheTTL);
     await cache.delete(`similar-pending:${mint}`);
     console.log(`[Worker] Similar tokens for ${mint}: found ${final.length} results`);
@@ -359,6 +396,10 @@ const jobProcessors = {
     for (const mint of mints) {
       try {
         if (known[mint] > 0) { skipped++; continue; }
+        // A holder snapshot is running (or just failed) for it: the snapshot pages the
+        // same DAS list and writes the count itself, so a scan now would pay twice and
+        // could overwrite the snapshot's count with a differently counted one
+        if (await cache.get(`holder-snapshot-pending:${mint}`).catch(() => null)) { skipped++; continue; }
         // A recent scan found no count: not a scan, so it mustn't use up the cap
         // below and keep the same first mints of a list ahead of the rest forever
         if (await cache.get(`holder-total-none:${mint}`).catch(() => null)) { skipped++; continue; }
@@ -389,10 +430,24 @@ const jobProcessors = {
    * Triggered by GET /api/tokens/:mint/holders when cache is cold.
    */
   'compute-holder-analytics': async (job) => {
-    const { mint, rawAccounts, totalSupply, usedDAS, supplyDecimals } = job.data;
+    let { mint, rawAccounts, totalSupply, usedDAS, supplyDecimals } = job.data;
     if (!rawAccounts || rawAccounts.length === 0) {
       await cache.delete(`holder-classify-pending:${mint}`).catch(() => {});
       return { status: 'empty' };
+    }
+
+    // The result goes to the cache key /holders serves. A short list (the top 20 a
+    // Cultify or RPC request queued) would replace a curated token's 100-holder
+    // snapshot list there for hours, so classify the snapshot's list when there is one.
+    const holderPipeline = require('./services/holderPipeline');
+    if (rawAccounts.length < holderPipeline.CONFIG.listN) {
+      const list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
+      if (list && list.rawAccounts.length > rawAccounts.length) {
+        rawAccounts = list.rawAccounts;
+        totalSupply = list.totalSupply;
+        supplyDecimals = list.decimals;
+        usedDAS = true;
+      }
     }
 
     console.log(`[Worker] Classifying ${rawAccounts.length} holder accounts for ${mint}`);
@@ -461,29 +516,11 @@ const jobProcessors = {
         }
       }
 
-      // Build full result with SPL burn detection
-      const PUMP_FUN_AUTHORITIES = new Set([
-        'TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM',
-        '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
-        '39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg',
-      ]);
-      let splBurnt = 0;
-      let isPumpFun = false;
-      if (currentSupply && currentSupply > 0) {
-        const isPumpFunAuth = tokenAuth?.authorities?.some(a => PUMP_FUN_AUTHORITIES.has(a.address));
-        const isPumpFunMint = !isPumpFunAuth && decimals === 6 && mintData
-          && mintData.mintAuthority === null && mintData.freezeAuthority === null
-          && currentSupply > 0 && currentSupply <= 1000000000;
-        isPumpFun = !!(isPumpFunAuth || isPumpFunMint);
-        if (isPumpFun && decimals === 6) {
-          const diff = 1000000000 - currentSupply;
-          if (diff > 0) splBurnt = diff;
-        }
-      }
+      // SPL burn detection (pump.fun only: the one launch with a known original supply)
+      const { isPumpFun, splBurnt, supplyDenominator } = inferSplBurn({ currentSupply, decimals, tokenAuth });
 
       const lockedAmount = await lockedPromise;
       const burntAmount = splBurnt + deadWalletBurnt;
-      const supplyDenominator = isPumpFun ? 1000000000 : currentSupply;
       const supply = {
         total: currentSupply, burnt: burntAmount,
         burntPct: supplyDenominator > 0 && burntAmount > 0 ? (burntAmount / supplyDenominator) * 100 : 0,
@@ -532,17 +569,22 @@ const jobProcessors = {
       }
 
       const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
-      // Outlives the next curated snapshot (every refreshMs), which re-runs this job;
-      // a shorter TTL left a gap where page views re-queued it for the same list.
       // When the Streamflow lookup failed, 'locked: 0' is a guess: keep it 15 minutes only.
-      const analyticsTtl = lockedUnknown ? 15 * 60 * 1000 : require('./services/holderPipeline').CONFIG.refreshMs + 2 * TTL.HOUR;
-      await cache.set(`holder-analytics:${mint}`, result, analyticsTtl);
+      await cache.set(`holder-analytics:${mint}`, result, lockedUnknown ? 15 * 60 * 1000 : holderAnalyticsTtl());
       await cache.delete(`holder-classify-pending:${mint}`);
 
       console.log(`[Worker] Holder analytics done for ${mint}: ${holders.length} holders, ${lpIndices.size} LP, ${burntIndices.size} burnt`);
       return { holders: holders.length, lp: lpIndices.size, burnt: burntIndices.size };
     } catch (err) {
-      await cache.delete(`holder-classify-pending:${mint}`);
+      // BullMQ retries the job (attempts and backoff in jobQueue.js). Until the last
+      // attempt keep the pending lock, so a page view doesn't queue a second
+      // classification that runs alongside the retry.
+      const attempts = job.opts?.attempts || 1;
+      if ((job.attemptsMade || 0) + 1 >= attempts) {
+        await cache.delete(`holder-classify-pending:${mint}`).catch(() => {});
+      } else {
+        await cache.set(`holder-classify-pending:${mint}`, Date.now(), 120000).catch(() => {});
+      }
       throw err;
     }
   },
@@ -552,21 +594,51 @@ const jobProcessors = {
    * in Postgres with the conviction sample, then the hold-time backfill is queued.
    * Also refreshes the holder list from the snapshot's top holders.
    */
-  'snapshot-holders': async (job) => {
+  'snapshot-holders': async (job, token) => {
     const { mint } = job.data;
     if (!mint) return { error: 'No mint provided' };
     const holderPipeline = require('./services/holderPipeline');
-    const result = await holderPipeline.takeSnapshot(mint);
+    if (token && activeSnapshots >= SNAPSHOT_MAX_CONCURRENT) {
+      // Keep the per-mint lock while it waits, so it isn't queued a second time
+      await cache.set(`holder-snapshot-pending:${mint}`, Date.now(), holderPipeline.CONFIG.snapshotLockTtl).catch(() => {});
+      await job.moveToDelayed(Date.now() + SNAPSHOT_SLOT_RETRY_MS + Math.floor(Math.random() * 5000), token);
+      throw new DelayedError();
+    }
+    activeSnapshots++;
+    let result;
+    try {
+      result = await holderPipeline.takeSnapshot(mint);
+    } finally {
+      activeSnapshots--;
+    }
 
-    // An unchanged holder list whose classification is still cached needs no re-run
-    const classified = result.status === 'unchanged' && !!(await cache.get(`holder-analytics:${mint}`).catch(() => null));
+    // An unchanged holder list whose classification is still cached needs no re-run.
+    // Only a full classification counts: the API's 2-minute fast result has no supply,
+    // and its inline fallback (20 RPC accounts) is shorter than the snapshot list.
+    const cachedAnalytics = result.status === 'unchanged'
+      ? await cache.get(`holder-analytics:${mint}`).catch(() => null) : null;
+    let list;
+    let classified = false;
+    if (cachedAnalytics?.supply) {
+      list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
+      const listed = list ? list.rawAccounts.filter(a => a.uiAmount > 0).length : 0;
+      classified = !!list && (cachedAnalytics.holders?.length || 0) >= Math.min(listed, holderPipeline.CONFIG.listN);
+    }
+    if (classified) {
+      // Still accurate, so renew it: written once, it expired 2h before the tick
+      // after next, and page views in that gap re-queued the classification
+      await cache.set(`holder-analytics:${mint}`, cachedAnalytics, holderAnalyticsTtl()).catch(() => {});
+    }
     if ((result.status === 'ok' || result.status === 'unchanged') && !classified && !(await cache.get(`holder-classify-pending:${mint}`))) {
-      const list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
+      if (list === undefined) list = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
       if (list) {
         await cache.set(`holder-classify-pending:${mint}`, Date.now(), 120000);
-        await require('./services/jobQueue').addAnalyticsJob('compute-holder-analytics', {
+        // addAnalyticsJob returns null on failure (it never rejects): release the lock
+        // so the API can queue the classification instead of waiting 2 minutes on nothing
+        const queued = await require('./services/jobQueue').addAnalyticsJob('compute-holder-analytics', {
           mint, rawAccounts: list.rawAccounts, totalSupply: list.totalSupply, usedDAS: true, supplyDecimals: list.decimals,
-        }).catch(() => cache.delete(`holder-classify-pending:${mint}`));
+        }).catch(() => null);
+        if (!queued) await cache.delete(`holder-classify-pending:${mint}`).catch(() => {});
       }
     }
     return result;
@@ -609,8 +681,18 @@ const jobProcessors = {
    * Score every curated token's diamond hands for today and settle the King of the
    * Pill (services/kingOfPill.js). Reads stored data only; idempotent within a day.
    */
-  'crown-king-of-pill': async () => {
+  'crown-king-of-pill': async (job) => {
     const kingOfPill = require('./services/kingOfPill');
+    // A catch-up run (jobQueue.ensureRecurringJobs) is only for a day the schedule missed
+    if (job?.data?.catchUp) {
+      const today = new Date().toISOString().slice(0, 10);
+      // Queued for a day that has since ended: that day can't be crowned now, and
+      // today's crowning belongs to the 00:20 run
+      if (job.data.day && job.data.day !== today) return { skipped: `catch-up for ${job.data.day} ran after that day ended` };
+      const done = await db.pool.query('SELECT 1 FROM diamond_hands_scores WHERE score_date = $1 LIMIT 1', [today])
+        .then(r => r.rows.length > 0).catch(() => false);
+      if (done) return { skipped: 'already crowned today' };
+    }
     return kingOfPill.runDailyCrowning();
   },
 
@@ -677,6 +759,16 @@ const jobProcessors = {
         if (!data) continue; // GeckoTerminal has no record of this token
 
         const marketCap = data.marketCap || data.fdv || null;
+        // ATH and listing market cap must be the same measure every time. GeckoTerminal
+        // publishes a market cap only while CoinGecko has a circulating supply, so for a
+        // token that has one, an FDV-only reading would set an ATH it never reached.
+        // Such readings still update the displayed market cap, but not the ATH.
+        let athMarketCap = marketCap;
+        if (data.marketCap > 0) {
+          await cache.set(`mcap-reported:${mint}`, true, 7 * TTL.DAY).catch(() => {});
+        } else if (await cache.get(`mcap-reported:${mint}`).catch(() => null)) {
+          athMarketCap = null;
+        }
 
         // Always write fresh market data — use updateTokenMarketData (not upsertToken)
         // so price_change_24h is overwritten with the latest value rather than
@@ -698,15 +790,15 @@ const jobProcessors = {
           console.warn(`[Worker] refresh-curated-prices update failed for ${mint.slice(0, 8)}:`, err.message);
         }
 
-        if (marketCap > 0) {
+        if (athMarketCap > 0) {
           // Backfill mcap_at_added for tokens listed before this feature shipped
           const curatedToken = curatedTokens.find(t => (t.mintAddress || t.mint_address) === mint);
           if (curatedToken?.mcapAtAdded == null) {
-            await db.updateCuratedTokenMcapAtAdded(mint, marketCap).catch(() => {});
+            await db.updateCuratedTokenMcapAtAdded(mint, athMarketCap).catch(() => {});
           }
 
           // Update ATH (upward-only guard is inside updateCuratedTokenATH)
-          const athResult = await db.updateCuratedTokenATH(mint, marketCap).catch(() => null);
+          const athResult = await db.updateCuratedTokenATH(mint, athMarketCap).catch(() => null);
           if (athResult) athUpdated++;
         }
       }
@@ -835,6 +927,9 @@ const jobProcessors = {
       const dbRow = dbRowMap[mint];
       const currentMcap = dbRow?.market_cap != null ? parseFloat(dbRow.market_cap) : null;
       if (currentMcap == null || currentMcap <= 0) continue;
+      // tokens.market_cap can be an FDV fallback; refresh-curated-prices ratchets the
+      // ATH of tokens with a reported market cap from that measure only
+      if (await cache.get(`mcap-reported:${mint}`).catch(() => null)) continue;
 
       // Also backfill mcap_at_added for tokens that were listed before this feature shipped
       if (token.mcapAtAdded == null) {
@@ -851,12 +946,24 @@ const jobProcessors = {
 };
 
 /**
+ * BullMQ concurrency is per Worker, and there is one Worker per queue, so one
+ * setting for all four multiplied it by four against the worker's DB pool.
+ * WORKER_CONCURRENCY is the analytics queue's (the heavy jobs); search runs
+ * page-triggered similar-token lookups; maintenance and notifications are rare.
+ */
+function queueConcurrency(queueName) {
+  if (queueName === 'analytics') return parseInt(process.env.WORKER_CONCURRENCY) || 2;
+  if (queueName === 'search') return parseInt(process.env.WORKER_SEARCH_CONCURRENCY) || 2;
+  return 1;
+}
+
+/**
  * Create a worker for a specific queue
  */
 function createWorker(queueName, redisConfig) {
   const worker = new Worker(
     queueName,
-    async (job) => {
+    async (job, token) => {
       const processor = jobProcessors[job.name];
 
       if (!processor) {
@@ -867,11 +974,13 @@ function createWorker(queueName, redisConfig) {
       const startTime = Date.now();
       try {
         // Helius calls made by the job are credited to it (admin Helius Credits tab)
-        const result = await heliusCredits.withSource(`job:${job.name}`, () => processor(job));
+        const result = await heliusCredits.withSource(`job:${job.name}`, () => processor(job, token));
         const duration = Date.now() - startTime;
         console.log(`[Worker] Job ${job.name} completed in ${duration}ms`);
         return result;
       } catch (err) {
+        // Moved back to the delayed set to wait for a slot; not a failure
+        if (err instanceof DelayedError) throw err;
         const duration = Date.now() - startTime;
         console.error(`[Worker] Job ${job.name} failed after ${duration}ms:`, err.message);
         throw err;
@@ -879,7 +988,7 @@ function createWorker(queueName, redisConfig) {
     },
     {
       connection: redisConfig,
-      concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 2, // Limit concurrency — holder-metrics/behavior jobs are Helius-heavy
+      concurrency: queueConcurrency(queueName), // Limit concurrency — holder-metrics/behavior jobs are Helius-heavy
       lockDuration: 300000, // 5 min lock (BullMQ renews it while a job runs; a backfill run is up to 4 min plus its slowest wallet)
       stalledInterval: 120000, // Check for stalled jobs every 2 min (must be < lockDuration)
       limiter: {
@@ -1014,6 +1123,10 @@ async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 
   }, deadlineMs + 10000);
   if (forceExit.unref) forceExit.unref();
 
+  // Stop the Telegram bot first, alongside the drain: Render starts the new worker
+  // before this one exits, and two processes long-polling one bot token get 409s
+  const botStopped = telegramBot.stopBot().catch(() => {});
+
   try {
     // Close all workers in parallel: none keeps picking up jobs while another drains
     let deadlineTimer;
@@ -1031,7 +1144,7 @@ async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 
     console.error('[Worker] Error closing workers:', err.message);
   }
 
-  await telegramBot.stopBot().catch(() => {});
+  await botStopped;
 
   // Only now: in-flight jobs used these sockets until their workers closed
   try { require('./services/httpAgent').destroy(); } catch (_) {}
@@ -1065,4 +1178,4 @@ start().catch((err) => {
 });
 }
 
-module.exports = { jobProcessors };
+module.exports = { jobProcessors, queueConcurrency };
