@@ -399,11 +399,13 @@ const jobProcessors = {
 
     try {
       // Fetch mint account info + token authorities + Streamflow locks in parallel
+      let lockedUnknown = false;
       const [mintAccount, tokenAuth, lockedAmount] = await Promise.all([
         solanaService.getAccountInfo(mint).catch(() => null),
         solanaService.getTokenAuthorities(mint).catch(() => null),
         solanaService.getStreamflowLockedAmount(mint, supplyDecimals).catch(err => {
           console.warn('[Worker] Streamflow check failed:', err.message);
+          lockedUnknown = true;
           return 0;
         })
       ]);
@@ -482,7 +484,8 @@ const jobProcessors = {
         total: currentSupply, burnt: burntAmount,
         burntPct: supplyDenominator > 0 && burntAmount > 0 ? (burntAmount / supplyDenominator) * 100 : 0,
         locked: lockedAmount, lockedPct: currentSupply > 0 && lockedAmount > 0 ? (lockedAmount / currentSupply) * 100 : 0,
-        splBurnt, deadWalletBurnt, isPumpFun
+        splBurnt, deadWalletBurnt, isPumpFun,
+        ...(lockedUnknown ? { lockedUnknown: true } : {})
       };
 
       const holders = rawAccounts.map((a, i) => ({
@@ -526,8 +529,10 @@ const jobProcessors = {
 
       const result = { holders, totalSupply, metrics, supply, fetchedAt: Date.now() };
       // Outlives the next curated snapshot (every refreshMs), which re-runs this job;
-      // a shorter TTL left a gap where page views re-queued it for the same list
-      await cache.set(`holder-analytics:${mint}`, result, require('./services/holderPipeline').CONFIG.refreshMs + 2 * TTL.HOUR);
+      // a shorter TTL left a gap where page views re-queued it for the same list.
+      // When the Streamflow lookup failed, 'locked: 0' is a guess: keep it 15 minutes only.
+      const analyticsTtl = lockedUnknown ? 15 * 60 * 1000 : require('./services/holderPipeline').CONFIG.refreshMs + 2 * TTL.HOUR;
+      await cache.set(`holder-analytics:${mint}`, result, analyticsTtl);
       await cache.delete(`holder-classify-pending:${mint}`);
 
       console.log(`[Worker] Holder analytics done for ${mint}: ${holders.length} holders, ${lpIndices.size} LP, ${burntIndices.size} burnt`);

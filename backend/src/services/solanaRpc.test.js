@@ -35,6 +35,21 @@ describe('rpcCall', () => {
     assert.match(calls[0].url, /helius/);
   });
 
+  test('an open solanaRpc breaker fails fast, without the overload backoff (audit #33)', async () => {
+    const { circuitBreakers } = require('./circuitBreaker');
+    calls = [];
+    answer = () => ({ data: { result: 1 } });
+    circuitBreakers.solanaRpc.trip();
+    try {
+      const t0 = Date.now();
+      await assert.rejects(solana.rpcCall('getSlot', []), err => err.isCircuitBreakerError === true);
+      assert.ok(Date.now() - t0 < 1000, `failed in ${Date.now() - t0}ms`);
+      assert.strictEqual(calls.length, 0);
+    } finally {
+      circuitBreakers.solanaRpc.reset();
+    }
+  });
+
   // (before the method-refusal test below, which turns getTransactionsForAddress off)
   test('large getTransactionsForAddress pages are capped in flight; small ones are not', async () => {
     let inFlight = 0;

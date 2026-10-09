@@ -54,3 +54,20 @@ test('a failure in HALF_OPEN reopens the breaker', async () => {
   await assert.rejects(cb.execute(() => Promise.reject(new Error('boom'))), /boom/);
   assert.strictEqual(cb.state, STATES.OPEN);
 });
+
+test('Helius breakers ignore our own queue overload and open-breaker errors (audit #94)', () => {
+  const { circuitBreakers, CircuitBreakerError } = require('./circuitBreaker');
+  const queueFull = Object.assign(new Error('API queue full - server overloaded. Try again later.'), { isOverloaded: true });
+  const queueTimeout = Object.assign(new Error('Request timed out waiting in queue'), { isOverloaded: true });
+  const open = new CircuitBreakerError('open', 'solanaRpc', STATES.OPEN, 1000);
+  for (const name of ['helius', 'heliusDas']) {
+    const cb = circuitBreakers[name];
+    assert.strictEqual(cb.isFailure(queueFull), false, `${name}: queue full`);
+    assert.strictEqual(cb.isFailure(queueTimeout), false, `${name}: queue timeout`);
+    assert.strictEqual(cb.isFailure(open), false, `${name}: open breaker`);
+    assert.strictEqual(cb.isFailure({ response: { status: 429 } }), false, `${name}: 429`);
+    assert.strictEqual(cb.isFailure({ response: { status: 502 } }), true, `${name}: 5xx`);
+    assert.strictEqual(cb.isFailure(Object.assign(new Error('timeout of 20000ms exceeded'), { code: 'ECONNABORTED' })), true, `${name}: timeout`);
+    assert.strictEqual(cb.isFailure({ response: { status: 400 } }), false, `${name}: 4xx`);
+  }
+});

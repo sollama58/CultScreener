@@ -45,3 +45,50 @@ test('a job without a mint does not run a backfill', async () => {
   stubPipeline.runBackfill = async () => { throw new Error('should not run'); };
   assert.deepStrictEqual(await jobProcessors['backfill-holder-acquisitions']({ data: {} }), { error: 'No mint provided' });
 });
+
+// audit #117: a failed Streamflow lookup must not be cached for hours as "0 locked"
+test('holder analytics after a failed Streamflow lookup is flagged and cached briefly', async () => {
+  const solanaService = require('./services/solana');
+  const real = {
+    getAccountInfo: solanaService.getAccountInfo,
+    getTokenAuthorities: solanaService.getTokenAuthorities,
+    getStreamflowLockedAmount: solanaService.getStreamflowLockedAmount,
+    getMultipleAccounts: solanaService.getMultipleAccounts,
+  };
+  solanaService.getMultipleAccounts = async () => ({ value: [null] });
+  solanaService.getAccountInfo = async () => null;
+  solanaService.getTokenAuthorities = async () => null;
+  solanaService.getStreamflowLockedAmount = async () => { throw new Error('timeout of 15000ms exceeded'); };
+  stubPipeline.CONFIG.refreshMs = 4 * 3600000;
+  const mint = 'StreamMint111111111111111111111111111111111';
+  const writes = [];
+  const realSet = cache.set;
+  cache.set = async (k, v, ttl) => { writes.push({ k, v, ttl }); return realSet.call(cache, k, v, ttl); };
+  try {
+    await jobProcessors['compute-holder-analytics']({ data: {
+      mint, totalSupply: 0, usedDAS: true, supplyDecimals: 6,
+      rawAccounts: [{ wallet: 'W1', address: 'A1', uiAmount: 10 }],
+    } });
+    const w = writes.find(x => x.k === `holder-analytics:${mint}`);
+    assert.strictEqual(w.v.supply.lockedUnknown, true);
+    assert.strictEqual(w.ttl, 15 * 60 * 1000);
+  } finally {
+    cache.set = realSet;
+    Object.assign(solanaService, real);
+  }
+});
+
+test('getStreamflowLockedAmount reports an RPC failure instead of answering 0', async () => {
+  const axios = require('axios');
+  const solanaService = require('./services/solana');
+  const realPost = axios.post;
+  axios.post = async () => { throw Object.assign(new Error('Request failed with status code 400'), { response: { status: 400 } }); };
+  try {
+    const mint = 'StreamFail11111111111111111111111111111111';
+    await assert.rejects(solanaService.getStreamflowLockedAmount(mint, 6));
+    // Remembered for a few minutes, still as a failure
+    await assert.rejects(solanaService.getStreamflowLockedAmount(mint, 6), /failed recently/);
+  } finally {
+    axios.post = realPost;
+  }
+});
