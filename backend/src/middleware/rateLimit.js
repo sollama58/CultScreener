@@ -86,6 +86,18 @@ const pollLimiter = rateLimit({
   keyGenerator: (req) => req.ip
 });
 
+// Single-wallet balance lookups (GET /api/tokens/:mint/holder/:wallet). Each new wallet is an
+// uncached Helius call, so naming random wallets under the 100/min default budget spent
+// credits for nothing; no page calls this route.
+const holderLookupLimiter = rateLimit({
+  windowMs: 60000, // 1 minute
+  max: 10,         // 10 lookups per minute per IP
+  message: { error: 'Too many balance lookups, please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip
+});
+
 // Limiter for API key requests (higher limits than default)
 // Uses IP as key to prevent per-key rate limit circumvention
 const apiKeyLimiter = rateLimit({
@@ -108,5 +120,6 @@ module.exports = {
   searchLimiter,
   walletLimiter,
   pollLimiter,
+  holderLookupLimiter,
   apiKeyLimiter
 };

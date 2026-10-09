@@ -398,18 +398,21 @@ const jobProcessors = {
     console.log(`[Worker] Classifying ${rawAccounts.length} holder accounts for ${mint}`);
 
     try {
-      // Fetch mint account info + token authorities + Streamflow locks in parallel
-      const [mintAccount, tokenAuth, lockedAmount] = await Promise.all([
+      // Fetch mint account info + token authorities in parallel
+      const [mintAccount, tokenAuth] = await Promise.all([
         solanaService.getAccountInfo(mint).catch(() => null),
-        solanaService.getTokenAuthorities(mint).catch(() => null),
-        solanaService.getStreamflowLockedAmount(mint, supplyDecimals).catch(err => {
-          console.warn('[Worker] Streamflow check failed:', err.message);
-          return 0;
-        })
+        solanaService.getTokenAuthorities(mint).catch(() => null)
       ]);
 
       const mintData = mintAccount?.value?.data?.parsed?.info;
-      const decimals = mintData?.decimals || supplyDecimals || 0;
+      const decimals = Number.isInteger(mintData?.decimals) ? mintData.decimals : (supplyDecimals || 0);
+      // Streamflow amounts are scaled by the mint's own decimals once known: a job that
+      // carried supplyDecimals 0 (its getTokenSupply failed) reported raw base units as locked.
+      // Runs alongside the wallet lookups below.
+      const lockedPromise = solanaService.getStreamflowLockedAmount(mint, decimals).catch(err => {
+        console.warn('[Worker] Streamflow check failed:', err.message);
+        return 0;
+      });
       const currentSupply = mintData
         ? parseFloat(mintData.supply) / Math.pow(10, decimals)
         : totalSupply;
@@ -476,6 +479,7 @@ const jobProcessors = {
         }
       }
 
+      const lockedAmount = await lockedPromise;
       const burntAmount = splBurnt + deadWalletBurnt;
       const supplyDenominator = isPumpFun ? 1000000000 : currentSupply;
       const supply = {

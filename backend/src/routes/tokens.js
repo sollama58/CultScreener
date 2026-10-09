@@ -6,7 +6,7 @@ const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
 const { validateMint, validatePagination, validateSearch, asyncHandler, SOLANA_ADDRESS_REGEX, catchUnlessOverloaded, requireDatabase, hashApiKey, canBypassCache } = require('../middleware/validation');
-const { searchLimiter, viewLimiter } = require('../middleware/rateLimit');
+const { searchLimiter, viewLimiter, holderLookupLimiter } = require('../middleware/rateLimit');
 const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('../constants');
 const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
@@ -15,6 +15,7 @@ const { resolveMintDecimals } = require('../services/mintDecimals');
 const axios = require('axios');
 const crypto = require('crypto');
 const { rateLimitedRequest } = require('../services/rateLimiter');
+const { circuitBreakers } = require('../services/circuitBreaker');
 
 // Require database for all token routes
 router.use(requireDatabase);
@@ -1954,8 +1955,9 @@ router.get('/:mint/views', validateMint, requireAllowedToken, asyncHandler(async
 }));
 
 // GET /api/tokens/:mint/holder/:wallet - Check if wallet holds token and get balance info
-// Used to verify submitter holds the token they want to update
-router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
+// Public API only (no page calls it). Every new wallet is an uncached Helius call, so it has
+// its own small per-IP limit.
+router.get('/:mint/holder/:wallet', holderLookupLimiter, validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint, wallet } = req.params;
 
   // Basic wallet address validation
@@ -1986,7 +1988,7 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
           const info = account.account?.data?.parsed?.info;
           if (info && info.mint === mint) {
             balance += parseFloat(info.tokenAmount?.uiAmount || 0);
-            decimals = info.tokenAmount?.decimals || 9;
+            decimals = pickDecimals(info.tokenAmount?.decimals);
           }
         }
       }
@@ -1994,16 +1996,22 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
       // RPC failed — try DAS fallback below
     }
 
-    // Method 2: Helius DAS fallback if RPC failed or returned zero
-    // DAS getTokenAccounts can find Token-2022 accounts that standard RPC may miss
-    if (balance === 0 && HELIUS_DAS_URL) {
+    // Method 2: Helius DAS fallback, only when the RPC call failed. A successful RPC answer
+    // with no accounts is a confirmed non-holder: the mint filter covers Token-2022 mints
+    // too, and a 10-credit DAS call per empty wallet made random wallets a credit drain.
+    if (!rpcSuccess && HELIUS_DAS_URL) {
       try {
-        solanaService.countCredits('getTokenAccounts', 10);
-        const dasResponse = await axios.post(HELIUS_DAS_URL, {
-          jsonrpc: '2.0', id: 1,
-          method: 'getTokenAccounts',
-          params: { owner: wallet, mint, limit: 10 }
-        }, { timeout: 10000 });
+        // Same rate limit and breaker as the other DAS callers (Helius RPS budget)
+        const dasResponse = await circuitBreakers.heliusDas.execute(() =>
+          rateLimitedRequest('helius', () => {
+            solanaService.countCredits('getTokenAccounts', 10);
+            return axios.post(HELIUS_DAS_URL, {
+              jsonrpc: '2.0', id: 1,
+              method: 'getTokenAccounts',
+              params: { owner: wallet, mint, limit: 10 }
+            }, { timeout: 10000 });
+          })
+        );
 
         if (dasResponse.data?.result?.token_accounts?.length > 0) {
           rpcSuccess = true;
@@ -2044,7 +2052,6 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
 
     // Get token supply for percentage calculation
     let totalSupply = null;
-    let liquidity = null;
     let circulatingSupply = null;
     let percentageHeld = null;
 
@@ -2054,21 +2061,16 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
       || await cache.getWithMeta(`batch:${mint}`);
     const tokenInfo = tokenInfoMeta?.value ?? null;
     if (tokenInfo) {
-      totalSupply = tokenInfo.supply || tokenInfo.totalSupply;
-      liquidity = tokenInfo.liquidity;
-      // Estimate circulating supply (total - liquidity locked)
-      // This is a rough approximation
-      if (totalSupply && liquidity && tokenInfo.price) {
-        const liquidityTokens = liquidity / tokenInfo.price;
-        circulatingSupply = Math.max(0, totalSupply - liquidityTokens);
-      } else {
-        circulatingSupply = totalSupply;
-      }
+      // Display supply (UI units). The raw Gecko totalSupply is not scaled, so it is no
+      // fallback here.
+      totalSupply = tokenInfo.supply || null;
+      circulatingSupply = tokenInfo.circulatingSupply || totalSupply;
     }
 
-    // Calculate percentage if we have supply data
-    if (balance > 0 && circulatingSupply && circulatingSupply > 0) {
-      percentageHeld = (balance / circulatingSupply) * 100;
+    // Share of total supply, as the holders panel reports it. Subtracting pool USD liquidity
+    // divided by price counted both sides of the pool as tokens, and pushed results past 100%.
+    if (balance > 0 && totalSupply > 0) {
+      percentageHeld = Math.min(100, (balance / totalSupply) * 100);
     }
 
     const result = {
@@ -2083,8 +2085,8 @@ router.get('/:mint/holder/:wallet', validateMint, requireAllowedToken, asyncHand
       percentageHeld: percentageHeld !== null ? parseFloat(percentageHeld.toFixed(6)) : null
     };
 
-    // Cache for 1 minute (balances change frequently)
-    await cache.set(cacheKey, result, 60000);
+    // Cache for 1 minute (balances change frequently); a confirmed non-holder for 5
+    await cache.set(cacheKey, result, result.holdsToken ? 60000 : 5 * 60000);
 
     res.json(result);
   } catch (error) {
@@ -2113,7 +2115,8 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
   try {
     // ?fresh=true bypasses the cache, but only for admin sessions and API-key callers;
     // anyone else could otherwise force uncached RPC calls on every request.
-    if (req.query.fresh !== 'true' || !(await canBypassCache(req))) {
+    const bypass = req.query.fresh === 'true' && await canBypassCache(req);
+    if (!bypass) {
       const cached = await cache.get(cacheKey);
       if (cached) return res.json(cached);
     }
@@ -2121,7 +2124,7 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
     // Phase 1, preferred: the top holders of a recent full snapshot (no RPC).
     const snapList = await holderPipeline.getSnapshotHolderList(mint).catch(() => null);
     if (snapList) {
-      return res.json(await _serveSnapshotHolders(mint, snapList, cacheKey));
+      return res.json(await _serveSnapshotHolders(mint, snapList, cacheKey, bypass));
     }
     // No recent snapshot: ask for one, and serve the 20-account RPC view meanwhile.
     if (solanaService.isHeliusConfigured()) holderPipeline.ensureSnapshot(mint).catch(() => {});
@@ -2132,32 +2135,20 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
       solanaService.getTokenSupply(mint).catch(catchUnlessOverloaded(null))
     ]);
 
-    // If standard RPC failed, try Helius DAS API as fallback (capped at 3s to keep API responsive)
-    let largestAccounts = rpcAccounts;
-    // Decimals for the DAS path, whose amounts come back raw. Defaulting to 0 when
-    // getTokenSupply also failed served (and had the worker cache) raw base units.
-    let dasDecimals = null;
-    if (!largestAccounts) {
-      dasDecimals = Number.isInteger(supplyResult?.value?.decimals)
-        ? supplyResult.value.decimals
-        : await resolveMintDecimals(mint);
-      if (dasDecimals == null) {
-        return res.status(503).json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
+    if (!rpcAccounts) {
+      // RPC down. An older snapshot's top holders are still the real largest accounts; a
+      // single DAS getTokenAccounts page is not (it is in index order, not by balance), and
+      // serving it as "top holders" had the worker cache concentration metrics from 20
+      // arbitrary small wallets for hours. With neither, say so and let the client retry.
+      const staleList = await holderPipeline.getSnapshotHolderList(mint, { maxAgeMs: STALE_SNAPSHOT_MAX_AGE_MS }).catch(() => null);
+      if (staleList) {
+        return res.json(await _serveSnapshotHolders(mint, staleList, cacheKey, bypass));
       }
-      const decimals = dasDecimals;
-      largestAccounts = await Promise.race([
-        solanaService.getTokenLargestAccountsDAS(mint, decimals),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('DAS timeout')), 10000)),
-      ]).catch((err) => {
-        if (err.message !== 'DAS timeout') console.warn(`[Tokens] DAS fallback failed for ${mint}:`, err.message);
-        return null;
-      });
+      return res.status(503).json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
     }
+    const largestAccounts = rpcAccounts;
 
-    if (!largestAccounts || largestAccounts.length === 0) {
-      if (!rpcAccounts) {
-        return res.status(503).json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
-      }
+    if (largestAccounts.length === 0) {
       return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: null });
     }
 
@@ -2205,33 +2196,23 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
 
     // Build fast result and cache briefly (worker will overwrite with full data)
     const fastResult = { holders, totalSupply, metrics, supply: null, fetchedAt: Date.now() };
-    // Only cache if we don't already have a full result being computed
-    const pendingKey = `holder-classify-pending:${mint}`;
-    const alreadyPending = await cache.get(pendingKey);
-    if (!alreadyPending) {
-      // Cache fast result with short TTL — worker will replace it with full data
-      await cache.set(cacheKey, fastResult, 120000); // 2 min
 
-      // Phase 2: Queue heavy classification to worker
-      await cache.set(pendingKey, Date.now(), 120000);
+    // Decimals for the worker's Streamflow scaling. getTokenSupply can fail on its own while
+    // getTokenLargestAccounts succeeds; each RPC account carries the mint decimals too.
+    // Sending 0 there scaled locked amounts (and lockedPct) by 10^decimals.
+    let supplyDecimals = [supplyResult?.value?.decimals, ...largestAccounts.map(a => a.decimals)]
+      .find(d => Number.isInteger(d) && d >= 0);
+    if (supplyDecimals === undefined) supplyDecimals = await resolveMintDecimals(mint);
+
+    if (supplyDecimals != null) {
       const rawAccounts = largestAccounts.slice(0, 20).map(a => ({
         address: a.address,
         wallet: a.wallet || null,
         uiAmount: a.uiAmount
       }));
-      const job = await jobQueue.addAnalyticsJob('compute-holder-analytics', {
-        mint,
-        rawAccounts,
-        totalSupply,
-        usedDAS: !rpcAccounts,
-        supplyDecimals: dasDecimals ?? (supplyResult?.value?.decimals || 0)
-      });
-      if (!job) {
-        // No worker available — do classification inline as fallback
-        await cache.delete(pendingKey);
-        await _classifyHoldersInline(mint, rawAccounts, totalSupply, !rpcAccounts,
-          supplyResult || (dasDecimals != null ? { value: { decimals: dasDecimals } } : null), cacheKey);
-      }
+      await _cacheFastResultAndClassify(mint, cacheKey, fastResult,
+        { rawAccounts, totalSupply, usedDAS: false, supplyDecimals },
+        { value: { ...(supplyResult?.value || {}), decimals: supplyDecimals } }, bypass);
     }
 
     if (!res.headersSent) res.json(fastResult);
@@ -2241,9 +2222,37 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
   }
 }));
 
+// Cache the unclassified fast result for 2 minutes and queue the worker classification,
+// once per pending window. Both writes are SET NX: a poll whose cache miss came just before
+// the worker finished must not replace the classified result with the unflagged one (or
+// queue the work again), and while a classification is already pending (queued by the
+// snapshot job or another request) the fast result is still cached, so polls in that
+// window are served from cache instead of repeating the reads. `overwrite` is the admin
+// ?fresh=true path, which replaces whatever is cached.
+async function _cacheFastResultAndClassify(mint, cacheKey, fastResult, jobData, supplyResult, overwrite = false) {
+  let stored;
+  if (overwrite) {
+    await cache.set(cacheKey, fastResult, 120000);
+    stored = true;
+  } else {
+    stored = await cache.setNX(cacheKey, fastResult, 120000);
+  }
+  if (!stored) return; // a result (classified or fast) is already there
+
+  const pendingKey = `holder-classify-pending:${mint}`;
+  if (!(await cache.setNX(pendingKey, Date.now(), 120000))) return; // already queued
+
+  const job = await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint, ...jobData });
+  if (!job) {
+    // No worker available — do classification inline as fallback
+    await cache.delete(pendingKey);
+    await _classifyHoldersInline(mint, jobData.rawAccounts, jobData.totalSupply, jobData.usedDAS, supplyResult, cacheKey);
+  }
+}
+
 // Holder list from a snapshot: unflagged top holders now, LP/burn/percentages from the
 // compute-holder-analytics job (which the snapshot job normally queues already).
-async function _serveSnapshotHolders(mint, snapList, cacheKey) {
+async function _serveSnapshotHolders(mint, snapList, cacheKey, overwrite = false) {
   const { rawAccounts, totalSupply, decimals } = snapList;
   const holders = rawAccounts.map((a, i) => ({
     rank: i + 1, address: a.wallet, balance: a.uiAmount, percentage: null, isLP: false, isBurnt: false
@@ -2255,18 +2264,9 @@ async function _serveSnapshotHolders(mint, snapList, cacheKey) {
   };
   const fastResult = { holders, totalSupply, metrics, supply: null, fetchedAt: Date.now() };
 
-  const pendingKey = `holder-classify-pending:${mint}`;
-  if (!(await cache.get(pendingKey))) {
-    await cache.set(cacheKey, fastResult, 120000);
-    await cache.set(pendingKey, Date.now(), 120000);
-    const job = await jobQueue.addAnalyticsJob('compute-holder-analytics', {
-      mint, rawAccounts, totalSupply, usedDAS: true, supplyDecimals: decimals
-    });
-    if (!job) {
-      await cache.delete(pendingKey);
-      await _classifyHoldersInline(mint, rawAccounts, totalSupply, true, { value: { decimals } }, cacheKey);
-    }
-  }
+  await _cacheFastResultAndClassify(mint, cacheKey, fastResult,
+    { rawAccounts, totalSupply, usedDAS: true, supplyDecimals: decimals },
+    { value: { decimals } }, overwrite);
   return fastResult;
 }
 
@@ -2283,8 +2283,10 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
     console.warn(`[Tokens] Inline classify skipped for ${mint.slice(0, 8)} — ${_inlineClassifyActive} already running (worker may be down)`);
     return;
   }
+  // Taken now, not inside setImmediate: callers in the same event-loop turn would all
+  // pass the check above before any deferred increment ran.
+  _inlineClassifyActive++;
   setImmediate(() => {
-    _inlineClassifyActive++;
     (async () => {
       try {
         const [mintAccount, tokenAuth] = await Promise.all([
@@ -2596,3 +2598,4 @@ router.get('/:mint/similar', validateMint, requireAllowedToken, asyncHandler(asy
 }));
 
 module.exports = router;
+module.exports._classifyHoldersInline = _classifyHoldersInline;
