@@ -429,13 +429,22 @@ const imageProxyCacheBudget = require('./services/cache').createSharedByteBudget
 // Upstream bytes fetched per hour (this process). The proxy fetches any https URL, so without a
 // cap a client naming unique URLs could pull up to 3 MB per request through the API's bandwidth
 // and CPU. Past a cap, cache hits are still served; new fetches get a 503 until the hour rolls on.
-// Two caps, so one client cannot spend everyone's: each client (rateLimit's clientKey) has its own
-// allowance, and the overall one only turns away requests that name no page (scripts, curl), so
-// HolDEX pages still get their logos when an anonymous client has used it up.
-// Override with IMAGE_PROXY_UPSTREAM_BUDGET_MB and IMAGE_PROXY_CLIENT_BUDGET_MB.
+// Caps, so one client cannot spend everyone's: each client (rateLimit's clientKey) has its own
+// allowance, and there are two overall ones, each a hard ceiling. Requests that name a page
+// (Origin/Referer, which foreign pages are refused on) draw on one, requests naming none
+// (scripts, crawlers, no-referrer users) on the other. A script can send a HolDEX Referer, so the
+// page bucket is a ceiling too; keeping the bytes apart means neither group can use up the
+// other's allowance.
+// Override with IMAGE_PROXY_UPSTREAM_BUDGET_MB, IMAGE_PROXY_PAGE_BUDGET_MB and
+// IMAGE_PROXY_CLIENT_BUDGET_MB.
 const IMAGE_PROXY_UPSTREAM_WINDOW_MS = 60 * 60 * 1000;
 const imageProxyUpstreamBudget = require('./services/cache').createByteBudget({
   limitBytes: (Number(process.env.IMAGE_PROXY_UPSTREAM_BUDGET_MB) || 1024) * 1024 * 1024,
+  windowMs: IMAGE_PROXY_UPSTREAM_WINDOW_MS,
+  buckets: 12
+});
+const imageProxyPageBudget = require('./services/cache').createByteBudget({
+  limitBytes: (Number(process.env.IMAGE_PROXY_PAGE_BUDGET_MB) || 2048) * 1024 * 1024,
   windowMs: IMAGE_PROXY_UPSTREAM_WINDOW_MS,
   buckets: 12
 });
@@ -579,8 +588,9 @@ function decodeImageEntry(raw) {
 }
 
 // One upstream fetch for the image proxy: bytes plus a content type judged from the bytes.
-// clientBudget: the requesting client's share of the upstream budget, charged alongside the total.
-async function fetchImageBytes(target, signal, clientBudget) {
+// clientBudget: the requesting client's share of the upstream budget, charged alongside the
+// overall one (globalBudget: the page or the no-page bucket).
+async function fetchImageBytes(target, signal, clientBudget, globalBudget = imageProxyUpstreamBudget) {
   const axios = require('axios');
   const response = await axios.get(target, {
     responseType: 'arraybuffer',
@@ -602,7 +612,7 @@ async function fetchImageBytes(target, signal, clientBudget) {
     },
   });
   const body = Buffer.from(response.data);
-  imageProxyUpstreamBudget.record(body.length);
+  globalBudget.record(body.length);
   if (clientBudget) clientBudget.record(body.length);
   // Trust the bytes over the label: IPFS gateways, Arweave/Irys and S3 often serve real images
   // as application/octet-stream or text/plain, and those used to be refused here.
@@ -683,7 +693,8 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     const clientBudget = imageProxyClientBudgets.forKey(clientKey(req));
     // Foreign pages were refused above (in production), so a request naming a page is the site's own
     const namesPage = Boolean((req.headers.origin && req.headers.origin !== 'null') || req.headers.referer);
-    if (clientBudget.exhausted() || (!namesPage && imageProxyUpstreamBudget.exhausted())) {
+    const globalBudget = namesPage ? imageProxyPageBudget : imageProxyUpstreamBudget;
+    if (clientBudget.exhausted() || globalBudget.exhausted()) {
       res.setHeader('Retry-After', '300');
       return res.status(503).json({ error: 'Image proxy busy' });
     }
@@ -697,13 +708,13 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
       let image;
       try {
         if (ipfsContentPath(url)) {
-          image = await Promise.any([url, ...fallbacks].map((target) => fetchImageBytes(target, controller.signal, clientBudget)));
+          image = await Promise.any([url, ...fallbacks].map((target) => fetchImageBytes(target, controller.signal, clientBudget, globalBudget)));
         } else {
           try {
-            image = await fetchImageBytes(url, controller.signal, clientBudget);
+            image = await fetchImageBytes(url, controller.signal, clientBudget, globalBudget);
           } catch (firstErr) {
             if (fallbacks.length === 0) throw firstErr;
-            image = await Promise.any(fallbacks.map((target) => fetchImageBytes(target, controller.signal, clientBudget)))
+            image = await Promise.any(fallbacks.map((target) => fetchImageBytes(target, controller.signal, clientBudget, globalBudget)))
               .catch(() => { throw firstErr; });
           }
         }
