@@ -14,8 +14,15 @@ const readline = require('readline');
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
+// Do not echo the password as it is typed: it would sit in the terminal scrollback (or a screen
+// share / recording) right above the hash. Everything readline writes after the prompt is dropped.
+let muted = false;
+rl._writeToOutput = (str) => { if (!muted) rl.output.write(str); };
+
 rl.question('Enter admin password to hash: ', (password) => {
+  muted = false;
   rl.close();
+  process.stdout.write('\n');
 
   if (!password) {
     console.error('Error: password cannot be empty');
@@ -34,3 +41,5 @@ rl.question('Enter admin password to hash: ', (password) => {
     console.log('');
   });
 });
+// rl.question has written the prompt by now; mute what follows (the typed characters)
+muted = true;

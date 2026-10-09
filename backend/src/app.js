@@ -11,16 +11,16 @@ if (!process.env.ADMIN_PASSWORD) {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('ADMIN_PASSWORD environment variable is required');
   }
+} else {
+  // A malformed scrypt value boots fine but can never log in; say so now rather than at login.
+  const adminPasswordError = require('./middleware/validation').adminPasswordFormatError(process.env.ADMIN_PASSWORD);
+  if (adminPasswordError) {
+    console.error(`[Startup] ADMIN_PASSWORD has invalid scrypt format (${adminPasswordError}) — admin login will always fail`);
+  }
 }
 
-const COOKIE_SECRET = process.env.COOKIE_SECRET;
-if (!COOKIE_SECRET) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('COOKIE_SECRET environment variable is required in production');
-  }
-  console.warn('[Security] COOKIE_SECRET not set — using ephemeral secret (sessions will not persist across restarts)');
-}
-const effectiveCookieSecret = COOKIE_SECRET || crypto.randomBytes(32).toString('hex');
+// No COOKIE_SECRET: the only cookie (admin_session) is a random token looked up in the
+// admin_sessions table, so it is never signed and sessions already survive restarts.
 
 if (process.env.NODE_ENV !== 'production' && (process.env.DATABASE_URL || process.env.REDIS_URL)) {
   console.warn('[Startup] WARNING: DATABASE_URL or REDIS_URL is set but NODE_ENV is not "production". Security controls (CORS, HSTS, cookies) are in development mode. Set NODE_ENV=production for production deployments.');
@@ -250,9 +250,9 @@ app.use((req, res, next) => {
 // Parse JSON bodies
 app.use(express.json({ limit: '100kb' }));
 
-// Cookie parser for session management (signed cookies for tamper detection)
+// Cookie parser for the admin_session cookie (an unsigned random token, validated against the DB)
 const cookieParser = require('cookie-parser');
-app.use(cookieParser(effectiveCookieSecret));
+app.use(cookieParser());
 
 // Request logging
 app.use((req, res, next) => {

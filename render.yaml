@@ -45,10 +45,6 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
 
-      # Cookie signing secret (required — sessions invalidated on restart without this)
-      - key: COOKIE_SECRET
-        sync: false
-
       # SSL certificate verification for PostgreSQL (set to 'false' for Render's self-signed certs)
       - key: DB_SSL_REJECT_UNAUTHORIZED
         value: "false"
@@ -255,7 +251,6 @@ databases:
 # 1. Set API keys in Render Dashboard (Environment tab):
 #    - HELIUS_API_KEY (required for holder analysis)
 #    - ADMIN_PASSWORD (required for curated token management)
-#    - COOKIE_SECRET (required for session persistence)
 #    - COINGECKO_API_KEY (optional — higher rate limits)
 #
 # 2. The frontend Static Site (HolDEX-frontend) is now defined in this file, including its

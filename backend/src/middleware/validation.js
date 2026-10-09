@@ -55,12 +55,21 @@ function stopSignatureCleanup() {
  * signature could both pass the check before either marks it used.
  */
 async function checkAndMarkSignature(signature, ttlMs) {
+  // The in-memory map is consulted first, whatever the backend: a signature that was marked only
+  // here while Redis was unreachable has no Redis key, so once Redis is back SET NX would call a
+  // replay of it fresh. Successful Redis claims are mirrored here for the same reason.
+  const memExpiry = usedSignatures.get(signature);
+  if (memExpiry && Date.now() <= memExpiry) return true; // Already used
+
   // Try Redis first — use SET NX (set-if-not-exists) for atomic check+set
   if (cache.getBackendType() === 'redis') {
     try {
       const replayKey = `sig-replay:${signature}`;
       const wasSet = await cache.setNX(replayKey, 1, ttlMs);
-      if (wasSet) return false; // Fresh — we just claimed it
+      if (wasSet) { // Fresh — we just claimed it
+        usedSignatures.set(signature, Date.now() + ttlMs);
+        return false;
+      }
       // setNX also answers false (without throwing) when Redis is disconnected or the
       // command failed. Only call it a replay when the key is really there; otherwise
       // fall through to the in-memory store instead of rejecting every fresh signature.
@@ -578,6 +587,16 @@ async function validateApiKey(req, res, next) {
 // Signature expiry time (2 minutes) - prevents replay attacks while allowing reasonable signing time
 const SIGNATURE_EXPIRY_MS = 2 * 60 * 1000;
 
+// Ed25519 group order L = 2^252 + 27742317777372353535851937790883648493
+const ED25519_L = (1n << 252n) + 27742317777372353535851937790883648493n;
+
+// True when the signature's S half (bytes 32..63, little-endian) is below L.
+function isCanonicalSignatureScalar(signatureBytes) {
+  let s = 0n;
+  for (let i = 63; i >= 32; i--) s = (s << 8n) | BigInt(signatureBytes[i]);
+  return s < ED25519_L;
+}
+
 /**
  * Verify a Solana wallet signature
  * Uses Ed25519 signature verification via tweetnacl
@@ -607,6 +626,13 @@ function verifyWalletSignature(message, signature, walletAddress) {
     // Ensure signature is 64 bytes (Ed25519)
     if (signatureBytes.length !== 64) {
       console.error('[Signature] Invalid signature length:', signatureBytes.length);
+      return false;
+    }
+
+    // tweetnacl does not check that S (the last 32 bytes) is reduced mod L, so S + k*L verifies
+    // too. Every replay marker is keyed on the signature bytes, so each such variant would be a
+    // fresh signature: reject non-canonical S as RFC 8032 and libsodium do.
+    if (!isCanonicalSignatureScalar(signatureBytes)) {
       return false;
     }
 
@@ -1745,6 +1771,26 @@ function generateAdminSessionToken() {
 // Supports two formats for ADMIN_PASSWORD:
 //   scrypt:<salt_hex>:<hash_hex>  — hashed (recommended, use scripts/hash-password.js to generate)
 //   <plaintext>                   — legacy plaintext (triggers a startup warning)
+// Byte length of the scrypt hash scripts/hash-password.js writes (and verifyAdminPassword derives)
+const ADMIN_SCRYPT_KEYLEN = 64;
+
+/**
+ * Check a hashed ADMIN_PASSWORD value (scrypt:<salt_hex>:<hash_hex>).
+ * @returns {string|null} What is wrong with it, or null when it is usable (or not a scrypt value)
+ */
+function adminPasswordFormatError(adminPassword) {
+  if (!adminPassword || !adminPassword.startsWith('scrypt:')) return null;
+  const parts = adminPassword.split(':');
+  if (parts.length !== 3) return 'expected scrypt:<salt_hex>:<hash_hex>';
+  const [, saltHex, hashHex] = parts;
+  if (!saltHex || !/^([0-9a-f]{2})+$/i.test(saltHex)) return 'the salt is not hex';
+  if (!/^([0-9a-f]{2})+$/i.test(hashHex)) return 'the hash is not hex';
+  if (hashHex.length !== ADMIN_SCRYPT_KEYLEN * 2) {
+    return `the hash is ${hashHex.length / 2} bytes, expected ${ADMIN_SCRYPT_KEYLEN} (use scripts/hash-password.js)`;
+  }
+  return null;
+}
+
 async function verifyAdminPassword(password) {
   const crypto = require('crypto');
   const adminPassword = process.env.ADMIN_PASSWORD;
@@ -1756,19 +1802,26 @@ async function verifyAdminPassword(password) {
 
   // Hashed path: scrypt:<salt_hex>:<hash_hex>
   if (adminPassword.startsWith('scrypt:')) {
-    const parts = adminPassword.split(':');
-    if (parts.length !== 3) {
-      console.error('[Security] ADMIN_PASSWORD has invalid scrypt format. Expected scrypt:<salt_hex>:<hash_hex>');
+    // A malformed value (a hash from another tool, a truncated paste) must fail the login, not
+    // reach timingSafeEqual: it throws on a length mismatch, and inside the scrypt callback that
+    // throw is an uncaught exception that restarts the whole API.
+    const formatError = adminPasswordFormatError(adminPassword);
+    if (formatError) {
+      console.error(`[Security] ADMIN_PASSWORD has invalid scrypt format: ${formatError}`);
       return false;
     }
-    const [, saltHex, hashHex] = parts;
+    const [, saltHex, hashHex] = adminPassword.split(':');
     const salt = Buffer.from(saltHex, 'hex');
     const storedHash = Buffer.from(hashHex, 'hex');
 
     return new Promise((resolve) => {
-      crypto.scrypt(password || '', salt, 64, (err, derivedKey) => {
-        if (err) { resolve(false); return; }
-        resolve(crypto.timingSafeEqual(derivedKey, storedHash));
+      crypto.scrypt(password || '', salt, ADMIN_SCRYPT_KEYLEN, (err, derivedKey) => {
+        try {
+          if (err || derivedKey.length !== storedHash.length) { resolve(false); return; }
+          resolve(crypto.timingSafeEqual(derivedKey, storedHash));
+        } catch {
+          resolve(false);
+        }
       });
     });
   }
@@ -1940,6 +1993,7 @@ module.exports = {
   // Admin functions
   generateAdminSessionToken,
   verifyAdminPassword,
+  adminPasswordFormatError,
   validateAdminSession,
   ADMIN_SESSION_DURATION_MS,
   // Device session functions

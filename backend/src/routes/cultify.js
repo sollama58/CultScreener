@@ -163,7 +163,9 @@ async function hasAccessProof(req, walletAddress, mint, createMessage = createCu
   if (!verifyWalletSignature(createMessage(mint, walletAddress, timestamp), signature, walletAddress)) {
     return { ok: false, reason: 'bad_signature' };
   }
-  if (await checkAndMarkSignature(req.query.sig, ACCESS_PROOF_REPLAY_TTL_MS)) {
+  // Burn the decoded bytes re-encoded, not the query string: base64 has spare bits in its last
+  // character, so several different ?sig= strings decode to the same signature.
+  if (await checkAndMarkSignature(Buffer.from(signature).toString('base64'), ACCESS_PROOF_REPLAY_TTL_MS)) {
     return { ok: false, reason: 'replayed' };
   }
   return { ok: true };
