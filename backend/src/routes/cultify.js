@@ -24,6 +24,8 @@ const BURN_AMOUNT = 5_000;
 const BURN_DECIMALS = 6; // pump.fun tokens use 6 decimals
 const BURN_RAW_AMOUNT = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const ACCESS_TOKEN_TTL = 43200 * 1000; // 12 hours in milliseconds (cache.set takes ms)
+// Oldest holder snapshot /analyze serves when the RPC is down (same as the tokens /holders route)
+const STALE_SNAPSHOT_MAX_AGE_MS = 24 * 3_600_000;
 
 /**
  * On-chain verification shared by both burn-gated features (Cultify at 5k, Holder Behavior at
@@ -377,33 +379,28 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     ]);
 
     let largestAccounts = rpcAccounts;
-    // Decimals for the DAS path, whose amounts come back raw. Defaulting to 0 when
-    // getTokenSupply also failed cached raw base units in the holder-analytics cache that the
-    // token page's /holders serves too. Same handling as that route: no guessing.
-    let dasDecimals = null;
-    if (!largestAccounts && solanaService.isHeliusConfigured()) {
-      dasDecimals = Number.isInteger(supplyResult?.value?.decimals)
-        ? supplyResult.value.decimals
-        : await resolveMintDecimals(mint);
-      if (dasDecimals == null) {
+    // RPC down. A snapshot up to a day old still holds the real largest accounts; a single
+    // DAS getTokenAccounts page does not (it is in index order, not by balance), and caching
+    // it here under holder-analytics:<mint> had the token page's /holders serve 20 arbitrary
+    // wallets as "top holders". Same handling as that route (audit #17).
+    let snapList = null;
+    if (!largestAccounts) {
+      snapList = await holderPipeline.getSnapshotHolderList(mint, { maxAgeMs: STALE_SNAPSHOT_MAX_AGE_MS }).catch(() => null);
+      if (!snapList) {
         return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
       }
-      // Cap the DAS fallback at 10s like the tokens /holders route; a timeout is treated
-      // as "no accounts" (rpc_unavailable below)
-      let dasTimer;
-      largestAccounts = await Promise.race([
-        solanaService.getTokenLargestAccountsDAS(mint, dasDecimals),
-        new Promise(resolve => { dasTimer = setTimeout(() => resolve(null), 10000); })
-      ]).finally(() => clearTimeout(dasTimer));
+      largestAccounts = snapList.rawAccounts;
     }
 
-    if (!largestAccounts || largestAccounts.length === 0) {
-      return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: !rpcAccounts ? 'rpc_unavailable' : 'no_holders' });
+    if (largestAccounts.length === 0) {
+      return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'no_holders' });
     }
 
-    const totalSupply = supplyResult?.value
-      ? parseFloat(supplyResult.value.uiAmountString || supplyResult.value.uiAmount || 0)
-      : null;
+    const totalSupply = snapList
+      ? snapList.totalSupply
+      : supplyResult?.value
+        ? parseFloat(supplyResult.value.uiAmountString || supplyResult.value.uiAmount || 0)
+        : null;
 
     // Build basic holders list (LP/burn flags come from worker enrichment)
     // Percentages set to null in fast path since LP status unknown — worker will compute actual percentages excluding LPs
@@ -445,9 +442,21 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
 
     // Phase 2: Queue the same worker job as the main endpoint for enrichment
     // (LP/burn detection, real holder count)
+    // Decimals for the worker's Streamflow scaling: getTokenSupply can fail on its own while
+    // getTokenLargestAccounts succeeds, and each RPC account carries the mint decimals too.
+    // Sending 0 scaled locked amounts by 10^decimals (audit #18).
+    let supplyDecimals = snapList
+      ? snapList.decimals
+      : [supplyResult?.value?.decimals, ...largestAccounts.map(a => a.decimals)]
+        .find(d => Number.isInteger(d) && d >= 0);
+    if (supplyDecimals === undefined) supplyDecimals = await resolveMintDecimals(mint);
+
     const pendingKey = `holder-classify-pending:${mint}`;
     const alreadyPending = await cache.get(pendingKey);
-    if (!alreadyPending) {
+    if (supplyDecimals == null) {
+      // No decimals: skip the classification, but still cache briefly so polls don't repeat the reads
+      await cache.setNX(cacheKey, fastResult, 30000);
+    } else if (!alreadyPending) {
       await cache.set(cacheKey, fastResult, 120000); // 2 min short TTL
       await cache.set(pendingKey, Date.now(), 120000);
       const rawAccounts = largestAccounts.slice(0, 20).map(a => ({
@@ -460,8 +469,9 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
         mint,
         rawAccounts,
         totalSupply,
-        usedDAS: !rpcAccounts,
-        supplyDecimals: dasDecimals ?? (supplyResult?.value?.decimals || 0)
+        // Snapshot accounts already carry their owner wallets
+        usedDAS: !!snapList,
+        supplyDecimals
       });
       if (!job) {
         await cache.delete(pendingKey);

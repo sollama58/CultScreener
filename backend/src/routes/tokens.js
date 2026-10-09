@@ -2213,6 +2213,10 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
       await _cacheFastResultAndClassify(mint, cacheKey, fastResult,
         { rawAccounts, totalSupply, usedDAS: false, supplyDecimals },
         { value: { ...(supplyResult?.value || {}), decimals: supplyDecimals } }, bypass);
+    } else {
+      // No decimals, so no classification job; still cache briefly so polls in this window
+      // don't repeat the three reads above.
+      await cache.setNX(cacheKey, fastResult, 30000);
     }
 
     if (!res.headersSent) res.json(fastResult);
@@ -2230,8 +2234,12 @@ router.get('/:mint/holders', validateMint, requireAllowedToken, asyncHandler(asy
 // window are served from cache instead of repeating the reads. `overwrite` is the admin
 // ?fresh=true path, which replaces whatever is cached.
 async function _cacheFastResultAndClassify(mint, cacheKey, fastResult, jobData, supplyResult, overwrite = false) {
+  // setNX answers false while Redis is disconnected, which would read as "already cached"
+  // and skip classification entirely. Then the writes below are no-ops anyway, so take the
+  // plain path and let the queue (or the inline fallback) run.
+  const cacheDown = cache.getBackendType() === 'redis' && cache.backend?.isConnected === false;
   let stored;
-  if (overwrite) {
+  if (overwrite || cacheDown) {
     await cache.set(cacheKey, fastResult, 120000);
     stored = true;
   } else {
@@ -2240,7 +2248,7 @@ async function _cacheFastResultAndClassify(mint, cacheKey, fastResult, jobData, 
   if (!stored) return; // a result (classified or fast) is already there
 
   const pendingKey = `holder-classify-pending:${mint}`;
-  if (!(await cache.setNX(pendingKey, Date.now(), 120000))) return; // already queued
+  if (!cacheDown && !(await cache.setNX(pendingKey, Date.now(), 120000))) return; // already queued
 
   const job = await jobQueue.addAnalyticsJob('compute-holder-analytics', { mint, ...jobData });
   if (!job) {
@@ -2295,7 +2303,8 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
         ]);
 
         const mintData = mintAccount?.value?.data?.parsed?.info;
-        const decimals = mintData?.decimals || supplyResult?.value?.decimals || 0;
+        const decimals = Number.isInteger(mintData?.decimals) ? mintData.decimals
+          : Number.isInteger(supplyResult?.value?.decimals) ? supplyResult.value.decimals : 0;
         const currentSupply = mintData
           ? parseFloat(mintData.supply) / Math.pow(10, decimals)
           : totalSupply;

@@ -800,7 +800,7 @@ async function getTrendingTokens(options = {}) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           // Use token-level market cap if available (a quote-side pool publishes none)
@@ -892,7 +892,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           if (info.marketCap) token.marketCap = info.marketCap;
@@ -983,7 +983,7 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           // Use token-level market cap if available (more accurate than pool-level)
