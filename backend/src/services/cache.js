@@ -30,7 +30,9 @@ const keys = {
   tokenInfo: (mint) => `token:${mint}`,
   tokenChart: (mint, interval, limit) => `chart:${mint}:${interval}:${limit}`,
   tokenList: (sort, page) => `list:${sort}:${page}`,
-  tokenSearch: (query) => `search:${query}`,
+  // The DEX-filter flag goes before the query, and the query is URI-encoded, so a query
+  // containing ':' (e.g. 'pepe:dex') can never produce another query's key
+  tokenSearch: (query, dexFilter = false) => `search:${dexFilter ? 'dex' : 'all'}:${encodeURIComponent(query)}`,
   submissions: (mint) => `submissions:${mint}`,
   pools: (mint) => `pools:${mint}`,
   holderCount: (mint) => `holders:${mint}`
@@ -644,9 +646,13 @@ class CacheService {
    * @param {string} key - Cache key
    * @param {Function} fetchFn - Async function to fetch value if not cached
    * @param {number} ttlMs - Time to live in milliseconds
+   * @param {Object} [options]
+   * @param {number} [options.inflightTimeoutMs=30000] - How long callers wait on fetchFn before
+   *   giving up with 'getOrSet timeout'. Raise it for a fetchFn whose own queue and retry
+   *   timeouts can legitimately run longer (a late result still fills the cache either way).
    * @returns {Promise<any>}
    */
-  async getOrSet(key, fetchFn, ttlMs = 60000) {
+  async getOrSet(key, fetchFn, ttlMs = 60000, options = {}) {
     const cached = await this.get(key);
     if (cached !== undefined) {
       return cached;
@@ -658,8 +664,9 @@ class CacheService {
     }
 
     // Create fetch promise and store it for deduplication.
-    // 30s timeout ensures the in-flight map entry is always cleaned up even if fetchFn hangs.
-    const INFLIGHT_TIMEOUT_MS = 30000;
+    // The timeout (30s by default) ensures the in-flight map entry is always cleaned up even if
+    // fetchFn hangs.
+    const INFLIGHT_TIMEOUT_MS = options.inflightTimeoutMs > 0 ? options.inflightTimeoutMs : 30000;
     const fetchPromise = (async () => {
       let timer;
       try {

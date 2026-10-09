@@ -794,7 +794,7 @@ router.get('/search', searchLimiter, validateSearch, asyncHandler(async (req, re
   const query = q.trim();
   // dex=1 means filter to major DEXes only (Pumpfun, Pumpswap, Raydium)
   const dexFilter = req.query.dex === '1';
-  const cacheKey = keys.tokenSearch(query.toLowerCase()) + (dexFilter ? ':dex' : '');
+  const cacheKey = keys.tokenSearch(query.toLowerCase(), dexFilter);
 
   // Try cache first
   const cached = await cache.get(cacheKey);
@@ -1572,7 +1572,10 @@ router.get('/:mint', validateMint, requireAllowedToken, asyncHandler(async (req,
             setTimeout(() => reject(Object.assign(new Error('gecko-timeout'), { isGeckoTimeout: true })), 5000)
           )
         ]).catch(err => {
-          if (err.isOverloaded || err.isCircuitBreakerError) throw err;
+          // Any GeckoTerminal failure, including its breaker being open or its request queue
+          // being full, serves partial data: the Helius metadata is still good, and geckoPartial
+          // keeps the zero-valued market data cached for 30s, not 10 minutes, and makes the
+          // frontend retry. (getTokenOverview answers null only for a token it does not index.)
           geckoTimedOut = true;
           console.warn(`[Tokens] GeckoTerminal unavailable (${err.message}) for ${mint.slice(0, 8)}... — serving partial data`);
           return null;
@@ -1737,8 +1740,8 @@ router.get('/:mint/price', validateMint, requireAllowedToken, asyncHandler(async
           new Promise((_, reject) => setTimeout(() => reject(new Error('Price timeout')), 3000))
         ]);
       } catch (err) {
-        if (err.isOverloaded || err.isCircuitBreakerError) throw err;
-        // GeckoTerminal failed or timed out — fall through to Jupiter
+        // GeckoTerminal failed, timed out, or is shedding load (breaker open / queue full) —
+        // fall through to Jupiter, an independent upstream
       }
 
       if (!data) {
