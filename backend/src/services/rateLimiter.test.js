@@ -66,3 +66,27 @@ test('GeckoTerminal free tier pacing stays within the requested requests per min
   }
   assert.strictEqual(limiter.geckoFreeTierLimits(30).minInterval, 2100);
 });
+
+// audit #116: callers arriving together used to all read the same stale state and fire at once
+test('non-queued limits hold for concurrent callers: spacing and burst cap', async () => {
+  limiter.RATE_LIMITS.testUnqueued = { minInterval: 40, maxJitter: 0, burstLimit: 3, burstWindow: 1000 };
+  try {
+    const starts = [];
+    const t0 = Date.now();
+    await Promise.all(Array.from({ length: 5 }, () =>
+      limiter.rateLimitedRequest('testUnqueued', async () => { starts.push(Date.now() - t0); })));
+    starts.sort((a, b) => a - b);
+    for (let i = 1; i < 3; i++) assert.ok(starts[i] - starts[i - 1] >= 35, `spaced: ${starts}`);
+    // Only 3 in any one 1s window: the 4th waits for the next window
+    const firstWindow = Math.floor(t0 / 1000);
+    const inFirst = starts.filter(s => Math.floor((t0 + s) / 1000) === firstWindow).length;
+    assert.ok(inFirst <= 3, `burst capped: ${starts}`);
+  } finally {
+    delete limiter.RATE_LIMITS.testUnqueued;
+  }
+});
+
+test('coingeckoPublic has limits of its own', () => {
+  assert.ok(limiter.RATE_LIMITS.coingeckoPublic);
+  assert.ok(limiter.RATE_LIMITS.coingeckoPublic.minInterval >= 1000);
+});

@@ -111,6 +111,13 @@ const RATE_LIMITS = {
     maxQueueSize: 200,
     queueTimeout: 15000
   },
+  // CoinGecko's public (keyless) API, used by the SOL price fallback: about 30/min
+  coingeckoPublic: {
+    minInterval: 2000,
+    maxJitter: 100,
+    burstLimit: 30,
+    burstWindow: 60000
+  },
   default: {
     minInterval: 100,
     maxJitter: 50,
@@ -176,7 +183,8 @@ const _burstCleanupTimer = setInterval(() => {
     const apiConfig = RATE_LIMITS[apiName] || RATE_LIMITS.default;
     if (!apiConfig.burstWindow || apiConfig.burstWindow <= 0) { burstCounters.delete(key); removed++; continue; }
     const estimatedKeyTime = windowTime * apiConfig.burstWindow;
-    if (now - estimatedKeyTime > BURST_MAX_AGE_MS) {
+    // (at least two of the API's own windows: a minute-long window must outlive 10s)
+    if (now - estimatedKeyTime > Math.max(BURST_MAX_AGE_MS, 2 * apiConfig.burstWindow)) {
       burstCounters.delete(key);
       removed++;
     }
@@ -267,7 +275,38 @@ function sleep(ms) {
  * @param {Function} requestFn - Async function that makes the request
  * @returns {Promise<any>} Result of the request
  */
+// Next start time each non-queued API has free (ms), reserved synchronously
+const nextSlotAt = new Map();
+const warnedUnknown = new Set();
+
+/**
+ * Reserve the next start time for a non-queued API and return how long to wait for
+ * it. The reservation (start spacing and the burst window's count) is made before
+ * the caller sleeps, so callers arriving together are spread out instead of all
+ * reading the same stale state, sleeping the same jitter and firing at once.
+ */
+function reserveSlot(apiName, config) {
+  const now = Date.now();
+  let at = Math.max(now, nextSlotAt.get(apiName) || 0);
+  for (;;) {
+    const window = Math.floor(at / config.burstWindow);
+    const burstKey = `${apiName}:${window}`;
+    const count = burstCounters.get(burstKey) || 0;
+    if (count < config.burstLimit) {
+      burstCounters.set(burstKey, count + 1);
+      break;
+    }
+    at = (window + 1) * config.burstWindow; // window full: the next one
+  }
+  nextSlotAt.set(apiName, at + config.minInterval);
+  return at - now + getJitter(config.maxJitter);
+}
+
 async function rateLimitedRequest(apiName, requestFn) {
+  if (!RATE_LIMITS[apiName] && !warnedUnknown.has(apiName)) {
+    warnedUnknown.add(apiName);
+    console.warn(`[RateLimiter] No limits configured for '${apiName}'; using the defaults`);
+  }
   const config = RATE_LIMITS[apiName] || RATE_LIMITS.default;
 
   // Use queue-based processing for strict rate limiting (GeckoTerminal)
@@ -275,13 +314,13 @@ async function rateLimitedRequest(apiName, requestFn) {
     return queueRequest(apiName, requestFn);
   }
 
-  const delay = getRequiredDelay(apiName);
+  const delay = reserveSlot(apiName, config);
 
   if (delay > 0) {
     await sleep(delay);
   }
 
-  recordRequest(apiName);
+  lastRequestTime.set(apiName, Date.now());
   return requestFn();
 }
 
