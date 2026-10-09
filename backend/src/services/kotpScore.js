@@ -118,6 +118,8 @@ function priceMomentumIndex(changes, p = PARAMS) {
  *   snapshotAgeMs       how old the snapshot behind the distribution is
  *   coreWeekAgo         core index stored 7 days ago (null if unknown)
  *   holdersMonthAgo     holder count 30 days ago (or the oldest known, at least 7 days back; null if unknown)
+ *   holdersNow          today's holder count in the same definition as holdersMonthAgo, for
+ *                       retention (defaults to holders)
  *   volume24h           24h trading volume in USD (null if unknown)
  *   marketCap           market cap in USD (null if unknown)
  *   priceChanges        { d1, d7, d30 } percent price changes (each null if unknown)
@@ -137,8 +139,9 @@ function scoreToken(t, p = PARAMS) {
 
   const confidence = Math.sqrt(clamp(ageDays / p.confidenceFullDays, 0, 1));
   const momentum = t.coreWeekAgo != null ? clamp((core - t.coreWeekAgo) / p.momentumFullSwing, -1, 1) : 0;
-  const retention = (t.holdersMonthAgo > 0 && t.holders > 0)
-    ? clamp((t.holders / t.holdersMonthAgo - 1) / p.retentionFullSwing, -1, 1) : 0;
+  const holdersNow = t.holdersNow ?? t.holders;
+  const retention = (t.holdersMonthAgo > 0 && holdersNow > 0)
+    ? clamp((holdersNow / t.holdersMonthAgo - 1) / p.retentionFullSwing, -1, 1) : 0;
   const retentionWeight = retention < 0 ? p.retentionLossWeight : p.retentionGainWeight;
   const activity = activityIndex(t.volume24h, t.marketCap, p);
   const priceMomentum = priceMomentumIndex(t.priceChanges, p);

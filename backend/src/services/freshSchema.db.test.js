@@ -116,6 +116,27 @@ if (!DB_URL) {
     });
   });
 
+  describe('utility access windows', () => {
+    const WALLET = 'FreshBurner11111111111111111111111111111111';
+    const MINT = 'FreshBurnMint111111111111111111111111111111';
+    const HOUR = 3_600_000;
+
+    test('access ends a fixed time after the latest burn, not after the latest check', async () => {
+      await db.recordCultifyBurn(WALLET, MINT, 'fresh-burn-cultify', '5000000000');
+      await db.recordCultifyBurn(WALLET, MINT, 'fresh-burn-hb', '10000000000', 'holder_behavior');
+      await db.pool.query(`UPDATE cultify_burns SET created_at = NOW() - INTERVAL '11 hours' WHERE burn_signature = 'fresh-burn-cultify'`);
+      await db.pool.query(`UPDATE cultify_burns SET created_at = NOW() - INTERVAL '71 hours' WHERE burn_signature = 'fresh-burn-hb'`);
+      const cultifyUntil = await db.hasCultifyAccess(WALLET, MINT);
+      const hbUntil = await db.hasHBAccess(WALLET, MINT);
+      assert.ok(Math.abs(cultifyUntil - (Date.now() + HOUR)) < 60_000, String(cultifyUntil - Date.now()));
+      assert.ok(Math.abs(hbUntil - (Date.now() + HOUR)) < 60_000, String(hbUntil - Date.now()));
+
+      await db.pool.query(`UPDATE cultify_burns SET created_at = NOW() - INTERVAL '13 hours' WHERE burn_signature = 'fresh-burn-cultify'`);
+      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), null);
+      assert.strictEqual(await db.hasHBAccess(WALLET, 'FreshOtherMint11111111111111111111111111111'), null);
+    });
+  });
+
   describe('session expiry', () => {
     const MINUTE = 60_000;
     const WALLET = 'FreshWallet111111111111111111111111111111111';

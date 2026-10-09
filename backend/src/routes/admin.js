@@ -532,7 +532,8 @@ router.post('/curated', adminWriteLimiter, asyncHandler(async (req, res) => {
   // route used to carry its own hand-copied version that had drifted: no tokens-table seed (so
   // panel-added tokens sat blank on the home page for up to ten minutes) and no tiktok social.
   const { addCuratedTokenFully } = require('../services/curatedTokens');
-  const { token } = await addCuratedTokenFully(mintAddress);
+  const { token, alreadyCurated } = await addCuratedTokenFully(mintAddress);
+  if (alreadyCurated) return res.json({ success: true, alreadyExists: true, token });
   // The home table lists curated tokens only: show the new one now, not when the cache expires
   await cache.clearPattern('leaderboard:conviction:*').catch(err => {
     console.warn('[Admin] add curated: failed to bust leaderboard cache:', err.message);

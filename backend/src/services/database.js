@@ -3735,17 +3735,27 @@ async function recordCultifyBurn(walletAddress, tokenMint, signature, burnAmount
   `, [walletAddress, tokenMint, signature, burnAmount, utilityType]);
 }
 
+// Remaining milliseconds of the window, as computed by Postgres (one clock for both the
+// window check and the end), turned into a local deadline; null when it is over.
+function accessDeadline(row) {
+  const ms = row?.remaining_ms;
+  return ms != null && Number(ms) > 0 ? Date.now() + Number(ms) : null;
+}
+
+// When the wallet's Cultify access to the mint ends (ms since epoch): 12 hours after its
+// latest burn for it, or null without one in that window. Truthy exactly when access is held;
+// routes cap the access tokens they issue at this, so a re-check can't stretch the window.
 async function hasCultifyAccess(walletAddress, tokenMint) {
   if (!pool) throw new Error('Database not available');
   const result = await pool.query(
-    `SELECT 1 FROM cultify_burns
+    `SELECT EXTRACT(EPOCH FROM (MAX(created_at) + INTERVAL '12 hours' - NOW())) * 1000 AS remaining_ms
+     FROM cultify_burns
      WHERE wallet_address = $1 AND token_mint = $2
        AND utility_type = 'cultify'
-       AND created_at > NOW() - INTERVAL '12 hours'
-     LIMIT 1`,
+       AND created_at > NOW() - INTERVAL '12 hours'`,
     [walletAddress, tokenMint]
   );
-  return result.rows.length > 0;
+  return accessDeadline(result.rows[0]);
 }
 
 async function getCultifyBurnsByWallet(walletAddress) {
@@ -3761,17 +3771,19 @@ async function getCultifyBurnsByWallet(walletAddress) {
   return result.rows.map(r => ({ mint: r.token_mint, createdAt: r.created_at }));
 }
 
+// When the wallet's Holder Behavior access to the mint ends (ms since epoch): 3 days after
+// its latest burn for it, or null without one in that window (see hasCultifyAccess).
 async function hasHBAccess(walletAddress, tokenMint) {
-  if (!pool) return false;
+  if (!pool) return null;
   const result = await pool.query(
-    `SELECT 1 FROM cultify_burns
+    `SELECT EXTRACT(EPOCH FROM (MAX(created_at) + INTERVAL '3 days' - NOW())) * 1000 AS remaining_ms
+     FROM cultify_burns
      WHERE wallet_address = $1 AND token_mint = $2
        AND utility_type = 'holder_behavior'
-       AND created_at > NOW() - INTERVAL '3 days'
-     LIMIT 1`,
+       AND created_at > NOW() - INTERVAL '3 days'`,
     [walletAddress, tokenMint]
   );
-  return result.rows.length > 0;
+  return accessDeadline(result.rows[0]);
 }
 
 async function getHBAccessByWallet(walletAddress) {

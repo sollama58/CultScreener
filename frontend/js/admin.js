@@ -783,13 +783,16 @@ const admin = {
     btn.disabled = true;
     btn.textContent = 'Adding...';
     try {
-      await this.request('/api/admin/curated', {
+      const data = await this.request('/api/admin/curated', {
         method: 'POST',
         body: JSON.stringify({ mintAddress: mint })
       });
       input.value = '';
       this.loadCurated();
-      if (typeof toast !== 'undefined') toast.success('Token added to curated list');
+      if (typeof toast !== 'undefined') {
+        if (data && data.alreadyExists) toast.info('Token is already in the curated list');
+        else toast.success('Token added to curated list');
+      }
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to add token');
     } finally {

@@ -169,10 +169,10 @@ const RECURRING_JOBS = [
   { id: 'refresh-curated-prices', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 }, phaseMs: 97_000 },
   // Curated prices 1, 7 and 30 days ago, for the home table's 7d/30d change (a few tokens per run)
   { id: 'refresh-curated-price-refs', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 15 * 60 * 1000 }, phaseMs: 194_000 },
-  // Daily holder counts, 00:05 UTC
-  { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' } },
+  // Daily holder counts, 00:05 UTC (tz pinned: a cron pattern is otherwise read in the process's local time)
+  { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *', tz: 'UTC' } },
   // Daily Diamond Hands scores and the King of the Pill, 00:20 UTC
-  { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *' } },
+  { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *', tz: 'UTC' } },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
 ];

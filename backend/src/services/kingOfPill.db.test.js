@@ -50,9 +50,10 @@ if (!DB_URL) {
       await db.pool.query(`DROP TABLE IF EXISTS ${t}`);
     }
     await db.pool.query(`DELETE FROM holder_count_points WHERE mint_address = ANY($1)`, [MINTS]);
+    await db.pool.query(`DELETE FROM holder_snapshots WHERE mint_address = ANY($1)`, [MINTS]);
     await db.pool.query(`DELETE FROM curated_tokens WHERE mint_address = ANY($1)`, [MINTS]);
     await db.pool.query(`DELETE FROM tokens WHERE mint_address = ANY($1)`, [MINTS]);
-    await db.pool.query(`DELETE FROM app_settings WHERE key = 'king_of_pill_mint'`);
+    await db.pool.query(`DELETE FROM app_settings WHERE key IN ('king_of_pill_mint', 'kotp_decided_on')`);
   }
 
   before(async () => {
@@ -75,6 +76,29 @@ if (!DB_URL) {
   after(async () => {
     await cleanup();
     await db.pool.end();
+  });
+
+  describe('buildInput', () => {
+    const now = T0;
+    const curated = { mintAddress: A, addedAt: new Date(T0 - 400 * DAY) };
+    const row = (meta) => ({ conviction_data: dist(60), conviction_meta: meta, conviction_computed_at: new Date(now - 60_000) });
+
+    test('snapshot freshness comes from the snapshot, not from the last re-store of its buckets', () => {
+      const meta = { snapshotAt: now - 3 * DAY, snapshotId: '7', holderCount: 5000 };
+      assert.strictEqual(kotp.buildInput(curated, row(meta), null, null, now, null).snapshotAgeMs, 3 * DAY);
+      // A pre-check that verified that same snapshot an hour ago makes it current
+      assert.strictEqual(kotp.buildInput(curated, row(meta), null, null, now, null, { id: '7', freshAt: now - 3600_000 }).snapshotAgeMs, 3600_000);
+      // A newer snapshot the buckets were not computed from does not
+      assert.strictEqual(kotp.buildInput(curated, row(meta), null, null, now, null, { id: '8', freshAt: now - 3600_000 }).snapshotAgeMs, 3 * DAY);
+    });
+
+    test('retention pairs the holder count history ends, not the snapshot count with a legacy count', () => {
+      const meta = { snapshotAt: now - 3600_000, holderCount: 4900 };
+      const input = kotp.buildInput(curated, row(meta), { holdersNow: 5000, holdersMonthAgo: 5000 }, null, now, null);
+      assert.strictEqual(input.holders, 4900);
+      assert.strictEqual(input.holdersNow, 5000);
+      assert.strictEqual(input.holdersMonthAgo, 5000);
+    });
   });
 
   describe('runDailyCrowning', () => {
@@ -145,6 +169,14 @@ if (!DB_URL) {
         assert.strictEqual(r.changed, false);
         assert.strictEqual(r.reason, expected[d], `day ${d + 1}`);
       }
+      // A second run on day 4, after ALPHA defended: the day is decided, even though
+      // ALPHA's fresher numbers would now lose to BETA
+      await db.pool.query(`UPDATE tokens SET conviction_data = $2 WHERE mint_address = $1`, [A, JSON.stringify({ '6h': 60, '24h': 40, '3d': 25, '1w': 15, '1m': 8, '3m': 4, '6m': 2, '9m': 1, '1yr': 0 })]);
+      r = await kotp.runDailyCrowning({ now: T0 + 3 * DAY + 3600_000 });
+      assert.strictEqual(r.reason, 'already_decided');
+      assert.strictEqual(r.changed, false);
+      assert.strictEqual(r.king, A);
+      await db.pool.query(`UPDATE tokens SET conviction_data = $2 WHERE mint_address = $1`, [A, JSON.stringify(dist(60))]);
       await bump(T0 + 4 * DAY);
       r = await kotp.runDailyCrowning({ now: T0 + 4 * DAY });
       assert.strictEqual(r.changed, true);
@@ -163,10 +195,52 @@ if (!DB_URL) {
       assert.strictEqual(king.mint, B);
       assert.strictEqual(king.reignDay, 1);
       assert.strictEqual(king.contenders[0].symbol, 'ALPHA');
+      // Past midnight but before the next crowning, the reign day is still the scored day's
+      const early = await kotp.getCurrentKing({ now: Date.UTC(2026, 9, 6, 0, 10) });
+      assert.strictEqual(early.reignDay, 1);
+      const later = await kotp.getCurrentKing({ now: T0 + 4 * DAY + 3600_000 });
+      assert.strictEqual(later.reignDay, 1);
+    });
+
+    test('a token removed from the curated list is no longer a contender', async () => {
+      await db.pool.query(`DELETE FROM curated_tokens WHERE mint_address = $1`, [A]);
+      try {
+        const king = await kotp.getCurrentKing({ now: T0 + 4 * DAY });
+        assert.ok(!king.contenders.some(c => c.mintAddress === A), JSON.stringify(king.contenders));
+      } finally {
+        await db.pool.query(`INSERT INTO curated_tokens (mint_address) VALUES ($1) ON CONFLICT DO NOTHING`, [A]);
+      }
+    });
+
+    test('day arithmetic holds when the process runs outside UTC', async () => {
+      const tz = process.env.TZ;
+      process.env.TZ = 'Asia/Tokyo';
+      try {
+        const reigns = await kotp.getReigns();
+        assert.strictEqual(reigns[0].crownedOn, '2026-10-05');
+        assert.strictEqual(reigns[1].endedOn, '2026-10-05');
+        const king = await kotp.getCurrentKing({ now: T0 + 4 * DAY });
+        assert.strictEqual(king.crownedOn, '2026-10-05');
+        assert.strictEqual(king.reignDay, 1);
+        assert.strictEqual(king.scoreDate, '2026-10-05');
+      } finally {
+        if (tz == null) delete process.env.TZ; else process.env.TZ = tz;
+      }
     });
 
     test('a king that loses eligibility is replaced at once', async () => {
       const now = T0 + (PARAMS.maxReignDays + 1) * DAY;
+      // A snapshot outage leaves every token stale: nobody can be judged, so the run
+      // must not use up the day
+      await db.pool.query(`UPDATE tokens SET conviction_meta = conviction_meta || jsonb_build_object('snapshotAt', $2::bigint) WHERE mint_address = ANY($1)`,
+        [MINTS, now - 3 * DAY]);
+      const outage = await kotp.runDailyCrowning({ now: now - 3600_000 });
+      assert.strictEqual(outage.reason, 'no_challenger');
+      assert.strictEqual(outage.changed, false);
+      assert.strictEqual(outage.king, B);
+      const { rows: [dec] } = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'kotp_decided_on'`);
+      assert.ok(!dec || !dec.value.includes('2026-10-09'), dec && dec.value);
+
       await db.pool.query(`UPDATE tokens SET conviction_meta = conviction_meta || jsonb_build_object('snapshotAt', $2::bigint) WHERE mint_address = ANY($1)`,
         [[A, C, D], now - 3600_000]);
       // BETA's snapshot goes stale
