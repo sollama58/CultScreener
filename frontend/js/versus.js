@@ -33,7 +33,7 @@ const versusPage = {
     if (!table) return;
     table.querySelectorAll('th[data-sort]').forEach(th => {
       th.style.cursor = 'pointer';
-      th.addEventListener('click', () => {
+      tokenTable.bindSortHeader(th, () => {
         const field = th.dataset.sort;
         if (this._sortField === field) {
           this._sortDir = this._sortDir === 'desc' ? 'asc' : 'desc';
@@ -55,7 +55,9 @@ const versusPage = {
       const arrow = th.querySelector('.sort-arrow');
       th.classList.remove('active-sort');
       if (arrow) arrow.className = 'sort-arrow';
-      if (th.dataset.sort === this._sortField) {
+      const active = th.dataset.sort === this._sortField;
+      tokenTable.setSortState(th, active ? this._sortDir : null);
+      if (active) {
         th.classList.add('active-sort');
         if (arrow) arrow.classList.add(this._sortDir);
       }
@@ -94,7 +96,7 @@ const versusPage = {
         : api.request('/api/tokens/benchmarks');
 
       const [leaderboard, benchmarks] = await Promise.all([
-        api.tokens.leaderboardConviction({ limit: 100, offset: 0 }),
+        tokenTable.loadBoard(),
         benchmarksFetch,
       ]);
 
@@ -130,7 +132,7 @@ const versusPage = {
         <tr class="empty-row">
           <td colspan="8">
             <div class="empty-state">
-              <span>Failed to load performance data. Please try again.</span>
+              <span>Failed to load performance data. Select the tab again to retry.</span>
             </div>
           </td>
         </tr>
@@ -222,12 +224,21 @@ const versusPage = {
     return list;
   },
 
+  // The three best performers against SOL, whatever column the table is sorted by. The podium
+  // and the share image used to take the table's order, so after a re-sort they put the medals
+  // on the worst performers or the biggest market caps.
+  _getTop3() {
+    return this._getSorted(null)
+      .filter(t => t._vsSol != null)
+      .sort((a, b) => b._vsSol - a._vsSol)
+      .slice(0, 3);
+  },
+
   renderPodium() {
     const podium = document.getElementById('versus-podium');
     if (!podium) return;
 
-    const sorted = this._getSorted(null);
-    const top3 = sorted.filter(t => t._vsSol != null).slice(0, 3);
+    const top3 = this._getTop3();
 
     if (top3.length === 0) {
       podium.style.display = 'none';
@@ -342,8 +353,7 @@ const versusPage = {
         ]);
       }
 
-      const sorted = this._getSorted(null);
-      const top3 = sorted.filter(t => t._vsSol != null).slice(0, 3);
+      const top3 = this._getTop3();
       if (top3.length === 0) {
         if (typeof toast !== 'undefined') toast.error('No data to share yet');
         return;
@@ -441,12 +451,14 @@ const versusPage = {
     const cardsHtml = slots.map(({ token, logo, medal, cls }) => {
       const vsSol = token._vsSol;
       const rawChg = token.priceChange24h;
-      const safeName = (token.name || token.symbol || '').replace(/</g, '&lt;').slice(0, 14);
-      const safeSym = (token.symbol || '').replace(/</g, '&lt;');
+      // Token metadata is set by whoever deployed the token: escape it fully, since the symbol
+      // also lands inside an attribute. Cut the name before escaping so no entity is split.
+      const safeName = utils.escapeHtml((token.name || token.symbol || '').slice(0, 14));
+      const safeSym = utils.escapeHtml(token.symbol || '');
       return `
         <div class="vsg-card ${cls}">
           <div class="vsg-medal">${medal}</div>
-          <img class="vsg-logo-img" src="${logo}" alt="${safeSym}">
+          <img class="vsg-logo-img" src="${utils.escapeHtml(logo || '')}" alt="${safeSym}">
           <span class="vsg-token-name">${safeName}</span>
           <span class="vsg-token-symbol">${safeSym}</span>
           <span class="vsg-vs-sol ${vsSol >= 0 ? 'pos' : 'neg'}">${fmtPct(vsSol)}</span>

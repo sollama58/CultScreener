@@ -19,6 +19,13 @@
   };
   var loaded = { diamond: true };
 
+  function pageFor(view) {
+    if (view === 'performance' && typeof performancePage !== 'undefined') return performancePage;
+    if (view === 'tech' && typeof techPage !== 'undefined') return techPage;
+    if (view === 'emerging' && typeof emergingPage !== 'undefined') return emergingPage;
+    return null;
+  }
+
   function warm(view) {
     if (loaded[view]) return;
     loaded[view] = true;
@@ -72,6 +79,10 @@
         versusPage.tokens && versusPage.tokens.length === 0 && opts.fromUser) {
       versusPage.loadData();
     }
+    // The other lazy views load once; after a failed load, a click on the tab tries again
+    // (their error messages say so) instead of leaving the error up until a page reload.
+    var page = opts.fromUser ? pageFor(view) : null;
+    if (page && page._loadFailed && !page._loading) page.loadData();
     placeIndicator(tab, opts.animate !== false);
     if (tab.scrollIntoView && bar.scrollWidth > bar.clientWidth) {
       tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -101,8 +112,11 @@
     });
   });
 
+  // Own keys only: a hash like #constructor or #toString would otherwise find an inherited
+  // Object.prototype member, match no tab, and leave every tab deselected.
   var fromHash = location.hash.replace('#', '');
-  show(panels[fromHash] ? fromHash : 'diamond', { animate: false });
+  var hashOk = Object.prototype.hasOwnProperty.call(panels, fromHash) && panels[fromHash];
+  show(hashOk ? fromHash : 'diamond', { animate: false });
 
   // Tab widths change when the web font arrives and when the window resizes.
   if (document.fonts && document.fonts.ready) {
