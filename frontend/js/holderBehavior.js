@@ -402,12 +402,18 @@
       }
     }
     // Helper to show error inside the burn gate (while it's still open)
-    function showBurnError(msg) {
+    function showBurnError(msg, mayHaveLanded) {
       const errEl = document.getElementById('hb-burn-error');
       if (errEl) {
         errEl.innerHTML = `<p class="cultify-error">${escHtml(msg)}</p>`;
-        burnBtn.disabled = false;
-        burnBtn.textContent = 'Burn & Analyze';
+        if (mayHaveLanded) {
+          // The burn may be on-chain: a second click would burn twice. Reload, then Analyze recovers it.
+          burnBtn.disabled = true;
+          burnBtn.textContent = 'Reload the page to check';
+        } else {
+          burnBtn.disabled = false;
+          burnBtn.textContent = 'Burn & Analyze';
+        }
       } else {
         // Modal content was replaced; fall back to an error screen
         setBody(errorHtml(msg));
@@ -509,9 +515,9 @@
         }
       }
       if (!confirmed) {
-        throw new Error(sendResp && sendResp.ok
+        throw Object.assign(new Error(sendResp && sendResp.ok
           ? 'Confirmation is taking longer than expected. Your burn is saved — reload the page to retry.'
-          : 'Could not confirm the transaction was sent. Do not burn again yet: wait a minute, then reload and press Analyze. If it landed, your burn is saved and will be verified.');
+          : 'Could not confirm the transaction was sent. Do not burn again yet: wait a minute, then reload and press Analyze. If it landed, your burn is saved and will be verified.'), { mayHaveLanded: true });
       }
 
       // Switch to computing spinner before verify so the user sees progress
@@ -531,7 +537,7 @@
       startPolling(mint);
 
     } catch (err) {
-      showBurnError(err.message);
+      showBurnError(err.message, err.mayHaveLanded);
     }
   }
 
@@ -954,36 +960,38 @@
       // the poll handler will clear it on 403)
     }
 
-    // 2. Pending burn recovery
-    const pending = getPending(mint);
-    if (pending) {
+    // 2. Pending burn recovery: try every saved burn for this mint, oldest first
+    const pendings = readPending().filter(p => p.mint === mint);
+    if (pendings.length) {
       showChecking('Recovering previous burn...');
-      // A burn saved before claims were signed: sign now if the burning wallet is connected
-      let claimSignature = pending.claimSignature;
-      if (!claimSignature && walletAddr() && walletAddr() === pending.wallet) {
-        try { claimSignature = await signBurnClaim(pending.sig, pending.mint, pending.wallet); } catch {}
+      let unsigned = false;
+      for (const pending of pendings) {
+        // A burn saved before claims were signed: sign now if the burning wallet is connected
+        let claimSignature = pending.claimSignature;
+        if (!claimSignature && walletAddr() && walletAddr() === pending.wallet) {
+          try { claimSignature = await signBurnClaim(pending.sig, pending.mint, pending.wallet); } catch {}
+        }
+        if (!claimSignature) { unsigned = true; continue; }
+        if (await verifyBurnWithRetry(pending.sig, pending.mint, pending.wallet, claimSignature)) {
+          setBody(computingHtml('Burn recovered! Starting analysis...', null));
+          pollStart = Date.now();
+          startPolling(mint);
+          return;
+        }
       }
-      const ok = claimSignature
-        ? await verifyBurnWithRetry(pending.sig, pending.mint, pending.wallet, claimSignature)
-        : false;
-      if (ok) {
-        setBody(computingHtml('Burn recovered! Starting analysis...', null));
-        pollStart = Date.now();
-        startPolling(mint);
-      } else {
-        setBody(errorHtml(claimSignature
-          ? 'Could not verify your previous burn.'
-          : 'Could not verify your previous burn. Connect the wallet that made it, then retry.'));
+      // Every saved burn was cleared (never landed, or refused): nothing to recover
+      if (getPending(mint)) {
+        setBody(errorHtml(unsigned
+          ? 'Could not verify your previous burn. Connect the wallet that made it, then retry.'
+          : 'Could not verify your previous burn.'));
         const errState = document.querySelector('.hb-error-state');
         if (errState) {
-          if (getPending(mint)) {
-            const retryBtn = document.createElement('button');
-            retryBtn.className = 'cultify-burn-btn';
-            retryBtn.style.marginTop = '0.5rem';
-            retryBtn.textContent = 'Retry Verification';
-            retryBtn.addEventListener('click', () => handleAnalyzeClick(mint));
-            errState.appendChild(retryBtn);
-          }
+          const retryBtn = document.createElement('button');
+          retryBtn.className = 'cultify-burn-btn';
+          retryBtn.style.marginTop = '0.5rem';
+          retryBtn.textContent = 'Retry Verification';
+          retryBtn.addEventListener('click', () => handleAnalyzeClick(mint));
+          errState.appendChild(retryBtn);
           const reburnBtn = document.createElement('button');
           reburnBtn.className = 'cultify-burn-btn';
           reburnBtn.style.marginTop = '0.5rem';
@@ -992,8 +1000,8 @@
           errState.appendChild(reburnBtn);
         }
         bindErrClose();
+        return;
       }
-      return;
     }
 
     // 3. No access — show burn gate

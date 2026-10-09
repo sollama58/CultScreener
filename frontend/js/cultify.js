@@ -874,7 +874,7 @@
           throw new Error('Burn transaction failed on-chain. No tokens were burned — please try again.');
         }
         if (landed !== 'confirmed') {
-          throw new Error('Could not confirm the transaction was sent. Do not burn again yet: wait a minute, then reload the page. If it landed, your burn is saved and will be verified.');
+          throw mayHaveLanded('Could not confirm the transaction was sent. Do not burn again yet: wait a minute, then reload the page. If it landed, your burn is saved and will be verified.');
         }
       }
 
@@ -906,14 +906,14 @@
         }
       }
       if (!confirmed) {
-        throw new Error('Confirmation is taking longer than expected. Your burn is saved — reload the page to retry verification.');
+        throw mayHaveLanded('Confirmation is taking longer than expected. Your burn is saved — reload the page to retry verification.');
       }
 
       // Step 7: Verify burn with retries
       burnBtn.textContent = 'Verifying...';
       const verified = await verifyBurnWithRetry(signature, mint, wallet.address, claimSignature);
       if (!verified) {
-        throw new Error('Burn verified on-chain but backend verification failed. Reload the page to retry — your burn is safe.');
+        throw mayHaveLanded('Burn verified on-chain but backend verification failed. Reload the page to retry — your burn is safe.');
       }
 
       // Success
@@ -922,9 +922,20 @@
 
     } catch (err) {
       errorEl.innerHTML = `<p class="cultify-error">${escapeHtml(err.message)}</p>`;
-      burnBtn.disabled = false;
-      burnBtn.textContent = 'Burn & Analyze';
+      if (err.mayHaveLanded) {
+        // The burn may be on-chain: a second click would burn twice. Reloading runs recovery.
+        burnBtn.disabled = true;
+        burnBtn.textContent = 'Reload the page to check';
+      } else {
+        burnBtn.disabled = false;
+        burnBtn.textContent = 'Burn & Analyze';
+      }
     }
+  }
+
+  // An error after a burn that may have landed (it is saved for recovery on reload)
+  function mayHaveLanded(message) {
+    return Object.assign(new Error(message), { mayHaveLanded: true });
   }
 
   // ── Load and render analysis ──────────────────────
