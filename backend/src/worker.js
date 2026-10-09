@@ -323,10 +323,12 @@ const jobProcessors = {
     // DEX filtering: only check local results that need dexId verification
     // Limit to top 8 local results to cap API calls (only 5 needed in final)
     const localResults = results.filter(t => t.source === 'local').slice(0, 8);
-    // getTokenOverview returns null both for "not on GeckoTerminal" and for any
-    // failure (timeout, 5xx, rate limit, open breaker). When every lookup came back
-    // null, GeckoTerminal is down or throttling: keep the look-alikes unverified
-    // instead of dropping them all, and cache that only briefly.
+    // getTokenOverview returns null only when GeckoTerminal does not index the
+    // token (404): such a look-alike trades on no DEX and is dropped. Any other
+    // failure (timeout, 5xx, rate limit, open breaker) rejects, and the entry's
+    // DEX list is unknown. When every lookup rejected, GeckoTerminal is down or
+    // throttling: keep the look-alikes unverified instead of dropping them all,
+    // and cache that only briefly.
     let dexCheckFailed = false;
     if (localResults.length > 0) {
       try {
@@ -335,9 +337,9 @@ const jobProcessors = {
         );
         for (let i = 0; i < localResults.length; i++) {
           const result = overviewResults[i];
-          if (result.status === 'fulfilled' && result.value) {
-            localResults[i]._dexIds = result.value.dexIds || [];
-            if (!localResults[i].pairCreatedAt && result.value.pairCreatedAt) {
+          if (result.status === 'fulfilled') {
+            localResults[i]._dexIds = result.value ? (result.value.dexIds || []) : []; // null = not indexed
+            if (result.value && !localResults[i].pairCreatedAt && result.value.pairCreatedAt) {
               localResults[i].pairCreatedAt = result.value.pairCreatedAt;
             }
           } else {

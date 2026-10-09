@@ -157,11 +157,18 @@ describe('compute-similar-tokens (audit #123)', () => {
   });
 
   test('when every DEX lookup fails the look-alikes are kept, and cached only briefly', async () => {
-    gecko.getTokenOverview = async () => null;
+    gecko.getTokenOverview = async () => { throw new Error('GeckoTerminal 503'); };
     await jobProcessors['compute-similar-tokens']({ data: { mint: MINT } });
     const cached = await cache.get(`similar:${MINT}`);
     assert.strictEqual(cached.results.length, 5);
     assert.strictEqual(ttls.get(`similar:${MINT}`), TTL.PRICE_DATA);
+  });
+
+  test('look-alikes GeckoTerminal does not index (null, a 404) are all dropped', async () => {
+    gecko.getTokenOverview = async () => null;
+    await jobProcessors['compute-similar-tokens']({ data: { mint: MINT } });
+    const cached = await cache.get(`similar:${MINT}`);
+    assert.deepStrictEqual(cached.results, []);
   });
 
   test('when GeckoTerminal answers, tokens it has no qualifying pool for are still dropped', async () => {
