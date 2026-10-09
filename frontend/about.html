@@ -240,7 +240,7 @@
         <table class="about-table">
           <thead><tr><th scope="col">Data</th><th scope="col">Source</th><th scope="col">Notes</th></tr></thead>
           <tbody>
-            <tr><td>Holder list &amp; hold times</td><td>Solana RPC via Helius</td><td>DAS API for full holder snapshots, Enhanced Transactions for one-time hold-time backfill</td></tr>
+            <tr><td>Holder list &amp; hold times</td><td>Solana RPC via Helius</td><td>DAS API for full holder snapshots, transaction history (getTransactionsForAddress, else Enhanced Transactions) for one-time hold-time backfill</td></tr>
             <tr><td>Price, volume, liquidity</td><td>GeckoTerminal</td><td>Free tier, rate-limited with circuit breakers</td></tr>
             <tr><td>Token metadata</td><td>Helius DAS + on-chain</td><td>Name, symbol, logo, social links from on-chain &amp; off-chain JSON</td></tr>
             <tr><td>Holder count</td><td>Jupiter + Helius</td><td>Jupiter search API (fast) with Helius DAS fallback</td></tr>
@@ -286,7 +286,7 @@
           <thead><tr><th scope="col">Job</th><th scope="col">Interval</th><th scope="col">Notes</th></tr></thead>
           <tbody>
             <tr><td>Curated token conviction refresh</td><td><code>1 hour</code></td><td>Re-analyzes all admin-curated tokens</td></tr>
-            <tr><td>Top token conviction warm</td><td><code>10 min</code></td><td>Re-analyzes up to 3 most-viewed tokens per cycle</td></tr>
+            <tr><td>Curated price refresh</td><td><code>10 min</code></td><td>Market cap and ATH for admin-curated tokens</td></tr>
             <tr><td>Cache warm on startup</td><td><code>Once</code></td><td>Pre-fetches market data for top 20 most-viewed tokens</td></tr>
             <tr><td>View count flush</td><td><code>5 sec</code></td><td>Batches page view increments to the database</td></tr>
           </tbody>

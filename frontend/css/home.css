@@ -658,6 +658,13 @@ td.perf-current-pct {
 .vsg-url { font-size: 0.65rem; color: #4b5563; letter-spacing: 0.04em; }
 .vsg-ts { font-size: 0.62rem; color: #374151; }
 
+/* Tech and Emerging: the ATH pill under the price, only on phones where the ATH column is hidden */
+.tt-ath-stack { display: none; }
+@media (max-width: 768px) {
+  .tt-ath-stack { display: block; margin-top: 2px; font-size: 0.7rem; line-height: 1.2; }
+  .tt-ath-stack .tt-pct { font-weight: 500; }
+}
+
 @media (max-width: 640px) {
   td.perf-mcap, th.perf-th-mcap { display: none; }
   th.perf-th-token { width: 180px; }
@@ -695,10 +702,12 @@ td.perf-current-pct {
   .podium-name { font-size: 0.75rem; max-width: 100px; }
   .podium-medal { font-size: 1.2rem; }
 
-  /* ── Performance table — hide ATH % column, keep Current % ── */
-  td.perf-ath-pct, th.perf-th-ath { display: none; }
+  /* ── Performance table — one % column: the one the table is sorted by (performance.js sets
+     data-sort on the table), so the row order always follows a value on screen ── */
+  .perf-table[data-sort="ath"] td.perf-current-pct, .perf-table[data-sort="ath"] th.perf-th-current,
+  .perf-table[data-sort="current"] td.perf-ath-pct, .perf-table[data-sort="current"] th.perf-th-ath { display: none; }
   th.perf-th-token { width: 150px; }
-  td.perf-current-pct { font-size: 0.82rem; }
+  td.perf-ath-pct, td.perf-current-pct { font-size: 0.82rem; }
 
   /* ── Performance share button — keep accessible but compact ── */
   .perf-share-btn { padding: 0.4rem 0.7rem; font-size: 0.72rem; }

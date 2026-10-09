@@ -146,7 +146,7 @@ const convictionPage = {
 
   bindSortHeaders() {
     document.querySelectorAll('.terminal-table th.sortable').forEach(th => {
-      th.addEventListener('click', () => {
+      tokenTable.bindSortHeader(th, () => {
         const field = th.dataset.sort;
         if (this._sortField === field) {
           this._sortDir = this._sortDir === 'desc' ? 'asc' : 'desc';
@@ -167,7 +167,9 @@ const convictionPage = {
       if (arrow) {
         arrow.classList.remove('asc', 'desc');
       }
-      if (th.dataset.sort === this._sortField) {
+      const active = th.dataset.sort === this._sortField;
+      tokenTable.setSortState(th, active ? this._sortDir : null);
+      if (active) {
         th.classList.add('active-sort');
         if (arrow) arrow.classList.add(this._sortDir);
       }
@@ -401,15 +403,19 @@ const convictionPage = {
             }
           } catch (_) { /* batch enrichment non-critical */ }
 
-          // Price changes, holders and holder velocity come with the leaderboard (curated
-          // tokens only, usually already in the client cache).
+          // Conviction, price changes, holders and holder velocity come with the leaderboard
+          // (curated tokens only, usually already in the client cache); the batch endpoint
+          // carries none of the conviction fields.
           try {
-            const board = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
+            const board = await tokenTable.loadBoard();
             const byMint = {};
             (board?.tokens || []).forEach(t => { byMint[t.mintAddress] = t; });
             this._allTokens.forEach(t => {
               const b = byMint[t.mintAddress];
               if (!b) return;
+              t.conviction = b.conviction || t.conviction;
+              t.conviction1m = b.conviction1m || t.conviction1m;
+              t.sampleSize = b.sampleSize || t.sampleSize;
               t.priceChange24h = b.priceChange24h;
               t.priceChange7d = b.priceChange7d;
               t.priceChange30d = b.priceChange30d;
@@ -425,8 +431,8 @@ const convictionPage = {
       } else {
         // Fetch all tokens (unfiltered, the same request the other home tabs make),
         // shuffle client-side for random order, then filter client-side.
-        const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
-        const all = [...(result.tokens || [])]; // clone to avoid mutating the cached array
+        const result = await tokenTable.loadBoard();
+        const all = result.tokens; // loadBoard returns a fresh array, not the cached one
 
         this._shuffle(all);
         all.forEach((t, i) => { t._originalIndex = i; });
@@ -494,7 +500,7 @@ const convictionPage = {
     if (!this._boardTokens) return;
     this._holderRefreshTries++;
     try {
-      const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 }, { fresh: true });
+      const result = await tokenTable.loadBoard({ fresh: true });
       const byMint = new Map((result?.tokens || []).map(t => [t.mintAddress, t]));
       let changed = false;
       this._boardTokens.forEach(t => {

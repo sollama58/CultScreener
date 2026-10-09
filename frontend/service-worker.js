@@ -82,7 +82,11 @@
 // for a minute; wallet-keyed API reads and image-proxy logos are no longer stored. Cultify and
 // wallet audit fixes - config.js v5, api.js v18, deviceLink.js v4, wallet.js v7, watchlist.js v4,
 // holderBehavior.js v12, cultify.js v22, apiKeys.js v5, connectPhone.js v4, linkPage.js v4.
-const CACHE_VERSION = 'holdex-v86';
+// v86: home tab fixes - Watchlist tab conviction, every curated token past the first 100, vs SOL
+// podium order and keyboard sorting, retry after a failed tab load, phone ATH columns -
+// tokenTable.js v9, conviction.js v23, tech.js v7, emerging.js v7, performance.js v29,
+// versus.js v18, mainViewTabs.js v3, home.css v2.
+const CACHE_VERSION = 'holdex-v87';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -92,18 +96,18 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=26',
-  '/css/home.css?v=1',
+  '/css/home.css?v=2',
   '/css/token.css?v=9',
   '/js/config.js?v=5',
   '/js/api.js?v=18',
   '/js/deviceLink.js?v=4',
   '/js/wallet.js?v=7',
-  '/js/tokenTable.js?v=8',
-  '/js/conviction.js?v=22',
-  '/js/tech.js?v=6',
-  '/js/emerging.js?v=6',
-  '/js/versus.js?v=17',
-  '/js/mainViewTabs.js?v=2',
+  '/js/tokenTable.js?v=10',
+  '/js/conviction.js?v=23',
+  '/js/tech.js?v=7',
+  '/js/emerging.js?v=7',
+  '/js/versus.js?v=18',
+  '/js/mainViewTabs.js?v=3',
   '/js/kotp.js?v=7',
   '/js/tokenDetail.js?v=36',
   '/js/chartDrawings.js?v=1',
@@ -114,7 +118,7 @@ const APP_SHELL = [
   '/js/holderBehavior.js?v=12',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=28',
+  '/js/performance.js?v=29',
   '/icons/icon.svg',
 ];
 

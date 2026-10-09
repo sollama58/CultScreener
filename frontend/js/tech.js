@@ -4,6 +4,8 @@ const techPage = {
   tokens: [],
   _searchTimeout: null,
   _loaded: false,
+  _loading: false,
+  _loadFailed: false,
 
   init() {
     if (this._loaded) return;
@@ -44,8 +46,8 @@ const techPage = {
     `;
 
     try {
-      const result = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
-      const allTokens = [...(result?.tokens || [])]; // clone to avoid mutating shared cache
+      const result = await tokenTable.loadBoard();
+      const allTokens = result.tokens; // a fresh array, not the shared cached one
       const filtered = allTokens.filter(t => t.techCoin);
       // Shuffle for random order
       for (let i = filtered.length - 1; i > 0; i--) {
@@ -53,6 +55,7 @@ const techPage = {
         [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
       }
       this.tokens = filtered;
+      this._loadFailed = false;
 
       if (statusEl) {
         statusEl.textContent = this.tokens.length > 0
@@ -63,6 +66,8 @@ const techPage = {
 
       this.render();
     } catch (err) {
+      // mainViewTabs reloads on the next tab click while this is set.
+      this._loadFailed = true;
       if (statusEl) {
         statusEl.textContent = 'ERROR';
         statusEl.parentElement.classList.remove('loading');
@@ -72,7 +77,7 @@ const techPage = {
         <tr class="empty-row">
           <td colspan="6">
             <div class="empty-state">
-              <span>Failed to load tech coins. Please try again.</span>
+              <span>Failed to load tech coins. Select the tab again to retry.</span>
             </div>
           </td>
         </tr>
@@ -83,6 +88,8 @@ const techPage = {
   },
 
   render() {
+    // Keep the load error up (a search would replace it with "Nothing here yet").
+    if (this._loadFailed) return;
     const tbody = document.getElementById('tech-table-body');
     if (!tbody) return;
     tokenTable.bind(tbody);
@@ -108,9 +115,9 @@ const techPage = {
       if (!tokenTable.mintOf(token)) return '';
       return `
         <tr ${tokenTable.rowAttrs(token)}>
-          ${tokenTable.rankCell(index + 1)}
+          ${tokenTable.rankCell(index + 1, { plain: true })}
           ${tokenTable.tokenCell(token)}
-          <td class="cell-price num">${utils.formatPrice(token.price, 6)}</td>
+          <td class="cell-price num">${utils.formatPrice(token.price, 6)}${tokenTable.athStack(token)}</td>
           <td class="cell-mcap num">${utils.formatNumber(token.marketCap, '$')}</td>
           <td class="cell-ath-pct">${tokenTable.athCell(token)}</td>
           <td class="cell-updated">${tokenTable.holders(token)}</td>
