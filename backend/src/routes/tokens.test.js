@@ -41,7 +41,9 @@ function resetStubs() {
     dasCalls: [],
     ownerAccounts: null,
     dasTokenAccounts: null,
-    jobs: []
+    jobs: [],
+    overview: null,
+    overviewError: null
   });
 }
 resetStubs();
@@ -55,7 +57,8 @@ const dbStub = {
   getTokenViewsBatch: async () => ({}),
   getSentimentBatch: async () => ({}),
   hasApprovedSubmissionsBatch: async () => new Set(),
-  getTopConvictionTokens: async () => ({ tokens: [], total: 0 })
+  getTopConvictionTokens: async () => ({ tokens: [], total: 0 }),
+  getApprovedSubmissions: async () => []
 };
 stub('../services/database', new Proxy(dbStub, {
   get: (t, p) => (p in t ? t[p] : (p === 'then' ? undefined : async () => ({})))
@@ -64,9 +67,10 @@ stub('../services/geckoTerminal', {
   getTrendingTokens: async ({ page }) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
   getNewTokens: async (_l, _s, page) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
   getTokenPools: async (mint, { limit }) => { S.poolCalls.push(limit); return S.pools.slice(0, limit); },
+  getTokenOverview: async () => { if (S.overviewError) throw S.overviewError; return S.overview || null; },
   OHLCV_TIMEFRAMES: { '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '12h': 1, '1d': 1 }
 });
-stub('../services/jupiter', { getTrendingTokens: async () => [] });
+stub('../services/jupiter', { getTrendingTokens: async () => [], getTokenInfo: async () => null });
 stub('../services/solana', {
   isHeliusConfigured: () => false,
   countCredits: () => {},
@@ -248,4 +252,21 @@ describe('DAS fallbacks scale by the mint decimals', () => {
     assert.strictEqual(r.body.error, 'rpc_unavailable');
     assert.deepStrictEqual(S.dasCalls, []);
   });
+});
+
+describe('GET /:mint (detail) when GeckoTerminal fails', () => {
+  for (const [label, err] of [
+    ['a 502', Object.assign(new Error('Bad Gateway'), { response: { status: 502 } })],
+    ['its breaker open', Object.assign(new Error('Circuit open'), { isCircuitBreakerError: true, isOverloaded: true })]
+  ]) {
+    test(`${label} serves partial data flagged geckoPartial, cached only briefly`, async () => {
+      S.overviewError = err;
+      const r = await get(`/api/tokens/${CURATED}`);
+      assert.strictEqual(r.status, 200);
+      assert.strictEqual(r.body.geckoPartial, true);
+      // Re-cached with the 30s partial TTL, not the 10-minute PRICE_DATA one
+      const meta = await cache.getWithMeta(`token:${CURATED}`);
+      assert.ok(meta && meta.value.geckoPartial);
+    });
+  }
 });

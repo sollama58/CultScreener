@@ -152,22 +152,22 @@ const cache = {
 const CACHE_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const MAX_CACHE_SIZE = 5000;
 
-const _cacheCleanupTimer = setInterval(() => {
-  const now = Date.now();
+function sweepPriceCache(now = Date.now()) {
   let evicted = 0;
+  // Entries are { data, expiry } (getTokenPrice); there is no top-level timestamp
   for (const [key, entry] of cache.prices) {
-    if (now - entry.timestamp > cache.CACHE_DURATION) {
+    if (now >= entry.expiry) {
       cache.prices.delete(key);
       evicted++;
     }
   }
-  // Hard cap: if still too large, evict oldest half using average timestamp
+  // Hard cap: if still too large, evict the older half (expiry = insert time + a fixed duration)
   if (cache.prices.size > MAX_CACHE_SIZE) {
     let sum = 0, count = 0;
-    for (const entry of cache.prices.values()) { sum += entry.timestamp; count++; }
-    const avgTimestamp = sum / count;
+    for (const entry of cache.prices.values()) { sum += entry.expiry; count++; }
+    const avgExpiry = sum / count;
     for (const [key, entry] of cache.prices) {
-      if (entry.timestamp <= avgTimestamp) {
+      if (entry.expiry <= avgExpiry) {
         cache.prices.delete(key);
         evicted++;
       }
@@ -176,7 +176,10 @@ const _cacheCleanupTimer = setInterval(() => {
   if (evicted > 0) {
     console.log(`[Jupiter] Cache cleanup: evicted ${evicted} entries, ${cache.prices.size} remaining`);
   }
-}, CACHE_CLEANUP_INTERVAL);
+  return evicted;
+}
+const _cacheCleanupTimer = setInterval(() => sweepPriceCache(), CACHE_CLEANUP_INTERVAL);
+if (_cacheCleanupTimer.unref) _cacheCleanupTimer.unref();
 
 /**
  * Search for tokens by symbol, name, or mint address
@@ -254,30 +257,8 @@ async function getTokenInfo(mintAddress) {
     console.warn('Jupiter token lookup failed:', error.message);
   }
 
-  // Fallback: try to get basic info from price API V3
-  try {
-    const priceResponse = await jupiterRequest(() =>
-      client.get(`/price/v3`, {
-        params: { ids: mintAddress }
-      })
-    );
-
-    const priceData = priceResponse.data?.data?.[mintAddress];
-    if (priceData) {
-      return {
-        mintAddress,
-        address: mintAddress,
-        name: null, // Price API doesn't have name, only symbol
-        symbol: priceData.symbol || null,
-        decimals: priceData.decimals || 9,
-        logoUri: null,
-        logoURI: null,
-        price: priceData.price ? parseFloat(priceData.price) : 0
-      };
-    }
-  } catch (priceError) {
-    console.warn('Jupiter price API lookup failed:', priceError.message);
-  }
+  // No Price API fallback here: it carries no name (the only field callers use this for), so a
+  // second request could never change the result.
 
   // Return basic info if all else fails — null name/symbol so callers know data is missing
   return {
@@ -758,5 +739,6 @@ module.exports = {
   getPriceHistory,
   isConfigured,
   checkHealth,
-  stopCleanup
+  stopCleanup,
+  _test: { sweepPriceCache, priceCache: cache.prices }
 };

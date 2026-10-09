@@ -113,3 +113,27 @@ test('createSharedByteBudget keeps its count in the store, so a restarted proces
   const down = createSharedByteBudget({ ...opts, store: { mget: async (k) => k.map(() => undefined), incrBy: async () => null } });
   assert.strictEqual(await down.tryConsume(1), false);
 });
+
+test('getOrSet waits as long as the caller\'s inflightTimeoutMs allows (audit #19)', async () => {
+  const prev = process.env.REDIS_URL;
+  delete process.env.REDIS_URL;
+  const svc = new CacheService();
+  try {
+    const slow = (v) => () => new Promise(r => setTimeout(() => r(v), 60));
+    await assert.rejects(svc.getOrSet('k-short', slow(1), 60000, { inflightTimeoutMs: 20 }), /getOrSet timeout/);
+    assert.strictEqual(await svc.getOrSet('k-long', slow(2), 60000, { inflightTimeoutMs: 1000 }), 2);
+    assert.strictEqual(await svc.get('k-long'), 2);
+  } finally {
+    clearInterval(svc.backend.cleanupInterval);
+    if (prev !== undefined) process.env.REDIS_URL = prev;
+  }
+});
+
+test('search cache keys cannot collide across the DEX filter (audit #53)', () => {
+  const { keys } = require('./cache');
+  // q=pepe:dex unfiltered vs q=pepe with the DEX filter
+  assert.notStrictEqual(keys.tokenSearch('pepe:dex', false), keys.tokenSearch('pepe', true));
+  assert.notStrictEqual(keys.tokenSearch('pepe', false), keys.tokenSearch('pepe', true));
+  // Still under search:*, which the curated/admin routes clear
+  assert.ok(keys.tokenSearch('a:b', true).startsWith('search:'));
+});

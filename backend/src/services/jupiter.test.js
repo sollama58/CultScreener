@@ -62,3 +62,28 @@ describe('Token API V2 rows', () => {
     assert.strictEqual(t.price, 0.0021);
   });
 });
+
+describe('price cache sweep (audit #112)', () => {
+  test('evicts expired entries and keeps fresh ones', async () => {
+    const { sweepPriceCache, priceCache } = jupiter._test;
+    priceCache.clear();
+    await jupiter.getTokenPrice(MINT);
+    priceCache.set('Old1', { data: { price: 1, timestamp: 0 }, expiry: Date.now() - 1 });
+    assert.strictEqual(sweepPriceCache(), 1);
+    assert.ok(priceCache.has(MINT));
+    assert.ok(!priceCache.has('Old1'));
+    // Once expired, the fetched entry goes too
+    assert.strictEqual(sweepPriceCache(Date.now() + 120000), 1);
+    assert.strictEqual(priceCache.size, 0);
+  });
+});
+
+describe('getTokenInfo for a mint search does not list (audit #113)', () => {
+  test('answers the null-name default without a /price/v3 request', async () => {
+    const before = calls.filter(c => c.url === '/price/v3').length;
+    const info = await jupiter.getTokenInfo('Unl1111111111111111111111111111111111111111');
+    assert.strictEqual(info.name, null);
+    assert.strictEqual(info.symbol, null);
+    assert.strictEqual(calls.filter(c => c.url === '/price/v3').length, before);
+  });
+});
