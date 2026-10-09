@@ -43,4 +43,17 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      # npm runs scripts under sh, where ** is just *, so the test script lists each
+      # depth (src/*.test.js src/*/*.test.js). A test file nested deeper needs another pattern.
+      - run: npm test
+
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: backend/.node-version
+      # The frontend tests use only node:test, node:vm and fs, so there is nothing to install
       - run: npm test
