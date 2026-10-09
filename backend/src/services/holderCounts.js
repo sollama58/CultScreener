@@ -336,7 +336,9 @@ async function getLatestPoints(mints) {
 
 /**
  * Holder counts for display (home tables, token hero): the Redis value when warm,
- * else the latest stored point, which also re-warms Redis. Exact counts only.
+ * else the latest stored point, which also re-warms Redis. A capped snapshot's
+ * point is a lower bound, but still far closer than the 100-page DAS count the
+ * callers would otherwise fetch and show.
  * Mints Postgres could not resolve are remembered for MISS_TTL_MS so a table that
  * keeps asking (the home page's holder retry) does not query Postgres every time;
  * the Redis read is still made each call, so a count the worker writes shows at once.
@@ -364,7 +366,7 @@ async function getDisplayCounts(mints) {
     if (latest) {
       for (const mint of missing) {
         const p = latest[mint];
-        if (!p || !p.complete || !(p.holders > 0)) {
+        if (!p || !(p.holders > 0)) {
           await cache.set(`holder-total-miss:${mint}`, 1, MISS_TTL_MS).catch(() => {});
           continue;
         }

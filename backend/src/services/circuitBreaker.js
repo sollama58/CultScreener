@@ -235,6 +235,16 @@ class CircuitBreakerError extends Error {
   }
 }
 
+// Helius breakers count 5xx, timeouts and connection errors. A 429 is handled by the
+// queue, and our own rate limiter's queue-full/queue-timeout errors (isOverloaded, no
+// .response) are local backpressure, not Helius failing: counting them let a backed-up
+// worker queue open the breaker and fail every DAS page while Helius was healthy.
+function isHeliusFailure(error) {
+  if (error.isOverloaded || error.isCircuitBreakerError) return false;
+  if (error.response?.status === 429) return false;
+  return error.response?.status >= 500 || !error.response;
+}
+
 // Circuit breaker instances for each external service
 const circuitBreakers = {
   geckoTerminal: new CircuitBreaker({
@@ -265,10 +275,7 @@ const circuitBreakers = {
     name: 'helius',
     failureThreshold: 5,
     resetTimeout: 30000,
-    isFailure: (error) => {
-      if (error.response?.status === 429) return false;
-      return error.response?.status >= 500 || !error.response;
-    }
+    isFailure: isHeliusFailure
   }),
 
   // Separate breaker for Helius DAS (getTokenAccounts, holder count pagination).
@@ -278,10 +285,7 @@ const circuitBreakers = {
     name: 'heliusDas',
     failureThreshold: 5,
     resetTimeout: 30000,
-    isFailure: (error) => {
-      if (error.response?.status === 429) return false;
-      return error.response?.status >= 500 || !error.response;
-    }
+    isFailure: isHeliusFailure
   }),
 
   solanaRpc: new CircuitBreaker({

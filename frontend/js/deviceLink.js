@@ -132,7 +132,12 @@ const deviceLink = {
       body: JSON.stringify({ pairingToken })
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'This code is not valid any more');
+    if (!res.ok) {
+      // status lets the page tell a spent or expired code (400) from a busy or unreachable server
+      const err = new Error(data.error || 'This code is not valid any more');
+      err.status = res.status;
+      throw err;
+    }
     this.setSession(data.sessionToken, data.wallet);
     return data.wallet;
   },
@@ -144,7 +149,9 @@ const deviceLink = {
    *  list off mintSiteCode instead; this exists for refreshing it on its own. */
   async listSiteDevices(wallet) {
     const timestamp = Date.now();
-    const signed = await wallet.signMessage(`HolDEX Link Device: ${wallet.address} at ${timestamp}`);
+    // Each action signs its own wording (backend createDeviceListSignatureMessage), so the
+    // wallet prompt says what is being approved and /pair never accepts this signature
+    const signed = await wallet.signMessage(`HolDEX List Linked Devices: ${wallet.address} at ${timestamp}`);
     const res = await fetch(`${this.siteApi()}/api/device/list`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -162,7 +169,11 @@ const deviceLink = {
   /** Revoke one device, or every device, on this site. `deviceId` null means all of them. */
   async revokeSiteDevice(wallet, deviceId) {
     const timestamp = Date.now();
-    const signed = await wallet.signMessage(`HolDEX Link Device: ${wallet.address} at ${timestamp}`);
+    // Names the phone (or all of them): backend createDeviceRevokeSignatureMessage
+    const message = deviceId === null
+      ? `HolDEX Unlink All Devices: ${wallet.address} at ${timestamp}`
+      : `HolDEX Unlink Device ${deviceId}: ${wallet.address} at ${timestamp}`;
+    const signed = await wallet.signMessage(message);
     const res = await fetch(`${this.siteApi()}/api/device/revoke`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS token_views (
 
 CREATE INDEX IF NOT EXISTS idx_token_views_count ON token_views(view_count DESC);
 
+-- batch-view-counts jobs already applied, so a redelivered job adds nothing twice
+-- (rows older than a day are pruned by the worker's cleanup-sessions job)
+CREATE TABLE IF NOT EXISTS view_count_batches (
+    batch_id VARCHAR(64) PRIMARY KEY,
+    processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- =====================================================
 -- SENTIMENT VOTES TABLE
 -- Community bullish/bearish votes (one per wallet per token)
@@ -57,7 +64,9 @@ CREATE TABLE IF NOT EXISTS sentiment_votes (
     UNIQUE(token_mint, voter_wallet)
 );
 
-CREATE INDEX IF NOT EXISTS idx_sentiment_votes_mint ON sentiment_votes(token_mint);
+-- No separate token_mint index: UNIQUE(token_mint, voter_wallet) serves those lookups, and
+-- initializeDatabase drops idx_sentiment_votes_mint, so creating it here rebuilt and dropped
+-- it on every deploy.
 
 -- =====================================================
 -- SENTIMENT TALLIES TABLE
@@ -99,6 +108,16 @@ CREATE TABLE IF NOT EXISTS watchlist (
 );
 
 -- =====================================================
+-- HELIUS CREDITS PER DAY (services/heliusCredits.js)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS helius_credit_days (
+    day DATE PRIMARY KEY,
+    credits BIGINT NOT NULL DEFAULT 0,
+    calls BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- =====================================================
 -- FUNCTIONS & TRIGGERS
 -- =====================================================
 
@@ -111,11 +130,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger for tokens updated_at
-DROP TRIGGER IF EXISTS update_tokens_updated_at ON tokens;
-CREATE TRIGGER update_tokens_updated_at
-    BEFORE UPDATE ON tokens
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+-- Trigger for tokens updated_at. Created only when missing: DROP/CREATE TRIGGER takes
+-- ACCESS EXCLUSIVE on tokens, and this script runs on every build (postinstall), while
+-- the live service is reading that table.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                   WHERE tgname = 'update_tokens_updated_at' AND tgrelid = 'tokens'::regclass) THEN
+        CREATE TRIGGER update_tokens_updated_at
+            BEFORE UPDATE ON tokens
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 -- End of initialization script

@@ -18,8 +18,9 @@ const config = {
       return 'https://cultscreener-api.onrender.com';
     })(),
 
-    // Request timeout in milliseconds
-    timeout: 30000,
+    // Request timeout in milliseconds. Above the server's 30 s REQUEST_TIMEOUT, so a slow request
+    // gets the server's own answer instead of the client aborting at the same moment (api.js)
+    timeout: 35000,
 
     // Retry configuration
     retries: 2,

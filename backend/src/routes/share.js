@@ -1,8 +1,22 @@
 ﻿const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { cache, TTL } = require('../services/cache');
+// The app's wrapper keys on clientKey (IPv6 cut to its /64), so one subscriber can't rotate
+// addresses for a fresh budget
+const { rateLimit } = require('../middleware/rateLimit');
+const { cache } = require('../services/cache');
+const holderCounts = require('../services/holderCounts');
 const { asyncHandler } = require('../middleware/validation');
+
+// /share is mounted outside the /api limiters and reads Postgres on every cache miss, so it gets
+// its own per-IP budget. Generous enough for a link unfurler fetching the page and its og-image.
+router.use(rateLimit({
+  windowMs: 60000,
+  max: 120,
+  message: 'Too many requests.',
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 
 // Frontend URL for redirects
 const FRONTEND_URL = process.env.CORS_ORIGIN
@@ -56,6 +70,39 @@ function fmtMcap(mcap) {
 }
 
 /**
+ * Token fields for the share page and card. The Postgres row is the base (it carries the
+ * conviction score); the token detail (`token:`) or home-table (`batch:`) cache entry, when
+ * present, overlays fresher market data. Both cache entries are setWithTimestamp wrappers, so
+ * they are read with getWithMeta, which unwraps them.
+ */
+async function loadToken(mint) {
+  let row = null;
+  let live = null;
+  try {
+    const [detail, batch, dbRow] = await Promise.all([
+      cache.getWithMeta(`token:${mint}`).catch(() => undefined),
+      cache.getWithMeta(`batch:${mint}`).catch(() => undefined),
+      db.getToken(mint).catch(() => null)
+    ]);
+    row = dbRow || null;
+    live = detail?.value || batch?.value || null;
+  } catch (_) {}
+  if (!row && !live) return null;
+  const r = row || {};
+  const c = live || {};
+  const livePrice = num(c.price);
+  return {
+    name: r.name || c.name || null,
+    symbol: r.symbol || c.symbol || null,
+    price: livePrice > 0 ? livePrice : num(r.price),
+    marketCap: num(c.marketCap) || num(r.market_cap),
+    priceChange24h: num(c.priceChange24h) ?? num(r.price_change_24h),
+    conviction: num(r.conviction_1m),
+    holders: num(c.holders) || null
+  };
+}
+
+/**
  * GET /share/:mint
  * Serves a minimal HTML page with dynamic OG meta tags for social media crawlers.
  * Browsers get redirected to the real token page on the frontend.
@@ -67,23 +114,14 @@ router.get('/:mint', asyncHandler(async (req, res) => {
     return res.redirect(302, FRONTEND_URL);
   }
 
-  // Fetch token data (try cache first, then DB)
-  let token = null;
-  try {
-    const cached = await cache.get(`token:${mint}`) || await cache.get(`batch:${mint}`);
-    if (cached) {
-      token = cached;
-    } else {
-      token = await db.getToken(mint);
-    }
-  } catch (_) {}
+  const token = await loadToken(mint);
 
   const name = token?.name || token?.symbol || 'Unknown Token';
   const symbol = token?.symbol || '';
-  const price = fmtPrice(num(token?.price));
-  const mcap = fmtMcap(num(token?.market_cap || token?.marketCap));
-  const change = num(token?.price_change_24h ?? token?.priceChange24h);
-  const conviction = num(token?.conviction_1m ?? token?.conviction1m);
+  const price = fmtPrice(token?.price);
+  const mcap = fmtMcap(token?.marketCap);
+  const change = token?.priceChange24h ?? null;
+  const conviction = token?.conviction ?? null;
 
   // Build title
   let title = symbol ? `${name} (${symbol})` : name;
@@ -136,13 +174,13 @@ router.get('/:mint', asyncHandler(async (req, res) => {
 <meta name="twitter:description" content="${esc(description)}">
 <meta name="twitter:image" content="${esc(twitterImageUrl)}">
 
-<!-- Redirect browsers to the real page -->
+<!-- Redirect browsers to the real page. The API's CSP (script-src 'self') blocks inline
+     scripts, so the meta refresh and the link below are the redirect. -->
 <meta http-equiv="refresh" content="0; url=${esc(tokenPageUrl)}">
 <link rel="canonical" href="${esc(tokenPageUrl)}">
 </head>
 <body>
 <p>Redirecting to <a href="${esc(tokenPageUrl)}">${esc(title)}</a>...</p>
-<script>window.location.replace(${JSON.stringify(tokenPageUrl)});</script>
 </body>
 </html>`);
 }));
@@ -160,32 +198,29 @@ router.get('/:mint/og-image', asyncHandler(async (req, res) => {
     return res.status(400).send('Invalid mint');
   }
 
-  // Fetch token data
-  let token = null;
-  try {
-    const cached = await cache.get(`token:${mint}`) || await cache.get(`batch:${mint}`);
-    if (cached) {
-      token = cached;
-    } else {
-      token = await db.getToken(mint);
-    }
-  } catch (_) {}
+  const token = await loadToken(mint);
 
-  const name = esc(token?.name || token?.symbol || 'Unknown Token');
+  const rawName = token?.name || token?.symbol || 'Unknown Token';
   const symbol = esc(token?.symbol || '');
-  const price = fmtPrice(num(token?.price)) || '--';
-  const mcap = fmtMcap(num(token?.market_cap || token?.marketCap)) || '--';
-  const change = num(token?.price_change_24h ?? token?.priceChange24h);
-  const conviction = num(token?.conviction_1m ?? token?.conviction1m);
-  const holders = num(token?.holder_count || token?.holders) || null;
+  const price = fmtPrice(token?.price) || '--';
+  const mcap = fmtMcap(token?.marketCap) || '--';
+  const change = token?.priceChange24h ?? null;
+  const conviction = token?.conviction ?? null;
+  // The tokens table has no holder count; it lives in the holder-count cache / snapshots.
+  // Only looked up for a known token, so random mints don't reach the holder tables.
+  let holders = token?.holders || null;
+  if (token && !holders) {
+    holders = await holderCounts.getDisplayCounts([mint]).then(c => c[mint] || null).catch(() => null);
+  }
 
   const changeStr = change !== null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '--';
   const changeColor = change !== null ? (change >= 0 ? '#10b981' : '#ef4444') : '#a0a0a8';
   const convictionStr = conviction !== null ? `${Math.round(conviction)}%` : '--';
   const holdersStr = holders ? holders.toLocaleString() : '--';
 
-  // Truncate long names
-  const displayName = name.length > 24 ? name.slice(0, 22) + '..' : name;
+  // Truncate long names before escaping, so the cut can never land inside an entity
+  // (a bare `&` makes the SVG malformed XML and unfurlers drop the image)
+  const displayName = esc(rawName.length > 24 ? rawName.slice(0, 22) + '..' : rawName);
   const mintShort = mint.slice(0, 6) + '...' + mint.slice(-4);
 
   // Conviction bar width (clamped 0-100)

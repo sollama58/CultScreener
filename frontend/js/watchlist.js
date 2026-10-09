@@ -13,15 +13,21 @@ const watchlist = {
       return;
     }
 
+    // A reload asked for mid-load (an account switch) runs once this load ends
+    if (this.isLoading) { this._reloadPending = true; return; }
     // Allow retry if previous load failed
-    if (this.isLoading) return;
     if (this.isLoaded && !this._loadFailed) return;
 
     this.isLoading = true;
     this._loadFailed = false;
+    this._reloadPending = false;
+    const address = wallet.address;
 
     try {
-      const response = await api.watchlist.get(wallet.address);
+      const response = await api.watchlist.get(address);
+      // The account changed (or disconnected) while this was in flight: these are another
+      // wallet's tokens. Drop them; the finally block loads the current wallet's list.
+      if (wallet.address !== address) return;
       this.items.clear();
       const tokens = response?.tokens || [];
       if (Array.isArray(tokens)) {
@@ -43,6 +49,12 @@ const watchlist = {
       this.isLoaded = true; // Prevent infinite retries on hard errors
     } finally {
       this.isLoading = false;
+      if (this._reloadPending || wallet.address !== address) {
+        this._reloadPending = false;
+        this.isLoaded = false;
+        this._loadFailed = false;
+        this.init();
+      }
     }
   },
 
@@ -83,6 +95,10 @@ const watchlist = {
       const auth = await this._sign('add', tokenMint);
       const result = await api.watchlist.add(wallet.address, tokenMint, auth);
 
+      // A load already in flight (e.g. started by the connect above) may have read the list
+      // before this add and would overwrite it: load again once it ends
+      if (this.isLoading) this._reloadPending = true;
+
       if (!result.alreadyExists) {
         this.items.set(tokenMint, { mint: tokenMint, addedAt: new Date() });
         if (typeof toast !== 'undefined') toast.success('Added to watchlist');
@@ -92,7 +108,8 @@ const watchlist = {
       this.updateWatchlistCount();
       return true;
     } catch (error) {
-      if (error.message?.includes('WATCHLIST_LIMIT')) {
+      // The server sends the code in `code` (api.request copies it to error.code) and a sentence in `error`
+      if (error.code === 'WATCHLIST_LIMIT') {
         if (typeof toast !== 'undefined') toast.error('Watchlist limit reached (max 100 tokens)');
       } else {
         console.error('Watchlist add error:', error.message);

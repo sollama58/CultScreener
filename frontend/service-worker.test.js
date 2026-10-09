@@ -93,3 +93,81 @@ test('many page views do not evict the precached app shell', async () => {
   const staticKeys = new Set((await (await caches.open(ctx.__STATIC)).keys()).map(k => k.url));
   for (const u of shell) assert.ok(staticKeys.has(u), `shell entry evicted: ${u}`);
 });
+
+// ── API fallback (audit #46, #160, #161, #168) ──────────────────────────────
+
+const API = 'https://api.holdex.test';
+
+async function respond(handlers, request) {
+  let responded = null;
+  const pending = [];
+  handlers.fetch({
+    request,
+    waitUntil: p => pending.push(p),
+    respondWith: p => { responded = p; }
+  });
+  const res = responded ? await responded : null;
+  await Promise.all(pending);
+  return res;
+}
+
+async function primeApi(ctx, caches, url, ageMs) {
+  const cache = await caches.open(ctx.__STATIC.replace('-static', '-api'));
+  await cache.put({ url }, new Response('{"price":1}', {
+    status: 200,
+    headers: { 'sw-cached-at': String(Date.now() - ageMs) }
+  }));
+}
+
+test('an API copy older than its TTL is not served as live data while online', async () => {
+  const { ctx, handlers, caches } = load();
+  ctx.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  const url = `${API}/api/tokens/leaderboard/conviction`;
+  await primeApi(ctx, caches, url, 60 * 60 * 1000);
+  const res = await respond(handlers, { url, method: 'GET', destination: '' });
+  assert.strictEqual(res.type, 'error');
+});
+
+test('a stale API copy is still served when the device is offline', async () => {
+  const { ctx, handlers, caches } = load();
+  ctx.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  ctx.self.navigator = { onLine: false };
+  const url = `${API}/api/tokens/leaderboard/conviction`;
+  await primeApi(ctx, caches, url, 60 * 60 * 1000);
+  const res = await respond(handlers, { url, method: 'GET', destination: '' });
+  assert.strictEqual(res.status, 200);
+});
+
+test('an API copy within its TTL stands in for a failed fetch', async () => {
+  const { ctx, handlers, caches } = load();
+  ctx.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  const url = `${API}/api/tokens/leaderboard/conviction`;
+  await primeApi(ctx, caches, url, 60 * 1000);
+  const res = await respond(handlers, { url, method: 'GET', destination: '' });
+  assert.strictEqual(res.status, 200);
+});
+
+test('an uncached API GET that fails offline is a network error, not a 503', async () => {
+  const { ctx, handlers } = load();
+  ctx.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  const res = await respond(handlers, { url: `${API}/api/tokens/abc`, method: 'GET', destination: '' });
+  assert.strictEqual(res.type, 'error');
+});
+
+test('image-proxy and wallet-keyed API reads are passed through, never stored', async () => {
+  const { handlers } = load();
+  for (const path of [
+    '/api/image-proxy?url=x',
+    '/api/watchlist/WALLET',
+    '/api/watchlist/WALLET/count',
+    '/api/sentiment/MINT?wallet=W',
+    '/api/utilities/my-access?wallet=W',
+    '/api/tokens/MINT/holder/WALLET',
+    '/api/keys/me',
+  ]) {
+    const res = await respond(handlers, { url: `${API}${path}`, method: 'GET', destination: '' });
+    assert.strictEqual(res, null, path);
+  }
+  const res = await respond(handlers, { url: `${API}/api/tokens/MINT`, method: 'GET', destination: '' });
+  assert.ok(res, 'public token reads still go through the API cache');
+});

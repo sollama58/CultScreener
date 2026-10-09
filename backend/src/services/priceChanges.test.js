@@ -75,6 +75,16 @@ describe('changesForRow', () => {
     assert.strictEqual(c.priceChange7d, null);
   });
 
+  test('the 24h fallback is not read from references more than 6h old (audit #182)', () => {
+    const row = { price: 2, price_change_24h: null, price_ref_1d: 1, price_ref_7d: 1 };
+    // 5h old: still within the 24h window's tolerance
+    assert.strictEqual(changesForRow({ ...row, price_refs_at: new Date(NOW - 5 * HOUR) }, NOW).priceChange24h, 100);
+    // 20h old: it would measure a ~44h move, so unknown rather than mislabelled; 7d still shown
+    const old = changesForRow({ ...row, price_refs_at: new Date(NOW - 20 * HOUR) }, NOW);
+    assert.strictEqual(old.priceChange24h, null);
+    assert.strictEqual(old.priceChange7d, 100);
+  });
+
   test('references a day old are not used', () => {
     const c = changesForRow({ price: 2, price_ref_7d: 1, price_refs_at: new Date(NOW - 2 * DAY) }, NOW);
     assert.strictEqual(c.priceChange7d, null);

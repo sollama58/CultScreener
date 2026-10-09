@@ -310,6 +310,31 @@ describe('GET /check-access/:mint with ?wallet=', () => {
     const r = await get(`/check-access/${MINT}?wallet=${bs58.encode(stranger.publicKey)}`);
     assert.deepStrictEqual(r.body, { access: false, reason: 'none' });
   });
+
+  test('another base64 spelling of a used proof is not a fresh proof', async () => {
+    const ts = Date.now();
+    const sig = signB64(burner, cultifyRoutes._createCultifyAccessMessage(MINT, BURNER, ts));
+    const first = await get(`/check-access/${MINT}?wallet=${BURNER}&sig=${encodeURIComponent(sig)}&sigTs=${ts}`);
+    assert.strictEqual(first.body.access, true);
+    // The 86th character carries 4 bits the decoder ignores: flip one of them
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const alt = sig.slice(0, 85) + alphabet[alphabet.indexOf(sig[85]) ^ 1] + '==';
+    assert.ok(Buffer.from(alt, 'base64').equals(Buffer.from(sig, 'base64')));
+    const replay = await get(`/check-access/${MINT}?wallet=${BURNER}&sig=${encodeURIComponent(alt)}&sigTs=${ts}`);
+    assert.deepStrictEqual(replay.body, { access: false, reason: 'signature_invalid', detail: 'bad_signature' });
+    // The replay marker is keyed on the decoded bytes, whichever spelling was sent
+    const { checkAndMarkSignature } = require('../middleware/validation');
+    assert.strictEqual(await checkAndMarkSignature(`access-proof:${Buffer.from(alt, 'base64').toString('hex')}`, 60_000), true);
+  });
+
+  test("a token issued late in the burn's window ends with the window", async () => {
+    const until = Date.now() + 60 * 60 * 1000;   // an hour of the 12 left
+    db.hasCultifyAccess = async () => until;
+    const r = await get(`/check-access/${MINT}?wallet=${BURNER}${accessProof()}`);
+    assert.strictEqual(r.body.access, true);
+    const issued = store.get(`cultify:access-by:${BURNER}:${MINT}`);
+    assert.ok(issued.expiresAt <= until + 1000 && issued.expiresAt > until - 60_000, JSON.stringify(issued));
+  });
 });
 
 // ── Holder Behavior: the same wallet proofs ─────────────────────────────
@@ -443,6 +468,57 @@ describe('GET /holder-behavior/check-access/:mint with ?wallet=', () => {
     const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${bs58.encode(stranger.publicKey)}`);
     assert.deepStrictEqual(r.body, { access: false, reason: 'none' });
   });
+
+  test("a token issued late in the burn's window ends with the window", async () => {
+    const until = Date.now() + 60 * 60 * 1000;   // an hour of the 3 days left
+    db.hasHBAccess = async () => until;
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof()}`);
+    assert.strictEqual(r.body.access, true);
+    const data = store.get(`hb:access:${r.body.accessToken}`);
+    assert.ok(data.expiresAt <= until + 1000 && data.expiresAt > until - 60_000, JSON.stringify(data));
+    const idx = store.get(`hb:wallet-idx:${BURNER}`);
+    assert.strictEqual(idx[0].expiresAt, data.expiresAt);
+  });
+
+  test('a whitelisted wallet still gets the full lifetime', async () => {
+    whitelisted = true;
+    const r = await get(`/holder-behavior/check-access/${MINT}?wallet=${BURNER}${hbAccessProof()}`);
+    const data = store.get(`hb:access:${r.body.accessToken}`);
+    assert.ok(data.expiresAt > Date.now() + 71 * 3600 * 1000);
+  });
+});
+
+describe('RPC relays', () => {
+  test('tx-status refuses a signature that is not base58', async () => {
+    let calls = 0;
+    solanaService.rpcCall = async () => { calls++; return { value: [null] }; };
+    const r = await get(`/tx-status/${'0'.repeat(88)}`);
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(calls, 0);
+  });
+
+  test('tx-status polls of an unknown signature are not each sent to the RPC', async () => {
+    let calls = 0;
+    solanaService.rpcCall = async () => { calls++; return { value: [null] }; };
+    for (let i = 0; i < 3; i++) {
+      const r = await get(`/tx-status/${BURN_SIG}`);
+      assert.deepStrictEqual(r.body, { confirmed: false });
+    }
+    assert.strictEqual(calls, 1);
+  });
+
+  test('balance is cached briefly per wallet', async () => {
+    let calls = 0;
+    solanaService.getTokenAccountsByOwner = async () => {
+      calls++;
+      return { value: [{ pubkey: 'acct', account: { data: { parsed: { info: { tokenAmount: { amount: '5000000', uiAmountString: '5' } } } } } }] };
+    };
+    const a = await get(`/balance/${BURNER}`);
+    const b = await get(`/balance/${BURNER}`);
+    assert.deepStrictEqual(a.body, { balance: 5000000, uiBalance: 5, tokenAccount: 'acct' });
+    assert.deepStrictEqual(b.body, a.body);
+    assert.strictEqual(calls, 1);
+  });
 });
 
 describe('GET /holder-behavior/analyze/:mint for a whitelisted wallet', () => {
@@ -482,42 +558,85 @@ describe('GET /holder-behavior/analyze/:mint for a whitelisted wallet', () => {
   });
 });
 
-describe('GET /analyze/:mint DAS fallback decimals', () => {
+describe('GET /analyze/:mint with the RPC down', () => {
   let added;
-  let dasDecimals;
+  let dasCalls;
+  let snapshot;
   beforeEach(() => {
     added = [];
-    dasDecimals = [];
+    dasCalls = 0;
+    snapshot = null;
     db.isTokenAllowed = async () => true;
     solanaService.getTokenLargestAccounts = async () => null; // RPC down
     solanaService.getTokenSupply = async () => { throw new Error('rpc down'); };
-    solanaService.getTokenMetadata = async () => null;
-    solanaService.getTokenLargestAccountsDAS = async (mint, decimals) => {
-      dasDecimals.push(decimals);
-      return [{ address: 'acct1', wallet: 'owner1', uiAmount: 1234 / 10 ** decimals }];
+    solanaService.getTokenMetadata = async () => ({ decimals: 6 });
+    solanaService.getTokenLargestAccountsDAS = async () => {
+      dasCalls++;
+      return [{ address: 'acct1', wallet: 'owner1', uiAmount: 1 }];
     };
+    holderPipeline.getSnapshotHolderList = async (mint, opts) => (opts?.maxAgeMs === 24 * 3_600_000 ? snapshot : null);
     jobQueue.addAnalyticsJob = async (name, data) => { added.push({ name, data }); return { id: 'j' }; };
   });
 
-  test('unknown decimals: answers rpc_unavailable without caching or queueing raw units', async () => {
+  test('no recent snapshot: answers rpc_unavailable, never caches a DAS page as top holders', async () => {
     const r = await get(`/analyze/${MINT}`);
     assert.strictEqual(r.status, 200);
     assert.deepStrictEqual(r.body, { holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
-    assert.deepStrictEqual(dasDecimals, [], 'DAS not scaled with a guess');
+    assert.strictEqual(dasCalls, 0, 'unsorted DAS page not used');
     assert.strictEqual(store.has(`holder-analytics:${MINT}`), false);
     assert.strictEqual(store.has(`holder-classify-pending:${MINT}`), false);
     assert.strictEqual(added.length, 0);
   });
 
-  test('decimals from Helius metadata scale the DAS amounts and reach the worker job', async () => {
-    solanaService.getTokenMetadata = async () => ({ decimals: 6 });
+  test('a snapshot up to a day old stands in for the top holders', async () => {
+    snapshot = {
+      rawAccounts: [{ address: 'acct1', wallet: 'owner1', uiAmount: 500 }, { address: 'acct2', wallet: 'owner2', uiAmount: 100 }],
+      totalSupply: 1000,
+      decimals: 0,
+    };
     const r = await get(`/analyze/${MINT}`);
     assert.strictEqual(r.status, 200);
-    assert.deepStrictEqual(dasDecimals, [6]);
-    assert.strictEqual(r.body.holders[0].balance, 1234 / 1e6);
+    assert.deepStrictEqual(r.body.holders.map(h => h.address), ['owner1', 'owner2']);
+    assert.strictEqual(r.body.totalSupply, 1000);
+    assert.strictEqual(dasCalls, 0);
     const job = added.find(j => j.name === 'compute-holder-analytics');
     assert.ok(job, 'enrichment job queued');
-    assert.strictEqual(job.data.supplyDecimals, 6);
-    assert.strictEqual(job.data.usedDAS, true);
+    assert.strictEqual(job.data.supplyDecimals, 0, "the snapshot's own decimals, 0 included");
+    assert.strictEqual(job.data.usedDAS, true, 'snapshot accounts carry their wallets');
+  });
+});
+
+describe('GET /analyze/:mint decimals for the worker job', () => {
+  test('getTokenSupply failing: decimals come from the RPC accounts', async () => {
+    const added = [];
+    db.isTokenAllowed = async () => true;
+    solanaService.getTokenLargestAccounts = async () => [{ address: 'acct1', uiAmount: 5, decimals: 4 }];
+    solanaService.getTokenSupply = async () => { throw new Error('rpc down'); };
+    jobQueue.addAnalyticsJob = async (name, data) => { added.push({ name, data }); return { id: 'j' }; };
+    const r = await get(`/analyze/${MINT}`);
+    assert.strictEqual(r.status, 200);
+    const job = added.find(j => j.name === 'compute-holder-analytics');
+    assert.ok(job);
+    assert.strictEqual(job.data.supplyDecimals, 4);
+    assert.strictEqual(job.data.usedDAS, false);
+  });
+});
+
+describe('getActiveHBAccess (My Utilities)', () => {
+  const WALLET = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+
+  test('rebuilds from the DB when the Redis wallet index is gone, and repopulates it', async () => {
+    const expiresAt = Date.now() + 3600000;
+    db.getHBAccessByWallet = async (w) => (w === WALLET ? [{ mint: MINT, expiresAt }, { mint: 'Old', expiresAt: Date.now() - 1 }] : []);
+    const active = await cultifyRoutes.getActiveHBAccess(WALLET);
+    assert.deepStrictEqual(active, [{ mint: MINT, expiresAt }]);
+    assert.deepStrictEqual(store.get(`hb:wallet-idx:${WALLET}`), [{ mint: MINT, expiresAt }]);
+  });
+
+  test('uses the Redis index when it has live entries', async () => {
+    const expiresAt = Date.now() + 3600000;
+    store.set(`hb:wallet-idx:${WALLET}`, [{ mint: MINT, expiresAt }]);
+    db.getHBAccessByWallet = async () => { throw new Error('should not be called'); };
+    assert.deepStrictEqual(await cultifyRoutes.getActiveHBAccess(WALLET), [{ mint: MINT, expiresAt }]);
   });
 });

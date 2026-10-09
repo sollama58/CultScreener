@@ -71,6 +71,14 @@ describe('scoreToken', () => {
     assert.ok(Math.abs(grow.score - r.score * 1.05) < 0.02);
     assert.ok(Math.abs(shrink.score - r.score * 0.75) < 0.02);
   });
+  test('retention pairs holdersNow with holdersMonthAgo when given, not the snapshot count', () => {
+    // 4,900 wallets after burn/LP exclusion, 5,000 token accounts now and a month ago: flat
+    const flat = scoreToken({ ...base, holders: 4900, holdersNow: 5000, holdersMonthAgo: 5000 });
+    assert.strictEqual(flat.retention, 0);
+    // Without holdersNow the snapshot count stands in (the old pairing)
+    const mixed = scoreToken({ ...base, holders: 4900, holdersMonthAgo: 5000 });
+    assert.ok(mixed.retention < 0);
+  });
   test('trading activity moves the score up to ±25%, unknown volume is neutral', () => {
     const r = scoreToken(base);
     assert.strictEqual(r.activity, 0);

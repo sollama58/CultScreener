@@ -1,4 +1,4 @@
-/* global utils */
+/* global api, utils */
 // Shared row markup and behaviour for the home page token tables (Diamond Hands, Tech, Emerging,
 // Performance, vs SOL). Each view used to build its own token cell, distribution bars and click
 // handling, and bound one listener per cell on every render (seven per row, 700 on a full page).
@@ -79,8 +79,11 @@ const tokenTable = {
     return `<span class="tt-age" title="${this.esc(`Token age ${utils.formatAge(token.pairCreatedAt)} · launched ${date}`)}">${this.esc(short)}</span>`;
   },
 
-  rankCell(rank) {
-    return `<td class="cell-rank"><span class="tt-rank${rank <= 3 ? ' tt-rank-top' : ''}">${rank}</span></td>`;
+  // plain: a row number for a list in random order (Tech, Emerging), without the top-3 highlight
+  // that would present a random pick as #1.
+  rankCell(rank, opts = {}) {
+    const top = !opts.plain && rank <= 3;
+    return `<td class="cell-rank"><span class="tt-rank${top ? ' tt-rank-top' : ''}">${rank}</span></td>`;
   },
 
   dash() {
@@ -106,6 +109,13 @@ const tokenTable = {
     const pct = this.athPct(token);
     if (pct == null) return this.dash();
     return this.pct(pct, { digits: 0, pill: true, title: `ATH MCap: ${utils.formatNumber(token.mcapAth, '$')}` });
+  },
+
+  // The ATH pill again, under the price: phones hide the ATH column (styles.css, max-width 768px)
+  // and home.css shows this copy there instead. Nothing when the token has no ATH figure.
+  athStack(token) {
+    if (this.athPct(token) == null) return '';
+    return `<span class="tt-ath-stack">${this.athCell(token)}</span>`;
   },
 
   holders(token) {
@@ -264,6 +274,52 @@ const tokenTable = {
 
   rowAttrs(token) {
     return `class="token-row tt-row" data-mint="${this.esc(this.mintOf(token))}" tabindex="0"`;
+  },
+
+  // Sortable column headers that keyboards can reach: each <th> is focusable and Enter or Space
+  // sorts like a click. setSortState puts aria-sort on the active one for screen readers.
+  bindSortHeader(th, onSort) {
+    th.tabIndex = 0;
+    th.addEventListener('click', onSort);
+    th.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      onSort();
+    });
+  },
+
+  setSortState(th, dir) {
+    if (dir) th.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending');
+    else th.removeAttribute('aria-sort');
+  },
+
+  // Every curated token on the conviction leaderboard. The server caps a page at 100 rows, so a
+  // single page silently dropped every token past the 100th once more were curated; this reads
+  // the following pages until it has `total`. The first page is the same cached request all the
+  // home tabs share. options.fresh bypasses the client cache (api.tokens.leaderboardConviction).
+  BOARD_PAGE: 100,
+  BOARD_MAX_PAGES: 20,
+
+  async loadBoard(options = {}) {
+    const page = this.BOARD_PAGE;
+    const first = await api.tokens.leaderboardConviction({ limit: page, offset: 0 }, options);
+    const tokens = [...(first?.tokens || [])]; // copy: the cached array is shared
+    const total = Number(first?.total) || 0;
+    const rest = [];
+    for (let offset = page; offset < total && offset < page * this.BOARD_MAX_PAGES; offset += page) {
+      rest.push(api.tokens.leaderboardConviction({ limit: page, offset }, options));
+    }
+    if (rest.length) {
+      // Rows can shift between pages while scores update; keep each mint once. A later page
+      // that fails is skipped so the tab still shows what loaded instead of an error.
+      const seen = new Set(tokens.map(t => t.mintAddress));
+      (await Promise.allSettled(rest)).forEach(r => (r.status === 'fulfilled' && r.value?.tokens || []).forEach(t => {
+        if (seen.has(t.mintAddress)) return;
+        seen.add(t.mintAddress);
+        tokens.push(t);
+      }));
+    }
+    return { tokens, total: Math.max(total, tokens.length) };
   },
 };
 

@@ -30,7 +30,9 @@ const keys = {
   tokenInfo: (mint) => `token:${mint}`,
   tokenChart: (mint, interval, limit) => `chart:${mint}:${interval}:${limit}`,
   tokenList: (sort, page) => `list:${sort}:${page}`,
-  tokenSearch: (query) => `search:${query}`,
+  // The DEX-filter flag goes before the query, and the query is URI-encoded, so a query
+  // containing ':' (e.g. 'pepe:dex') can never produce another query's key
+  tokenSearch: (query, dexFilter = false) => `search:${dexFilter ? 'dex' : 'all'}:${encodeURIComponent(query)}`,
   submissions: (mint) => `submissions:${mint}`,
   pools: (mint) => `pools:${mint}`,
   holderCount: (mint) => `holders:${mint}`
@@ -644,9 +646,13 @@ class CacheService {
    * @param {string} key - Cache key
    * @param {Function} fetchFn - Async function to fetch value if not cached
    * @param {number} ttlMs - Time to live in milliseconds
+   * @param {Object} [options]
+   * @param {number} [options.inflightTimeoutMs=30000] - How long callers wait on fetchFn before
+   *   giving up with 'getOrSet timeout'. Raise it for a fetchFn whose own queue and retry
+   *   timeouts can legitimately run longer (a late result still fills the cache either way).
    * @returns {Promise<any>}
    */
-  async getOrSet(key, fetchFn, ttlMs = 60000) {
+  async getOrSet(key, fetchFn, ttlMs = 60000, options = {}) {
     const cached = await this.get(key);
     if (cached !== undefined) {
       return cached;
@@ -658,8 +664,9 @@ class CacheService {
     }
 
     // Create fetch promise and store it for deduplication.
-    // 30s timeout ensures the in-flight map entry is always cleaned up even if fetchFn hangs.
-    const INFLIGHT_TIMEOUT_MS = 30000;
+    // The timeout (30s by default) ensures the in-flight map entry is always cleaned up even if
+    // fetchFn hangs.
+    const INFLIGHT_TIMEOUT_MS = options.inflightTimeoutMs > 0 ? options.inflightTimeoutMs : 30000;
     const fetchPromise = (async () => {
       let timer;
       try {
@@ -840,21 +847,88 @@ function createByteBudget({ limitBytes, windowMs, buckets = 24, now = Date.now }
   const sliceMs = windowMs / buckets;
   let slices = []; // [{ start, bytes }], oldest first
   const prune = (t) => { slices = slices.filter((s) => s.start + windowMs > t); };
+  const add = (t, bytes) => {
+    const start = Math.floor(t / sliceMs) * sliceMs;
+    const last = slices[slices.length - 1];
+    if (last && last.start === start) last.bytes += bytes;
+    else slices.push({ start, bytes });
+  };
   return {
     tryConsume(bytes) {
       const t = now();
       prune(t);
       const used = slices.reduce((sum, s) => sum + s.bytes, 0);
       if (used + bytes > limitBytes) return false;
-      const start = Math.floor(t / sliceMs) * sliceMs;
-      const last = slices[slices.length - 1];
-      if (last && last.start === start) last.bytes += bytes;
-      else slices.push({ start, bytes });
+      add(t, bytes);
       return true;
+    },
+    // Count bytes that were spent whether or not they fit (e.g. bytes already downloaded)
+    record(bytes) {
+      const t = now();
+      prune(t);
+      add(t, bytes);
     },
     used() {
       prune(now());
       return slices.reduce((sum, s) => sum + s.bytes, 0);
+    },
+    exhausted() {
+      return this.used() >= limitBytes;
+    }
+  };
+}
+
+/**
+ * One createByteBudget per key (e.g. per client), so one key spending its allowance leaves the
+ * others theirs. At most maxKeys budgets are kept; the least recently used is dropped first.
+ */
+function createKeyedByteBudget({ maxKeys = 5000, ...opts }) {
+  const budgets = new Map();
+  return {
+    forKey(key) {
+      let budget = budgets.get(key);
+      if (budget) {
+        budgets.delete(key);
+      } else {
+        budget = createByteBudget(opts);
+        if (budgets.size >= maxKeys) budgets.delete(budgets.keys().next().value);
+      }
+      budgets.set(key, budget);
+      return budget;
+    },
+    size() {
+      return budgets.size;
+    }
+  };
+}
+
+/**
+ * createByteBudget, but counted in the cache itself (one INCRBY counter per slice) instead of
+ * process memory. For a budget that guards what is written to that same cache: the count then
+ * survives API restarts and deploys (a per-process count started from zero each time while the
+ * earlier entries were still there), and is lost together with the entries when the cache itself
+ * restarts empty (a per-process count kept refusing writes for a whole window). Async; refuses
+ * when the cache cannot answer, since the write it guards would not land either.
+ */
+function createSharedByteBudget({ store, prefix, limitBytes, windowMs, buckets = 24, now = Date.now }) {
+  const sliceMs = windowMs / buckets;
+  const sliceKeys = (t) => {
+    const current = Math.floor(t / sliceMs);
+    return Array.from({ length: buckets }, (_, i) => `${prefix}:${current - i}`);
+  };
+  const usedAt = async (keyList) => (await store.mget(keyList)).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  return {
+    async tryConsume(bytes) {
+      try {
+        const keyList = sliceKeys(now());
+        if ((await usedAt(keyList)) + bytes > limitBytes) return false;
+        return (await store.incrBy(keyList[0], bytes, windowMs + sliceMs)) != null;
+      } catch {
+        return false;
+      }
+    },
+    async used() {
+      return usedAt(sliceKeys(now()));
     }
   };
 }
@@ -864,5 +938,7 @@ module.exports = {
   CacheService,
   TTL,
   keys,
-  createByteBudget
+  createByteBudget,
+  createKeyedByteBudget,
+  createSharedByteBudget
 };

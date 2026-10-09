@@ -77,3 +77,361 @@ describe('validateWalletSignature (data deletion)', () => {
     assert.strictEqual(second.body.code, 'SIGNATURE_REPLAY');
   });
 });
+
+describe('checkAndMarkSignature across a Redis reconnect', () => {
+  const saved = {};
+  afterEach(() => Object.assign(cache, saved));
+
+  test('a signature marked in memory during the outage is still a replay once Redis is back', async () => {
+    Object.assign(saved, { getBackendType: cache.getBackendType, setNX: cache.setNX, get: cache.get });
+    cache.getBackendType = () => 'redis';
+    // Outage: setNX/get answer as a disconnected RedisCache does
+    cache.setNX = async () => false;
+    cache.get = async () => undefined;
+    const sig = `outage-${Date.now()}-${Math.random()}`;
+    assert.strictEqual(await validation.checkAndMarkSignature(sig, 60000), false);
+
+    // Reconnected, with no key for this signature: SET NX would succeed
+    cache.setNX = async () => true;
+    assert.strictEqual(await validation.checkAndMarkSignature(sig, 60000), true);
+  });
+});
+
+// Ed25519 group order; S + L verifies under tweetnacl but is a different byte string.
+const ED25519_L = (1n << 252n) + 27742317777372353535851937790883648493n;
+function addLToS(signature) {
+  let s = 0n;
+  for (let i = 63; i >= 32; i--) s = (s << 8n) | BigInt(signature[i]);
+  s += ED25519_L;
+  const out = signature.slice();
+  for (let i = 32; i < 64; i++) { out[i] = Number(s & 0xffn); s >>= 8n; }
+  return s === 0n ? out : null; // null when S + L no longer fits in 32 bytes
+}
+
+describe('verifyWalletSignature', () => {
+  test('rejects a non-canonical (S + L) variant of a valid signature', () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const kp = nacl.sign.keyPair();
+      const wallet = bs58.encode(kp.publicKey);
+      const msg = `HolDEX Link Device: ${wallet} at ${Date.now()}`;
+      const signature = Array.from(nacl.sign.detached(new TextEncoder().encode(msg), kp.secretKey));
+      const malleated = addLToS(signature);
+      if (!malleated) continue;
+      // tweetnacl itself accepts it; the wrapper must not
+      assert.strictEqual(nacl.sign.detached.verify(new TextEncoder().encode(msg), new Uint8Array(malleated), kp.publicKey), true);
+      assert.strictEqual(validation.verifyWalletSignature(msg, signature, wallet), true);
+      assert.strictEqual(validation.verifyWalletSignature(msg, malleated, wallet), false);
+      return;
+    }
+    assert.fail('no signature with room for S + L in 20 attempts');
+  });
+});
+
+// Every wallet-signature middleware: a valid signature passes once, and is refused when it is
+// from another wallet, expired, replayed, non-canonical, or signed for a different action/token.
+describe('wallet-signature middlewares', () => {
+  const MINT = 'So11111111111111111111111111111111111111112';
+  const OTHER_MINT = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+  const sign = (kp, msg) => Array.from(nacl.sign.detached(new TextEncoder().encode(msg), kp.secretKey));
+
+  // build(wallet, ts, mint) -> { req fields without signature, message the wallet must sign }
+  const cases = [
+    {
+      name: 'validateDeviceLinkSignature', mw: validation.validateDeviceLinkSignature,
+      build: (wallet, ts) => ({ body: { wallet, signatureTimestamp: ts }, message: validation.createDeviceLinkSignatureMessage(wallet, ts) }),
+      wrongAction: (wallet, ts) => validation.createDataDeletionSignatureMessage(wallet, ts)
+    },
+    {
+      name: 'validateWalletSignature', mw: validation.validateWalletSignature,
+      build: (wallet, ts) => ({ body: { wallet, signatureTimestamp: ts }, message: validation.createDataDeletionSignatureMessage(wallet, ts) }),
+      wrongAction: (wallet, ts) => validation.createDeviceLinkSignatureMessage(wallet, ts)
+    },
+    {
+      name: 'validateWatchlistSignature (add)', mw: validation.validateWatchlistSignature,
+      build: (wallet, ts, mint) => ({ method: 'POST', body: { wallet, tokenMint: mint, signatureTimestamp: ts }, message: validation.createWatchlistSignatureMessage('add', wallet, mint, ts) }),
+      wrongAction: (wallet, ts) => validation.createWatchlistSignatureMessage('remove', wallet, MINT, ts)
+    },
+    {
+      name: 'validateWatchlistSignature (remove)', mw: validation.validateWatchlistSignature,
+      build: (wallet, ts, mint) => ({ method: 'DELETE', body: { wallet, tokenMint: mint, signatureTimestamp: ts }, message: validation.createWatchlistSignatureMessage('remove', wallet, mint, ts) }),
+      wrongAction: (wallet, ts) => validation.createWatchlistSignatureMessage('add', wallet, MINT, ts)
+    },
+    {
+      name: 'validateVoteSignature', mw: validation.validateVoteSignature,
+      build: (wallet, ts) => ({ body: { submissionId: 42, voterWallet: wallet, voteType: 'up', signatureTimestamp: ts }, message: validation.createVoteSignatureMessage('up', 42, ts) }),
+      wrongAction: (wallet, ts) => validation.createVoteSignatureMessage('down', 42, ts)
+    },
+    {
+      name: 'validateBatchVoteSignature', mw: validation.validateBatchVoteSignature,
+      build: (wallet, ts) => {
+        const votes = [{ submissionId: 2, voteType: 'up' }, { submissionId: 1, voteType: 'down' }];
+        return { body: { votes, voterWallet: wallet, signatureTimestamp: ts }, message: validation.createBatchVoteSignatureMessage(votes, wallet, ts) };
+      },
+      wrongAction: (wallet, ts) => validation.createBatchVoteSignatureMessage([{ submissionId: 2, voteType: 'down' }, { submissionId: 1, voteType: 'down' }], wallet, ts)
+    },
+    {
+      name: 'validateSubmissionSignature', mw: validation.validateSubmissionSignature,
+      build: (wallet, ts, mint) => ({ body: { tokenMint: mint, submissionType: 'twitter', submitterWallet: wallet, signatureTimestamp: ts }, message: validation.createSubmissionSignatureMessage('twitter', mint, ts) }),
+      wrongAction: (wallet, ts) => validation.createSubmissionSignatureMessage('banner', MINT, ts)
+    },
+    {
+      name: 'validateBatchSubmissionSignature', mw: validation.validateBatchSubmissionSignature,
+      build: (wallet, ts, mint) => {
+        const submissions = [{ submissionType: 'twitter' }, { submissionType: 'banner' }];
+        return { body: { tokenMint: mint, submissions, submitterWallet: wallet, signatureTimestamp: ts }, message: validation.createBatchSubmissionSignatureMessage(['twitter', 'banner'], mint, ts) };
+      },
+      wrongAction: (wallet, ts) => validation.createBatchSubmissionSignatureMessage(['twitter'], MINT, ts)
+    },
+    {
+      name: 'validateSentimentSignature', mw: validation.validateSentimentSignature,
+      build: (wallet, ts, mint) => ({ params: { mint }, body: { voterWallet: wallet, sentiment: 'bullish', signatureTimestamp: ts }, message: validation.createSentimentSignatureMessage('bullish', mint, wallet, ts) }),
+      wrongAction: (wallet, ts) => validation.createSentimentSignatureMessage('bearish', MINT, wallet, ts)
+    },
+    {
+      name: 'validateCallSignature', mw: validation.validateCallSignature,
+      build: (wallet, ts, mint) => ({ params: { mint }, body: { callerWallet: wallet, signatureTimestamp: ts }, message: validation.createCallSignatureMessage(mint, wallet, ts) }),
+      wrongAction: (wallet, ts) => validation.createSentimentSignatureMessage('bullish', MINT, wallet, ts)
+    },
+    {
+      name: "requireApiKeySignature('rotate')", mw: validation.requireApiKeySignature('rotate'),
+      build: (wallet, ts) => ({ body: { wallet, signatureTimestamp: ts }, message: validation.createApiKeySignatureMessage(wallet, ts, 'rotate') }),
+      wrongAction: (wallet, ts) => validation.createApiKeySignatureMessage(wallet, ts, 'register')
+    }
+  ];
+
+  // A request for MINT whose body carries `signature` (the message was signed by `kp`)
+  function request(c, kp, ts, signedMessage, overrides = {}) {
+    const wallet = overrides.wallet || bs58.encode(kp.publicKey);
+    const built = c.build(wallet, ts, MINT);
+    const signature = overrides.signature || sign(kp, signedMessage || built.message);
+    return {
+      method: built.method || 'POST',
+      params: { ...(built.params || {}) },
+      body: { ...built.body, signature },
+      header: () => undefined
+    };
+  }
+
+  for (const c of cases) {
+    describe(c.name, () => {
+      test('passes a valid signature once, then refuses the replay', async () => {
+        const kp = nacl.sign.keyPair();
+        const req = request(c, kp, Date.now());
+        const first = await run(c.mw, { ...req, body: { ...req.body } });
+        assert.strictEqual(first.next, true, JSON.stringify(first.body));
+        const second = await run(c.mw, { ...req, body: { ...req.body } });
+        assert.strictEqual(second.status, 400);
+        assert.strictEqual(second.body.code, 'SIGNATURE_REPLAY');
+      });
+
+      test('refuses a signature from another wallet', async () => {
+        const kp = nacl.sign.keyPair();
+        const other = nacl.sign.keyPair();
+        const ts = Date.now();
+        const claimed = bs58.encode(kp.publicKey);
+        const req = request(c, kp, ts, null, { signature: sign(other, c.build(claimed, ts, MINT).message) });
+        const out = await run(c.mw, req);
+        assert.strictEqual(out.next, false);
+        assert.strictEqual(out.status, 401);
+      });
+
+      test('refuses an expired signature', async () => {
+        const kp = nacl.sign.keyPair();
+        const out = await run(c.mw, request(c, kp, Date.now() - validation.SIGNATURE_EXPIRY_MS - 1000));
+        assert.strictEqual(out.status, 400);
+        assert.strictEqual(out.body.code, 'SIGNATURE_EXPIRED');
+      });
+
+      test('refuses a timestamp in the future', async () => {
+        const kp = nacl.sign.keyPair();
+        const out = await run(c.mw, request(c, kp, Date.now() + 60000));
+        assert.strictEqual(out.next, false);
+        assert.strictEqual(out.status, 400);
+      });
+
+      test('refuses a signature for a different action or token', async () => {
+        const kp = nacl.sign.keyPair();
+        const ts = Date.now();
+        const wallet = bs58.encode(kp.publicKey);
+        const wrong = await run(c.mw, request(c, kp, ts, c.wrongAction(wallet, ts)));
+        assert.strictEqual(wrong.status, 401);
+        if (c.build(wallet, ts, OTHER_MINT).message !== c.build(wallet, ts, MINT).message) {
+          const otherMint = await run(c.mw, request(c, kp, ts, c.build(wallet, ts, OTHER_MINT).message));
+          assert.strictEqual(otherMint.status, 401);
+        }
+      });
+
+      test('refuses the S + L variant of a signature already used', async () => {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const kp = nacl.sign.keyPair();
+          const req = request(c, kp, Date.now());
+          const malleated = addLToS(req.body.signature);
+          if (!malleated) continue;
+          assert.strictEqual((await run(c.mw, { ...req, body: { ...req.body } })).next, true);
+          const out = await run(c.mw, { ...req, body: { ...req.body, signature: malleated } });
+          assert.strictEqual(out.next, false);
+          assert.strictEqual(out.status, 401);
+          return;
+        }
+        assert.fail('no signature with room for S + L in 20 attempts');
+      });
+    });
+  }
+});
+
+describe('verifyAdminPassword', () => {
+  const crypto = require('crypto');
+  const original = process.env.ADMIN_PASSWORD;
+  afterEach(() => {
+    if (original === undefined) delete process.env.ADMIN_PASSWORD;
+    else process.env.ADMIN_PASSWORD = original;
+  });
+  const hashed = (password, keylen = 64) => {
+    const salt = crypto.randomBytes(16);
+    return `scrypt:${salt.toString('hex')}:${crypto.scryptSync(password, salt, keylen).toString('hex')}`;
+  };
+
+  test('accepts the right password and refuses a wrong one (scrypt)', async () => {
+    process.env.ADMIN_PASSWORD = hashed('correct horse');
+    assert.strictEqual(await validation.verifyAdminPassword('correct horse'), true);
+    assert.strictEqual(await validation.verifyAdminPassword('wrong'), false);
+  });
+
+  test('a hash of the wrong length fails the login instead of crashing the process', async () => {
+    let uncaught = null;
+    const onUncaught = (err) => { uncaught = err; };
+    process.on('uncaughtException', onUncaught);
+    try {
+      for (const value of [hashed('pw', 32), hashed('pw').slice(0, -3), hashed('pw').slice(0, -2) + 'zz']) {
+        process.env.ADMIN_PASSWORD = value;
+        assert.ok(validation.adminPasswordFormatError(value));
+        assert.strictEqual(await validation.verifyAdminPassword('pw'), false);
+      }
+      await new Promise(r => setImmediate(r));
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+    assert.strictEqual(uncaught, null);
+  });
+
+  test('adminPasswordFormatError accepts what hash-password.js writes and plaintext', () => {
+    assert.strictEqual(validation.adminPasswordFormatError(hashed('pw')), null);
+    assert.strictEqual(validation.adminPasswordFormatError('plain-password'), null);
+    assert.ok(validation.adminPasswordFormatError('scrypt:abcd'));
+  });
+});
+
+describe('validateAdminSession', () => {
+  const db = require('../services/database');
+  const saved = {};
+  afterEach(() => Object.assign(db, saved));
+  const token = 'a'.repeat(64);
+  const withHeaders = (headers, cookies) => ({ cookies, header: (name) => headers[name] });
+
+  test('401 without a token, or with a malformed one', async () => {
+    assert.strictEqual((await run(validation.validateAdminSession, withHeaders({}))).status, 401);
+    assert.strictEqual((await run(validation.validateAdminSession, withHeaders({ 'X-Admin-Session': 'not-hex' }))).status, 401);
+  });
+
+  test('401 for an unknown or expired session; passes a live one from the header or cookie', async () => {
+    saved.getAdminSession = db.getAdminSession;
+    const live = new Map([[token, { session_token: token }]]);
+    db.getAdminSession = async (t) => live.get(t);
+
+    const expired = await run(validation.validateAdminSession, withHeaders({ 'X-Admin-Session': 'b'.repeat(64) }));
+    assert.strictEqual(expired.status, 401);
+
+    const viaHeader = await run(validation.validateAdminSession, withHeaders({ 'X-Admin-Session': token }));
+    assert.strictEqual(viaHeader.next, true);
+    assert.strictEqual(viaHeader.req.adminSession.session_token, token);
+
+    const viaCookie = await run(validation.validateAdminSession, withHeaders({}, { admin_session: token }));
+    assert.strictEqual(viaCookie.next, true);
+  });
+});
+
+describe('device link signatures name their action', () => {
+  function signed(message, kp) {
+    return Array.from(nacl.sign.detached(new TextEncoder().encode(message), kp.secretKey));
+  }
+
+  test('a signature given to list or unlink phones is refused by /pair', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    for (const message of [
+      validation.createDeviceListSignatureMessage(wallet, ts),
+      validation.createDeviceRevokeSignatureMessage(wallet, ts, 'all'),
+      validation.createDeviceRevokeSignatureMessage(wallet, ts, 7),
+    ]) {
+      const out = await run(validation.validateDeviceLinkSignature, {
+        body: { wallet, signature: signed(message, kp), signatureTimestamp: ts }
+      });
+      assert.strictEqual(out.next, false, message);
+      assert.strictEqual(out.status, 401);
+    }
+  });
+
+  test('a pairing signature is refused by list and unlink once the legacy fallback is off', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    const signature = signed(validation.createDeviceLinkSignatureMessage(wallet, ts), kp);
+    process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES = 'false';
+    try {
+      const list = await run(validation.validateDeviceListSignature, { body: { wallet, signature, signatureTimestamp: ts } });
+      assert.strictEqual(list.status, 401);
+      const revoke = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, all: true } });
+      assert.strictEqual(revoke.status, 401);
+    } finally {
+      delete process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES;
+    }
+  });
+
+  test('during the rollout the old page\'s pairing signature still lists and unlinks', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts1 = Date.now();
+    const ts2 = ts1 + 1;
+    const list = await run(validation.validateDeviceListSignature, {
+      body: { wallet, signature: signed(validation.createDeviceLinkSignatureMessage(wallet, ts1), kp), signatureTimestamp: ts1 }
+    });
+    assert.strictEqual(list.next, true);
+    const revoke = await run(validation.validateDeviceRevokeSignature, {
+      body: { wallet, signature: signed(validation.createDeviceLinkSignatureMessage(wallet, ts2), kp), signatureTimestamp: ts2, deviceId: 7 }
+    });
+    assert.strictEqual(revoke.next, true);
+  });
+
+  test('unlinking is bound to the device it names', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    const signature = signed(validation.createDeviceRevokeSignatureMessage(wallet, ts, 7), kp);
+    const other = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, deviceId: 8 } });
+    assert.strictEqual(other.status, 401);
+    const all = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, all: true } });
+    assert.strictEqual(all.status, 401);
+    const same = await run(validation.validateDeviceRevokeSignature, { body: { wallet, signature, signatureTimestamp: ts, deviceId: 7 } });
+    assert.strictEqual(same.next, true);
+    assert.strictEqual(same.req.linkedWallet, wallet);
+  });
+
+  test('each action accepts its own message', async () => {
+    const kp = nacl.sign.keyPair();
+    const wallet = bs58.encode(kp.publicKey);
+    const ts = Date.now();
+    const pair = await run(validation.validateDeviceLinkSignature, {
+      body: { wallet, signature: signed(validation.createDeviceLinkSignatureMessage(wallet, ts), kp), signatureTimestamp: ts }
+    });
+    assert.strictEqual(pair.next, true);
+    const list = await run(validation.validateDeviceListSignature, {
+      body: { wallet, signature: signed(validation.createDeviceListSignatureMessage(wallet, ts), kp), signatureTimestamp: ts }
+    });
+    assert.strictEqual(list.next, true);
+    const all = await run(validation.validateDeviceRevokeSignature, {
+      body: { wallet, signature: signed(validation.createDeviceRevokeSignatureMessage(wallet, ts, 'all'), kp), signatureTimestamp: ts, all: true }
+    });
+    assert.strictEqual(all.next, true);
+  });
+});

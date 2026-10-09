@@ -160,7 +160,11 @@ const tokenDetail = {
     // Share button — copies a share URL with rich social media previews
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      const shareUrl = `https://holdex.live/share/${this.mint}`;
+      // /share is served by the API (it renders the OG tags and redirects people
+      // to the token page); the static site has no /share route, so a holdex.live
+      // link would 404.
+      const apiBase = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
+      const shareUrl = `${apiBase}/share/${encodeURIComponent(this.mint)}`;
       const copied = await utils.copyToClipboard(shareUrl);
       if (copied) toast.success('Share link copied to clipboard');
     };
@@ -294,10 +298,27 @@ const tokenDetail = {
       if (data.marketCap != null) this.token.marketCap = data.marketCap;
       if (data.fdv != null) this.token.fdv = data.fdv;
       if (data.pairCreatedAt) this.token.pairCreatedAt = data.pairCreatedAt;
-      // Clear the partial flag so renderToken shows real values
-      delete this.token.geckoPartial;
+      // Clear the partial flag so renderToken shows real values, but only when market data
+      // came back: a price-only (Jupiter) answer has null market cap/volume/liquidity, and
+      // clearing the flag then showed $0 for them instead of '--'
+      if (data.marketCap != null || data.volume24h != null || data.liquidity != null) {
+        delete this.token.geckoPartial;
+      }
       this.renderToken();
     } catch { /* silently ignore — normal price refresh will pick it up later */ }
+  },
+
+  // Circulating supply in the facts box: total less Streamflow-locked and burn-wallet supply,
+  // as the holders panel computes them (the token response may only have the total)
+  _updateCirculating(supply) {
+    if (!supply || !(supply.total > 0)) return;
+    const circ = Math.max(0, supply.total - (supply.locked || 0) - (supply.deadWalletBurnt || 0));
+    if (this.token) this.token.circulatingSupply = circ;
+    const el = document.getElementById('stat-circulating');
+    if (el) {
+      el.textContent = utils.formatNumber(circ, '');
+      el.classList.remove('stat-placeholder');
+    }
   },
 
   startPriceRefresh() {
@@ -329,7 +350,11 @@ const tokenDetail = {
     }
 
     try {
-      const data = await api.tokens.getPrice(this.mint);
+      // Fetch past apiCache: getOrFetch hands back a cached price up to 5 min old
+      // (refreshing it only in the background, never shown), and the pill below
+      // would then call it "Updated just now". Store the answer for other readers.
+      const data = await api.request(`/api/tokens/${encodeURIComponent(this.mint)}/price`);
+      if (data) apiCache.set(`tokens:price:${this.mint}`, data, apiCache.TTL.price);
       if (data && data.price) {
         this.token.price = data.price;
         if (data.priceChange24h !== undefined) {
@@ -898,6 +923,7 @@ const tokenDetail = {
         // started above when metrics are pending; metrics can also be null here.
         if (!(metrics && metrics.top5Pct == null)) this._pollForFullMetrics();
       } else {
+        this._updateCirculating(data.supply);
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
           : v >= 1e3 ? (v / 1e3).toFixed(2) + 'K'
@@ -986,8 +1012,9 @@ const tokenDetail = {
   // timer, and runs as soon as the tab is visible again. Returns true when parked.
   _deferPollWhileHidden(timerKey, resume) {
     if (document.visibilityState !== 'hidden') return false;
-    // A newer call supersedes any poll of the same loop still waiting on a timer
-    if (this[timerKey]) clearTimeout(this[timerKey]);
+    // A newer call supersedes any poll of the same loop still waiting on a timer.
+    // Null the id too: callers test it to tell whether a poll is scheduled.
+    if (this[timerKey]) { clearTimeout(this[timerKey]); this[timerKey] = null; }
     if (!this._pausedPolls) this._pausedPolls = {};
     this._pausedPolls[timerKey] = { mint: this.mint, resume };
     return true;
@@ -1065,6 +1092,7 @@ const tokenDetail = {
 
       // Update locked & burnt supply
       if (data.supply) {
+        this._updateCirculating(data.supply);
         const fmtAmount = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B'
           : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M'
           : v >= 1e3 ? (v / 1e3).toFixed(2) + 'K'
@@ -1248,7 +1276,9 @@ const tokenDetail = {
 
     const scheduleNext = (nextAttempt) => {
       const delay = nextAttempt >= MAX_POLLS ? EXTENDED_DELAY : (POLL_DELAYS[nextAttempt] || 10000);
-      this._holdTimesTimer = setTimeout(() => this._loadHoldTimes(nextAttempt), delay);
+      // Clear the id when the timer fires: the re-ask in _pollForFullMetrics only runs
+      // while no hold-time poll is scheduled, and a spent id would block it for good
+      this._holdTimesTimer = setTimeout(() => { this._holdTimesTimer = null; this._loadHoldTimes(nextAttempt); }, delay);
     };
 
     try {
@@ -1265,6 +1295,7 @@ const tokenDetail = {
           scheduleNext(attempt + 1);
         } else {
           this._holdTimesLoaded = true;
+          this._updateAvgHoldTimeMetric();
         }
         return;
       }
@@ -1317,6 +1348,7 @@ const tokenDetail = {
           this._holdTimesAutoRetried = true;
           if (typeof config !== 'undefined' && config.app?.debug) console.log(`[HoldTimes] Still computing — auto-retry in 30s`);
           this._holdTimesTimer = setTimeout(() => {
+            this._holdTimesTimer = null;
             this._htIsAutoRetry = true; // Prevents attempt=0 reset from clearing _holdTimesAutoRetried
             this._loadHoldTimes(0);
           }, 30000);
@@ -1384,7 +1416,12 @@ const tokenDetail = {
   // Computes the average across all top-20 wallets that have hold time data.
   _updateAvgHoldTimeMetric() {
     const el = document.getElementById('holders-avg-hold-time');
-    if (!el || !this._holdTimesData) return;
+    if (!el) return;
+    if (!this._holdTimesData) {
+      // Polling ended with no hold times at all: replace the '...' loading state
+      if (this._holdTimesLoaded) el.textContent = '--';
+      return;
+    }
 
     const values = Object.values(this._holdTimesData).filter(v => v > 0);
     if (values.length === 0) {
@@ -1487,7 +1524,9 @@ const tokenDetail = {
           const hbMap = JSON.parse(sessionStorage.getItem('hb_access') || '{}');
           const hbToken = hbMap[this.mint];
           const wa = (typeof wallet !== 'undefined' && wallet.connected) ? wallet.address : null;
-          if (hbToken || wa) {
+          // Only with an access token: a bare ?wallet= (no device-session header, no
+          // signature) is always refused 403 by the API, so it just burns rate limit
+          if (hbToken) {
             const params = new URLSearchParams();
             if (hbToken) params.set('token', hbToken);
             if (wa) params.set('wallet', wa);
@@ -1680,7 +1719,6 @@ const tokenDetail = {
     }
 
     const isExtended = attempt >= MAX_POLLS;
-    const extendedAttempt = attempt - MAX_POLLS;
 
     // Capture mint at call time — if the user navigates to a different token while this
     // request is in-flight, we discard the stale response instead of rendering it onto
@@ -1692,6 +1730,20 @@ const tokenDetail = {
       this._diamondHandsTimer = setTimeout(() => this._loadDiamondHands(nextAttempt), delay);
     };
 
+    // Slow cadence: only polls that saw no progress use up the extended budget, so a
+    // big token that is still moving keeps updating until it finishes instead of
+    // stopping at a partial result. MAX_TOTAL_POLLS is the hard stop.
+    const MAX_TOTAL_POLLS = 200;
+    // Retry budget after a failed or empty poll. It must match the success path's
+    // budget (_dhExtendedUsed, not the attempt index), or one error after a few
+    // progressing extended polls would end polling on a partial result. A failed
+    // poll is charged to the extended budget like a stalled one.
+    const canRetryAfterFailure = () => {
+      if (isExtended) this._dhExtendedUsed = (this._dhExtendedUsed || 0) + 1;
+      return attempt + 1 < MAX_TOTAL_POLLS &&
+        (!isExtended ? attempt < MAX_POLLS : this._dhExtendedUsed < EXTENDED_POLLS);
+    };
+
     try {
       // Bypass apiCache — poll directly so we always get fresh data from backend
       if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Poll ${attempt}/${MAX_POLLS + EXTENDED_POLLS} for ${mintAtStart.slice(0, 8)}...`);
@@ -1700,11 +1752,9 @@ const tokenDetail = {
       // Discard response if user navigated away while this request was in-flight
       if (this.mint !== mintAtStart) return;
 
-      const canRetry = (!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS);
-
       if (!data) {
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] No response`);
-        if (canRetry) { scheduleNext(attempt + 1); } else if (!this._diamondHandsData) { this._diamondHandsLoaded = true; this._showDiamondHandsUnavailable(); }
+        if (canRetryAfterFailure()) { scheduleNext(attempt + 1); } else if (!this._diamondHandsData) { this._diamondHandsLoaded = true; this._showDiamondHandsUnavailable(); }
         return;
       }
 
@@ -1720,10 +1770,6 @@ const tokenDetail = {
         this._dhStalledCount = 0;
         this._dhLastState = stateKey;
       }
-      // Slow cadence: only polls that saw no progress use up the extended budget, so a
-      // big token that is still moving keeps updating until it finishes instead of
-      // stopping at a partial result. MAX_TOTAL_POLLS is the hard stop.
-      const MAX_TOTAL_POLLS = 200;
       const progressing = total > 0 && this._dhStalledCount === 0;
       if (isExtended && !progressing) this._dhExtendedUsed = (this._dhExtendedUsed || 0) + 1;
       const canPoll = attempt + 1 < MAX_TOTAL_POLLS &&
@@ -1788,8 +1834,7 @@ const tokenDetail = {
       if (this.mint !== mintAtStart) return;
       // Always retry on error up to max polls — a single network hiccup should not
       // permanently show "Unavailable" on the very first attempt.
-      const canRetry = (!isExtended && attempt < MAX_POLLS) || (isExtended && extendedAttempt < EXTENDED_POLLS);
-      if (canRetry) {
+      if (canRetryAfterFailure()) {
         scheduleNext(attempt + 1);
       } else {
         this._diamondHandsLoaded = true;
@@ -2026,7 +2071,11 @@ const tokenDetail = {
     if (!container) return;
     const esc = (s) => utils.escapeHtml(s);
     const links = [];
-    const { twitter, telegram, discord, website, tiktok } = socials;
+    // Third-party URLs (DexScreener profiles, curated socials): only http(s) becomes a
+    // link, so a javascript: or data: "website" never turns into a clickable chip
+    const safe = (u) => (typeof u === 'string' && utils.isValidUrl(u) ? u : null);
+    const twitter = safe(socials.twitter), telegram = safe(socials.telegram), discord = safe(socials.discord);
+    const website = safe(socials.website), tiktok = safe(socials.tiktok);
     if (twitter) links.push(`<a href="${esc(twitter)}" target="_blank" rel="noopener" class="social-chip"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>Twitter</a>`);
     if (telegram) links.push(`<a href="${esc(telegram)}" target="_blank" rel="noopener" class="social-chip"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>Telegram</a>`);
     if (discord) links.push(`<a href="${esc(discord)}" target="_blank" rel="noopener" class="social-chip"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>Discord</a>`);

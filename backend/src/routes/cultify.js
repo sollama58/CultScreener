@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const solanaService = require('../services/solana');
 const db = require('../services/database');
 const { cache, TTL, keys } = require('../services/cache');
+const { recordIssuedToken } = require('../services/accessTokens');
 const {
   validateMint, asyncHandler, SOLANA_ADDRESS_REGEX, canBypassCache,
   verifyWalletSignature, checkAndMarkSignature, validateDeviceSession
@@ -24,6 +25,8 @@ const BURN_AMOUNT = 5_000;
 const BURN_DECIMALS = 6; // pump.fun tokens use 6 decimals
 const BURN_RAW_AMOUNT = BigInt(BURN_AMOUNT) * BigInt(10 ** BURN_DECIMALS);
 const ACCESS_TOKEN_TTL = 43200 * 1000; // 12 hours in milliseconds (cache.set takes ms)
+// Oldest holder snapshot /analyze serves when the RPC is down (same as the tokens /holders route)
+const STALE_SNAPSHOT_MAX_AGE_MS = 24 * 3_600_000;
 
 /**
  * On-chain verification shared by both burn-gated features (Cultify at 5k, Holder Behavior at
@@ -123,9 +126,14 @@ function createCultifyAccessMessage(mint, walletAddress, timestamp) {
 }
 
 // Wallet signatures travel base64-encoded (64 bytes); returns the byte array or null.
+// Only the canonical spelling is accepted: the 86th character carries 4 bits the decoder
+// ignores, so 16 strings decode to the same signature, and a replay marker keyed on the
+// string would count each of them as a fresh proof.
 function decodeWalletSignature(b64) {
   if (typeof b64 !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(b64)) return null;
-  return Array.from(Buffer.from(b64, 'base64'));
+  const bytes = Buffer.from(b64, 'base64');
+  if (bytes.toString('base64') !== b64) return null;
+  return Array.from(bytes);
 }
 
 // Holder Behavior has its own prefixes, so a signature given for one utility never counts for the other.
@@ -163,7 +171,8 @@ async function hasAccessProof(req, walletAddress, mint, createMessage = createCu
   if (!verifyWalletSignature(createMessage(mint, walletAddress, timestamp), signature, walletAddress)) {
     return { ok: false, reason: 'bad_signature' };
   }
-  if (await checkAndMarkSignature(req.query.sig, ACCESS_PROOF_REPLAY_TTL_MS)) {
+  // Burned by the decoded bytes, so no other spelling of the same signature gets through
+  if (await checkAndMarkSignature(`access-proof:${Buffer.from(signature).toString('hex')}`, ACCESS_PROOF_REPLAY_TTL_MS)) {
     return { ok: false, reason: 'replayed' };
   }
   return { ok: true };
@@ -203,6 +212,13 @@ async function rememberIssuedToken(prefix, walletAddress, mint, token, ttlMs) {
   await cache.set(accessByKey(prefix, walletAddress, mint), { token, expiresAt: Date.now() + ttlMs }, ttlMs);
 }
 
+// Lifetime of a token issued now from a burn on record: up to the end of that burn's access
+// window (accessUntil, ms, from db.hasCultifyAccess / hasHBAccess), never past fullTtlMs.
+// A full fresh lifetime here let a re-check late in the window stretch access to twice its length.
+function accessTtl(accessUntil, fullTtlMs) {
+  return typeof accessUntil === 'number' ? Math.min(fullTtlMs, accessUntil - Date.now()) : fullTtlMs;
+}
+
 async function findIssuedToken(prefix, walletAddress, mint, ttlMs) {
   const issued = await cache.get(accessByKey(prefix, walletAddress, mint));
   if (!issued || !issued.token || !(issued.expiresAt - Date.now() > ttlMs / 2)) return null;
@@ -239,10 +255,12 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   if (alreadyUsed) {
     // The burner's own retry after a lost response: re-issue for the claim that was recorded,
     // while it is still inside the access window.
-    if (await isSameBurnClaim(signature, walletAddress, mint, 'cultify') &&
-        await db.hasCultifyAccess(walletAddress, mint)) {
+    const ttl = await isSameBurnClaim(signature, walletAddress, mint, 'cultify')
+      ? accessTtl(await db.hasCultifyAccess(walletAddress, mint) || 0, ACCESS_TOKEN_TTL) : 0;
+    if (ttl > 0) {
       const accessToken = generateAccessToken(walletAddress, mint);
-      await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ttl);
+      await recordIssuedToken('cultify', walletAddress, mint, accessToken, ttl);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
     return res.status(409).json({ error: 'This burn transaction has already been claimed' });
@@ -280,6 +298,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
       }
       const accessToken = generateAccessToken(walletAddress, mint);
       await cache.set(`cultify:access:${accessToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+      await recordIssuedToken('cultify', walletAddress, mint, accessToken, ACCESS_TOKEN_TTL);
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
     throw err;
@@ -290,6 +309,7 @@ router.post('/verify-burn', strictLimiter, asyncHandler(async (req, res) => {
   const accessToken = generateAccessToken(walletAddress, mint);
   const accessKey = `cultify:access:${accessToken}`;
   await cache.set(accessKey, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
+  await recordIssuedToken('cultify', walletAddress, mint, accessToken, ACCESS_TOKEN_TTL);
 
   res.json({ success: true, accessToken });
 }));
@@ -323,16 +343,19 @@ router.get('/check-access/:mint', walletLimiter, validateMint, validateDeviceSes
   const walletAddress = req.query.wallet;
   if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     const hasBurn = await db.hasCultifyAccess(walletAddress, mint);
-    if (hasBurn) {
+    const ttl = hasBurn ? accessTtl(hasBurn, ACCESS_TOKEN_TTL) : 0;
+    if (ttl > 0) {
       // The burn record is public; only the wallet's owner gets a token from it
       const proof = await hasAccessProof(req, walletAddress, mint);
       if (!proof.ok) return res.json(accessProofRefusal(proof));
-      // Hand back the token issued earlier while it is valid, else issue a fresh one
-      const existing = await findIssuedToken('cultify', walletAddress, mint, ACCESS_TOKEN_TTL);
+      // Hand back the token issued earlier while it is valid, else issue a fresh one that
+      // ends with the burn's access window
+      const existing = await findIssuedToken('cultify', walletAddress, mint, ttl);
       if (existing) return res.json({ access: true, reason: 'burned', accessToken: existing });
       const newToken = generateAccessToken(walletAddress, mint);
-      await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ACCESS_TOKEN_TTL);
-      await rememberIssuedToken('cultify', walletAddress, mint, newToken, ACCESS_TOKEN_TTL);
+      await cache.set(`cultify:access:${newToken}`, { wallet: walletAddress, mint }, ttl);
+      await recordIssuedToken('cultify', walletAddress, mint, newToken, ttl);
+      await rememberIssuedToken('cultify', walletAddress, mint, newToken, ttl);
       return res.json({ access: true, reason: 'burned', accessToken: newToken });
     }
   }
@@ -377,33 +400,28 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
     ]);
 
     let largestAccounts = rpcAccounts;
-    // Decimals for the DAS path, whose amounts come back raw. Defaulting to 0 when
-    // getTokenSupply also failed cached raw base units in the holder-analytics cache that the
-    // token page's /holders serves too. Same handling as that route: no guessing.
-    let dasDecimals = null;
-    if (!largestAccounts && solanaService.isHeliusConfigured()) {
-      dasDecimals = Number.isInteger(supplyResult?.value?.decimals)
-        ? supplyResult.value.decimals
-        : await resolveMintDecimals(mint);
-      if (dasDecimals == null) {
+    // RPC down. A snapshot up to a day old still holds the real largest accounts; a single
+    // DAS getTokenAccounts page does not (it is in index order, not by balance), and caching
+    // it here under holder-analytics:<mint> had the token page's /holders serve 20 arbitrary
+    // wallets as "top holders". Same handling as that route (audit #17).
+    let snapList = null;
+    if (!largestAccounts) {
+      snapList = await holderPipeline.getSnapshotHolderList(mint, { maxAgeMs: STALE_SNAPSHOT_MAX_AGE_MS }).catch(() => null);
+      if (!snapList) {
         return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
       }
-      // Cap the DAS fallback at 10s like the tokens /holders route; a timeout is treated
-      // as "no accounts" (rpc_unavailable below)
-      let dasTimer;
-      largestAccounts = await Promise.race([
-        solanaService.getTokenLargestAccountsDAS(mint, dasDecimals),
-        new Promise(resolve => { dasTimer = setTimeout(() => resolve(null), 10000); })
-      ]).finally(() => clearTimeout(dasTimer));
+      largestAccounts = snapList.rawAccounts;
     }
 
-    if (!largestAccounts || largestAccounts.length === 0) {
-      return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: !rpcAccounts ? 'rpc_unavailable' : 'no_holders' });
+    if (largestAccounts.length === 0) {
+      return res.json({ holders: [], totalSupply: null, metrics: null, supply: null, error: 'no_holders' });
     }
 
-    const totalSupply = supplyResult?.value
-      ? parseFloat(supplyResult.value.uiAmountString || supplyResult.value.uiAmount || 0)
-      : null;
+    const totalSupply = snapList
+      ? snapList.totalSupply
+      : supplyResult?.value
+        ? parseFloat(supplyResult.value.uiAmountString || supplyResult.value.uiAmount || 0)
+        : null;
 
     // Build basic holders list (LP/burn flags come from worker enrichment)
     // Percentages set to null in fast path since LP status unknown — worker will compute actual percentages excluding LPs
@@ -445,9 +463,21 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
 
     // Phase 2: Queue the same worker job as the main endpoint for enrichment
     // (LP/burn detection, real holder count)
+    // Decimals for the worker's Streamflow scaling: getTokenSupply can fail on its own while
+    // getTokenLargestAccounts succeeds, and each RPC account carries the mint decimals too.
+    // Sending 0 scaled locked amounts by 10^decimals (audit #18).
+    let supplyDecimals = snapList
+      ? snapList.decimals
+      : [supplyResult?.value?.decimals, ...largestAccounts.map(a => a.decimals)]
+        .find(d => Number.isInteger(d) && d >= 0);
+    if (supplyDecimals === undefined) supplyDecimals = await resolveMintDecimals(mint);
+
     const pendingKey = `holder-classify-pending:${mint}`;
     const alreadyPending = await cache.get(pendingKey);
-    if (!alreadyPending) {
+    if (supplyDecimals == null) {
+      // No decimals: skip the classification, but still cache briefly so polls don't repeat the reads
+      await cache.setNX(cacheKey, fastResult, 30000);
+    } else if (!alreadyPending) {
       await cache.set(cacheKey, fastResult, 120000); // 2 min short TTL
       await cache.set(pendingKey, Date.now(), 120000);
       const rawAccounts = largestAccounts.slice(0, 20).map(a => ({
@@ -460,8 +490,9 @@ router.get('/analyze/:mint', walletLimiter, validateMint, asyncHandler(async (re
         mint,
         rawAccounts,
         totalSupply,
-        usedDAS: !rpcAccounts,
-        supplyDecimals: dasDecimals ?? (supplyResult?.value?.decimals || 0)
+        // Snapshot accounts already carry their owner wallets
+        usedDAS: !!snapList,
+        supplyDecimals
       });
       if (!job) {
         await cache.delete(pendingKey);
@@ -543,6 +574,11 @@ router.get('/my-tokens/:wallet', walletLimiter, asyncHandler(async (req, res) =>
 }));
 
 // ── RPC proxy endpoints (keeps Helius API key on the server) ──────────
+// Neither balance nor tx-status needs a burn or a token, so each answer is cached briefly per
+// key: a loop over random wallets or signatures otherwise bills one Helius call per request.
+const BALANCE_CACHE_TTL = 10_000;
+const TX_PENDING_CACHE_TTL = 2_000;   // a poll may see one stale 'not yet confirmed' answer at most
+const TX_SIGNATURE_REGEX = /^[1-9A-HJ-NP-Za-km-z]{80,90}$/;
 
 // GET /api/cultify/balance/:wallet — get ASDFASDFA balance for a wallet
 router.get('/balance/:wallet', walletLimiter, asyncHandler(async (req, res) => {
@@ -551,10 +587,17 @@ router.get('/balance/:wallet', walletLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid wallet address' });
   }
 
+  // Each answer is an RPC call anyone can trigger for any wallet: hold it briefly per wallet
+  const balanceKey = `cultify:balance:${walletAddress}`;
+  const cachedBalance = await cache.get(balanceKey);
+  if (cachedBalance) return res.json(cachedBalance);
+
   try {
     const result = await solanaService.getTokenAccountsByOwner(walletAddress, BURN_MINT);
     if (!result || !result.value || result.value.length === 0) {
-      return res.json({ balance: 0, uiBalance: 0, tokenAccount: null });
+      const empty = { balance: 0, uiBalance: 0, tokenAccount: null };
+      await cache.set(balanceKey, empty, BALANCE_CACHE_TTL).catch(() => {});
+      return res.json(empty);
     }
 
     let bestAccount = null;
@@ -573,7 +616,9 @@ router.get('/balance/:wallet', walletLimiter, asyncHandler(async (req, res) => {
       }
     }
 
-    res.json({ balance: bestBalance, uiBalance: bestUiBalance, tokenAccount: bestAccount });
+    const payload = { balance: bestBalance, uiBalance: bestUiBalance, tokenAccount: bestAccount };
+    await cache.set(balanceKey, payload, BALANCE_CACHE_TTL).catch(() => {});
+    res.json(payload);
   } catch (err) {
     console.error('[Cultify] Balance check error:', err.message);
     res.status(502).json({ error: 'Failed to check balance' });
@@ -627,7 +672,7 @@ router.post('/send-tx', strictLimiter, asyncHandler(async (req, res) => {
 // GET /api/cultify/tx-status/:signature — check transaction confirmation status
 router.get('/tx-status/:signature', pollLimiter, asyncHandler(async (req, res) => {
   const { signature } = req.params;
-  if (!signature || signature.length < 80 || signature.length > 90) {
+  if (!signature || !TX_SIGNATURE_REGEX.test(signature)) {
     return res.status(400).json({ error: 'Invalid signature' });
   }
 
@@ -635,6 +680,10 @@ router.get('/tx-status/:signature', pollLimiter, asyncHandler(async (req, res) =
   const cacheKey = `cultify:tx-confirmed:${signature}`;
   const confirmed = await cache.get(cacheKey);
   if (confirmed != null) return res.json(confirmed);
+  // A not-yet-confirmed answer is held for a couple of seconds too, so an unknown signature
+  // polled in a loop costs one call per window instead of one per request
+  const pendingKey = `cultify:tx-pending:${signature}`;
+  if (await cache.get(pendingKey)) return res.json({ confirmed: false });
 
   try {
     // Only the status is needed here, not the full parsed transaction
@@ -643,6 +692,7 @@ router.get('/tx-status/:signature', pollLimiter, asyncHandler(async (req, res) =
     // No confirmationStatus on old nodes: confirmations === null means finalized
     const level = status && (status.confirmationStatus || (status.confirmations === null ? 'finalized' : 'processed'));
     if (level !== 'confirmed' && level !== 'finalized') {
+      await cache.set(pendingKey, 1, TX_PENDING_CACHE_TTL).catch(() => {});
       return res.json({ confirmed: false });
     }
     const payload = { confirmed: true, failed: !!status.err };
@@ -650,6 +700,7 @@ router.get('/tx-status/:signature', pollLimiter, asyncHandler(async (req, res) =
     await cache.set(cacheKey, payload, 300000);
     res.json(payload);
   } catch (err) {
+    await cache.set(pendingKey, 1, TX_PENDING_CACHE_TTL).catch(() => {});
     res.json({ confirmed: false });
   }
 }));
@@ -666,16 +717,17 @@ const HB_ACCESS_TTL = 259200 * 1000;  // 3 days (72 hours)
 // Store an HB access token and update the per-wallet index for "My Utilities".
 // reuse: return the token already issued for this wallet+mint while more than half its
 // lifetime remains (repeat access checks); a new burn always gets a fresh token with the
-// full TTL.
-async function storeHBAccess(walletAddress, mint, { reuse = false } = {}) {
+// full TTL. ttlMs: a token issued from an older burn on record ends with that burn's window.
+async function storeHBAccess(walletAddress, mint, { reuse = false, ttlMs = HB_ACCESS_TTL } = {}) {
   if (reuse) {
-    const existing = await findIssuedToken('hb', walletAddress, mint, HB_ACCESS_TTL);
+    const existing = await findIssuedToken('hb', walletAddress, mint, ttlMs);
     if (existing) return existing;
   }
   const accessToken = generateAccessToken(walletAddress, mint);
-  const expiresAt = Date.now() + HB_ACCESS_TTL;
-  await cache.set(`hb:access:${accessToken}`, { wallet: walletAddress, mint, expiresAt }, HB_ACCESS_TTL);
-  await rememberIssuedToken('hb', walletAddress, mint, accessToken, HB_ACCESS_TTL);
+  const expiresAt = Date.now() + ttlMs;
+  await cache.set(`hb:access:${accessToken}`, { wallet: walletAddress, mint, expiresAt }, ttlMs);
+  await recordIssuedToken('hb', walletAddress, mint, accessToken, ttlMs);
+  await rememberIssuedToken('hb', walletAddress, mint, accessToken, ttlMs);
 
   // Maintain a per-wallet index so "My Utilities" can enumerate active accesses
   const idxKey = `hb:wallet-idx:${walletAddress}`;
@@ -717,9 +769,10 @@ router.post('/holder-behavior/verify-burn', strictLimiter, asyncHandler(async (r
   if (alreadyUsed) {
     // The burner's own retry after a lost response: re-issue for the claim that was recorded,
     // while it is still inside the access window.
-    if (await isSameBurnClaim(signature, walletAddress, mint, 'holder_behavior') &&
-        await db.hasHBAccess(walletAddress, mint)) {
-      const accessToken = await storeHBAccess(walletAddress, mint);
+    const ttl = await isSameBurnClaim(signature, walletAddress, mint, 'holder_behavior')
+      ? accessTtl(await db.hasHBAccess(walletAddress, mint) || 0, HB_ACCESS_TTL) : 0;
+    if (ttl > 0) {
+      const accessToken = await storeHBAccess(walletAddress, mint, { ttlMs: ttl });
       return res.json({ success: true, accessToken, note: 'Burn already recorded' });
     }
     return res.status(409).json({ error: 'This burn transaction has already been claimed' });
@@ -779,11 +832,13 @@ router.get('/holder-behavior/check-access/:mint', walletLimiter, validateMint, v
   if (walletAddress && SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     const isWhitelisted = await db.isWalletWhitelisted(walletAddress);
     const hasBurn = !isWhitelisted && await db.hasHBAccess(walletAddress, mint);
-    if (isWhitelisted || hasBurn) {
+    // A burn's token ends with the burn's access window; a whitelisted wallet's runs the full TTL
+    const ttl = isWhitelisted ? HB_ACCESS_TTL : hasBurn ? accessTtl(hasBurn, HB_ACCESS_TTL) : 0;
+    if (ttl > 0) {
       const proof = await hasAccessProof(req, walletAddress, mint, createHBAccessMessage);
       if (!proof.ok) return res.json(accessProofRefusal(proof));
       // Issue an access token so the analyze route can validate normally
-      const newToken = await storeHBAccess(walletAddress, mint, { reuse: true });
+      const newToken = await storeHBAccess(walletAddress, mint, { reuse: true, ttlMs: ttl });
       return res.json({ access: true, reason: isWhitelisted ? 'whitelisted' : 'burned', accessToken: newToken });
     }
   }
@@ -860,8 +915,16 @@ router.get('/holder-behavior/my-access', walletLimiter, asyncHandler(async (req,
   if (!walletAddress || !SOLANA_ADDRESS_REGEX.test(walletAddress)) {
     return res.json({ items: [] });
   }
+  const active = await getActiveHBAccess(walletAddress);
+  res.json({ items: active.map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' })) });
+}));
+
+// A wallet's unexpired Holder Behavior accesses as [{ mint, expiresAt }], from the Redis wallet
+// index, rebuilt from cultify_burns when the index is empty (Redis restart, eviction, TTL).
+// Shared with /api/utilities/my-access (app.js), which the My Utilities modal calls.
+async function getActiveHBAccess(walletAddress) {
   const idxKey = `hb:wallet-idx:${walletAddress}`;
-  let entries = (await cache.get(idxKey)) || [];
+  const entries = (await cache.get(idxKey)) || [];
   const now = Date.now();
   let active = entries.filter(e => e.expiresAt > now);
 
@@ -876,11 +939,11 @@ router.get('/holder-behavior/my-access', walletLimiter, asyncHandler(async (req,
       }
     }
   }
-
-  res.json({ items: active.map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' })) });
-}));
+  return active;
+}
 
 module.exports = router;
+module.exports.getActiveHBAccess = getActiveHBAccess;
 // Exposed for tests only - lets the burn verification be exercised against captured transaction
 // fixtures without standing up the whole route (and its DB/cache/RPC dependencies).
 module.exports._verifyBurnTransaction = verifyBurnTransaction;

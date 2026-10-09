@@ -73,7 +73,23 @@
 // hidden tabs - api.js v17, conviction.js v22, styles.css v26, new css/home.css, tokenDetail.js v35,
 // tokenChart.js v7, holderChart.js v4, holderBehavior.js v11, cultify.js v21, communityPage.js v10.
 // v85: holders line color, opacity and own-pane option in the chart modal - token.css v9, tokenChart.js v8.
-const CACHE_VERSION = 'holdex-v85';
+// v86: share link points at the API's /share, social links http(s) only, price freshness,
+// hold-time and diamond-hands poll fixes, UTC date ticks, chart logo fallback without inline
+// onerror, holder range revert on failure - tokenDetail.js v36, tokenChart.js v9, holderChart.js v5.
+// v86: API fallback copies older than API_CACHE_TTL are no longer served as live data while the
+// device is online (an API outage showed hours-old prices as current); offline API misses fail
+// like a network error instead of a synthetic 503 that api.js read as "server busy" and backed off
+// for a minute; wallet-keyed API reads and image-proxy logos are no longer stored. Cultify and
+// wallet audit fixes - config.js v5, api.js v18, deviceLink.js v4, wallet.js v7, watchlist.js v4,
+// holderBehavior.js v12, cultify.js v22, apiKeys.js v5, connectPhone.js v4, linkPage.js v4.
+// v86: home tab fixes - Watchlist tab conviction, every curated token past the first 100, vs SOL
+// podium order and keyboard sorting, retry after a failed tab load, phone ATH columns -
+// tokenTable.js v9, conviction.js v23, tech.js v7, emerging.js v7, performance.js v29,
+// versus.js v18, mainViewTabs.js v3, home.css v2.
+// v88: API key Refresh details signs the 'view' action - apiKeys.js v6.
+const CACHE_VERSION = 'holdex-v88';
+// v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
+// subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -83,29 +99,29 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=26',
-  '/css/home.css?v=1',
+  '/css/home.css?v=2',
   '/css/token.css?v=9',
-  '/js/config.js?v=4',
-  '/js/api.js?v=17',
-  '/js/deviceLink.js?v=3',
-  '/js/wallet.js?v=6',
-  '/js/tokenTable.js?v=8',
-  '/js/conviction.js?v=22',
-  '/js/tech.js?v=6',
-  '/js/emerging.js?v=6',
-  '/js/versus.js?v=17',
-  '/js/mainViewTabs.js?v=2',
+  '/js/config.js?v=5',
+  '/js/api.js?v=18',
+  '/js/deviceLink.js?v=4',
+  '/js/wallet.js?v=7',
+  '/js/tokenTable.js?v=10',
+  '/js/conviction.js?v=23',
+  '/js/tech.js?v=7',
+  '/js/emerging.js?v=7',
+  '/js/versus.js?v=18',
+  '/js/mainViewTabs.js?v=3',
   '/js/kotp.js?v=7',
-  '/js/tokenDetail.js?v=35',
+  '/js/tokenDetail.js?v=36',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
-  '/js/tokenChart.js?v=8',
-  '/js/holderChart.js?v=4',
-  '/js/watchlist.js?v=3',
-  '/js/holderBehavior.js?v=11',
+  '/js/tokenChart.js?v=9',
+  '/js/holderChart.js?v=5',
+  '/js/watchlist.js?v=4',
+  '/js/holderBehavior.js?v=12',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=28',
+  '/js/performance.js?v=29',
   '/icons/icon.svg',
 ];
 
@@ -116,7 +132,8 @@ const API_PATTERNS = [
 
 // Hosts whose responses must never be written to a cache.
 //
-// TrenchScanner's API (once used by the in-site Trenches app, now moved to trenchscanner.app)
+// Not the HolDEX API (cultscreener-api.onrender.com): its per-wallet paths are listed in
+// PER_WALLET_API_PATTERNS below. TrenchScanner's API (once used by the in-site Trenches app, now moved to trenchscanner.app)
 // serves cookie-authenticated, per-user endpoints — /auth/me, /filters, /matches — none of which carry the /api/ prefix
 // API_PATTERNS matches on, and all of which are cross-origin. Without this they'd fall
 // through to the catch-all network-first branch at the bottom of the fetch handler and be
@@ -144,6 +161,20 @@ const NO_STORE_API_PATTERNS = [
   /^\/api\/tokens\/[^/]+\/ohlcv/,
   /^\/api\/tokens\/[^/]+\/price$/,
   /^\/api\/cultify\//,
+  // Proxied logos: images (up to a few MB) that evicted cached JSON from the 50-entry API_CACHE.
+  // The browser's HTTP cache already keeps them.
+  /^\/api\/image-proxy/,
+];
+
+// API reads keyed by a wallet (watchlist, votes, holdings, paid-utility access, API keys).
+// API_PATTERNS matches /api/ on any origin, so without this they were written to Cache Storage
+// and left on disk of a shared machine after the wallet disconnected. Passed through, never stored.
+const PER_WALLET_API_PATTERNS = [
+  /^\/api\/watchlist(\/|$)/,
+  /^\/api\/sentiment\//,
+  /^\/api\/utilities\//,
+  /^\/api\/tokens\/[^/]+\/holder\//,
+  /^\/api\/keys(\/|$)/,
 ];
 
 // Font CDN patterns — cache long-term
@@ -151,7 +182,8 @@ const NO_STORE_API_PATTERNS = [
 const MAX_DYNAMIC_ENTRIES = 100;
 const MAX_API_ENTRIES = 50;
 
-// API cache TTL (5 minutes)
+// API cache TTL (5 minutes): how old a stored copy may be and still stand in for a failed
+// fetch while the device is online. Offline, any stored copy is better than nothing.
 const API_CACHE_TTL = 5 * 60 * 1000;
 
 // ─── Install ─────────────────────────────────────────────
@@ -214,6 +246,9 @@ self.addEventListener('fetch', (event) => {
 
   // Polled API endpoints — same pass-through, nothing worth keeping. See NO_STORE_API_PATTERNS.
   if (NO_STORE_API_PATTERNS.some((p) => p.test(url.pathname))) return;
+
+  // Wallet-keyed API reads — same pass-through. See PER_WALLET_API_PATTERNS.
+  if (PER_WALLET_API_PATTERNS.some((p) => p.test(url.pathname))) return;
 
   // API requests â†’ Network First with cache fallback
   if (API_PATTERNS.some((p) => p.test(url.pathname))) {
@@ -319,17 +354,16 @@ async function networkFirstWithCache(event, request, cacheName, ttl, maxEntries 
     // Network failed — try cache
     const cached = await caches.match(request);
     if (cached) {
-      // Check TTL if specified
-      if (ttl) {
-        const cachedAt = parseInt(cached.headers.get('sw-cached-at') || '0');
-        if (Date.now() - cachedAt > ttl) {
-          // Stale but better than nothing when offline
-          return cached;
-        }
+      // A fetch also throws while the device is online: an API outage whose error page carries
+      // no CORS headers, DNS or TLS trouble. A copy past its TTL would then be shown as current
+      // data with nothing marking it stale, so it is only served when the device is offline.
+      const cachedAt = parseInt(cached.headers.get('sw-cached-at') || '0', 10);
+      const offline = !!self.navigator && self.navigator.onLine === false;
+      if (!ttl || offline || Date.now() - cachedAt <= ttl) {
+        // Trim cache even on fallback path to prevent unbounded growth
+        trimCache(cacheName, maxEntries).catch(() => {});
+        return cached;
       }
-      // Trim cache even on fallback path to prevent unbounded growth
-      trimCache(cacheName, maxEntries).catch(() => {});
-      return cached;
     }
     return offlineFallback(request);
   }
@@ -414,7 +448,10 @@ function offlineFallback(request) {
     });
   }
 
-  return new Response('Offline', { status: 503 });
+  // Anything else fails as a network error, which is what the page would have seen with no
+  // worker. A synthetic 503 read to api.js as an overloaded server: it started the site-wide
+  // 60-second backoff and a 'Server is busy' toast over a few seconds without signal.
+  return Response.error();
 }
 
 // ─── Cache Management ────────────────────────────────────

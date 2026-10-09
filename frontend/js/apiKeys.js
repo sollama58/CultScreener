@@ -39,13 +39,22 @@ const apiKeysPage = {
   },
 
   loadSessionKey() {
-    // Restore key from sessionStorage so tester works within same browser session
-    const saved = sessionStorage.getItem('cultApiKey');
+    // Restore key from sessionStorage so tester works within same browser session.
+    // Storage can throw (site data blocked): that must not abort the rest of init.
+    let saved = null;
+    try { saved = sessionStorage.getItem('cultApiKey'); } catch (e) { /* storage unavailable */ }
     if (saved) {
       this.currentKey = saved;
       const testerInput = document.getElementById('tester-api-key');
       if (testerInput) testerInput.value = saved;
     }
+  },
+
+  _storeSessionKey(key) {
+    try {
+      if (key) sessionStorage.setItem('cultApiKey', key);
+      else sessionStorage.removeItem('cultApiKey');
+    } catch (e) { /* storage unavailable: the key still lives in memory for this page */ }
   },
 
   setApiBaseUrl() {
@@ -99,6 +108,7 @@ const apiKeysPage = {
     on('revoke-key-btn', () => this.revokeKey());
     on('key-generated-confirm', () => this.confirmKeySaved());
     on('copy-key-btn', () => this.copyKeyToClipboard());
+    on('refresh-key-btn', () => this.refreshKeyMeta());
   },
 
   bindApiTester() {
@@ -154,12 +164,50 @@ const apiKeysPage = {
 
   // ── Signing helper ────────────────────────────────────────────────────────
 
-  async signForApi() {
+  // The signed text names the action (register, rotate, revoke, view): the server only accepts a
+  // signature on the route whose action it names.
+  async signForApi(action) {
+    if (!action) throw new Error('signForApi needs an action');
     const timestamp = Date.now();
-    const message = `HolDEX API Key: register for ${this.currentWallet} at ${timestamp}`;
+    const message = `HolDEX API Key: ${action} for ${this.currentWallet} at ${timestamp}`;
     const sig = await wallet.signMessage(message);
     if (!sig || !sig.signature) throw new Error('Signature cancelled or failed');
     return { signature: sig.signature, signatureTimestamp: timestamp };
+  },
+
+  // ── Key details from the server ───────────────────────────────────────────
+  // The cached metadata is only what this browser saw at creation (request count 0, or '-' for
+  // a key made elsewhere). POST /api/keys/me returns the real prefix, dates and usage; it needs
+  // a signature, so it runs when asked rather than prompting on every visit.
+
+  async refreshKeyMeta() {
+    if (!this.currentWallet) return;
+    const btn = document.getElementById('refresh-key-btn');
+    this._setLoading(btn, true, 'Signing...');
+    try {
+      const { signature, signatureTimestamp } = await this.signForApi('view');
+      const info = await api.request('/api/keys/me', {
+        method: 'POST',
+        retries: 1, // the signature is single-use: a retry would only be refused as a replay
+        body: JSON.stringify({ wallet: this.currentWallet, signature, signatureTimestamp })
+      });
+      if (!info || !info.found) {
+        this._showKeyGone();
+        return;
+      }
+      this.saveKeyMeta({
+        prefix: info.prefix,
+        created_at: info.created_at,
+        is_active: info.is_active !== false,
+        request_count: typeof info.request_count === 'number' ? info.request_count : Number(info.request_count) || 0,
+        last_used_at: info.last_used_at || null
+      });
+      this.showExistingKey(this.keyMeta);
+    } catch (err) {
+      toast.error(err.message || 'Could not load key details');
+    } finally {
+      this._setLoading(btn, false, 'Refresh details');
+    }
   },
 
   // ── Key operations ────────────────────────────────────────────────────────
@@ -171,16 +219,17 @@ const apiKeysPage = {
     this._setLoading(btn, true, 'Signing...');
 
     try {
-      const { signature, signatureTimestamp } = await this.signForApi();
+      const { signature, signatureTimestamp } = await this.signForApi('register');
 
       const response = await api.request('/api/keys', {
         method: 'POST',
+        retries: 1, // the signature is single-use: a retry would only be refused as a replay
         body: JSON.stringify({ wallet: this.currentWallet, signature, signatureTimestamp })
       });
 
       if (response.success && response.key) {
         this.currentKey = response.key;
-        sessionStorage.setItem('cultApiKey', response.key);
+        this._storeSessionKey(response.key);
 
         this.saveKeyMeta({
           prefix: response.prefix,
@@ -201,7 +250,7 @@ const apiKeysPage = {
         // browser). Show the existing-key state so Rotate/Revoke are reachable.
         this.saveKeyMeta({ prefix: null, created_at: null, is_active: true, request_count: null, last_used_at: null, unknown: true });
         this.showExistingKey(this.keyMeta);
-        toast.info('This wallet already has an API key. Rotate it to get a new key, or revoke it.');
+        toast.info('This wallet already has an API key. Use Refresh details to load it, rotate it to get a new key, or revoke it.');
       } else {
         toast.error(err.message || 'Failed to generate API key');
       }
@@ -218,16 +267,17 @@ const apiKeysPage = {
     this._setLoading(btn, true, 'Signing...');
 
     try {
-      const { signature, signatureTimestamp } = await this.signForApi();
+      const { signature, signatureTimestamp } = await this.signForApi('rotate');
 
       const response = await api.request('/api/keys/rotate', {
         method: 'POST',
+        retries: 1, // the signature is single-use: a retry would only be refused as a replay
         body: JSON.stringify({ wallet: this.currentWallet, signature, signatureTimestamp })
       });
 
       if (response.success && response.key) {
         this.currentKey = response.key;
-        sessionStorage.setItem('cultApiKey', response.key);
+        this._storeSessionKey(response.key);
 
         this.saveKeyMeta({
           prefix: response.prefix,
@@ -262,16 +312,17 @@ const apiKeysPage = {
     this._setLoading(btn, true, 'Revoking...');
 
     try {
-      const { signature, signatureTimestamp } = await this.signForApi();
+      const { signature, signatureTimestamp } = await this.signForApi('revoke');
 
       const response = await api.request('/api/keys/me', {
         method: 'DELETE',
+        retries: 1, // the signature is single-use: a retry would only be refused as a replay
         body: JSON.stringify({ wallet: this.currentWallet, signature, signatureTimestamp })
       });
 
       if (response.success) {
         this.currentKey = null;
-        sessionStorage.removeItem('cultApiKey');
+        this._storeSessionKey(null);
         this.clearKeyMeta();
         this._prefillTesterKey('');
         this.hideExistingKey();
@@ -294,7 +345,7 @@ const apiKeysPage = {
 
   _showKeyGone() {
     this.currentKey = null;
-    sessionStorage.removeItem('cultApiKey');
+    this._storeSessionKey(null);
     this.clearKeyMeta();
     this._prefillTesterKey('');
     this.hideExistingKey();

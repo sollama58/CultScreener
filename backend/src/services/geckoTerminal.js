@@ -292,6 +292,10 @@ function trimPool(pool) {
  * each caller keeps its own errorCache handling.
  */
 const POOLS_PAGE_TTL = TTL.POOLS; // 3 minutes
+// On the free tier one request can wait 30s+ in the limiter's queue, take up to 30s, sleep 15s
+// after a 429 and take another 30s on its retry. getOrSet's default 30s wait would report such a
+// slow-but-successful fetch as a 'getOrSet timeout' failure, so callers wait this long instead.
+const POOLS_PAGE_INFLIGHT_TIMEOUT_MS = 2 * 60 * 1000;
 async function getPoolsPage(mintAddress) {
   return redisCache.getOrSet(`gecko-pools-page:${mintAddress}`, async () => {
     const response = await deduplicatedRequest(`pools:${mintAddress}`, () =>
@@ -300,7 +304,7 @@ async function getPoolsPage(mintAddress) {
       })
     );
     return (response.data.data || []).map(trimPool);
-  }, POOLS_PAGE_TTL);
+  }, POOLS_PAGE_TTL, { inflightTimeoutMs: POOLS_PAGE_INFLIGHT_TIMEOUT_MS });
 }
 
 /**
@@ -389,7 +393,7 @@ async function getTokenInfo(mintAddress) {
       address: attrs.address,
       name: attrs.name || null,
       symbol: attrs.symbol || null,
-      decimals: attrs.decimals || 9,
+      decimals: Number.isInteger(attrs.decimals) ? attrs.decimals : 9,
       logoUri: normalizeLogoUri(attrs.image_url),
       logoURI: normalizeLogoUri(attrs.image_url),
       price: parseFloat(attrs.price_usd) || 0,
@@ -400,12 +404,15 @@ async function getTokenInfo(mintAddress) {
       coingeckoId: attrs.coingecko_coin_id
     };
   } catch (error) {
-    console.error('[GeckoTerminal] getTokenInfo error:', error.message);
-    // Cache the error (but not 429 errors - those should retry)
-    if (error.response?.status !== 429) {
+    // 404 = token not indexed on GeckoTerminal: remember it and answer null. Anything else
+    // (5xx, timeout, 429, breaker open, limiter queue full) is transient: not error-cached, and
+    // thrown so the caller can tell "GeckoTerminal is failing" from "GeckoTerminal has no data".
+    if (error.response?.status === 404) {
       errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
+      return null;
     }
-    return null;
+    console.error('[GeckoTerminal] getTokenInfo error:', error.message);
+    throw error;
   }
 }
 
@@ -664,7 +671,7 @@ async function getTokenOverview(mintAddress) {
       address: tokenAddress,
       name: symbol, // Basic name from pool, Helius provides better metadata
       symbol: symbol,
-      decimals: 9, // Default, Helius provides accurate decimals
+      decimals: null, // Unknown from pools; Helius provides accurate decimals (a guessed 9 masked a real 0)
       logoUri: null, // Helius provides logos
       logoURI: null,
       price,
@@ -686,17 +693,17 @@ async function getTokenOverview(mintAddress) {
     await redisCache.set(overviewCacheKey, overviewResult, TTL.OHLCV || 120000);
     return overviewResult;
   } catch (error) {
-    // 404 = token not indexed on GeckoTerminal — expected, not a real error
+    // 404 = token not indexed on GeckoTerminal — expected, not a real error: remember it and
+    // answer null. Anything else (5xx, timeout, 429, breaker open, limiter queue full) is
+    // transient: not error-cached (that served null for 5 minutes after GeckoTerminal recovered),
+    // and thrown so callers can serve partial data / fall back instead of caching zeros.
     if (error.response?.status === 404) {
       console.warn(`[GeckoTerminal] getTokenOverview: token not found on GeckoTerminal (${mintAddress.slice(0, 8)}...)`);
-    } else {
-      console.error('[GeckoTerminal] getTokenOverview error:', error.message);
-    }
-    // Cache the error (but not 429 errors - those should retry)
-    if (error.response?.status !== 429) {
       errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
+      return null;
     }
-    return null;
+    console.error('[GeckoTerminal] getTokenOverview error:', error.message);
+    throw error;
   }
 }
 
@@ -709,7 +716,7 @@ async function getMarketData(mintAddress) {
   debugLog(`[GeckoTerminal] getMarketData: ${mintAddress}`);
 
   try {
-    // Only fetch single-token info (price change comes from getTokenInfo's pool lookup)
+    // Only fetch single-token info (one GeckoTerminal call; no pools, so no 24h change)
     const tokenInfo = await getTokenInfo(mintAddress);
 
     if (!tokenInfo) {
@@ -721,8 +728,10 @@ async function getMarketData(mintAddress) {
       volume24h: tokenInfo.volume24h || 0,
       marketCap: tokenInfo.marketCap || 0,
       fdv: tokenInfo.fdv || 0,
-      priceChange24h: 0, // Not available from token endpoint alone
-      liquidity: 0,       // Not available from token endpoint alone
+      // The token endpoint publishes neither: null ("unknown"), not a 0 that would be stored
+      // and shown as a flat +0.00% until the next price refresh
+      priceChange24h: null,
+      liquidity: null,
       totalSupply: tokenInfo.totalSupply
     };
   } catch (error) {
@@ -785,6 +794,8 @@ async function getTrendingTokens(options = {}) {
         marketCap: listed.marketCap || listed.fdv || 0,
         fdv: listed.fdv || 0,
         poolAddress: attrs.address,
+        // Pool age: /api/tokens/spikes filters on it (unknown age drops the token)
+        pairCreatedAt: attrs.pool_created_at || null,
         transactions24h: (attrs.transactions?.h24?.buys || 0) + (attrs.transactions?.h24?.sells || 0)
       });
     }
@@ -800,7 +811,7 @@ async function getTrendingTokens(options = {}) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           // Use token-level market cap if available (a quote-side pool publishes none)
@@ -892,7 +903,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           if (info.marketCap) token.marketCap = info.marketCap;
@@ -983,7 +994,7 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           // Use token-level market cap if available (more accurate than pool-level)
@@ -1065,7 +1076,19 @@ async function getOHLCV(mintAddress, options = {}) {
 
     // If not cached, fetch pools
     if (!poolAddress) {
-      const pools = await getPoolsPage(mintAddress);
+      // A token GeckoTerminal does not index (its pools page 404s; remembered under the same
+      // errorCache key getTokenPools uses) has no chart: answer empty without asking again on
+      // every 60s chart poll
+      const poolsErrorKey = `pools:${mintAddress}`;
+      const knownMissing = errorCache.get(poolsErrorKey);
+      if (knownMissing && Date.now() < knownMissing.expiry) {
+        return { mintAddress, interval, data: [] };
+      }
+      const pools = await getPoolsPage(mintAddress).catch(err => {
+        if (err.response?.status !== 404) throw err;
+        errorCache.set(poolsErrorKey, { expiry: Date.now() + ERROR_CACHE_TTL });
+        return [];
+      });
       if (pools.length === 0) {
         debugLog('[GeckoTerminal] No pools found for token');
         return { mintAddress, interval, data: [] };
@@ -1167,6 +1190,9 @@ async function getTokenPrice(mintAddress) {
 /**
  * Get liquidity pools for a token
  * Endpoint: /networks/{network}/tokens/{address}/pools
+ * Returns [] when the token has no pools (or is not indexed, 404) and null when the
+ * request failed (429, 5xx, timeout, open breaker), so callers don't cache a failure
+ * as an empty pool list.
  */
 async function getTokenPools(mintAddress, options = {}) {
   const { limit = 10 } = options;
@@ -1233,10 +1259,10 @@ async function getTokenPools(mintAddress, options = {}) {
     if (error.response?.status === 404) {
       console.warn(`[GeckoTerminal] getTokenPools: token not found on GeckoTerminal (${mintAddress.slice(0, 8)}...)`);
       errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
-    } else {
-      console.error('[GeckoTerminal] getTokenPools error:', error.message);
+      return [];
     }
-    return [];
+    console.error('[GeckoTerminal] getTokenPools error:', error.message);
+    return null;
   }
 }
 

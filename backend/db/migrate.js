@@ -24,7 +24,12 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  max: 2 // Runs sequential statements; don't compete with the app pools for connections
+  max: 2, // Runs sequential statements; don't compete with the app pools for connections
+  // This runs from postinstall on every build while the live service is serving. Bound how long
+  // a statement may queue for a table lock (its own request blocks every later query on that
+  // table while it waits) and how long it may run; on failure the app's boot schema step runs.
+  lock_timeout: 5000,
+  statement_timeout: 60000
 });
 
 // Parse command line arguments

@@ -147,6 +147,9 @@ async function withRpcRetry(requestFn, context = 'rpc') {
       return await requestFn();
     } catch (error) {
       lastError = error;
+      // An open breaker is a decision to fail fast, not a full queue: waiting 2s+4s+8s
+      // here would only make every call stall ~15s while it stays open
+      if (error.isCircuitBreakerError) throw error;
       // Handle both axios 429 responses and queue overload errors
       const is429 = error.response?.status === 429;
       const isOverloaded = error.isOverloaded;
@@ -521,9 +524,9 @@ async function getTokenMetadata(mintAddress) {
       logoUri = content.json_uri;
     }
 
-    // On-chain fallback links (content.links and metadata.extensions).
-    // The primary source — off-chain JSON at json_uri — is fetched separately
-    // via fetchOffchainLinks() so it can run in parallel with other work.
+    // On-chain links (content.links and metadata.extensions). The off-chain JSON at
+    // json_uri is not fetched: it is attacker-chosen, so any future fetch of it must go
+    // through safeFetchAgent (address-level SSRF guard, capped size and redirects).
     const onchainLinks = {};
     try {
       if (typeof content.links?.external_url === 'string' && content.links.external_url) {
@@ -571,59 +574,6 @@ async function getTokenMetadata(mintAddress) {
     return result;
   } catch (error) {
     console.error('[Solana] getTokenMetadata error:', error.message);
-    return null;
-  }
-}
-
-/**
- * Fetch off-chain JSON metadata and extract social links.
- * Most Solana tokens (pump.fun, Metaplex standard) store twitter/telegram/
- * website/discord in the JSON file pointed to by json_uri.
- * Designed to run in parallel with other work — call this with the jsonUri
- * returned by getTokenMetadata().
- *
- * @param {string} jsonUri - URL to off-chain JSON metadata
- * @returns {Promise<Object|null>} - { twitter, telegram, website, discord } or null
- */
-async function fetchOffchainLinks(jsonUri) {
-  if (!jsonUri) return null;
-
-  // SSRF protection: only allow https URLs and block private/internal IPs
-  try {
-    const parsed = new URL(jsonUri);
-    if (parsed.protocol !== 'https:') return null;
-    const host = parsed.hostname.toLowerCase();
-    // Block private/internal ranges
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0'
-      || host.startsWith('10.') || host.startsWith('192.168.')
-      || host.startsWith('169.254.') || host.startsWith('172.')
-      || host.endsWith('.internal') || host.endsWith('.local')) {
-      return null;
-    }
-  } catch { return null; }
-
-  try {
-    const jsonRes = await axios.get(jsonUri, { timeout: 5000, httpsAgent });
-    const offchain = jsonRes.data;
-    if (!offchain || typeof offchain !== 'object') return null;
-
-    const links = {};
-    const tw = safeSocialUrl('twitter', offchain.twitter);
-    if (tw) links.twitter = tw;
-    const tg = safeSocialUrl('telegram', offchain.telegram);
-    if (tg) links.telegram = tg;
-    const dc = safeSocialUrl('discord', offchain.discord);
-    if (dc) links.discord = dc;
-    if (typeof offchain.website === 'string' && offchain.website) {
-      links.website = offchain.website.startsWith('http') ? offchain.website : `https://${offchain.website}`;
-    }
-    if (!links.website && typeof offchain.external_url === 'string' && offchain.external_url) {
-      links.website = offchain.external_url.startsWith('http') ? offchain.external_url : `https://${offchain.external_url}`;
-    }
-
-    return Object.keys(links).length > 0 ? links : null;
-  } catch (err) {
-    console.warn(`[Solana] Failed to fetch json_uri ${jsonUri}: ${err.message}`);
     return null;
   }
 }
@@ -1140,7 +1090,7 @@ async function getTokenAuthorities(mintAddress) {
  * @param {Object} [options] - Query options
  * @param {number} [options.limit=100] - Max transactions to return (up to 100)
  * @param {string} [options.type] - Filter by transaction type (e.g. 'SWAP')
- * @returns {Promise<Array|null>} - Array of parsed transactions or null
+ * @returns {Promise<Array|null>} - Array of parsed transactions ([] on a 404), or null when the read failed
  */
 async function getTransactionsForAddress(walletAddress, { limit = 100, type, before } = {}) {
   if (!HELIUS_API_KEY) {
@@ -1168,8 +1118,9 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
     return response.data;
   } catch (error) {
     // 404 is expected for token accounts (ATAs) and program-owned addresses
-    // that don't have wallet-level transaction history — not an error
-    if (error.response && error.response.status === 404) return null;
+    // that don't have wallet-level transaction history — not an error: an empty
+    // answer, so callers can tell it from a failed read (null)
+    if (error.response && error.response.status === 404) return [];
     console.error(`[Solana] getTransactionsForAddress error for ${walletAddress.slice(0, 8)}...: ${error.response?.status || error.code || error.message}`);
     return null;
   }
@@ -1193,17 +1144,22 @@ const STREAMFLOW_CACHE_TTL = TTL.DAY;
 // longer looked up don't stay in memory for the life of the process
 const _streamflowSweep = setInterval(() => {
   const now = Date.now();
-  for (const [mint, entry] of streamflowCache) if (entry.expiry <= now) streamflowCache.delete(mint);
+  for (const [key, entry] of streamflowCache) if (entry.expiry <= now) streamflowCache.delete(key);
 }, 10 * 60 * 1000);
 if (_streamflowSweep.unref) _streamflowSweep.unref();
 
 async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
-  // Check local cache first, then the shared cache
-  const cached = streamflowCache.get(mintAddress);
-  if (cached && Date.now() < cached.expiry) return cached.value;
+  // Check local cache first, then the shared cache. Both are keyed by decimals too: the
+  // amount is scaled by them, so a call with wrong decimals must not answer later correct ones.
+  const localKey = `${mintAddress}:${decimals}`;
+  const cached = streamflowCache.get(localKey);
+  if (cached && Date.now() < cached.expiry) {
+    if (cached.error) throw new Error(`Streamflow lookup failed recently: ${cached.error}`);
+    return cached.value;
+  }
   const shared = await cache.get(`streamflow-locked:${mintAddress}:${decimals}`).catch(() => undefined);
   if (typeof shared === 'number') {
-    streamflowCache.set(mintAddress, { value: shared, expiry: Date.now() + 60 * 60 * 1000 });
+    streamflowCache.set(localKey, { value: shared, expiry: Date.now() + 60 * 60 * 1000 });
     return shared;
   }
 
@@ -1229,7 +1185,7 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
     ]);
 
     if (!result || result.length === 0) {
-      streamflowCache.set(mintAddress, { value: 0, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
+      streamflowCache.set(localKey, { value: 0, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
       await cache.set(`streamflow-locked:${mintAddress}:${decimals}`, 0, STREAMFLOW_CACHE_TTL).catch(() => {});
       return 0;
     }
@@ -1250,14 +1206,15 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
     }
 
     console.log(`[Solana] Streamflow locked for ${mintAddress}: ${totalLocked} (${result.length} contracts found)`);
-    streamflowCache.set(mintAddress, { value: totalLocked, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
+    streamflowCache.set(localKey, { value: totalLocked, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
     await cache.set(`streamflow-locked:${mintAddress}:${decimals}`, totalLocked, STREAMFLOW_CACHE_TTL).catch(() => {});
     return totalLocked;
   } catch (error) {
     console.error('[Solana] getStreamflowLockedAmount error:', error.message);
-    // Cache zeros briefly (5 min) to avoid hammering RPC on repeated failures
-    streamflowCache.set(mintAddress, { value: 0, expiry: Date.now() + 5 * 60 * 1000 });
-    return 0;
+    // Remember the failure briefly (5 min) to avoid hammering RPC, but report it:
+    // a 0 here was cached by callers as "nothing locked" for hours
+    streamflowCache.set(localKey, { error: error.message, expiry: Date.now() + 5 * 60 * 1000 });
+    throw error;
   }
 }
 
@@ -1280,7 +1237,6 @@ module.exports = {
   getSignaturesPage,
   parseTransactions,
   getTokenMetadata,
-  fetchOffchainLinks,
   getTokenMetadataBatch,
   getStreamflowLockedAmount,
   getTokenAuthorities,

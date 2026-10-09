@@ -1,6 +1,8 @@
 /**
  * King of the Pill simulation: realistic mock holder bases for ~40 curated tokens,
  * one year of daily scoring and crowning, reporting how often the crown moves.
+ * Each token also has a mock market (a daily price walk, market cap and 24h volume),
+ * so the trading-activity and price-momentum terms of the score are exercised too.
  *
  *   node simulate.js [days=365] [seeds=5] [--json]
  */
@@ -13,18 +15,26 @@ function rng(seed) {
   r.int = (lo, hi) => lo + Math.floor(r() * (hi - lo + 1));
   r.exp = mean => -Math.log(1 - r()) * mean;
   r.pareto = (xm, a) => xm / Math.pow(1 - r(), 1 / a);
+  r.normal = () => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
   return r;
 }
 
 // ── Mock token universe ─────────────────────────────────────────────────────
 // Archetypes: steady cult (low churn), hype coin (fast growth, fast churn), fading
 // (net outflow), new launch (appears mid-sim), whale-held (supply concentrated).
+// Market: drift and vol are the daily log-return mean and spread, mcap the starting
+// market cap in USD, turnover the typical 24h volume as a share of market cap.
 const ARCHETYPES = [
-  { name: 'cult',   w: 0.35, churn: [0.004, 0.012], inflow: [0.004, 0.015], holders: [800, 20000],  age: [60, 700] },
-  { name: 'hype',   w: 0.25, churn: [0.02, 0.06],   inflow: [0.02, 0.08],   holders: [500, 15000],  age: [10, 120] },
-  { name: 'fading', w: 0.15, churn: [0.015, 0.04],  inflow: [0.001, 0.008], holders: [300, 8000],   age: [90, 500] },
-  { name: 'launch', w: 0.15, churn: [0.01, 0.04],   inflow: [0.03, 0.12],   holders: [150, 1500],   age: [-200, 3] }, // negative = launches later
-  { name: 'whale',  w: 0.10, churn: [0.006, 0.02],  inflow: [0.004, 0.02],  holders: [200, 3000],   age: [30, 400] },
+  { name: 'cult',   w: 0.35, churn: [0.004, 0.012], inflow: [0.004, 0.015], holders: [800, 20000],  age: [60, 700],
+    drift: [0, 0.004],       vol: [0.04, 0.08], mcap: [1e6, 5e7], turnover: [0.03, 0.15] },
+  { name: 'hype',   w: 0.25, churn: [0.02, 0.06],   inflow: [0.02, 0.08],   holders: [500, 15000],  age: [10, 120],
+    drift: [-0.01, 0.02],    vol: [0.10, 0.20], mcap: [2e5, 2e7], turnover: [0.2, 1.0] },
+  { name: 'fading', w: 0.15, churn: [0.015, 0.04],  inflow: [0.001, 0.008], holders: [300, 8000],   age: [90, 500],
+    drift: [-0.012, -0.002], vol: [0.05, 0.10], mcap: [1e5, 5e6], turnover: [0.005, 0.05] },
+  { name: 'launch', w: 0.15, churn: [0.01, 0.04],   inflow: [0.03, 0.12],   holders: [150, 1500],   age: [-200, 3], // negative = launches later
+    drift: [-0.005, 0.02],   vol: [0.10, 0.25], mcap: [5e4, 2e6], turnover: [0.2, 1.5] },
+  { name: 'whale',  w: 0.10, churn: [0.006, 0.02],  inflow: [0.004, 0.02],  holders: [200, 3000],   age: [30, 400],
+    drift: [-0.003, 0.005],  vol: [0.05, 0.12], mcap: [2e5, 1e7], turnover: [0.02, 0.2] },
 ];
 
 function pickArchetype(r) {
@@ -46,6 +56,9 @@ function makeToken(i, r, t0) {
     wallets: [],      // { acquiredAt, balance }
     sampleBias: (r() - 0.5) * 2 * 2,
     holdersHistory: [], coreHistory: [],
+    // Market: price starts at 1, so market cap is mcap0 × price
+    drift: lerp(a.drift), vol: lerp(a.vol), mcap0: lerp(a.mcap), turnover: lerp(a.turnover),
+    price: 1, priceHistory: [], volume24h: null,
   };
   return t;
 }
@@ -74,6 +87,11 @@ function stepDay(t, r, now) {
   const shock = r();
   if (shock < 0.03) churn *= 4;            // dump
   else if (shock < 0.06) inflow *= 4;      // hype
+  // Market: a log-normal price step (dumps fall, hype days rise) and the day's volume,
+  // which runs hotter on shock days
+  const jump = shock < 0.03 ? -0.2 : shock < 0.06 ? 0.2 : 0;
+  t.price *= Math.exp(t.drift + t.vol * r.normal() + jump);
+  t.volume24h = t.mcap0 * t.price * t.turnover * Math.exp(0.5 * r.normal()) * (shock < 0.06 ? 3 : 1);
   // Sell: recent buyers are ~3x more likely to sell than long holders
   t.wallets = t.wallets.filter(w => {
     const heldDays = (now - w.acquiredAt) / DAY;
@@ -128,12 +146,19 @@ function run({ days = 365, seed = 1, nTokens = 40, params = PARAMS, rule = 'fati
       const { distribution, supplyDistribution } = distributions(t, now, r);
       const holders = t.wallets.length;
       t.holdersHistory.push(holders);
+      const launched = now >= t.launchedAt;
+      if (launched) t.priceHistory.push(t.price);
+      const change = back => (t.priceHistory.length > back
+        ? (t.price / t.priceHistory[t.priceHistory.length - 1 - back] - 1) * 100 : null);
       const res = scoreToken({
         distribution, supplyDistribution,
         ageMs: now - t.launchedAt, holders,
         snapshotAgeMs: r() * 6 * 3_600_000,
         coreWeekAgo: t.coreHistory.length >= 7 ? t.coreHistory[t.coreHistory.length - 7] : null,
         holdersMonthAgo: t.holdersHistory.length >= 8 ? t.holdersHistory[Math.max(0, t.holdersHistory.length - 31)] : null,
+        volume24h: launched ? t.volume24h : null,
+        marketCap: launched ? t.mcap0 * t.price : null,
+        priceChanges: launched ? { d1: change(1), d7: change(7), d30: change(30) } : null,
       }, params);
       t.coreHistory.push(res.core);
       if (res.eligible) scored.push({ mint: t.mint, score: res.score, archetype: t.archetype });
@@ -219,6 +244,7 @@ if (require.main === module) {
     'no repeat penalty':         { repeatPenalty: 0 },
     'cooldown 10d':              { cooldownDays: 10 },
     'no momentum/retention':     { momentumWeight: 0, retentionGainWeight: 0, retentionLossWeight: 0 },
+    'no activity/price':         { volumeWeight: 0, priceGainWeight: 0, priceLossWeight: 0 },
     'no age normalisation':      { achievableMarginMs: -400 * DAY, confidenceFullDays: 0.001 },
   };
   for (const [name, over] of Object.entries(variants)) out.variants[name] = summarize(runs({ params: { ...PARAMS, ...over } }));

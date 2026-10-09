@@ -11,7 +11,7 @@ const { asyncHandler } = require('../middleware/validation');
 
 // /health is mounted outside the /api limiters (probes must never be throttled), but /stats is
 // public and touches the DB and Redis on every call, so it gets its own cap.
-const statsLimiter = require('express-rate-limit')({
+const statsLimiter = require('../middleware/rateLimit').rateLimit({
   windowMs: 60000,
   max: 30,
   message: { error: 'Too many requests.' },
@@ -207,13 +207,12 @@ router.get('/ready', asyncHandler(async (req, res) => {
     if (process.env.DATABASE_URL && !db.isReady()) {
       // Return 503 only if database is required and not ready
       // This gives Render time to wait for the database
+      // This route is public and unthrottled: the pg driver's error text (DB host, address, user)
+      // goes to the log only; /health/detailed (admin) has the full picture.
       const dbHealth = await db.checkHealth();
       if (!dbHealth.healthy) {
-        return res.status(503).json({
-          ready: false,
-          reason: 'Database connecting...',
-          dbStatus: dbHealth
-        });
+        console.warn('[Health] /ready: database not ready -', dbHealth.error);
+        return res.status(503).json({ ready: false, reason: 'database_unavailable' });
       }
     }
 
@@ -222,7 +221,8 @@ router.get('/ready', asyncHandler(async (req, res) => {
     // 2. Database is healthy
     res.json({ ready: true, databaseConfigured: !!process.env.DATABASE_URL });
   } catch (error) {
-    res.status(503).json({ ready: false, reason: error.message });
+    console.warn('[Health] /ready check failed -', error.message);
+    res.status(503).json({ ready: false, reason: 'not_ready' });
   }
 }));
 

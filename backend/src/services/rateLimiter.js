@@ -82,10 +82,11 @@ const RATE_LIMITS = {
   },
   helius: {
     // Requests per second this process may start. The Developer plan allows 50/s per
-    // key and the API and worker processes each run their own limiter, so the two
-    // must add up to under 50: the worker keeps the default 40, the API (which makes
-    // few Helius calls now that holder data comes from snapshots) is set to 10 in
-    // render.yaml.
+    // key and the API and worker processes each run their own limiter, so they must
+    // add up to under 50, including during a deploy, when the old worker still drains
+    // its jobs (at WORKER_DRAIN_HELIUS_RPS, see worker.js) beside the new one. render.yaml
+    // sets the worker to 25 and the API (few Helius calls now that holder data comes
+    // from snapshots) to 10: 25 + 15 draining + 10 = 50.
     minInterval: Math.round(1000 / HELIUS_RPS),
     maxJitter: 10,
     // Per-1s-window cap from the same HELIUS_RPS, so it can't silently hold the
@@ -110,6 +111,13 @@ const RATE_LIMITS = {
     useQueue: true,
     maxQueueSize: 200,
     queueTimeout: 15000
+  },
+  // CoinGecko's public (keyless) API, used by the SOL price fallback: about 30/min
+  coingeckoPublic: {
+    minInterval: 2000,
+    maxJitter: 100,
+    burstLimit: 30,
+    burstWindow: 60000
   },
   default: {
     minInterval: 100,
@@ -137,6 +145,16 @@ function geckoFreeTierLimits(rpm = parseInt(process.env.GECKO_FREE_RPM, 10) || 3
 
 function useGeckoFreeTierLimits() {
   Object.assign(RATE_LIMITS.geckoTerminal, geckoFreeTierLimits());
+}
+
+// Change this process's Helius rate at runtime. A worker draining jobs after SIGTERM drops
+// to a small share, because during a deploy the new worker is already running at the full
+// rate on the same key (render.yaml sizes the per-process rates for that overlap).
+function setHeliusRps(rps) {
+  const n = Math.max(1, parseInt(rps, 10) || 1);
+  RATE_LIMITS.helius.minInterval = Math.round(1000 / n);
+  RATE_LIMITS.helius.burstLimit = n;
+  return n;
 }
 
 // Requests currently running per queued API, and the queue loops waiting for a free slot
@@ -176,7 +194,8 @@ const _burstCleanupTimer = setInterval(() => {
     const apiConfig = RATE_LIMITS[apiName] || RATE_LIMITS.default;
     if (!apiConfig.burstWindow || apiConfig.burstWindow <= 0) { burstCounters.delete(key); removed++; continue; }
     const estimatedKeyTime = windowTime * apiConfig.burstWindow;
-    if (now - estimatedKeyTime > BURST_MAX_AGE_MS) {
+    // (at least two of the API's own windows: a minute-long window must outlive 10s)
+    if (now - estimatedKeyTime > Math.max(BURST_MAX_AGE_MS, 2 * apiConfig.burstWindow)) {
       burstCounters.delete(key);
       removed++;
     }
@@ -267,7 +286,38 @@ function sleep(ms) {
  * @param {Function} requestFn - Async function that makes the request
  * @returns {Promise<any>} Result of the request
  */
+// Next start time each non-queued API has free (ms), reserved synchronously
+const nextSlotAt = new Map();
+const warnedUnknown = new Set();
+
+/**
+ * Reserve the next start time for a non-queued API and return how long to wait for
+ * it. The reservation (start spacing and the burst window's count) is made before
+ * the caller sleeps, so callers arriving together are spread out instead of all
+ * reading the same stale state, sleeping the same jitter and firing at once.
+ */
+function reserveSlot(apiName, config) {
+  const now = Date.now();
+  let at = Math.max(now, nextSlotAt.get(apiName) || 0);
+  for (;;) {
+    const window = Math.floor(at / config.burstWindow);
+    const burstKey = `${apiName}:${window}`;
+    const count = burstCounters.get(burstKey) || 0;
+    if (count < config.burstLimit) {
+      burstCounters.set(burstKey, count + 1);
+      break;
+    }
+    at = (window + 1) * config.burstWindow; // window full: the next one
+  }
+  nextSlotAt.set(apiName, at + config.minInterval);
+  return at - now + getJitter(config.maxJitter);
+}
+
 async function rateLimitedRequest(apiName, requestFn) {
+  if (!RATE_LIMITS[apiName] && !warnedUnknown.has(apiName)) {
+    warnedUnknown.add(apiName);
+    console.warn(`[RateLimiter] No limits configured for '${apiName}'; using the defaults`);
+  }
   const config = RATE_LIMITS[apiName] || RATE_LIMITS.default;
 
   // Use queue-based processing for strict rate limiting (GeckoTerminal)
@@ -275,13 +325,13 @@ async function rateLimitedRequest(apiName, requestFn) {
     return queueRequest(apiName, requestFn);
   }
 
-  const delay = getRequiredDelay(apiName);
+  const delay = reserveSlot(apiName, config);
 
   if (delay > 0) {
     await sleep(delay);
   }
 
-  recordRequest(apiName);
+  lastRequestTime.set(apiName, Date.now());
   return requestFn();
 }
 
@@ -537,5 +587,6 @@ module.exports = {
   RATE_LIMITS,
   geckoFreeTierLimits,
   useGeckoFreeTierLimits,
+  setHeliusRps,
   stopCleanup
 };

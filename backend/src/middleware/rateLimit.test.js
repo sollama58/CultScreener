@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const express = require('express');
 
 process.env.RATE_LIMIT_MAX_REQUESTS = '3';
-const { defaultLimiter, viewLimiter } = require('./rateLimit');
+const { defaultLimiter, viewLimiter, adminLoginLimiter, holderLookupLimiter, clientKey } = require('./rateLimit');
 
 async function serve(app, fn) {
   const server = app.listen(0);
@@ -46,5 +46,51 @@ test('viewLimiter: per IP and token, over budget answers 200 without views', asy
     // Another token has its own budget
     const other = await fetch(`${base}/api/tokens/MintB/view`, { method: 'POST' });
     assert.strictEqual((await other.json()).views, 7);
+  });
+});
+
+test('clientKey: IPv4 as is, IPv6 cut to its /64, IPv4-mapped IPv6 as the IPv4 address', () => {
+  assert.strictEqual(clientKey({ ip: '203.0.113.7' }), '203.0.113.7');
+  assert.strictEqual(clientKey({ ip: '::ffff:203.0.113.7' }), '203.0.113.7');
+  // Every address inside one /64 shares a key, so rotating through it buys no extra budget
+  const a = clientKey({ ip: '2001:db8:1:2:aaaa:bbbb:cccc:dddd' });
+  assert.strictEqual(a, '2001:db8:1:2::/64');
+  assert.strictEqual(clientKey({ ip: '2001:db8:1:2::1' }), a);
+  assert.strictEqual(clientKey({ ip: '2001:0db8:0001:0002:0:0:0:ffff' }), a);
+  assert.notStrictEqual(clientKey({ ip: '2001:db8:1:3::1' }), a);
+  assert.strictEqual(clientKey({ ip: '2001:db8::1' }), '2001:db8:0:0::/64');
+});
+
+test('adminLoginLimiter counts failed logins only', async () => {
+  const app = express();
+  app.use(express.json());
+  app.post('/login', adminLoginLimiter, (req, res) => (
+    req.body.password === 'right' ? res.json({ success: true }) : res.status(401).json({ error: 'Invalid password' })
+  ));
+  const login = (base, password) => fetch(`${base}/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password })
+  }).then(r => r.status);
+  await serve(app, async (base) => {
+    // Many successful logins (one per new admin tab) never use up the budget
+    for (let i = 0; i < 8; i++) assert.strictEqual(await login(base, 'right'), 200);
+    // Five failures do, and then even the right password waits
+    for (let i = 0; i < 5; i++) assert.strictEqual(await login(base, 'wrong'), 401);
+    assert.strictEqual(await login(base, 'wrong'), 429);
+    assert.strictEqual(await login(base, 'right'), 429);
+  });
+});
+
+test('holderLookupLimiter shares one budget across an IPv6 /64', async () => {
+  const app = express();
+  app.set('trust proxy', true);
+  app.get('/api/tokens/:mint/holder/:wallet', holderLookupLimiter, (req, res) => res.json({ ok: true }));
+  await serve(app, async (base) => {
+    const statuses = [];
+    for (let i = 1; i <= 11; i++) {
+      const r = await fetch(`${base}/api/tokens/M/holder/W`, { headers: { 'X-Forwarded-For': `2001:db8:1:2::${i.toString(16)}` } });
+      statuses.push(r.status);
+    }
+    assert.deepStrictEqual(statuses.slice(0, 10), Array(10).fill(200));
+    assert.strictEqual(statuses[10], 429);
   });
 });

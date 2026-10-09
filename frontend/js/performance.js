@@ -14,6 +14,13 @@ const performancePage = {
   /** @type {'ath'|'current'} Active sort field */
   sortField: 'ath',
 
+  _loading: false,
+  /** Set when the last load failed; mainViewTabs retries on the next tab click. */
+  _loadFailed: false,
+
+  /** The #perf-empty copy for a real empty result (index.html carries the same text). */
+  EMPTY_TEXT: 'No performance data yet. Add tokens and run the ATH backfill.',
+
   // ---------------------------------------------------------------------------
   // Init
   // ---------------------------------------------------------------------------
@@ -55,11 +62,16 @@ const performancePage = {
    * Fetch leaderboard data, filter, store, and render.
    */
   async loadData() {
+    if (this._loading) return;
+    this._loading = true;
+    // A retry after a failure: drop the error message while loading again.
+    const emptyEl = document.getElementById('perf-empty');
+    if (emptyEl) emptyEl.style.display = 'none';
     this._showLoading(true);
     this._setStatusText('Loading…');
 
     try {
-      const data = await api.tokens.leaderboardConviction({ limit: 100, offset: 0 });
+      const data = await tokenTable.loadBoard();
 
       // Accept either a plain array or an object with a tokens/data property
       const raw = Array.isArray(data) ? data : (data?.tokens || data?.data || []);
@@ -69,6 +81,7 @@ const performancePage = {
         t => t.mcapAtAdded != null && t.mcapAtAdded > 0
       );
 
+      this._loadFailed = false;
       this._showLoading(false);
       this.render();
 
@@ -76,9 +89,13 @@ const performancePage = {
       this._setStatusText(`${count} token${count !== 1 ? 's' : ''} tracked`);
     } catch (err) {
       console.error('[performancePage] loadData error:', err);
+      // An outage is not "no data": say it failed and how to retry, not that tokens are missing.
+      this._loadFailed = true;
       this._showLoading(false);
       this._setStatusText('Failed to load data');
-      this._showEmpty(true);
+      this._showEmpty(true, 'Failed to load performance data. Select the tab again to retry.');
+    } finally {
+      this._loading = false;
     }
   },
 
@@ -381,6 +398,10 @@ const performancePage = {
     if (btnCurrent) {
       btnCurrent.classList.toggle('active', this.sortField === 'current');
     }
+
+    // Phones show only the sorted-by % column (home.css, max-width 480px).
+    const table = document.querySelector('.perf-table');
+    if (table) table.dataset.sort = this.sortField;
   },
 
   /**
@@ -398,10 +419,15 @@ const performancePage = {
   /**
    * Show or hide the empty state element, and toggle the table accordingly.
    * @param {boolean} show
+   * @param {string} [message] Text to show instead of the no-data copy (EMPTY_TEXT)
    */
-  _showEmpty(show) {
+  _showEmpty(show, message) {
     const el = document.getElementById('perf-empty');
-    if (el) el.style.display = show ? '' : 'none';
+    if (el) {
+      el.style.display = show ? '' : 'none';
+      const text = el.querySelector('p');
+      if (text && show) text.textContent = message || this.EMPTY_TEXT;
+    }
 
     const wrap = document.getElementById('perf-table-wrap');
     if (wrap) wrap.style.display = show ? 'none' : '';

@@ -53,3 +53,87 @@ test('createByteBudget bounds bytes written per window, then frees them as they 
   t = 29000; // everything from t=5000 has aged out
   assert.strictEqual(budget.used(), 600);
 });
+
+test('createByteBudget.record counts bytes even past the limit; exhausted() reports it', () => {
+  const { createByteBudget } = require('./cache');
+  let t = 0;
+  const budget = createByteBudget({ limitBytes: 1000, windowMs: 24000, buckets: 24, now: () => t });
+  budget.record(900);
+  assert.strictEqual(budget.exhausted(), false);
+  budget.record(300);
+  assert.strictEqual(budget.used(), 1200);
+  assert.strictEqual(budget.exhausted(), true);
+  t = 24000;
+  assert.strictEqual(budget.exhausted(), false);
+});
+
+test('createKeyedByteBudget gives each key its own allowance and bounds how many it keeps (audit #8)', () => {
+  const { createKeyedByteBudget } = require('./cache');
+  let t = 0;
+  const budgets = createKeyedByteBudget({ limitBytes: 1000, windowMs: 24000, buckets: 24, maxKeys: 2, now: () => t });
+  budgets.forKey('a').record(1200);
+  assert.strictEqual(budgets.forKey('a').exhausted(), true);
+  assert.strictEqual(budgets.forKey('b').exhausted(), false, 'one key spending its budget leaves the others theirs');
+  budgets.forKey('a'); // a is now the most recently used
+  budgets.forKey('c'); // over maxKeys: b, the least recently used, is dropped
+  assert.strictEqual(budgets.size(), 2);
+  assert.strictEqual(budgets.forKey('a').exhausted(), true, 'the recently used key keeps its count');
+  t = 24000;
+  assert.strictEqual(budgets.forKey('a').exhausted(), false);
+});
+
+test('createSharedByteBudget keeps its count in the store, so a restarted process sees it (audit #65)', async () => {
+  const { createSharedByteBudget } = require('./cache');
+  // A minimal store with the two calls the budget makes
+  const data = new Map();
+  const store = {
+    async mget(keys) { return keys.map(k => data.get(k)); },
+    async incrBy(k, by) { data.set(k, (data.get(k) || 0) + by); return data.get(k); }
+  };
+  let t = 0;
+  const opts = { store, prefix: 'budget', limitBytes: 1000, windowMs: 24000, buckets: 24, now: () => t };
+  const first = createSharedByteBudget(opts);
+  assert.strictEqual(await first.tryConsume(800), true);
+
+  // A new process (deploy/restart) shares the same count instead of starting from zero
+  const second = createSharedByteBudget(opts);
+  assert.strictEqual(await second.tryConsume(300), false);
+  assert.strictEqual(await second.tryConsume(200), true);
+  assert.strictEqual(await first.used(), 1000);
+
+  // The store restarted empty: the budget is free again along with the entries it counted
+  data.clear();
+  assert.strictEqual(await first.tryConsume(900), true);
+
+  // Slices age out after the window
+  t = 24000 + 1000;
+  assert.strictEqual(await first.used(), 0);
+
+  // A store that cannot answer refuses (the guarded write would not land either)
+  const down = createSharedByteBudget({ ...opts, store: { mget: async (k) => k.map(() => undefined), incrBy: async () => null } });
+  assert.strictEqual(await down.tryConsume(1), false);
+});
+
+test('getOrSet waits as long as the caller\'s inflightTimeoutMs allows (audit #19)', async () => {
+  const prev = process.env.REDIS_URL;
+  delete process.env.REDIS_URL;
+  const svc = new CacheService();
+  try {
+    const slow = (v) => () => new Promise(r => setTimeout(() => r(v), 60));
+    await assert.rejects(svc.getOrSet('k-short', slow(1), 60000, { inflightTimeoutMs: 20 }), /getOrSet timeout/);
+    assert.strictEqual(await svc.getOrSet('k-long', slow(2), 60000, { inflightTimeoutMs: 1000 }), 2);
+    assert.strictEqual(await svc.get('k-long'), 2);
+  } finally {
+    clearInterval(svc.backend.cleanupInterval);
+    if (prev !== undefined) process.env.REDIS_URL = prev;
+  }
+});
+
+test('search cache keys cannot collide across the DEX filter (audit #53)', () => {
+  const { keys } = require('./cache');
+  // q=pepe:dex unfiltered vs q=pepe with the DEX filter
+  assert.notStrictEqual(keys.tokenSearch('pepe:dex', false), keys.tokenSearch('pepe', true));
+  assert.notStrictEqual(keys.tokenSearch('pepe', false), keys.tokenSearch('pepe', true));
+  // Still under search:*, which the curated/admin routes clear
+  assert.ok(keys.tokenSearch('a:b', true).startsWith('search:'));
+});

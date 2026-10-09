@@ -8,7 +8,7 @@ const {
   verifyAdminPassword, generateAdminSessionToken,
   ADMIN_SESSION_DURATION_MS
 } = require('../middleware/validation');
-const { veryStrictLimiter, strictLimiter } = require('../middleware/rateLimit');
+const { adminLoginLimiter, adminWriteLimiter } = require('../middleware/rateLimit');
 
 router.use(requireDatabase);
 
@@ -25,7 +25,7 @@ async function deleteCacheKeysWhere(match) {
 // Authentication
 // ==========================================
 
-router.post('/login', veryStrictLimiter, asyncHandler(async (req, res) => {
+router.post('/login', adminLoginLimiter, asyncHandler(async (req, res) => {
   const { password } = req.body;
   if (!password || typeof password !== 'string') {
     return res.status(400).json({ error: 'Password is required' });
@@ -88,7 +88,7 @@ router.get('/stats', asyncHandler(async (req, res) => {
 // Conviction Maintenance
 // ==========================================
 
-router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/flush-failed-wallets', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { cache } = require('../services/cache');
 
   // Give wallets whose hold-time backfill gave up another try now (the snapshot
@@ -118,7 +118,7 @@ router.post('/flush-failed-wallets', strictLimiter, asyncHandler(async (req, res
 // history (holderPipeline). This used to wipe holder-total and re-page Helius DAS for every
 // mint inside the request, which ran past the admin timeout, kept running after the 503,
 // and cached a capped, dust-inclusive count over the snapshot one.
-router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/refresh-holder-counts', adminWriteLimiter, asyncHandler(async (req, res) => {
   const holderPipeline = require('../services/holderPipeline');
   const curatedTokens = await db.getCuratedTokens().catch(() => []);
   const mints = [...new Set(curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean))];
@@ -142,7 +142,7 @@ router.post('/refresh-holder-counts', strictLimiter, asyncHandler(async (req, re
 // "Snapshot Holders Now": queue a fresh holder snapshot for every curated token.
 // Each snapshot writes a holder count point (services/holderCounts.js); counting
 // any other way would put a second definition into the history.
-router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/backfill-holder-counts', adminWriteLimiter, asyncHandler(async (req, res) => {
   const holderPipeline = require('../services/holderPipeline');
   const curatedTokens = await db.getCuratedTokens().catch(() => []);
   let recorded = 0;
@@ -162,10 +162,33 @@ router.post('/backfill-holder-counts', strictLimiter, asyncHandler(async (req, r
 // Historical Holder Count Backfill (CoinGecko Pro)
 // ==========================================
 
-router.post('/backfill-holder-history', strictLimiter, asyncHandler(async (req, res) => {
+// One run at a time: each token costs two billed CoinGecko Pro calls, and a run outlives a
+// dropped connection, so a retry must not start a second loop alongside the first.
+let holderHistoryBackfillRunning = false;
+
+// ~2-3 s per curated token, so the 120 s admin timeout is too short; give it 10 minutes like
+// the other bulk routes (curated/backfill-ath).
+router.post('/backfill-holder-history', adminWriteLimiter, (req, res, next) => {
+  res.setTimeout(600000, () => {
+    if (!res.headersSent) res.status(503).json({ error: 'Backfill timed out' });
+  });
+  next();
+}, asyncHandler(async (req, res) => {
   const geckoService = require('../services/geckoTerminal');
   const { sleep } = require('../services/rateLimiter');
 
+  if (holderHistoryBackfillRunning) {
+    return res.status(409).json({ error: 'A holder history backfill is already running' });
+  }
+  holderHistoryBackfillRunning = true;
+  try {
+    await runHolderHistoryBackfill(req, res, geckoService, sleep);
+  } finally {
+    holderHistoryBackfillRunning = false;
+  }
+}));
+
+async function runHolderHistoryBackfill(req, res, geckoService, sleep) {
   const curatedTokens = await db.getCuratedTokens().catch(() => []);
   if (!curatedTokens.length) {
     return res.status(400).json({ error: 'No curated tokens found' });
@@ -232,14 +255,14 @@ router.post('/backfill-holder-history', strictLimiter, asyncHandler(async (req, 
   }
 
   console.log(`[Admin] Holder history backfill complete: ${results.inserted} rows inserted, ${results.failed} failed across ${curatedTokens.length} tokens`);
-  res.json({ success: true, ...results });
-}));
+  if (!res.headersSent) res.json({ success: true, ...results });
+}
 
 // ==========================================
 // Per-Token Cache Wipe
 // ==========================================
 
-router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/wipe-token-cache', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { cache } = require('../services/cache');
   const { mint } = req.body;
 
@@ -266,11 +289,20 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
       `diamond-hands-wallets:${addr}`,
       `similar:${addr}`,
       `similar-pending:${addr}`,
-      `submissions:${addr}`,
       `cultify:dh-progress:${addr}`,
       `hold-times:${addr}`,
       `diamond-hands-partial:${addr}`,
       `holder-total-miss:${addr}`,
+      `holder-total-none:${addr}`,
+      `hb-analysis:${addr}`,
+      // Upstream caches the token:<mint> rebuild reads from (GET /:mint): without these the
+      // rebuilt entry comes straight back from the same stale metadata / overview
+      `helius-meta:${addr}`,
+      `gecko-overview:${addr}`,
+      `gecko-pools-page:${addr}`,
+      // Public /v1 API copies
+      `api:token:${addr}`,
+      `api:token:rank:${addr}`,
     ];
 
     // OHLCV candles for every interval and both cached sizes (routes/tokens.js /:mint/ohlcv)
@@ -281,9 +313,11 @@ router.post('/wipe-token-cache', strictLimiter, asyncHandler(async (req, res) =>
     // One multi-key DEL; it returns how many of the keys existed
     deleted += await cache.deleteMany(directKeys);
 
-    // Leaderboard caches (conviction pages reference this token's data) and list caches
-    // (token may appear in list pages), in one SCAN pass
-    deleted += await deleteCacheKeysWhere(k => k.startsWith('leaderboard:conviction:') || k.startsWith('list:'));
+    // Leaderboard caches (conviction pages reference this token's data), list caches (token may
+    // appear in list pages), and this token's suffixed keys - submissions are cached as
+    // submissions:<mint>:<type>:<status>, Streamflow locks per decimals - in one SCAN pass
+    deleted += await deleteCacheKeysWhere(k => k.startsWith('leaderboard:conviction:') || k.startsWith('list:')
+      || k.startsWith(`submissions:${addr}:`) || k.startsWith(`streamflow-locked:${addr}:`));
 
     console.log(`[Admin] Wiped ${deleted} cache entries for token ${addr}`);
     res.json({ success: true, deleted, mint: addr });
@@ -321,12 +355,12 @@ router.get('/king-of-pill', asyncHandler(async (req, res) => {
 
 // Run today's scoring and crowning now instead of waiting for 00:20 UTC. Idempotent:
 // scores are recomputed, the crown is only decided once per day.
-router.post('/king-of-pill/run', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/king-of-pill/run', adminWriteLimiter, asyncHandler(async (req, res) => {
   const summary = await require('../services/kingOfPill').runDailyCrowning();
   res.json({ success: true, ...summary });
 }));
 
-router.post('/king-of-pill', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/king-of-pill', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.body;
 
   if (mint && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint.trim())) {
@@ -350,7 +384,7 @@ router.post('/king-of-pill', strictLimiter, asyncHandler(async (req, res) => {
 // Benchmark Price Refresh (SOL / BTC)
 // ==========================================
 
-router.post('/refresh-benchmarks', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/refresh-benchmarks', adminWriteLimiter, asyncHandler(async (req, res) => {
   // Bust the short-lived cache so the next call to /api/tokens/benchmarks re-fetches from CoinGecko
   await cache.delete('benchmarks:sol-btc');
   // Fetch fresh data immediately so the caller gets the result right away
@@ -397,7 +431,7 @@ router.post('/refresh-benchmarks', strictLimiter, asyncHandler(async (req, res) 
 // Force Refresh All Market Caps
 // ==========================================
 
-router.post('/refresh-market-caps', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/refresh-market-caps', adminWriteLimiter, asyncHandler(async (req, res) => {
   const geckoService = require('../services/geckoTerminal');
   const { sleep } = require('../services/rateLimiter');
 
@@ -487,7 +521,7 @@ router.get('/curated', asyncHandler(async (req, res) => {
   res.json({ tokens });
 }));
 
-router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/curated', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { mintAddress } = req.body;
   if (!mintAddress || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mintAddress)) {
     return res.status(400).json({ error: 'Invalid mint address' });
@@ -498,7 +532,8 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
   // route used to carry its own hand-copied version that had drifted: no tokens-table seed (so
   // panel-added tokens sat blank on the home page for up to ten minutes) and no tiktok social.
   const { addCuratedTokenFully } = require('../services/curatedTokens');
-  const { token } = await addCuratedTokenFully(mintAddress);
+  const { token, alreadyCurated } = await addCuratedTokenFully(mintAddress);
+  if (alreadyCurated) return res.json({ success: true, alreadyExists: true, token });
   // The home table lists curated tokens only: show the new one now, not when the cache expires
   await cache.clearPattern('leaderboard:conviction:*').catch(err => {
     console.warn('[Admin] add curated: failed to bust leaderboard cache:', err.message);
@@ -506,7 +541,7 @@ router.post('/curated', strictLimiter, asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, token });
 }));
 
-router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => {
+router.delete('/curated/:mint', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   console.log(`[Admin] DELETE /curated/${mint ? mint.slice(0, 8) + '...' : 'null'}`);
   if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
@@ -535,7 +570,7 @@ router.delete('/curated/:mint', strictLimiter, asyncHandler(async (req, res) => 
 }));
 
 // POST /api/admin/curated/backfill-ath — OHLCV lookback to set historical ATH for curated tokens
-router.post('/curated/backfill-ath', strictLimiter, (req, res, next) => {
+router.post('/curated/backfill-ath', adminWriteLimiter, (req, res, next) => {
   res.setTimeout(600000, () => {
     if (!res.headersSent) res.status(503).json({ error: 'Backfill timed out' });
   });
@@ -630,7 +665,7 @@ router.post('/curated/backfill-ath', strictLimiter, (req, res, next) => {
 }));
 
 // PATCH /api/admin/curated/:mint/mcap — Set the listing market cap for a curated token
-router.patch('/curated/:mint/mcap', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/curated/:mint/mcap', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
     return res.status(400).json({ error: 'Invalid mint address' });
@@ -652,7 +687,7 @@ router.patch('/curated/:mint/mcap', strictLimiter, asyncHandler(async (req, res)
 }));
 
 // PATCH /api/admin/curated/:mint/ath — Admin force-set ATH market cap (manual override)
-router.patch('/curated/:mint/ath', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/curated/:mint/ath', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
     return res.status(400).json({ error: 'Invalid mint address' });
@@ -674,7 +709,7 @@ router.patch('/curated/:mint/ath', strictLimiter, asyncHandler(async (req, res) 
 }));
 
 // PATCH /api/admin/curated/:mint/emerging-cult — Toggle the "Emerging Cult" label
-router.patch('/curated/:mint/emerging-cult', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/curated/:mint/emerging-cult', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
     return res.status(400).json({ error: 'Invalid mint address' });
@@ -690,15 +725,17 @@ router.patch('/curated/:mint/emerging-cult', strictLimiter, asyncHandler(async (
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
 
-  // Invalidate token cache so the label shows immediately
+  // Invalidate token cache so the label shows immediately. The Tech and Emerging tabs read the
+  // labels from the conviction leaderboard rows, so that cache goes too.
   await cache.delete(`token:${mint}`).catch(() => {});
   await require('../services/curatedTokens').invalidateCuratedList();
+  await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
 
   res.json({ success: true, emergingCult: value });
 }));
 
 // PATCH /api/admin/curated/:mint/tech-coin — Toggle the "Tech Coin" label
-router.patch('/curated/:mint/tech-coin', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/curated/:mint/tech-coin', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { mint } = req.params;
   if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
     return res.status(400).json({ error: 'Invalid mint address' });
@@ -714,14 +751,16 @@ router.patch('/curated/:mint/tech-coin', strictLimiter, asyncHandler(async (req,
     return res.status(404).json({ error: 'Token not found in curated list' });
   }
 
-  // Invalidate token cache so the label shows immediately
+  // Invalidate token cache so the label shows immediately. The Tech and Emerging tabs read the
+  // labels from the conviction leaderboard rows, so that cache goes too.
   await cache.delete(`token:${mint}`).catch(() => {});
   await require('../services/curatedTokens').invalidateCuratedList();
+  await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
 
   res.json({ success: true, techCoin: value });
 }));
 
-router.post('/curated/refresh', strictLimiter, (req, res, next) => {
+router.post('/curated/refresh', adminWriteLimiter, (req, res, next) => {
   // Bulk refresh can take >30s; extend timeout beyond the global 30s default
   res.setTimeout(300000, () => {
     if (!res.headersSent) res.status(503).json({ error: 'Refresh timed out' });
@@ -770,7 +809,7 @@ router.get('/announcements', asyncHandler(async (req, res) => {
   }
 }));
 
-router.post('/announcements', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/announcements', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { title, message, type, expiresAt } = req.body;
   if (!title || typeof title !== 'string' || title.length > 200) {
     return res.status(400).json({ error: 'Title is required (max 200 chars)' });
@@ -795,7 +834,7 @@ router.post('/announcements', strictLimiter, asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, announcement });
 }));
 
-router.patch('/announcements/:id', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/announcements/:id', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -829,7 +868,7 @@ router.patch('/announcements/:id', strictLimiter, asyncHandler(async (req, res) 
   res.json({ success: true, announcement: result });
 }));
 
-router.delete('/announcements/:id', strictLimiter, asyncHandler(async (req, res) => {
+router.delete('/announcements/:id', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -859,7 +898,7 @@ router.get('/bug-reports', asyncHandler(async (req, res) => {
   }
 }));
 
-router.patch('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/bug-reports/:id', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -873,7 +912,7 @@ router.patch('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) =>
   res.json({ success: true, report: result });
 }));
 
-router.delete('/bug-reports/:id', strictLimiter, asyncHandler(async (req, res) => {
+router.delete('/bug-reports/:id', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -891,7 +930,7 @@ router.get('/whitelist', asyncHandler(async (req, res) => {
   res.json({ wallets });
 }));
 
-router.post('/whitelist', strictLimiter, asyncHandler(async (req, res) => {
+router.post('/whitelist', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { wallet, note } = req.body;
   if (!wallet || typeof wallet !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet.trim())) {
     return res.status(400).json({ error: 'Invalid wallet address' });
@@ -900,7 +939,7 @@ router.post('/whitelist', strictLimiter, asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, entry });
 }));
 
-router.delete('/whitelist/:wallet', strictLimiter, asyncHandler(async (req, res) => {
+router.delete('/whitelist/:wallet', adminWriteLimiter, asyncHandler(async (req, res) => {
   const { wallet } = req.params;
   if (!wallet || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
     return res.status(400).json({ error: 'Invalid wallet address' });
@@ -930,7 +969,7 @@ router.get('/submissions', asyncHandler(async (req, res) => {
   }
 }));
 
-router.patch('/submissions/:id', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/submissions/:id', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -958,7 +997,7 @@ router.get('/api-keys', asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
-router.patch('/api-keys/:id/revoke', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/api-keys/:id/revoke', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -968,7 +1007,7 @@ router.patch('/api-keys/:id/revoke', strictLimiter, asyncHandler(async (req, res
   res.json({ success: true, key: result });
 }));
 
-router.patch('/api-keys/:id/restore', strictLimiter, asyncHandler(async (req, res) => {
+router.patch('/api-keys/:id/restore', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -978,7 +1017,7 @@ router.patch('/api-keys/:id/restore', strictLimiter, asyncHandler(async (req, re
   res.json({ success: true, key: result });
 }));
 
-router.delete('/api-keys/:id', strictLimiter, asyncHandler(async (req, res) => {
+router.delete('/api-keys/:id', adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
 

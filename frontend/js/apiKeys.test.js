@@ -13,7 +13,7 @@ const vm = require('node:vm');
 
 const SRC = fs.readFileSync(path.join(__dirname, 'apiKeys.js'), 'utf8');
 
-function load({ requestError }) {
+function load({ requestError, blockSession = false }) {
   const els = new Map();
   const el = (id) => {
     if (!els.has(id)) els.set(id, { id, style: {}, textContent: '', value: '', dataset: {}, addEventListener() {}, classList: { add() {}, remove() {} } });
@@ -29,7 +29,9 @@ function load({ requestError }) {
     document: { readyState: 'complete', getElementById: el, querySelectorAll: () => [], querySelector: () => null, addEventListener() {} },
     window: { addEventListener() {} },
     localStorage: store(),
-    sessionStorage: store(),
+    sessionStorage: blockSession
+      ? { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('SecurityError'); }, removeItem() { throw new Error('SecurityError'); } }
+      : store(),
     confirm: () => true,
     config: { api: { baseUrl: 'http://x' } },
     wallet: { connected: true, address: 'W1', signMessage: async () => ({ signature: [1] }) },
@@ -79,4 +81,55 @@ test('Validation messages use the global toast', () => {
   page.currentKey = null;
   assert.strictEqual(page._getTesterKey(), null);
   assert.strictEqual(toasts[0][0], 'error');
+});
+
+test('Refresh details loads the key from the server (POST /api/keys/me)', async () => {
+  const { page, el, ctx } = load({ requestError: new Error('unused') });
+  const calls = [];
+  const signed = [];
+  ctx.wallet.signMessage = async (m) => { signed.push(m); return { signature: [1] }; };
+  ctx.api.request = async (endpoint, opts) => {
+    calls.push([endpoint, opts.method]);
+    return { found: true, prefix: 'cult_abc', created_at: '2026-01-02T00:00:00Z', last_used_at: '2026-02-03T00:00:00Z', request_count: 42, is_active: true };
+  };
+  page.saveKeyMeta({ prefix: null, created_at: null, is_active: true, request_count: null, last_used_at: null, unknown: true });
+  await page.refreshKeyMeta();
+  assert.deepStrictEqual(calls, [['/api/keys/me', 'POST']]);
+  // The server checks POST /me against the 'view' action; any other text is refused.
+  assert.match(signed[0], /^HolDEX API Key: view for W1 at \d+$/);
+  assert.strictEqual(el('existing-key').style.display, 'block');
+  assert.strictEqual(el('key-prefix').textContent, 'cult_abc');
+  assert.strictEqual(el('key-requests').textContent, (42).toLocaleString());
+  assert.strictEqual(JSON.parse(ctx.localStorage.getItem('cultApiKeyMeta_W1')).request_count, 42);
+});
+
+test('Refresh details of a wallet with no key drops back to "no key"', async () => {
+  const { page, el, ctx } = load({ requestError: new Error('unused') });
+  ctx.api.request = async () => ({ found: false });
+  page.saveKeyMeta({ prefix: 'cult_x', is_active: true });
+  await page.refreshKeyMeta();
+  assert.strictEqual(el('no-key').style.display, 'block');
+  assert.strictEqual(ctx.localStorage.getItem('cultApiKeyMeta_W1'), null);
+});
+
+test('Blocked session storage does not stop the page from loading', () => {
+  const { page } = load({ requestError: new Error('unused'), blockSession: true });
+  assert.ok(page);
+});
+
+test('Revoke removes the raw key from session storage', async () => {
+  const { page, ctx } = load({ requestError: new Error('unused') });
+  ctx.api.request = async () => ({ success: true });
+  page._storeSessionKey('cult_secret');
+  assert.strictEqual(ctx.sessionStorage.getItem('cultApiKey'), 'cult_secret');
+  await page.revokeKey();
+  assert.strictEqual(ctx.sessionStorage.getItem('cultApiKey'), null);
+  assert.strictEqual(page.currentKey, null);
+});
+
+test('A key that is gone on the server is removed from session storage', () => {
+  const { page, ctx } = load({ requestError: new Error('unused') });
+  page._storeSessionKey('cult_secret');
+  page._showKeyGone();
+  assert.strictEqual(ctx.sessionStorage.getItem('cultApiKey'), null);
 });

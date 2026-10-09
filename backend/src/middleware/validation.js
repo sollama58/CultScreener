@@ -55,12 +55,21 @@ function stopSignatureCleanup() {
  * signature could both pass the check before either marks it used.
  */
 async function checkAndMarkSignature(signature, ttlMs) {
+  // The in-memory map is consulted first, whatever the backend: a signature that was marked only
+  // here while Redis was unreachable has no Redis key, so once Redis is back SET NX would call a
+  // replay of it fresh. Successful Redis claims are mirrored here for the same reason.
+  const memExpiry = usedSignatures.get(signature);
+  if (memExpiry && Date.now() <= memExpiry) return true; // Already used
+
   // Try Redis first — use SET NX (set-if-not-exists) for atomic check+set
   if (cache.getBackendType() === 'redis') {
     try {
       const replayKey = `sig-replay:${signature}`;
       const wasSet = await cache.setNX(replayKey, 1, ttlMs);
-      if (wasSet) return false; // Fresh — we just claimed it
+      if (wasSet) { // Fresh — we just claimed it
+        usedSignatures.set(signature, Date.now() + ttlMs);
+        return false;
+      }
       // setNX also answers false (without throwing) when Redis is disconnected or the
       // command failed. Only call it a replay when the key is really there; otherwise
       // fall through to the in-memory store instead of rejecting every fresh signature.
@@ -578,6 +587,16 @@ async function validateApiKey(req, res, next) {
 // Signature expiry time (2 minutes) - prevents replay attacks while allowing reasonable signing time
 const SIGNATURE_EXPIRY_MS = 2 * 60 * 1000;
 
+// Ed25519 group order L = 2^252 + 27742317777372353535851937790883648493
+const ED25519_L = (1n << 252n) + 27742317777372353535851937790883648493n;
+
+// True when the signature's S half (bytes 32..63, little-endian) is below L.
+function isCanonicalSignatureScalar(signatureBytes) {
+  let s = 0n;
+  for (let i = 63; i >= 32; i--) s = (s << 8n) | BigInt(signatureBytes[i]);
+  return s < ED25519_L;
+}
+
 /**
  * Verify a Solana wallet signature
  * Uses Ed25519 signature verification via tweetnacl
@@ -607,6 +626,13 @@ function verifyWalletSignature(message, signature, walletAddress) {
     // Ensure signature is 64 bytes (Ed25519)
     if (signatureBytes.length !== 64) {
       console.error('[Signature] Invalid signature length:', signatureBytes.length);
+      return false;
+    }
+
+    // tweetnacl does not check that S (the last 32 bytes) is reduced mod L, so S + k*L verifies
+    // too. Every replay marker is keyed on the signature bytes, so each such variant would be a
+    // fresh signature: reject non-canonical S as RFC 8032 and libsodium do.
+    if (!isCanonicalSignatureScalar(signatureBytes)) {
       return false;
     }
 
@@ -710,6 +736,23 @@ function createDeviceLinkSignatureMessage(wallet, timestamp) {
 }
 
 /**
+ * Listing and unlinking phones get their own wording for the same reason: they used to sign the
+ * pairing message, so the wallet prompt for "Disconnect all phones" asked the user to approve
+ * linking a device, and a signature given to list or revoke was also accepted by /pair (which
+ * mints a pairing code, and so a session). Unlinking names the device (or "all"), so a signature
+ * for one phone cannot disconnect another.
+ */
+function createDeviceListSignatureMessage(wallet, timestamp) {
+  return `HolDEX List Linked Devices: ${wallet} at ${timestamp}`;
+}
+
+function createDeviceRevokeSignatureMessage(wallet, timestamp, deviceId) {
+  return deviceId === 'all'
+    ? `HolDEX Unlink All Devices: ${wallet} at ${timestamp}`
+    : `HolDEX Unlink Device ${deviceId}: ${wallet} at ${timestamp}`;
+}
+
+/**
  * Device tokens are stored hashed, never raw - a pairing code and a device session token are both
  * bearer credentials, so a dump of the table would otherwise be a pile of working sessions.
  * Unsalted SHA-256 is the right tool and would not be for a password: the input is 32 bytes of
@@ -720,12 +763,43 @@ function hashDeviceToken(token) {
 }
 
 /**
- * Proves the caller holds the wallet it claims, for device pairing and revocation. Same shape as
- * validateWalletSignature (timestamp window, replay window, 64-byte signature) but bound to the
- * pairing message above.
+ * Proves the caller holds the wallet it claims, for device pairing, listing and revocation. Same
+ * shape as validateWalletSignature (timestamp window, replay window, 64-byte signature), each
+ * bound to its own action's message above: messageFor(req, wallet, timestamp) returns the text
+ * the wallet must have signed, or null when the request does not say what it is for.
  */
-async function validateDeviceLinkSignature(req, res, next) {
-  const { wallet, signature, signatureTimestamp } = req.body;
+function deviceSignatureValidator(messageFor, legacyMessageFor = null) {
+  return (req, res, next) => checkDeviceSignature(messageFor, req, res, next, legacyMessageFor);
+}
+
+/**
+ * Transitional: the API and the static site deploy separately, and a tab left open keeps running
+ * the old JS, which signed the pairing message to list or unlink phones and the 'register'
+ * message to view an API key. Those old texts are still accepted on the read-only or low-harm
+ * routes that used to take them (each signature still single-use through the replay store).
+ * API key rotate and revoke stay strict: a 'register' signature there would hand a phishing page
+ * a fresh key, which is what binding the action closed; an old tab must reload for those.
+ * Deploy the API before the static site. Set ACCEPT_LEGACY_SIGNATURE_MESSAGES=false to turn the
+ * fallback off; remove it in the release after the action-named messages went out.
+ */
+function acceptLegacySignatureMessages() {
+  return process.env.ACCEPT_LEGACY_SIGNATURE_MESSAGES !== 'false';
+}
+
+const validateDeviceLinkSignature = deviceSignatureValidator(
+  (req, wallet, timestamp) => createDeviceLinkSignatureMessage(wallet, timestamp));
+const validateDeviceListSignature = deviceSignatureValidator(
+  (req, wallet, timestamp) => createDeviceListSignatureMessage(wallet, timestamp),
+  createDeviceLinkSignatureMessage);
+const validateDeviceRevokeSignature = deviceSignatureValidator((req, wallet, timestamp) => {
+  const { all, deviceId } = req.body || {};
+  if (all === true) return createDeviceRevokeSignatureMessage(wallet, timestamp, 'all');
+  if (Number.isInteger(deviceId)) return createDeviceRevokeSignatureMessage(wallet, timestamp, deviceId);
+  return null;
+}, createDeviceLinkSignatureMessage);
+
+async function checkDeviceSignature(messageFor, req, res, next, legacyMessageFor = null) {
+  const { wallet, signature, signatureTimestamp } = req.body || {};
 
   if (!signature || !signatureTimestamp || !wallet) {
     return res.status(400).json({
@@ -754,8 +828,14 @@ async function validateDeviceLinkSignature(req, res, next) {
     return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
   }
 
-  const expectedMessage = createDeviceLinkSignatureMessage(wallet, timestamp);
-  if (!verifyWalletSignature(expectedMessage, signature, wallet)) {
+  const expectedMessage = messageFor(req, wallet, timestamp);
+  if (!expectedMessage) {
+    return res.status(400).json({ error: 'deviceId required' });
+  }
+  const valid = verifyWalletSignature(expectedMessage, signature, wallet) ||
+    (legacyMessageFor !== null && acceptLegacySignatureMessages() &&
+      verifyWalletSignature(legacyMessageFor(wallet, timestamp), signature, wallet));
+  if (!valid) {
     return res.status(401).json({ error: 'Invalid signature', code: 'INVALID_SIGNATURE' });
   }
 
@@ -1447,14 +1527,20 @@ function createCallSignatureMessage(mint, wallet, timestamp) {
   return `HolDEX Call: ${mint} by ${wallet} at ${timestamp}`;
 }
 
+// The actions an API-key signature can authorise. Each one signs its own verb, so a signature
+// given for one action (say "register") cannot be spent on another (rotate hands the caller the
+// new plaintext key; revoke breaks the owner's integrations).
+const API_KEY_ACTIONS = ['register', 'view', 'rotate', 'revoke'];
+
 /**
- * Create signature message for API key registration
+ * Create signature message for an API key action
  * @param {string} wallet - The wallet address
  * @param {number} timestamp - Unix timestamp in milliseconds
+ * @param {string} [action='register'] - One of API_KEY_ACTIONS
  * @returns {string} The message to sign
  */
-function createApiKeySignatureMessage(wallet, timestamp) {
-  return `HolDEX API Key: register for ${wallet} at ${timestamp}`;
+function createApiKeySignatureMessage(wallet, timestamp, action = 'register') {
+  return `HolDEX API Key: ${action} for ${wallet} at ${timestamp}`;
 }
 
 /**
@@ -1655,11 +1741,16 @@ async function validateCallSignature(req, res, next) {
 }
 
 /**
- * Middleware to validate wallet signature for API key registration
- * Signature is optional — if not provided, skip validation
+ * Middleware factory: validate a wallet signature for one API key action
+ * (see API_KEY_ACTIONS). The signed message names the action, so it must match the route.
  */
-async function validateApiKeySignature(req, res, next) {
-  const { wallet, signature, signatureTimestamp } = req.body;
+function requireApiKeySignature(action) {
+  if (!API_KEY_ACTIONS.includes(action)) throw new Error(`Unknown API key action: ${action}`);
+  return (req, res, next) => validateApiKeySignatureFor(action, req, res, next);
+}
+
+async function validateApiKeySignatureFor(action, req, res, next) {
+  const { wallet, signature, signatureTimestamp } = req.body || {};
 
   // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
@@ -1696,8 +1787,12 @@ async function validateApiKeySignature(req, res, next) {
   // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
 
-  const expectedMessage = createApiKeySignatureMessage(wallet, timestamp);
-  const isValid = verifyWalletSignature(expectedMessage, signature, wallet);
+  const expectedMessage = createApiKeySignatureMessage(wallet, timestamp, action);
+  // Transitional fallback (see acceptLegacySignatureMessages): the old page signed 'register'
+  // to view the key. Not for rotate/revoke.
+  const isValid = verifyWalletSignature(expectedMessage, signature, wallet) ||
+    (action === 'view' && acceptLegacySignatureMessages() &&
+      verifyWalletSignature(createApiKeySignatureMessage(wallet, timestamp, 'register'), signature, wallet));
 
   if (!isValid) {
     return res.status(401).json({ error: 'Invalid signature', message: 'Wallet signature verification failed', code: 'INVALID_SIGNATURE' });
@@ -1734,6 +1829,26 @@ function generateAdminSessionToken() {
 // Supports two formats for ADMIN_PASSWORD:
 //   scrypt:<salt_hex>:<hash_hex>  — hashed (recommended, use scripts/hash-password.js to generate)
 //   <plaintext>                   — legacy plaintext (triggers a startup warning)
+// Byte length of the scrypt hash scripts/hash-password.js writes (and verifyAdminPassword derives)
+const ADMIN_SCRYPT_KEYLEN = 64;
+
+/**
+ * Check a hashed ADMIN_PASSWORD value (scrypt:<salt_hex>:<hash_hex>).
+ * @returns {string|null} What is wrong with it, or null when it is usable (or not a scrypt value)
+ */
+function adminPasswordFormatError(adminPassword) {
+  if (!adminPassword || !adminPassword.startsWith('scrypt:')) return null;
+  const parts = adminPassword.split(':');
+  if (parts.length !== 3) return 'expected scrypt:<salt_hex>:<hash_hex>';
+  const [, saltHex, hashHex] = parts;
+  if (!saltHex || !/^([0-9a-f]{2})+$/i.test(saltHex)) return 'the salt is not hex';
+  if (!/^([0-9a-f]{2})+$/i.test(hashHex)) return 'the hash is not hex';
+  if (hashHex.length !== ADMIN_SCRYPT_KEYLEN * 2) {
+    return `the hash is ${hashHex.length / 2} bytes, expected ${ADMIN_SCRYPT_KEYLEN} (use scripts/hash-password.js)`;
+  }
+  return null;
+}
+
 async function verifyAdminPassword(password) {
   const crypto = require('crypto');
   const adminPassword = process.env.ADMIN_PASSWORD;
@@ -1745,19 +1860,26 @@ async function verifyAdminPassword(password) {
 
   // Hashed path: scrypt:<salt_hex>:<hash_hex>
   if (adminPassword.startsWith('scrypt:')) {
-    const parts = adminPassword.split(':');
-    if (parts.length !== 3) {
-      console.error('[Security] ADMIN_PASSWORD has invalid scrypt format. Expected scrypt:<salt_hex>:<hash_hex>');
+    // A malformed value (a hash from another tool, a truncated paste) must fail the login, not
+    // reach timingSafeEqual: it throws on a length mismatch, and inside the scrypt callback that
+    // throw is an uncaught exception that restarts the whole API.
+    const formatError = adminPasswordFormatError(adminPassword);
+    if (formatError) {
+      console.error(`[Security] ADMIN_PASSWORD has invalid scrypt format: ${formatError}`);
       return false;
     }
-    const [, saltHex, hashHex] = parts;
+    const [, saltHex, hashHex] = adminPassword.split(':');
     const salt = Buffer.from(saltHex, 'hex');
     const storedHash = Buffer.from(hashHex, 'hex');
 
     return new Promise((resolve) => {
-      crypto.scrypt(password || '', salt, 64, (err, derivedKey) => {
-        if (err) { resolve(false); return; }
-        resolve(crypto.timingSafeEqual(derivedKey, storedHash));
+      crypto.scrypt(password || '', salt, ADMIN_SCRYPT_KEYLEN, (err, derivedKey) => {
+        try {
+          if (err || derivedKey.length !== storedHash.length) { resolve(false); return; }
+          resolve(crypto.timingSafeEqual(derivedKey, storedHash));
+        } catch {
+          resolve(false);
+        }
       });
     });
   }
@@ -1883,7 +2005,11 @@ async function canBypassCache(req) {
 module.exports = {
   canBypassCache,
   createDeviceLinkSignatureMessage,
+  createDeviceListSignatureMessage,
+  createDeviceRevokeSignatureMessage,
   validateDeviceLinkSignature,
+  validateDeviceListSignature,
+  validateDeviceRevokeSignature,
   hashDeviceToken,
   validateMint,
   validateWallet,
@@ -1894,6 +2020,7 @@ module.exports = {
   asyncHandler,
   requireDatabase,
   sanitizeString,
+  sanitizeSearchString,
   isValidUrl,
   validateUrlDomain,
   // API Key functions
@@ -1922,11 +2049,14 @@ module.exports = {
   validateWatchlistSignature,
   validateSentimentSignature,
   validateCallSignature,
-  validateApiKeySignature,
+  validateApiKeySignature: requireApiKeySignature('register'),
+  requireApiKeySignature,
+  API_KEY_ACTIONS,
   SIGNATURE_EXPIRY_MS,
   // Admin functions
   generateAdminSessionToken,
   verifyAdminPassword,
+  adminPasswordFormatError,
   validateAdminSession,
   ADMIN_SESSION_DURATION_MS,
   // Device session functions

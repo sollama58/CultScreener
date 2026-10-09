@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../services/database');
 const { asyncHandler, requireDatabase, validateWalletSignature, validateWatchlistSignature, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { walletLimiter, strictLimiter, defaultLimiter } = require('../middleware/rateLimit');
+const { forgetWalletAccess } = require('../services/accessTokens');
 
 // All routes in this file require database access
 router.use(requireDatabase);
@@ -190,8 +191,11 @@ router.post('/check-batch', walletLimiter, asyncHandler(async (req, res) => {
  * This endpoint deletes:
  * - Watchlist entries
  * - Votes (and updates affected tallies)
- * - API keys
- * - Anonymizes submissions (removes wallet association but keeps content)
+ * - API keys, token calls, sentiment votes
+ * - Linked device sessions and the utility whitelist entry
+ * - Cached utility access for the wallet
+ * - Anonymizes submissions and utility burns (removes wallet association but keeps the
+ *   content, and the burn signature that stops a burn from being claimed twice)
  */
 router.delete('/user-data',
   strictLimiter,
@@ -209,6 +213,9 @@ router.delete('/user-data',
       if (!result) {
         return res.status(500).json({ error: 'Failed to delete user data' });
       }
+      await forgetWalletAccess(wallet).catch((err) => {
+        console.warn('[GDPR] Could not clear cached utility access:', err.message);
+      });
 
       res.json({
         success: true,
@@ -224,3 +231,4 @@ router.delete('/user-data',
 );
 
 module.exports = router;
+module.exports.forgetWalletAccess = forgetWalletAccess; // for tests

@@ -11,16 +11,16 @@ if (!process.env.ADMIN_PASSWORD) {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('ADMIN_PASSWORD environment variable is required');
   }
+} else {
+  // A malformed scrypt value boots fine but can never log in; say so now rather than at login.
+  const adminPasswordError = require('./middleware/validation').adminPasswordFormatError(process.env.ADMIN_PASSWORD);
+  if (adminPasswordError) {
+    console.error(`[Startup] ADMIN_PASSWORD has invalid scrypt format (${adminPasswordError}) — admin login will always fail`);
+  }
 }
 
-const COOKIE_SECRET = process.env.COOKIE_SECRET;
-if (!COOKIE_SECRET) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('COOKIE_SECRET environment variable is required in production');
-  }
-  console.warn('[Security] COOKIE_SECRET not set — using ephemeral secret (sessions will not persist across restarts)');
-}
-const effectiveCookieSecret = COOKIE_SECRET || crypto.randomBytes(32).toString('hex');
+// No COOKIE_SECRET: the only cookie (admin_session) is a random token looked up in the
+// admin_sessions table, so it is never signed and sessions already survive restarts.
 
 if (process.env.NODE_ENV !== 'production' && (process.env.DATABASE_URL || process.env.REDIS_URL)) {
   console.warn('[Startup] WARNING: DATABASE_URL or REDIS_URL is set but NODE_ENV is not "production". Security controls (CORS, HSTS, cookies) are in development mode. Set NODE_ENV=production for production deployments.');
@@ -41,7 +41,8 @@ const apiKeyRoutes = require('./routes/apiKeys');
 const publicApiRoutes = require('./routes/public');
 
 // Import middleware
-const { defaultLimiter, apiKeyLimiter } = require('./middleware/rateLimit');
+const { defaultLimiter, apiKeyLimiter, clientKey } = require('./middleware/rateLimit');
+const { warmBatchEntry, bodyParserErrorResponse, isForeignPageRequest } = require('./routes/appHelpers');
 
 // Import database for cleanup jobs
 const db = require('./services/database');
@@ -151,7 +152,9 @@ app.use((req, res, next) => {
   if (allowed && normalizedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', normalizedOrigin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'X-Admin-Token');
+    // Retry-After and the RateLimit-* headers are not CORS-safelisted: without listing them the
+    // frontend (always cross-origin) reads null and falls back to a blind 60s backoff.
+    res.setHeader('Access-Control-Expose-Headers', 'X-Admin-Token, Retry-After, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, X-Request-ID');
     res.setHeader('Vary', 'Origin');
   } else if (!allowed) {
     console.warn(`[CORS] Blocked origin: "${origin}" — not in allowed list: [${corsOrigins.join(', ')}]`);
@@ -250,9 +253,9 @@ app.use((req, res, next) => {
 // Parse JSON bodies
 app.use(express.json({ limit: '100kb' }));
 
-// Cookie parser for session management (signed cookies for tamper detection)
+// Cookie parser for the admin_session cookie (an unsigned random token, validated against the DB)
 const cookieParser = require('cookie-parser');
-app.use(cookieParser(effectiveCookieSecret));
+app.use(cookieParser());
 
 // Request logging
 app.use((req, res, next) => {
@@ -290,7 +293,7 @@ app.use('/health', healthRoutes);
 
 // Dedicated rate limiter for lightweight public endpoints (announcements, my-access)
 // These hit DB/Redis on every call so deserve a tighter cap than the shared defaultLimiter.
-const publicEndpointLimiter = require('express-rate-limit')({
+const publicEndpointLimiter = require('./middleware/rateLimit').rateLimit({
   windowMs: 60000,
   max: 30,
   message: { error: 'Too many requests.' },
@@ -306,7 +309,6 @@ app.get('/api/utilities/my-access', publicEndpointLimiter, async (req, res) => {
   if (!wallet || !SOLANA_ADDR.test(wallet)) return res.json({ cultify: [], holderBehavior: [] });
 
   try {
-    const { cache } = require('./services/cache');
     const CULTIFY_ACCESS_TTL_MS = 43200 * 1000; // 12 hours (matches ACCESS_TOKEN_TTL in cultify.js)
 
     // Cultify: look up recent burns from DB
@@ -317,11 +319,9 @@ app.get('/api/utilities/my-access', publicEndpointLimiter, async (req, res) => {
       type: 'cultify'
     }));
 
-    // Holder Behavior: read wallet index from Redis
-    const hbEntries = (await cache.get(`hb:wallet-idx:${wallet}`)) || [];
-    const now = Date.now();
+    // Holder Behavior: the Redis wallet index, rebuilt from the DB when Redis has lost it
+    const hbEntries = await cultifyRoutes.getActiveHBAccess(wallet);
     const holderBehavior = hbEntries
-      .filter(e => e.expiresAt > now)
       .map(e => ({ mint: e.mint, expiresAt: new Date(e.expiresAt).toISOString(), type: 'holderBehavior' }));
 
     res.json({ cultify, holderBehavior });
@@ -378,7 +378,7 @@ const { sniffImageType, imageSourceFallbacks, ipfsContentPath } = require('./ser
 // the old usage and was rejecting normal page loads with 429s. 150 was still short: the five
 // home tables each render up to 100 rows, and opening a few tabs plus a token page passes it.
 // Most requests are Redis cache hits, so a generous per-IP ceiling costs little.
-const imageProxyLimiter = require('express-rate-limit')({
+const imageProxyLimiter = require('./middleware/rateLimit').rateLimit({
   windowMs: 60000,
   max: 600,
   message: { error: 'Too many image proxy requests.' },
@@ -415,11 +415,44 @@ const IMAGE_PROXY_CACHE_MAX_BYTES = 150 * 1024;
 const IMAGE_PROXY_PASSTHROUGH_TTL_MS = 60 * 60 * 1000; // 1h
 // The per-entry cap alone does not bound the total: resized images are small but their keys are
 // any URL a client names, at 600 requests/min per IP. So everything this proxy writes to Redis in
-// one TTL window is capped too (bytes, this process). Past it, images are still served, just not
-// cached, and the rest of the instance keeps its room. Override with IMAGE_PROXY_CACHE_BUDGET_MB.
-const imageProxyCacheBudget = require('./services/cache').createByteBudget({
+// one TTL window is capped too. Past it, images are still served, just not cached, and the rest of
+// the instance keeps its room. Override with IMAGE_PROXY_CACHE_BUDGET_MB.
+// The count lives in Redis next to the entries it counts: a per-process count restarted at zero
+// on every deploy while the earlier entries stayed, and after a Redis restart kept refusing
+// writes for up to a day although the entries were gone.
+const imageProxyCacheBudget = require('./services/cache').createSharedByteBudget({
+  store: require('./services/cache').cache,
+  prefix: 'image-proxy:budget',
   limitBytes: (Number(process.env.IMAGE_PROXY_CACHE_BUDGET_MB) || 8) * 1024 * 1024,
   windowMs: IMAGE_PROXY_TTL_MS
+});
+// Upstream bytes fetched per hour (this process). The proxy fetches any https URL, so without a
+// cap a client naming unique URLs could pull up to 3 MB per request through the API's bandwidth
+// and CPU. Past a cap, cache hits are still served; new fetches get a 503 until the hour rolls on.
+// Caps, so one client cannot spend everyone's: each client (rateLimit's clientKey) has its own
+// allowance, and there are two overall ones, each a hard ceiling. Requests that name a page
+// (Origin/Referer, which foreign pages are refused on) draw on one, requests naming none
+// (scripts, crawlers, no-referrer users) on the other. A script can send a HolDEX Referer, so the
+// page bucket is a ceiling too; keeping the bytes apart means neither group can use up the
+// other's allowance.
+// Override with IMAGE_PROXY_UPSTREAM_BUDGET_MB, IMAGE_PROXY_PAGE_BUDGET_MB and
+// IMAGE_PROXY_CLIENT_BUDGET_MB.
+const IMAGE_PROXY_UPSTREAM_WINDOW_MS = 60 * 60 * 1000;
+const imageProxyUpstreamBudget = require('./services/cache').createByteBudget({
+  limitBytes: (Number(process.env.IMAGE_PROXY_UPSTREAM_BUDGET_MB) || 1024) * 1024 * 1024,
+  windowMs: IMAGE_PROXY_UPSTREAM_WINDOW_MS,
+  buckets: 12
+});
+const imageProxyPageBudget = require('./services/cache').createByteBudget({
+  limitBytes: (Number(process.env.IMAGE_PROXY_PAGE_BUDGET_MB) || 2048) * 1024 * 1024,
+  windowMs: IMAGE_PROXY_UPSTREAM_WINDOW_MS,
+  buckets: 12
+});
+const imageProxyClientBudgets = require('./services/cache').createKeyedByteBudget({
+  limitBytes: (Number(process.env.IMAGE_PROXY_CLIENT_BUDGET_MB) || 200) * 1024 * 1024,
+  windowMs: IMAGE_PROXY_UPSTREAM_WINDOW_MS,
+  buckets: 12,
+  maxKeys: 5000
 });
 
 // Token artwork arrives at whatever size the creator uploaded - routinely a 1200px+ PNG of
@@ -538,6 +571,8 @@ async function withImageProxySlot(fn) {
 // header value with its parameters stripped).
 const IMAGE_PROXY_FAIL_MARK = '!fail';
 const IMAGE_PROXY_GONE_MARK = '!gone';
+// A transient failure that was already retried once (?retry=1): the next retry is not let past it
+const IMAGE_PROXY_RETRIED_MARK = '!retried';
 function encodeImageEntry(header, body) {
   return body ? Buffer.concat([Buffer.from(header + '\n'), body]) : Buffer.from(header + '\n');
 }
@@ -546,14 +581,16 @@ function decodeImageEntry(raw) {
   const nl = raw.indexOf(0x0a);
   if (nl <= 0) return null;
   const header = raw.toString('latin1', 0, nl);
-  if (header === IMAGE_PROXY_FAIL_MARK || header === IMAGE_PROXY_GONE_MARK) {
-    return { notFound: true, gone: header === IMAGE_PROXY_GONE_MARK };
+  if (header === IMAGE_PROXY_FAIL_MARK || header === IMAGE_PROXY_GONE_MARK || header === IMAGE_PROXY_RETRIED_MARK) {
+    return { notFound: true, gone: header === IMAGE_PROXY_GONE_MARK, retried: header === IMAGE_PROXY_RETRIED_MARK };
   }
   return { contentType: header, buffer: raw.subarray(nl + 1) };
 }
 
 // One upstream fetch for the image proxy: bytes plus a content type judged from the bytes.
-async function fetchImageBytes(target, signal) {
+// clientBudget: the requesting client's share of the upstream budget, charged alongside the
+// overall one (globalBudget: the page or the no-page bucket).
+async function fetchImageBytes(target, signal, clientBudget, globalBudget = imageProxyUpstreamBudget) {
   const axios = require('axios');
   const response = await axios.get(target, {
     responseType: 'arraybuffer',
@@ -575,6 +612,8 @@ async function fetchImageBytes(target, signal) {
     },
   });
   const body = Buffer.from(response.data);
+  globalBudget.record(body.length);
+  if (clientBudget) clientBudget.record(body.length);
   // Trust the bytes over the label: IPFS gateways, Arweave/Irys and S3 often serve real images
   // as application/octet-stream or text/plain, and those used to be refused here.
   const labelled = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
@@ -599,6 +638,14 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // an inert picture; <img> rendering ignores a subresource's CSP, so the app's logos are unaffected.
   res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox");
   res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  // Hotlinking from other sites: a page elsewhere naming this proxy in its <img> tags would spend
+  // this API's bandwidth and CPU on its own images. Browsers say which page asked (Referer, or
+  // Origin for CORS loads); requests that name no page (curl, crawlers fetching share images) are
+  // left to the rate and byte limits. Production only, so any local dev origin works.
+  if (process.env.NODE_ENV === 'production' && isForeignPageRequest(req, corsOrigins)) {
+    return res.status(403).json({ error: 'Image proxy is for HolDEX pages only' });
+  }
 
   const { url } = req.query;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
@@ -629,8 +676,10 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // A remembered transient failure (not a 404/410) is skipped for the browser's one retry
   // (?retry=1, see utils.handleImageError): that retry lands seconds after the failure, inside
   // the 45s window, and would otherwise be answered with the same cached 502 every time.
+  // Only once per failure, though: a retry that fails too is remembered as '!retried', which
+  // later ?retry=1 requests do not get past, so the flag cannot force a refetch on every request.
   const isRetry = req.query.retry === '1';
-  if (cached && !(cached.notFound && !cached.gone && isRetry)) {
+  if (cached && !(cached.notFound && !cached.gone && !cached.retried && isRetry)) {
     if (cached.notFound) return res.status(502).send('Bad Gateway');
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -641,6 +690,14 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
   // keyed on the cache key rather than the URL, since the two widths produce different bytes.
   let fetchPromise = imageProxyInFlight.get(cacheKey);
   if (!fetchPromise) {
+    const clientBudget = imageProxyClientBudgets.forKey(clientKey(req));
+    // Foreign pages were refused above (in production), so a request naming a page is the site's own
+    const namesPage = Boolean((req.headers.origin && req.headers.origin !== 'null') || req.headers.referer);
+    const globalBudget = namesPage ? imageProxyPageBudget : imageProxyUpstreamBudget;
+    if (clientBudget.exhausted() || globalBudget.exhausted()) {
+      res.setHeader('Retry-After', '300');
+      return res.status(503).json({ error: 'Image proxy busy' });
+    }
     fetchPromise = withImageProxySlot(async () => {
       // An IPFS image races its original URL against the other gateways and Helius's image CDN
       // (see imageSourceFallbacks): ipfs.io refuses or stalls on requests from cloud servers often
@@ -651,13 +708,13 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
       let image;
       try {
         if (ipfsContentPath(url)) {
-          image = await Promise.any([url, ...fallbacks].map((target) => fetchImageBytes(target, controller.signal)));
+          image = await Promise.any([url, ...fallbacks].map((target) => fetchImageBytes(target, controller.signal, clientBudget, globalBudget)));
         } else {
           try {
-            image = await fetchImageBytes(url, controller.signal);
+            image = await fetchImageBytes(url, controller.signal, clientBudget, globalBudget);
           } catch (firstErr) {
             if (fallbacks.length === 0) throw firstErr;
-            image = await Promise.any(fallbacks.map((target) => fetchImageBytes(target, controller.signal)))
+            image = await Promise.any(fallbacks.map((target) => fetchImageBytes(target, controller.signal, clientBudget, globalBudget)))
               .catch(() => { throw firstErr; });
           }
         }
@@ -673,9 +730,12 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
       const result = await downscaleImage(image.buffer, image.contentType, width);
       // Written once here, by the shared fetch, rather than by every request that joined it.
       // Fire-and-forget: a slow Redis write must never stall (or fail) the response.
-      if (result.buffer.length <= IMAGE_PROXY_CACHE_MAX_BYTES && imageProxyCacheBudget.tryConsume(result.buffer.length)) {
-        const ttl = IMAGE_PROXY_PASSTHROUGH.test(result.contentType) ? IMAGE_PROXY_PASSTHROUGH_TTL_MS : IMAGE_PROXY_TTL_MS;
-        cache.setBuffer(cacheKey, encodeImageEntry(result.contentType, result.buffer), ttl).catch(() => {});
+      if (result.buffer.length <= IMAGE_PROXY_CACHE_MAX_BYTES) {
+        imageProxyCacheBudget.tryConsume(result.buffer.length).then((ok) => {
+          if (!ok) return;
+          const ttl = IMAGE_PROXY_PASSTHROUGH.test(result.contentType) ? IMAGE_PROXY_PASSTHROUGH_TTL_MS : IMAGE_PROXY_TTL_MS;
+          return cache.setBuffer(cacheKey, encodeImageEntry(result.contentType, result.buffer), ttl);
+        }).catch(() => {});
       }
       return result;
     });
@@ -704,8 +764,9 @@ app.get('/api/image-proxy', imageProxyLimiter, async (req, res) => {
     const upstreamStatus = err.response?.status;
     const gone = upstreamStatus === 404 || upstreamStatus === 410;
     console.warn('[ImageProxy] fetch failed for', url, '-', err.message);
+    const mark = gone ? IMAGE_PROXY_GONE_MARK : (isRetry ? IMAGE_PROXY_RETRIED_MARK : IMAGE_PROXY_FAIL_MARK);
     cache
-      .setBuffer(cacheKey, encodeImageEntry(gone ? IMAGE_PROXY_GONE_MARK : IMAGE_PROXY_FAIL_MARK), gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
+      .setBuffer(cacheKey, encodeImageEntry(mark), gone ? IMAGE_PROXY_GONE_TTL_MS : IMAGE_PROXY_FAIL_TTL_MS)
       .catch(() => {});
     if (res.headersSent) return;
     res.status(502).send('Bad Gateway');
@@ -761,8 +822,13 @@ app.use((err, req, res, next) => {
   const requestId = req.requestId || 'unknown';
   const timestamp = new Date().toISOString();
 
-  // Log full error details server-side for debugging (with request ID for correlation)
-  console.error(`[${timestamp}] [${requestId}] Error:`, err.stack || err.message);
+  // Log full error details server-side for debugging (with request ID for correlation).
+  // A bad request body is the client's mistake: one warn line, no stack.
+  if (bodyParserErrorResponse(err)) {
+    console.warn(`[${timestamp}] [${requestId}] Bad request body (${err.type}) on ${req.method} ${req.path}`);
+  } else {
+    console.error(`[${timestamp}] [${requestId}] Error:`, err.stack || err.message);
+  }
 
   // Prevent double-response if headers already sent
   if (res.headersSent) {
@@ -775,8 +841,14 @@ app.use((err, req, res, next) => {
   let errorCode = 'INTERNAL_ERROR';
   let retryAfter = null;
 
+  // A malformed or oversized request body (express.json) is a client error: say so, in every
+  // environment, rather than 'Internal server error'
+  const bodyError = bodyParserErrorResponse(err);
+
   // Handle circuit breaker errors specially
-  if (err.isCircuitBreakerError) {
+  if (bodyError) {
+    ({ statusCode, userMessage, errorCode } = bodyError);
+  } else if (err.isCircuitBreakerError) {
     statusCode = 503;
     userMessage = 'Service temporarily unavailable';
     errorCode = 'SERVICE_UNAVAILABLE';
@@ -836,18 +908,28 @@ async function gracefulShutdown(signal) {
   const isError = signal === 'uncaughtException' || signal === 'unhandledRejection';
   const exitCode = isError ? 1 : 0;
 
-  // Force exit after 35 seconds if shutdown takes too long. Started before the drain so it bounds
-  // that too: admin routes raise their response timeout to 5-10 minutes.
+  // Render SIGKILLs the API 30 s after SIGTERM (HolDEX-api sets no maxShutdownDelaySeconds), so
+  // everything below has to fit well inside that: the drain gets at most SHUTDOWN_DRAIN_MS, then
+  // the buffered API-key usage and view counts are flushed even if a long request (admin routes
+  // raise their response timeout to 5-10 minutes) is still open, and the force-exit timer fires
+  // before the SIGKILL would.
+  const SHUTDOWN_DRAIN_MS = 15000;
   const forceTimer = setTimeout(() => {
     console.error('[Shutdown] Forced exit after timeout');
     process.exit(exitCode);
-  }, 35000);
+  }, 25000);
   forceTimer.unref();
 
-  // Stop accepting new connections and await in-flight request drain
+  // Stop accepting new connections and await in-flight request drain (bounded)
   if (httpServer) {
     await new Promise(resolve => {
+      const drainTimer = setTimeout(() => {
+        console.warn(`[Shutdown] Requests still open after ${SHUTDOWN_DRAIN_MS / 1000}s - flushing anyway`);
+        resolve();
+      }, SHUTDOWN_DRAIN_MS);
+      drainTimer.unref();
       httpServer.close(() => {
+        clearTimeout(drainTimer);
         console.log('[Shutdown] HTTP server closed');
         resolve();
       });
@@ -946,8 +1028,10 @@ async function warmCache() {
       try {
         const batchInfo = await geckoService.getMultiTokenInfo(needsWarm);
         for (const mint of needsWarm) {
-          if (batchInfo[mint]) {
-            await cache.set(`batch:${mint}`, batchInfo[mint], TTL.PRICE_DATA);
+          // The shape and freshness stamp POST /api/tokens/batch writes itself (see warmBatchEntry)
+          const entry = warmBatchEntry(mint, batchInfo[mint]);
+          if (entry) {
+            await cache.setWithTimestamp(`batch:${mint}`, entry, TTL.PRICE_DATA);
             warmed++;
           }
         }

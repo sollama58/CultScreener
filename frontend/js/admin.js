@@ -68,7 +68,9 @@ const admin = {
       sessionStorage.setItem('admin_token', this.token);
       input.value = '';
       this.showPanel();
-      this.loadTab('dashboard');
+      // Reload the tab that is still showing (a session can expire mid-tab and
+      // leave its "Session expired" error row on screen), not just the dashboard
+      this.loadTab(this.activeTab || 'dashboard');
     } catch (err) {
       errEl.textContent = err.message || 'Login failed';
       errEl.style.display = 'block';
@@ -93,10 +95,16 @@ const admin = {
       // Populate stats directly from the verification call — avoids a second round-trip
       this._applyStats(stats);
       this.loadKingOfPill();
-    } catch {
-      this.token = null;
-      sessionStorage.removeItem('admin_token');
-      this.showLogin();
+    } catch (err) {
+      // request() already dropped the token and showed the login form on 401.
+      // Any other failure (API cold start, 5xx, 429, network) says nothing about
+      // the session, so keep the token: throwing it away would force a re-login
+      // that spends one of the 5 hourly login attempts.
+      if (err && err.status === 401) return;
+      if (!this.token) { this.showLogin(); return; }
+      this.showPanel();
+      this.activeTab = 'dashboard';
+      if (typeof toast !== 'undefined') toast.error(`Could not reach the API (${err?.message || 'network error'}). Reload to retry.`);
     }
   },
 
@@ -141,7 +149,9 @@ const admin = {
       cache: 'no-store'
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
+    // opts.acceptStatuses: non-2xx statuses whose body is still the answer
+    // (e.g. /health/detailed sends its full report with 503 when degraded)
+    if (!res.ok && !(opts.acceptStatuses || []).includes(res.status)) {
       if (res.status === 401 && !opts.noAuth) {
         this.token = null;
         sessionStorage.removeItem('admin_token');
@@ -458,9 +468,18 @@ const admin = {
       const btc = data.data?.btc;
       const solStr = sol?.price != null ? `$${sol.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--';
       const btcStr = btc?.price != null ? `$${btc.price.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '--';
-      status.textContent = `SOL/BTC prices refreshed — SOL: ${solStr}, BTC: ${btcStr}`;
-      status.style.color = 'var(--green)';
-      if (typeof toast !== 'undefined') toast.success(`Benchmarks refreshed — SOL: ${solStr}  BTC: ${btcStr}`);
+      if (data.stale) {
+        // CoinGecko failed: the server answered with its last-good copy and
+        // refreshed nothing, so say so instead of reporting success
+        const at = data.data?.updatedAt ? new Date(data.data.updatedAt).toLocaleString() : 'unknown time';
+        status.textContent = `CoinGecko unavailable — prices NOT refreshed. Last known (${at}): SOL ${solStr}, BTC ${btcStr}`;
+        status.style.color = 'var(--yellow)';
+        if (typeof toast !== 'undefined') toast.warning('CoinGecko unavailable — showing last known SOL/BTC prices');
+      } else {
+        status.textContent = `SOL/BTC prices refreshed — SOL: ${solStr}, BTC: ${btcStr}`;
+        status.style.color = 'var(--green)';
+        if (typeof toast !== 'undefined') toast.success(`Benchmarks refreshed — SOL: ${solStr}  BTC: ${btcStr}`);
+      }
     } catch (err) {
       status.textContent = `Error: ${err.message}`;
       status.style.color = 'var(--red)';
@@ -764,13 +783,16 @@ const admin = {
     btn.disabled = true;
     btn.textContent = 'Adding...';
     try {
-      await this.request('/api/admin/curated', {
+      const data = await this.request('/api/admin/curated', {
         method: 'POST',
         body: JSON.stringify({ mintAddress: mint })
       });
       input.value = '';
       this.loadCurated();
-      if (typeof toast !== 'undefined') toast.success('Token added to curated list');
+      if (typeof toast !== 'undefined') {
+        if (data && data.alreadyExists) toast.info('Token is already in the curated list');
+        else toast.success('Token added to curated list');
+      }
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message || 'Failed to add token');
     } finally {
@@ -943,7 +965,7 @@ const admin = {
       tbody.innerHTML = reports.map(r => `<tr>
         <td class="mono">${r.id}</td>
         <td>${this.esc(r.category)}</td>
-        <td class="truncate" title="${this.esc(r.description)}">${this.esc((r.description || '').slice(0, 60))}</td>
+        <td class="truncate" title="${this.esc([r.description, r.page_url && `Page: ${r.page_url}`, r.contact_info && `Contact: ${r.contact_info}`].filter(Boolean).join('\n'))}">${this.esc((r.description || '').slice(0, 60))}</td>
         <td><span class="badge ${statusBadge[r.status] || 'badge-gray'}">${this.esc(r.status)}</span></td>
         <td>${r.created_at ? new Date(r.created_at).toLocaleDateString() : '--'}</td>
         <td class="actions-cell">
@@ -1016,7 +1038,7 @@ const admin = {
           <td>${s.created_at ? new Date(s.created_at).toLocaleDateString() : '--'}</td>
           <td class="actions-cell">
             ${isPending ? `<button class="action-btn success" data-approve-sub="${s.id}">Approve</button>
-            <button class="action-btn danger" data-reject-sub="${s.id}">Reject</button>` : '--'}
+            <button class="action-btn danger" data-reject-sub="${s.id}">Reject</button>` : `<button class="action-btn" data-reopen-sub="${s.id}">Reopen</button>`}
           </td>
         </tr>`;
       }).join('');
@@ -1025,7 +1047,14 @@ const admin = {
         btn.addEventListener('click', () => this.reviewSubmission(parseInt(btn.dataset.approveSub), 'approved'));
       });
       tbody.querySelectorAll('[data-reject-sub]').forEach(btn => {
-        btn.addEventListener('click', () => this.reviewSubmission(parseInt(btn.dataset.rejectSub), 'rejected'));
+        btn.addEventListener('click', () => {
+          if (!confirm('Reject this submission?')) return;
+          this.reviewSubmission(parseInt(btn.dataset.rejectSub), 'rejected');
+        });
+      });
+      // Approved/rejected rows can be put back to pending to undo a misclick
+      tbody.querySelectorAll('[data-reopen-sub]').forEach(btn => {
+        btn.addEventListener('click', () => this.reviewSubmission(parseInt(btn.dataset.reopenSub), 'pending'));
       });
     } catch (err) {
       tbody.innerHTML = `<tr><td colspan="7" class="empty-msg">Error: ${this.esc(err.message)}</td></tr>`;
@@ -1040,7 +1069,7 @@ const admin = {
       });
       this.loadSubmissions();
       this.loadStats();
-      if (typeof toast !== 'undefined') toast.success(`Submission ${status}`);
+      if (typeof toast !== 'undefined') toast.success(status === 'pending' ? 'Submission reopened' : `Submission ${status}`);
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
     }
@@ -1347,7 +1376,9 @@ const admin = {
     const grid = document.getElementById('health-grid');
     grid.innerHTML = '<div class="empty-msg">Loading health data...</div>';
     try {
-      const h = await this.request('/health/detailed');
+      // A degraded API answers 503 with the full report: show it, since that
+      // is exactly when the admin needs to see which check is failing.
+      const h = await this.request('/health/detailed', { acceptStatuses: [503] });
       const checks = h.checks || {};
 
       const card = (title, status, details) => {
@@ -1362,7 +1393,7 @@ const admin = {
 
       grid.innerHTML = [
         card('Overview', h.status, `Status: <strong>${this.esc(h.status)}</strong><br>Uptime: ${uptime}<br>Version: ${this.esc(h.version || '--')}`),
-        card('Database', checks.database?.status, `Healthy: ${checks.database?.healthy}<br>Latency: ${checks.database?.connectionTime || '--'}`),
+        card('Database', checks.database?.status, `Healthy: ${checks.database?.healthy}<br>Pool: ${checks.database?.poolSize ?? '--'} open, ${checks.database?.idleConnections ?? '--'} idle<br>Waiting: ${checks.database?.waitingRequests ?? '--'}${checks.database?.error ? `<br>Error: ${this.esc(checks.database.error)}` : ''}`),
         card('Solana RPC', checks.solana_rpc?.status, `Healthy: ${checks.solana_rpc?.healthy}<br>Endpoint: ${checks.solana_rpc?.currentEndpoint || '--'}/${checks.solana_rpc?.totalEndpoints || '--'}<br>Fallback: ${checks.solana_rpc?.usingFallback ? 'Yes' : 'No'}`),
         card('Cache', checks.cache?.status, `Type: ${checks.cache?.type || '--'}<br>Healthy: ${checks.cache?.healthy}`),
         card('Job Queue', checks.job_queue?.status, `Initialized: ${checks.job_queue?.initialized}<br>Worker Active: ${checks.job_queue?.workerActive}<br>Buffer: ${checks.job_queue?.viewBufferSize || 0}`),
@@ -1381,11 +1412,17 @@ const admin = {
 
   // ── Utilities ─────────────────────────────────
 
+  // Escapes quotes as well as &, < and >: the result is also used inside
+  // title="..." and data-*="..." attributes, where a bare " would let a token
+  // name from on-chain metadata break out and add its own attributes.
   esc(str) {
     if (str === null || str === undefined) return '';
-    const div = document.createElement('div');
-    div.textContent = String(str);
-    return div.innerHTML;
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   },
 
   setText(id, val) {

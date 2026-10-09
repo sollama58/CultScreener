@@ -43,6 +43,13 @@ const QUOTE_ONLY_POOLS = [
   })
 ];
 
+// A token GeckoTerminal does not index (every request 404s), and one whose requests fail
+// transiently (502) until flakyFails is cleared
+const MISSING = 'Mis1111111111111111111111111111111111111111';
+const FLAKY = 'Fla1111111111111111111111111111111111111111';
+let flakyFails = true;
+let flakyCalls = 0;
+
 const calls = [];
 let gecko;
 
@@ -53,6 +60,7 @@ before(() => {
     inst.get = async (url, opts = {}) => {
       calls.push({ url, params: opts.params });
       if (url.endsWith(`/tokens/${TOKEN}/pools`)) return { data: { data: POOLS } };
+      if (url.endsWith('/trending_pools')) return { data: { data: POOLS } };
       if (url.endsWith(`/tokens/${QUOTE_ONLY}/pools`)) return { data: { data: QUOTE_ONLY_POOLS } };
       if (url.endsWith(`/tokens/${QUOTE_ONLY}`)) {
         return { data: { data: { id: `solana_${QUOTE_ONLY}`, type: 'token', attributes: {
@@ -68,6 +76,13 @@ before(() => {
       }
       if (url.includes('/pools/PoolZec/ohlcv/')) {
         return { data: { data: { attributes: { ohlcv_list: [[1790000000, 0.002, 0.0022, 0.0019, 0.0021, 500]] } } } };
+      }
+      if (url.includes(FLAKY)) {
+        flakyCalls++;
+        if (flakyFails) throw Object.assign(new Error('Bad Gateway'), { response: { status: 502 } });
+        return { data: { data: POOLS.map(p => ({ ...p, relationships: { ...p.relationships,
+          base_token: p.id === 'solana_PoolSol' ? { data: { id: `solana_${FLAKY}` } } : p.relationships.base_token,
+          quote_token: p.id === 'solana_PoolZec' ? { data: { id: `solana_${SOL}` } } : p.relationships.quote_token } })) } };
       }
       throw Object.assign(new Error(`unexpected ${url}`), { response: { status: 404 } });
     };
@@ -123,5 +138,57 @@ describe('token that only trades as the quote', () => {
     assert.strictEqual(o.price, 0.5);
     assert.strictEqual(o.poolSide, 'quote');
     assert.strictEqual(o.priceChange24h, null);
+  });
+});
+
+describe('failures', () => {
+  test('a token GeckoTerminal does not index is null, and remembered', async () => {
+    assert.strictEqual(await gecko.getTokenOverview(MISSING), null);
+    const n = calls.length;
+    assert.strictEqual(await gecko.getTokenOverview(MISSING), null);
+    assert.strictEqual(calls.length, n, 'second lookup answered from the error cache');
+  });
+
+  test('a transient failure is thrown, not error-cached, so the next request recovers', async () => {
+    await assert.rejects(gecko.getTokenOverview(FLAKY), /Bad Gateway/);
+    flakyFails = false;
+    const o = await gecko.getTokenOverview(FLAKY);
+    assert.ok(o && o.price > 0, 'recovered as soon as GeckoTerminal answered');
+  });
+
+  test('getTokenInfo: 404 is null, a transient failure is thrown', async () => {
+    assert.strictEqual(await gecko.getTokenInfo(MISSING), null);
+    flakyFails = true;
+    await assert.rejects(gecko.getTokenInfo(FLAKY), /Bad Gateway/);
+    flakyFails = false;
+  });
+
+  test('OHLCV for a token GeckoTerminal does not index is an empty chart, asked for once', async () => {
+    const before = calls.filter(c => c.url.includes(`/tokens/${MISSING}/pools`)).length;
+    const first = await gecko.getOHLCV(MISSING, { interval: '1h' });
+    const second = await gecko.getOHLCV(MISSING, { interval: '1h' });
+    assert.deepStrictEqual(first.data, []);
+    assert.strictEqual(first.error, undefined);
+    assert.deepStrictEqual(second.data, []);
+    const after = calls.filter(c => c.url.includes(`/tokens/${MISSING}/pools`)).length;
+    assert.ok(after - before <= 1, `pools requests: ${after - before}`);
+  });
+});
+
+describe('getMarketData', () => {
+  test('reports an unknown 24h change and liquidity, not 0', async () => {
+    const m = await gecko.getMarketData(TOKEN);
+    assert.strictEqual(m.price, 0.0021);
+    assert.strictEqual(m.priceChange24h, null);
+    assert.strictEqual(m.liquidity, null);
+  });
+});
+
+describe('trending list', () => {
+  test('each token carries its pool\'s creation date (the spikes route filters on it)', async () => {
+    const tokens = await gecko.getTrendingTokens({ limit: 20, skipEnrichment: true, page: 1 });
+    const foo = tokens.find(t => t.address === TOKEN);
+    assert.ok(foo);
+    assert.strictEqual(foo.pairCreatedAt, '2026-08-01T00:00:00Z');
   });
 });

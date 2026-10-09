@@ -218,6 +218,11 @@ if (!DB_URL) {
       assert.ok(await pipeline.getSnapshotHolderList(MINT, { maxAgeMs: HOUR }), 'served as recent');
       assert.ok(await cache.get(`holder-snapshot-verified:${MINT}`));
       assert.strictEqual(new Date((await store.getLatestSnapshot(MINT)).verified_at).getTime(), now, 'verified_at recorded');
+      assert.strictEqual(new Date((await store.getLatestSnapshot(MINT)).checked_at).getTime(), now, 'checked_at recorded');
+      // The Redis key lost (restart or eviction): Postgres still knows the check (audit #28)
+      await cache.delete(`holder-snapshot-verified:${MINT}`);
+      assert.ok(await pipeline.getSnapshotHolderList(MINT, { maxAgeMs: HOUR }), 'still served as recent without the Redis key');
+      assert.strictEqual((await pipeline.getFreshnessTimes([MINT]))[MINT], now);
       // one page read in full: the count is confirmed now, so the history gets a point
       const pts = await require('./holderCounts').getPoints(MINT);
       const last = pts[pts.length - 1];
@@ -273,6 +278,15 @@ if (!DB_URL) {
       assert.strictEqual(snap.complete, false);
       const [top] = await store.getSnapshotEntries(snap.id, 1);
       assert.strictEqual(top.wallet, 'WHALE', 'largest accounts merged into a capped snapshot');
+      // Its count (a lower bound) is what is displayed, from Redis or the stored point,
+      // instead of a separate 100-page DAS count (audit #109)
+      const holderCounts = require('./holderCounts');
+      const point = (await holderCounts.getLatestPoints([MINT]))[MINT];
+      assert.strictEqual(point.complete, false);
+      assert.strictEqual(await cache.get(`holder-total:${MINT}`), point.holders);
+      await cache.delete(`holder-total:${MINT}`);
+      await cache.delete(`holder-total-miss:${MINT}`);
+      assert.strictEqual((await holderCounts.getDisplayCounts([MINT]))[MINT], point.holders);
       capped = false;
 
       now = T0 + 13.5 * HOUR;
@@ -470,6 +484,49 @@ if (!DB_URL) {
         [MINT, new Date(T0 - 11 * DAY)]);
     });
 
+    test('a failed wallet on a token that never changes is retried by the backfill run', async () => {
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'failed', backfill_attempts = 3,
+        backfill_updated_at = $2 WHERE mint_address = $1 AND wallet = 'W009'`, [MINT, new Date(now - 25 * HOUR)]);
+      // No snapshot is written (the pre-check would find nothing changed); the backfill run alone
+      // used to leave it failed until an admin flush
+      await drainBackfill();
+      assert.strictEqual((await position('W009')).acquired_source, 'backfill');
+    });
+
+    test('a holder the page read missed keeps its position and streak', async () => {
+      const before = await position('W020');
+      assert.ok(before);
+      const realAll = solana.getAllTokenAccounts;
+      const realMulti = solana.getMultipleAccounts;
+      // An account closed between two page reads shifted W020 off both pages
+      solana.getAllTokenAccounts = async (...args) => {
+        const r = await realAll(...args);
+        return { ...r, accounts: r.accounts.filter(a => a.owner !== 'W020') };
+      };
+      const checked = [];
+      solana.getMultipleAccounts = async addrs => {
+        checked.push(...addrs);
+        const res = await realMulti(addrs);
+        return { value: addrs.map((a, i) => (a === ata('W020')
+          ? { data: { parsed: { info: { mint: MINT, owner: 'W020', tokenAmount: { amount: chain.W020.amount.toString() } } } } }
+          : res.value[i])) };
+      };
+      try {
+        now += 10 * 60 * 1000;
+        const r = await pipeline.takeSnapshot(MINT);
+        assert.strictEqual(r.status, 'ok');
+        assert.strictEqual(r.complete, true);
+      } finally {
+        solana.getAllTokenAccounts = realAll;
+        solana.getMultipleAccounts = realMulti;
+      }
+      assert.ok(checked.includes(ata('W020')));
+      const after = await position('W020');
+      assert.ok(after, 'position kept');
+      assert.strictEqual(after.acquired_source, before.acquired_source);
+      assert.strictEqual(String(after.acquired_at), String(before.acquired_at));
+    });
+
     test('rate limiting keeps a wallet pending past the normal attempt limit, then it settles', async () => {
       const snap = await store.getLatestSnapshot(MINT);
       const lp = new Set(snap.sample_meta.lpWallets || []);
@@ -505,6 +562,84 @@ if (!DB_URL) {
       assert.ok(['backfill', 'backfill_capped'].includes(pos.acquired_source), pos.acquired_source);
     });
 
+    test('a Helius 5xx outage costs no attempts; a lone 5xx still counts one (audit #27)', async () => {
+      const snap = await store.getLatestSnapshot(MINT);
+      const lp = new Set(snap.sample_meta.lpWallets || []);
+      const ws = snap.sample.map(x => x.wallet)
+        .filter(x => !lp.has(x) && chain[x] && chain[x].amount > 0n && chain[x].history.length > 0).slice(0, 4);
+      assert.strictEqual(ws.length, 4, 'four sampled wallets with history');
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = NULL,
+        backfill_balance = NULL, backfill_attempts = 0 WHERE mint_address = $1 AND wallet = ANY($2)`, [MINT, ws]);
+      const realBalance = solana.getTokenAccountBalance;
+      const prevPause = pipeline.CONFIG.pushbackPauseMs;
+      pipeline.CONFIG.pushbackPauseMs = 5;
+      const badGateway = () => Object.assign(new Error('Request failed with status code 502'), { response: { status: 502 } });
+      try {
+        // Every call fails: an outage. Runs come back later and nobody's attempts go up.
+        solana.getTokenAccountBalance = async () => { throw badGateway(); };
+        for (let i = 0; i < pipeline.CONFIG.backfillMaxTransientAttempts + 1; i++) {
+          const before = queued.length;
+          const r = await pipeline.runBackfill(MINT);
+          assert.ok(r.remaining >= 4);
+          await cache.delete(`holder-backfill-pending:${MINT}`);
+          assert.ok(queued.length > before, 're-queued');
+        }
+        for (const w of ws) {
+          const pos = await position(w);
+          assert.strictEqual(pos.acquired_source, 'pending');
+          assert.strictEqual(pos.backfill_attempts, 0, `${w} lost no attempt to the outage`);
+        }
+        // Only one wallet fails while the others are answered: that one counts an attempt
+        solana.getTokenAccountBalance = async a => { if (walletOfAta(a) === ws[0]) throw badGateway(); return realBalance(a); };
+        await pipeline.runBackfill(MINT);
+        await cache.delete(`holder-backfill-pending:${MINT}`);
+        assert.strictEqual((await position(ws[0])).backfill_attempts, 1);
+      } finally {
+        solana.getTokenAccountBalance = realBalance;
+        pipeline.CONFIG.pushbackPauseMs = prevPause;
+      }
+      await drainBackfill();
+      assert.ok(['backfill', 'backfill_capped'].includes((await position(ws[0])).acquired_source));
+    });
+
+    test('wallets that 5xx every run on their own are given up in the end (audit #27)', async () => {
+      // A wallet that answered earlier must not keep the counter from a previous test
+      await cache.delete(`holder-backfill-outage-runs:${MINT}`);
+      const snap = await store.getLatestSnapshot(MINT);
+      const lp = new Set(snap.sample_meta.lpWallets || []);
+      const ws = snap.sample.map(x => x.wallet)
+        .filter(x => !lp.has(x) && chain[x] && chain[x].amount > 0n && chain[x].history.length > 0).slice(0, 3);
+      assert.strictEqual(ws.length, 3, 'three sampled wallets with history');
+      // only these three are pending, and they fail every time
+      await db.pool.query(`UPDATE holder_positions SET acquired_source = 'pending', acquired_at = NULL, backfill_cursor = NULL,
+        backfill_balance = NULL, backfill_attempts = 0 WHERE mint_address = $1 AND wallet = ANY($2)`, [MINT, ws]);
+      const realBalance = solana.getTokenAccountBalance;
+      const prevPause = pipeline.CONFIG.pushbackPauseMs;
+      const prevMaxRuns = pipeline.CONFIG.outageMaxRuns;
+      pipeline.CONFIG.pushbackPauseMs = 5;
+      pipeline.CONFIG.outageMaxRuns = 2;
+      solana.getTokenAccountBalance = async a => {
+        if (ws.includes(walletOfAta(a))) throw Object.assign(new Error('Request failed with status code 502'), { response: { status: 502 } });
+        return realBalance(a);
+      };
+      try {
+        const maxRuns = pipeline.CONFIG.outageMaxRuns + pipeline.CONFIG.backfillMaxTransientAttempts;
+        for (let i = 0; i < maxRuns; i++) {
+          await pipeline.runBackfill(MINT);
+          await cache.delete(`holder-backfill-pending:${MINT}`);
+          if (i < pipeline.CONFIG.outageMaxRuns) {
+            for (const w of ws) assert.strictEqual((await position(w)).backfill_attempts, 0, `run ${i + 1} still treated as an outage`);
+          }
+        }
+        for (const w of ws) assert.strictEqual((await position(w)).acquired_source, 'failed', `${w} given up`);
+      } finally {
+        solana.getTokenAccountBalance = realBalance;
+        pipeline.CONFIG.pushbackPauseMs = prevPause;
+        pipeline.CONFIG.outageMaxRuns = prevMaxRuns;
+        await cache.delete(`holder-backfill-outage-runs:${MINT}`);
+      }
+    });
+
     test('only a few tokens backfill at once; the rest wait and re-queue', async () => {
       const held = [];
       for (let i = 0; i < pipeline.CONFIG.backfillMaxTokens; i++) {
@@ -531,6 +666,18 @@ if (!DB_URL) {
         assert.ok(queued.length > before && job.name === 'backfill-holder-acquisitions');
         // slots other tokens hold are left alone
         assert.strictEqual(await cache.get(held[0]), 'OtherMint0');
+        // still no slot: the next poll waits again without re-reading the database (audit #177)
+        const realEntries = store.getSnapshotEntries;
+        let reads = 0;
+        store.getSnapshotEntries = async (...a) => { reads++; return realEntries(...a); };
+        try {
+          await cache.delete(`holder-backfill-pending:${MINT}`);
+          const again = await pipeline.runBackfill(MINT);
+          assert.strictEqual(again.status, 'waiting');
+          assert.strictEqual(reads, 0);
+        } finally {
+          store.getSnapshotEntries = realEntries;
+        }
       } finally {
         for (const key of held) await cache.delete(key);
         await cache.delete(`holder-backfill-pending:${MINT}`);
@@ -649,6 +796,10 @@ if (!DB_URL) {
       const { rows } = await db.pool.query('SELECT conviction_meta, conviction_sample_size FROM tokens WHERE mint_address = $1', [MINT]);
       assert.strictEqual(rows[0].conviction_meta.method, 'stratified-v1');
       assert.ok(rows[0].conviction_meta.supplyDistribution);
+      // The stored sample size is the wallets the distribution rests on (audit #110)
+      assert.strictEqual(rows[0].conviction_sample_size, dh.resolved);
+      assert.strictEqual(rows[0].conviction_meta.resolved, dh.resolved);
+      assert.strictEqual(rows[0].conviction_meta.analyzed, dh.analyzed);
 
       // The hourly sweep runs a backfill pass even with nothing left to backfill:
       // it re-stores diamond hands without anyone opening the token page.
@@ -696,10 +847,13 @@ if (!DB_URL) {
       const realMulti = solana.getMultipleAccounts;
       solana.getMultipleAccounts = async () => { throw Object.assign(new Error('Request failed with status code 429'), { response: { status: 429 } }); };
       chain.W001.amount += 1n; // so the pre-check sees a change
+      const realRetry = pipeline.CONFIG.lpCheckRetryMs;
+      pipeline.CONFIG.lpCheckRetryMs = [1, 1, 1];
       try {
         await assert.rejects(pipeline.takeSnapshot(MINT), /LP wallet check failed/);
         assert.strictEqual((await store.getLatestSnapshot(MINT)).id, before.id);
       } finally {
+        pipeline.CONFIG.lpCheckRetryMs = realRetry;
         solana.getMultipleAccounts = realMulti;
         chain.W001.amount -= 1n;
         await cache.delete(`holder-snapshot-pending:${MINT}`);
@@ -718,6 +872,71 @@ if (!DB_URL) {
       const p = await position('VERIFIEDNEW');
       assert.strictEqual(p.acquired_source, 'snapshot');
       assert.strictEqual(new Date(p.acquired_at).getTime(), now);
+    });
+
+    test('a failed LP check batch is retried in place; the DAS pages are not bought again (audit #26)', async () => {
+      now += HOUR;
+      const before = await store.getLatestSnapshot(MINT);
+      const realMulti = solana.getMultipleAccounts;
+      const realAll = solana.getAllTokenAccounts;
+      const realRetry = pipeline.CONFIG.lpCheckRetryMs;
+      pipeline.CONFIG.lpCheckRetryMs = [1, 1, 1];
+      let fails = 2;
+      let reads = 0;
+      solana.getMultipleAccounts = async addrs => {
+        if (fails-- > 0) throw Object.assign(new Error('timeout of 15000ms exceeded'), { code: 'ECONNABORTED' });
+        return realMulti(addrs);
+      };
+      solana.getAllTokenAccounts = async (...a) => { reads++; return realAll(...a); };
+      chain.W001.amount += 1n; // so the pre-check sees a change
+      try {
+        const r = await pipeline.takeSnapshot(MINT);
+        assert.strictEqual(r.status, 'ok');
+        assert.notStrictEqual((await store.getLatestSnapshot(MINT)).id, before.id);
+        assert.strictEqual(reads, 1, 'the account list was read once');
+      } finally {
+        pipeline.CONFIG.lpCheckRetryMs = realRetry;
+        solana.getMultipleAccounts = realMulti;
+        solana.getAllTokenAccounts = realAll;
+        chain.W001.amount -= 1n;
+      }
+    });
+
+    test('a snapshot job is queued under one id per mint, so a long queue wait cannot double it (audit #107)', async () => {
+      await cache.delete(`holder-snapshot-pending:${MINT}`);
+      const realAdd = jobQueue.addAnalyticsJob;
+      let seen;
+      jobQueue.addAnalyticsJob = async (name, data, opts) => { seen = { name, opts }; return { id: 'x' }; };
+      try {
+        assert.strictEqual(await pipeline.ensureSnapshot(MINT), true);
+      } finally {
+        jobQueue.addAnalyticsJob = realAdd;
+        await cache.delete(`holder-snapshot-pending:${MINT}`);
+      }
+      assert.strictEqual(seen.name, 'snapshot-holders');
+      assert.strictEqual(seen.opts.jobId, `snapshot-${MINT}`);
+      assert.strictEqual(seen.opts.removeOnComplete, true);
+      assert.strictEqual(seen.opts.removeOnFail, true);
+    });
+
+    test('a second snapshot of a mint already being snapshotted here is skipped (audit #108)', async () => {
+      now += HOUR;
+      const realSupply = solana.getTokenSupply;
+      let release;
+      const gate = new Promise(r => { release = r; });
+      let calls = 0;
+      solana.getTokenSupply = async (...a) => { calls++; await gate; return realSupply(...a); };
+      try {
+        const first = pipeline.takeSnapshot(MINT);
+        await new Promise(r => setTimeout(r, 10));
+        await cache.delete(`holder-snapshot-pending:${MINT}`); // e.g. a Redis restart
+        assert.deepStrictEqual(await pipeline.takeSnapshot(MINT), { status: 'busy' });
+        assert.strictEqual(calls, 1);
+        release();
+        await first;
+      } finally {
+        solana.getTokenSupply = realSupply;
+      }
     });
   });
 

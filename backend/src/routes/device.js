@@ -6,6 +6,8 @@ const {
   asyncHandler,
   requireDatabase,
   validateDeviceLinkSignature,
+  validateDeviceListSignature,
+  validateDeviceRevokeSignature,
   hashDeviceToken,
 } = require('../middleware/validation');
 const { strictLimiter, defaultLimiter } = require('../middleware/rateLimit');
@@ -120,13 +122,13 @@ router.post('/activate', strictLimiter, asyncHandler(async (req, res) => {
  * The phones currently linked to a wallet. Behind a signature: a wallet address is public, so
  * without one this would let anyone enumerate somebody else's devices.
  */
-router.post('/list', defaultLimiter, validateDeviceLinkSignature, asyncHandler(async (req, res) => {
+router.post('/list', defaultLimiter, validateDeviceListSignature, asyncHandler(async (req, res) => {
   const devices = await db.getDeviceSessionsByWallet(req.linkedWallet);
   res.json({ devices: devices.map(toDeviceView) });
 }));
 
 /** Revoke one phone, or all of them. Signed, and scoped to the signer's own devices. */
-router.post('/revoke', strictLimiter, validateDeviceLinkSignature, asyncHandler(async (req, res) => {
+router.post('/revoke', strictLimiter, validateDeviceRevokeSignature, asyncHandler(async (req, res) => {
   const { deviceId, all } = req.body || {};
 
   if (all === true) {

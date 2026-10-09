@@ -17,7 +17,7 @@ function pool() {
 /** Latest snapshot header for a mint, or null. */
 async function getLatestSnapshot(mint) {
   const { rows } = await pool().query(
-    `SELECT id, mint_address, taken_at, verified_at, complete, pages, account_count, holder_count,
+    `SELECT id, mint_address, taken_at, verified_at, checked_at, complete, pages, account_count, holder_count,
             decimals, supply, sample, sample_meta
        FROM holder_snapshots WHERE mint_address = $1
       ORDER BY taken_at DESC LIMIT 1`,
@@ -27,14 +27,14 @@ async function getLatestSnapshot(mint) {
 }
 
 /**
- * mint → when the latest snapshot was last known exact (ms): its taken_at, or a
- * later verified_at. Snapshots without a supply (written before supply/decimals
+ * mint → when the latest snapshot was last known current (ms): its taken_at, or a
+ * later verified_at or pre-check (checked_at). Snapshots without a supply (written before supply/decimals
  * were required) don't count, so the schedulers replace them on their next run.
  */
 async function getLatestSnapshotTimes(mints) {
   if (!mints || mints.length === 0) return {};
   const { rows } = await pool().query(
-    `SELECT DISTINCT ON (mint_address) mint_address, GREATEST(taken_at, verified_at) AS fresh_at, supply
+    `SELECT DISTINCT ON (mint_address) mint_address, GREATEST(taken_at, verified_at, checked_at) AS fresh_at, supply
        FROM holder_snapshots WHERE mint_address = ANY($1)
       ORDER BY mint_address, taken_at DESC`,
     [mints]
@@ -44,9 +44,14 @@ async function getLatestSnapshotTimes(mints) {
   return out;
 }
 
-/** A pre-check that read every account found the snapshot still exact at `at`. */
-async function markVerified(snapshotId, at) {
-  await pool().query('UPDATE holder_snapshots SET verified_at = $2 WHERE id = $1', [snapshotId, new Date(at)]);
+/**
+ * A pre-check found the snapshot unchanged at `at` (checked_at). When it read every
+ * account (`all`), the snapshot is also known exact then (verified_at).
+ */
+async function markVerified(snapshotId, at, { all = true } = {}) {
+  await pool().query(
+    `UPDATE holder_snapshots SET checked_at = $2${all ? ', verified_at = $2' : ''} WHERE id = $1`,
+    [snapshotId, new Date(at)]);
 }
 
 /** Top ranked entries of a snapshot. */
@@ -79,6 +84,14 @@ async function getSnapshotEntries(snapshotId, limit = 100) {
  */
 const FAILED_RETRY_AFTER_HOURS = 24;
 const FAILED_RETRY_MAX_ATTEMPTS = 10;
+// $1 mint, $2 FAILED_RETRY_AFTER_HOURS, $3 FAILED_RETRY_MAX_ATTEMPTS, $4 now
+const REQUEUE_FAILED_SQL = `
+  UPDATE holder_positions p SET
+    acquired_source = 'pending',
+    backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL, backfill_pages = 0
+  WHERE p.mint_address = $1 AND p.acquired_source = 'failed'
+    AND p.backfill_attempts < $3
+    AND (p.backfill_updated_at IS NULL OR p.backfill_updated_at < $4::timestamptz - make_interval(hours => $2))`;
 
 async function writeSnapshot({ mint, takenAt, complete, pages, accountCount, holders, decimals, supply,
   sample, sampleMeta, topN, newAcquisition }) {
@@ -138,12 +151,7 @@ async function writeSnapshot({ mint, takenAt, complete, pages, accountCount, hol
     );
     // Gave up a while ago: try again
     await client.query(
-      `UPDATE holder_positions p SET
-         acquired_source = 'pending',
-         backfill_cursor = NULL, backfill_balance = NULL, backfill_oldest_at = NULL, backfill_pages = 0
-       WHERE p.mint_address = $1 AND p.acquired_source = 'failed'
-         AND p.backfill_attempts < $3
-         AND (p.backfill_updated_at IS NULL OR p.backfill_updated_at < $4::timestamptz - make_interval(hours => $2))
+      `${REQUEUE_FAILED_SQL}
          AND EXISTS (SELECT 1 FROM snapshot_wallets s WHERE s.wallet = p.wallet)`,
       [mint, FAILED_RETRY_AFTER_HOURS, FAILED_RETRY_MAX_ATTEMPTS, takenAtDate]
     );
@@ -207,6 +215,15 @@ async function getPositions(mint, wallets) {
   return out;
 }
 
+/** Every stored position of a mint: wallet and its token account. */
+async function getPositionAccounts(mint) {
+  const { rows } = await pool().query(
+    'SELECT wallet, token_account FROM holder_positions WHERE mint_address = $1',
+    [mint]
+  );
+  return rows;
+}
+
 /** Save backfill progress or the result for one wallet. */
 async function saveBackfill(mint, wallet, { acquiredAt = null, source = null, cursor = null, balance = null,
   oldestAt = null, pagesAdded = 0, attempted = false }) {
@@ -256,6 +273,19 @@ async function pruneAbandonedMints() {
   return rowCount;
 }
 
+/**
+ * The same day-later retry as writeSnapshot's, for the backfill run. A token whose pre-check
+ * keeps finding it unchanged never writes a snapshot, so its 'failed' wallets otherwise
+ * stayed failed until an admin flush. No snapshot check here: on a complete token positions
+ * only hold current holders. On a capped token a wallet that has since left can be requeued
+ * until the attempt cap, which costs little since runBackfill only works walletsOfInterest.
+ */
+async function requeueFailedBackfills(mint, at = Date.now()) {
+  const { rowCount } = await pool().query(REQUEUE_FAILED_SQL,
+    [mint, FAILED_RETRY_AFTER_HOURS, FAILED_RETRY_MAX_ATTEMPTS, new Date(at)]);
+  return rowCount;
+}
+
 /** Put wallets whose backfill gave up back in the queue (admin action). */
 async function resetFailedBackfills() {
   const { rowCount } = await pool().query(
@@ -269,6 +299,7 @@ async function resetFailedBackfills() {
 module.exports = {
   FAILED_RETRY_AFTER_HOURS,
   resetFailedBackfills,
+  requeueFailedBackfills,
   getLatestSnapshot,
   getLatestSnapshotTimes,
   markVerified,
@@ -276,6 +307,7 @@ module.exports = {
   writeSnapshot,
   pruneSnapshots,
   getPositions,
+  getPositionAccounts,
   saveBackfill,
   pruneAbandonedMints,
 };
