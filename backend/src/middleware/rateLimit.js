@@ -144,7 +144,7 @@ const holderLookupLimiter = rateLimit({
   message: { error: 'Too many balance lookups, please slow down.' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip
+  keyGenerator: (req) => clientKey(req) // IPv6 cut to its /64, like every other limiter
 });
 
 // Limiter for API key requests (higher limits than default)

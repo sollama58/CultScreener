@@ -1,7 +1,9 @@
 ﻿const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const rateLimit = require('express-rate-limit');
+// The app's wrapper keys on clientKey (IPv6 cut to its /64), so one subscriber can't rotate
+// addresses for a fresh budget
+const { rateLimit } = require('../middleware/rateLimit');
 const { cache } = require('../services/cache');
 const holderCounts = require('../services/holderCounts');
 const { asyncHandler } = require('../middleware/validation');

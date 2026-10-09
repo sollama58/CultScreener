@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const express = require('express');
 
 process.env.RATE_LIMIT_MAX_REQUESTS = '3';
-const { defaultLimiter, viewLimiter, adminLoginLimiter, clientKey } = require('./rateLimit');
+const { defaultLimiter, viewLimiter, adminLoginLimiter, holderLookupLimiter, clientKey } = require('./rateLimit');
 
 async function serve(app, fn) {
   const server = app.listen(0);
@@ -77,5 +77,20 @@ test('adminLoginLimiter counts failed logins only', async () => {
     for (let i = 0; i < 5; i++) assert.strictEqual(await login(base, 'wrong'), 401);
     assert.strictEqual(await login(base, 'wrong'), 429);
     assert.strictEqual(await login(base, 'right'), 429);
+  });
+});
+
+test('holderLookupLimiter shares one budget across an IPv6 /64', async () => {
+  const app = express();
+  app.set('trust proxy', true);
+  app.get('/api/tokens/:mint/holder/:wallet', holderLookupLimiter, (req, res) => res.json({ ok: true }));
+  await serve(app, async (base) => {
+    const statuses = [];
+    for (let i = 1; i <= 11; i++) {
+      const r = await fetch(`${base}/api/tokens/M/holder/W`, { headers: { 'X-Forwarded-For': `2001:db8:1:2::${i.toString(16)}` } });
+      statuses.push(r.status);
+    }
+    assert.deepStrictEqual(statuses.slice(0, 10), Array(10).fill(200));
+    assert.strictEqual(statuses[10], 429);
   });
 });
