@@ -11,7 +11,7 @@ const { asyncHandler } = require('../middleware/validation');
 
 // /health is mounted outside the /api limiters (probes must never be throttled), but /stats is
 // public and touches the DB and Redis on every call, so it gets its own cap.
-const statsLimiter = require('express-rate-limit')({
+const statsLimiter = require('../middleware/rateLimit').rateLimit({
   windowMs: 60000,
   max: 30,
   message: { error: 'Too many requests.' },

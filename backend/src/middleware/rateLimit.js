@@ -1,7 +1,33 @@
 /**
  * Rate limiting middleware configurations
  */
-const rateLimit = require('express-rate-limit');
+const net = require('net');
+const expressRateLimit = require('express-rate-limit');
+
+// The key every limiter counts against: the client IP, with an IPv6 address cut to its /64.
+// One IPv6 subscriber or VM normally holds a whole /64, so keying on the full address would hand
+// it 2^64 separate budgets (including the admin login one) just by changing source address.
+// IPv4-mapped IPv6 (::ffff:1.2.3.4) is counted as the IPv4 address it carries.
+function clientKey(req) {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  if (!net.isIPv6(ip)) return ip;
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  const [head, tail = ''] = ip.split('%')[0].split('::');
+  const headParts = head ? head.split(':') : [];
+  const tailParts = ip.includes('::') ? (tail ? tail.split(':') : []) : [];
+  // A dotted IPv4 tail fills two groups (and only ever the low 64 bits)
+  const tailGroups = tailParts.length + (tailParts.some(g => g.includes('.')) ? 1 : 0);
+  const groups = ip.includes('::')
+    ? [...headParts, ...Array(Math.max(0, 8 - headParts.length - tailGroups)).fill('0'), ...tailParts]
+    : headParts;
+  return groups.slice(0, 4).map(g => (parseInt(g, 16) || 0).toString(16)).join(':') + '::/64';
+}
+
+// express-rate-limit with clientKey as the default key. Every limiter in the app is built here.
+function rateLimit(options) {
+  return expressRateLimit({ keyGenerator: clientKey, ...options });
+}
 
 // Default rate limiter
 const baseDefaultLimiter = rateLimit({
@@ -38,15 +64,38 @@ const viewLimiter = rateLimit({
   max: 10,         // 10 counted views per minute per IP per token
   standardHeaders: false,
   legacyHeaders: false,
-  keyGenerator: (req) => `${req.ip}:${req.params.mint}`,
+  keyGenerator: (req) => `${clientKey(req)}:${req.params.mint}`,
   handler: (req, res) => res.json({ recorded: false })
 });
 
-// Very strict limiter for sensitive operations (e.g. admin login)
+// Very strict limiter for sensitive operations (API key registration)
 const veryStrictLimiter = rateLimit({
   windowMs: parseInt(process.env.VERY_STRICT_RATE_LIMIT_WINDOW_MS, 10) || 3600000,
   max: parseInt(process.env.VERY_STRICT_RATE_LIMIT_MAX, 10) || 5,
+  message: { error: 'Too many requests. Please try again in 1 hour.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Admin login: same budget, but only failed attempts count. The admin token lives in per-tab
+// sessionStorage (the SameSite=strict cookie is never sent cross-site to the API host), so every
+// new tab logs in again; counting those successes locked the admin out after the fifth tab.
+const adminLoginLimiter = rateLimit({
+  windowMs: parseInt(process.env.VERY_STRICT_RATE_LIMIT_WINDOW_MS, 10) || 3600000,
+  max: parseInt(process.env.VERY_STRICT_RATE_LIMIT_MAX, 10) || 5,
+  skipSuccessfulRequests: true,
   message: { error: 'Too many login attempts. Please try again in 1 hour.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Admin panel writes (label toggles, approvals, announcements). Mounted after validateAdminSession,
+// with its own budget: sharing the public strictLimiter (10/min, same per-IP counter as votes and
+// watchlist writes) stopped an admin at the 11th click in a minute.
+const adminWriteLimiter = rateLimit({
+  windowMs: 60000,
+  max: parseInt(process.env.ADMIN_WRITE_RATE_LIMIT_MAX, 10) || 120,
+  message: { error: 'Too many admin actions, please slow down.' },
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -70,7 +119,7 @@ const walletLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Always use IP to prevent spoofing attacks where attacker uses victim's wallet address
-    return req.ip;
+    return clientKey(req);
   }
 });
 
@@ -83,7 +132,7 @@ const pollLimiter = rateLimit({
   message: { error: 'Too many requests, please slow down.' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip
+  keyGenerator: (req) => clientKey(req)
 });
 
 // Limiter for API key requests (higher limits than default)
@@ -96,15 +145,19 @@ const apiKeyLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Use IP as key to prevent circumvention
-    return req.ip;
+    return clientKey(req);
   }
 });
 
 module.exports = {
+  rateLimit,
+  clientKey,
   defaultLimiter,
   strictLimiter,
   viewLimiter,
   veryStrictLimiter,
+  adminLoginLimiter,
+  adminWriteLimiter,
   searchLimiter,
   walletLimiter,
   pollLimiter,

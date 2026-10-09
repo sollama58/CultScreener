@@ -10,6 +10,8 @@ const path = require('path');
 
 const MINT = 'So11111111111111111111111111111111111111112';
 const calls = [];
+let scanKeys = [];
+let releaseBackfill = null;
 
 const stub = (rel, exports) => {
   const file = require.resolve(path.join(__dirname, rel));
@@ -27,13 +29,17 @@ before(() => {
       clearPattern: async (p) => { calls.push(['clearPattern', p]); },
       delete: async (k) => { calls.push(['delete', k]); },
       get: async () => null,
-      scanKeys: async () => [],
-      deleteMany: async (ks) => ks.length,
+      scanKeys: async () => scanKeys,
+      deleteMany: async (ks) => { calls.push(['deleteMany', ks]); return ks.length; },
       set: async () => {},
     },
   });
   stub('../services/database', {
     removeCuratedToken: async () => ({ mint_address: MINT }),
+    setEmergingCult: async () => ({ mint_address: MINT }),
+    setTechCoin: async () => ({ mint_address: MINT }),
+    // Holds the backfill loop open until the test releases it
+    getCuratedTokens: () => new Promise(r => { releaseBackfill = () => r([]); }),
   });
   stub('../services/curatedTokens', {
     addCuratedTokenFully: async (mint) => ({ token: { mintAddress: mint } }),
@@ -76,5 +82,49 @@ describe('admin curated tokens and the leaderboard cache', () => {
     assert.strictEqual(status, 200);
     assert.ok(calls.some(([op, p]) => op === 'clearPattern' && p === 'leaderboard:conviction:*'), JSON.stringify(calls));
     assert.ok(calls.some(([op, k]) => op === 'delete' && k === 'king-of-pill:featured'), JSON.stringify(calls));
+  });
+});
+
+describe('admin label toggles', () => {
+  for (const [routePath, body] of [['/curated/:mint/emerging-cult', { emergingCult: true }], ['/curated/:mint/tech-coin', { techCoin: true }]]) {
+    test(`${routePath} clears the cached leaderboard the Tech and Emerging tabs read`, async () => {
+      calls.length = 0;
+      const { status } = await call('patch', routePath, { params: { mint: MINT }, body });
+      assert.strictEqual(status, 200);
+      assert.ok(calls.some(([op, p]) => op === 'clearPattern' && p === 'leaderboard:conviction:*'), JSON.stringify(calls));
+    });
+  }
+});
+
+describe('admin wipe-token-cache', () => {
+  test('deletes the upstream caches the rebuild reads and the suffixed submissions keys', async () => {
+    calls.length = 0;
+    scanKeys = [`submissions:${MINT}:all:approved`, `streamflow-locked:${MINT}:6`, 'submissions:OtherMint:all:approved', 'leaderboard:conviction:100:0:'];
+    const { status } = await call('post', '/wipe-token-cache', { body: { mint: MINT } });
+    scanKeys = [];
+    assert.strictEqual(status, 200);
+    const deletedKeys = calls.filter(([op]) => op === 'deleteMany').flatMap(([, ks]) => ks);
+    for (const k of [`token:${MINT}`, `helius-meta:${MINT}`, `gecko-overview:${MINT}`, `holder-total-none:${MINT}`,
+      `hb-analysis:${MINT}`, `api:token:${MINT}`, `submissions:${MINT}:all:approved`, `streamflow-locked:${MINT}:6`,
+      'leaderboard:conviction:100:0:']) {
+      assert.ok(deletedKeys.includes(k), k);
+    }
+    assert.ok(!deletedKeys.includes('submissions:OtherMint:all:approved'));
+  });
+});
+
+describe('admin backfill-holder-history', () => {
+  test('refuses a second run while one is in progress', async () => {
+    const first = call('post', '/backfill-holder-history', {});
+    await new Promise(r => setImmediate(r));
+    const second = await call('post', '/backfill-holder-history', {});
+    assert.strictEqual(second.status, 409);
+    releaseBackfill();
+    assert.strictEqual((await first).status, 400); // no curated tokens in the stub
+    // Finished: the next run is allowed again
+    const third = call('post', '/backfill-holder-history', {});
+    await new Promise(r => setImmediate(r));
+    releaseBackfill();
+    assert.strictEqual((await third).status, 400);
   });
 });

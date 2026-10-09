@@ -290,7 +290,7 @@ app.use('/health', healthRoutes);
 
 // Dedicated rate limiter for lightweight public endpoints (announcements, my-access)
 // These hit DB/Redis on every call so deserve a tighter cap than the shared defaultLimiter.
-const publicEndpointLimiter = require('express-rate-limit')({
+const publicEndpointLimiter = require('./middleware/rateLimit').rateLimit({
   windowMs: 60000,
   max: 30,
   message: { error: 'Too many requests.' },
@@ -378,7 +378,7 @@ const { sniffImageType, imageSourceFallbacks, ipfsContentPath } = require('./ser
 // the old usage and was rejecting normal page loads with 429s. 150 was still short: the five
 // home tables each render up to 100 rows, and opening a few tabs plus a token page passes it.
 // Most requests are Redis cache hits, so a generous per-IP ceiling costs little.
-const imageProxyLimiter = require('express-rate-limit')({
+const imageProxyLimiter = require('./middleware/rateLimit').rateLimit({
   windowMs: 60000,
   max: 600,
   message: { error: 'Too many image proxy requests.' },
