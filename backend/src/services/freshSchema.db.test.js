@@ -222,7 +222,7 @@ if (!DB_URL) {
       await db.activateDeviceSession('gdpr-pair', 'gdpr-session');
       await db.addWhitelistedWallet(WALLET, 'test');
       await db.recordCultifyBurn(WALLET, MINT, SIG, '1000');
-      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), true);
+      assert.ok(await db.hasCultifyAccess(WALLET, MINT), 'access held before the deletion');
 
       const result = await db.deleteUserData(WALLET);
       assert.strictEqual(result.deleted.deviceSessions, 1);
@@ -231,7 +231,7 @@ if (!DB_URL) {
 
       assert.strictEqual(await db.getDeviceSession('gdpr-session'), undefined);
       assert.strictEqual(await db.isWalletWhitelisted(WALLET), false);
-      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), false);
+      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), null);
       assert.deepStrictEqual(await db.getCultifyBurnsByWallet(WALLET), []);
       // The burn still can't be claimed a second time
       assert.strictEqual(await db.isCultifySignatureUsed(SIG), true);

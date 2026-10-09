@@ -347,6 +347,9 @@ describe('validateAdminSession', () => {
 
     const viaCookie = await run(validation.validateAdminSession, withHeaders({}, { admin_session: token }));
     assert.strictEqual(viaCookie.next, true);
+  });
+});
+
 describe('device link signatures name their action', () => {
   function signed(message, kp) {
     return Array.from(nacl.sign.detached(new TextEncoder().encode(message), kp.secretKey));
