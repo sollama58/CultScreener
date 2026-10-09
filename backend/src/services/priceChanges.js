@@ -26,6 +26,15 @@ const CANDLE_LIMIT = 31 * 6;
 const REFRESH_AFTER_MS = 3 * HOUR;
 // ...and older than this are not used at all (refreshes have been failing)
 const MAX_REF_AGE_MS = DAY;
+// A reference is the price `window` before the time it was fetched, so a change computed from it
+// spans window + its age. Each window only uses references young enough to keep that stretch to
+// a quarter of the window at most: the 24h fallback stops after 6h (instead of reading a 47h move
+// as "24h" after a day of failed refreshes), 7d and 30d keep the one-day limit.
+const MAX_REF_AGE_BY_WINDOW = {
+  d1: Math.min(MAX_REF_AGE_MS, WINDOWS.d1 / 4),
+  d7: Math.min(MAX_REF_AGE_MS, WINDOWS.d7 / 4),
+  d30: Math.min(MAX_REF_AGE_MS, WINDOWS.d30 / 4),
+};
 
 const finite = (v) => {
   const n = typeof v === 'number' ? v : parseFloat(v);
@@ -74,13 +83,13 @@ function changePct(price, ref) {
  */
 function changesForRow(row, now = Date.now()) {
   const refsAt = row.price_refs_at ? new Date(row.price_refs_at).getTime() : NaN;
-  const fresh = Number.isFinite(refsAt) && now - refsAt <= MAX_REF_AGE_MS;
-  const ref = (key) => (fresh ? row[key] : null);
+  const age = Number.isFinite(refsAt) ? now - refsAt : Infinity;
+  const ref = (win, column) => (age <= MAX_REF_AGE_BY_WINDOW[win] ? row[column] : null);
   const stored24h = finite(row.price_change_24h);
   return {
-    priceChange24h: stored24h != null ? stored24h : changePct(row.price, ref('price_ref_1d')),
-    priceChange7d: changePct(row.price, ref('price_ref_7d')),
-    priceChange30d: changePct(row.price, ref('price_ref_30d')),
+    priceChange24h: stored24h != null ? stored24h : changePct(row.price, ref('d1', 'price_ref_1d')),
+    priceChange7d: changePct(row.price, ref('d7', 'price_ref_7d')),
+    priceChange30d: changePct(row.price, ref('d30', 'price_ref_30d')),
   };
 }
 
@@ -101,6 +110,7 @@ async function fetchReferencePrices(mint, { now = Date.now(), gecko = require('.
 module.exports = {
   REFRESH_AFTER_MS,
   MAX_REF_AGE_MS,
+  MAX_REF_AGE_BY_WINDOW,
   CANDLE_LIMIT,
   priceAt,
   referencePrices,
