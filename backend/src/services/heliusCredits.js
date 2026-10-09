@@ -12,6 +12,9 @@
  *   helius-src-calls:<day>:<source>   calls per source
  *   helius-credits-hour:<hour>        credits per UTC hour (YYYY-MM-DDTHH)
  *
+ * Each day's totals are also added to Postgres (helius_credit_days), so the month
+ * line survives a Redis restart or the eviction of past days' keys.
+ *
  * The source is whatever withSource() set for the async context the call runs
  * in: "job:<name>" in the worker, "api:<METHOD> <path>" in the API (mints and
  * ids in the path collapsed), "<role>:background" otherwise.
@@ -37,6 +40,14 @@ const MONTHLY_BUDGET = (() => {
   return Number.isFinite(v) && v > 0 ? v : 10_000_000;
 })();
 const USAGE_CACHE_MS = 30000;
+// Day of the month the Helius plan's credits reset (the subscription's billing date,
+// UTC). The "month" line runs from the last such day; 1 = calendar month.
+const BILLING_DAY = (() => {
+  const v = parseInt(process.env.HELIUS_BILLING_DAY, 10);
+  return Number.isFinite(v) && v >= 1 && v <= 31 ? v : 1;
+})();
+// Increments a failed flush keeps for the next one (exact keys), at most
+const MAX_RETRY_KEYS = 5000;
 
 const context = new AsyncLocalStorage();
 let role = 'api';
@@ -123,26 +134,102 @@ function count(method, credits, calls = 1) {
   bump(processTotals.methods, method, credits, calls);
 }
 
+// Increments whose write failed (Redis disconnected: incrBy answers null), by exact
+// key, retried on the next flush instead of being lost
+const retry = new Map(); // key → { by, ttl }
+// Day totals not yet added to Postgres: day → { credits, calls }
+const pgPending = new Map();
+
+function addRetry(key, by, ttl) {
+  const e = retry.get(key);
+  if (e) e.by += by;
+  else if (retry.size < MAX_RETRY_KEYS) retry.set(key, { by, ttl });
+}
+
 async function flush() {
-  if (!buffer.day) return;
-  const { methods, sources, hours, day } = buffer;
-  buffer = { methods: new Map(), sources: new Map(), hours: new Map(), day: null };
-  const ops = [];
-  let total = 0;
-  for (const [method, { credits, calls }] of methods) {
-    total += credits;
-    if (credits) ops.push(cache.incrBy(`helius-credits:${day}:${method}`, credits, DAY_KEY_TTL));
-    if (calls) ops.push(cache.incrBy(`helius-calls:${day}:${method}`, calls, DAY_KEY_TTL));
+  const ops = [...retry].map(([key, { by, ttl }]) => [key, by, ttl]);
+  retry.clear();
+  if (buffer.day) {
+    const { methods, sources, hours, day } = buffer;
+    buffer = { methods: new Map(), sources: new Map(), hours: new Map(), day: null };
+    let total = 0;
+    let calls = 0;
+    for (const [method, m] of methods) {
+      total += m.credits;
+      calls += m.calls;
+      if (m.credits) ops.push([`helius-credits:${day}:${method}`, m.credits, DAY_KEY_TTL]);
+      if (m.calls) ops.push([`helius-calls:${day}:${method}`, m.calls, DAY_KEY_TTL]);
+    }
+    for (const [source, src] of sources) {
+      if (src.credits) ops.push([`helius-src-credits:${day}:${source}`, src.credits, DAY_KEY_TTL]);
+      if (src.calls) ops.push([`helius-src-calls:${day}:${source}`, src.calls, DAY_KEY_TTL]);
+    }
+    for (const [hour, credits] of hours) {
+      if (credits) ops.push([`helius-credits-hour:${hour}`, credits, HOUR_KEY_TTL]);
+    }
+    if (total) ops.push([`helius-credits:${day}`, total, DAY_KEY_TTL]);
+    if (total || calls) {
+      const p = pgPending.get(day) || { credits: 0, calls: 0 };
+      p.credits += total;
+      p.calls += calls;
+      pgPending.set(day, p);
+    }
   }
-  for (const [source, { credits, calls }] of sources) {
-    if (credits) ops.push(cache.incrBy(`helius-src-credits:${day}:${source}`, credits, DAY_KEY_TTL));
-    if (calls) ops.push(cache.incrBy(`helius-src-calls:${day}:${source}`, calls, DAY_KEY_TTL));
+  await Promise.all(ops.map(([key, by, ttl]) => Promise.resolve(cache.incrBy(key, by, ttl))
+    .then(v => { if (v == null) addRetry(key, by, ttl); }, () => addRetry(key, by, ttl))));
+  await flushToPostgres();
+}
+
+// Add the buffered day totals to Postgres; kept for the next flush if that fails
+async function flushToPostgres() {
+  if (pgPending.size === 0) return;
+  const pool = require('./database').pool;
+  if (!pool) return;
+  for (const [day, { credits, calls }] of [...pgPending]) {
+    try {
+      await pool.query(
+        `INSERT INTO helius_credit_days (day, credits, calls, updated_at) VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (day) DO UPDATE SET credits = helius_credit_days.credits + EXCLUDED.credits,
+           calls = helius_credit_days.calls + EXCLUDED.calls, updated_at = NOW()`,
+        [day, credits, calls]);
+      pgPending.delete(day);
+    } catch (_) {
+      // Postgres unreachable: keep the totals for the next flush (bounded by days)
+      if (pgPending.size > HISTORY_DAYS + 9) pgPending.delete(pgPending.keys().next().value);
+      return;
+    }
   }
-  for (const [hour, credits] of hours) {
-    if (credits) ops.push(cache.incrBy(`helius-credits-hour:${hour}`, credits, HOUR_KEY_TTL));
+}
+
+// day → credits stored in Postgres, for the last `days` days
+async function readPostgresDays(days) {
+  const pool = require('./database').pool;
+  if (!pool) return {};
+  try {
+    const { rows } = await pool.query(
+      `SELECT to_char(day, 'YYYY-MM-DD') AS day, credits FROM helius_credit_days
+        WHERE day >= ((NOW() AT TIME ZONE 'UTC')::date - $1::int)`, [days]);
+    return Object.fromEntries(rows.map(r => [r.day, Number(r.credits) || 0]));
+  } catch (_) {
+    return {};
   }
-  if (total) ops.push(cache.incrBy(`helius-credits:${day}`, total, DAY_KEY_TTL));
-  await Promise.all(ops.map(p => Promise.resolve(p).catch(() => {})));
+}
+
+/**
+ * The billing cycle containing `now`: from the last BILLING_DAY (clamped to the
+ * month's length) to the next one, as UTC day starts in ms.
+ */
+function billingCycle(now = Date.now(), billingDay = BILLING_DAY) {
+  const d = new Date(now);
+  const startOf = (y, m) => {
+    const len = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    return Date.UTC(y, m, Math.min(billingDay, len));
+  };
+  let start = startOf(d.getUTCFullYear(), d.getUTCMonth());
+  if (start > now) start = startOf(d.getUTCFullYear(), d.getUTCMonth() - 1);
+  const s = new Date(start);
+  const end = startOf(s.getUTCFullYear(), s.getUTCMonth() + 1);
+  return { start, end };
 }
 
 const flushTimer = setInterval(() => { flush().catch(() => {}); }, FLUSH_MS);
@@ -186,11 +273,12 @@ async function getUsage({ fresh = false } = {}) {
   await flush().catch(() => {});
 
   const now = Date.now();
-  const [methodCredits, methodCalls, srcCredits, srcCalls] = await Promise.all([
+  const [methodCredits, methodCalls, srcCredits, srcCalls, pgDays] = await Promise.all([
     readGrouped('helius-credits'),
     readGrouped('helius-calls'),
     readGrouped('helius-src-credits'),
     readGrouped('helius-src-calls'),
+    readPostgresDays(HISTORY_DAYS),
   ]);
 
   const days = [];
@@ -202,8 +290,9 @@ async function getUsage({ fresh = false } = {}) {
     days.push({
       date,
       // The per-method keys and the day total are written together; take the
-      // larger in case one write was lost
-      credits: Math.max(total, byMethod.reduce((s, r) => s + r.credits, 0)),
+      // larger in case one write was lost. Postgres keeps the total when Redis
+      // has lost the day (restart, eviction).
+      credits: Math.max(total, byMethod.reduce((s, r) => s + r.credits, 0), pgDays[date] || 0),
       calls: byMethod.reduce((s, r) => s + r.calls, 0),
       byMethod,
       bySource,
@@ -220,15 +309,17 @@ async function getUsage({ fresh = false } = {}) {
   const fullDays = days.slice(0, -1).filter(d => d.credits > 0).slice(-7);
   const avg7d = fullDays.length ? Math.round(fullDays.reduce((s, d) => s + d.credits, 0) / fullDays.length) : null;
 
-  // Month to date and a projection: full days so far at the 7-day average (or
-  // today's pace when there is no history yet)
-  const month = today.date.slice(0, 7);
-  const monthToDate = days.filter(d => d.date.startsWith(month)).reduce((s, d) => s + d.credits, 0);
+  // Billing cycle to date and a projection: full days so far at the 7-day average
+  // (or today's pace when there is no history yet). The cycle starts on the plan's
+  // billing day (HELIUS_BILLING_DAY), which is when Helius resets the credits.
+  const cycle = billingCycle(now);
+  const cycleStartDay = utcDay(cycle.start);
+  const month = cycleStartDay.slice(0, 7);
+  const monthToDate = days.filter(d => d.date >= cycleStartDay).reduce((s, d) => s + d.credits, 0);
   const d = new Date(now);
-  const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
   const dayFraction = (now - Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) / 86400000;
   const perDay = avg7d ?? (dayFraction > 0.05 ? today.credits / dayFraction : null);
-  const remainingDays = daysInMonth - (d.getUTCDate() - 1) - dayFraction;
+  const remainingDays = (cycle.end - now) / 86400000;
   const projected = perDay != null ? Math.round(monthToDate + perDay * remainingDays) : null;
 
   const value = {
@@ -238,6 +329,9 @@ async function getUsage({ fresh = false } = {}) {
     avg7d,
     month: {
       month,
+      billingDay: BILLING_DAY,
+      cycleStart: cycleStartDay,
+      cycleEnd: utcDay(cycle.end),
       toDate: monthToDate,
       projected,
       budget: MONTHLY_BUDGET,
@@ -282,5 +376,6 @@ module.exports = {
   normalizePath,
   getUsage,
   getSummary,
+  billingCycle,
   MONTHLY_BUDGET,
 };

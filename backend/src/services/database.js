@@ -616,6 +616,16 @@ async function initializeDatabase() {
         value TEXT,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+
+      -- Helius credits per UTC day (services/heliusCredits.js adds each flush's totals).
+      -- The per-method detail lives in Redis; this keeps the month line through a
+      -- Redis restart or the eviction of past days' keys.
+      CREATE TABLE IF NOT EXISTS helius_credit_days (
+        day DATE PRIMARY KEY,
+        credits BIGINT NOT NULL DEFAULT 0,
+        calls BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
     `);
 
     await client.query('COMMIT');
