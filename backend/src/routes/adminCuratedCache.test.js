@@ -10,6 +10,7 @@ const path = require('path');
 
 const MINT = 'So11111111111111111111111111111111111111112';
 const calls = [];
+let alreadyCurated = false;
 
 const stub = (rel, exports) => {
   const file = require.resolve(path.join(__dirname, rel));
@@ -36,7 +37,7 @@ before(() => {
     removeCuratedToken: async () => ({ mint_address: MINT }),
   });
   stub('../services/curatedTokens', {
-    addCuratedTokenFully: async (mint) => ({ token: { mintAddress: mint } }),
+    addCuratedTokenFully: async (mint) => ({ token: { mintAddress: mint }, alreadyCurated }),
     invalidateCuratedList: async () => {},
   });
   router = require('./admin');
@@ -68,6 +69,19 @@ describe('admin curated tokens and the leaderboard cache', () => {
     const { status } = await call('post', '/curated', { body: { mintAddress: MINT } });
     assert.strictEqual(status, 201);
     assert.ok(calls.some(([op, p]) => op === 'clearPattern' && p === 'leaderboard:conviction:*'), JSON.stringify(calls));
+  });
+
+  test('adding a mint already on the list says so and leaves the cache alone', async () => {
+    calls.length = 0;
+    alreadyCurated = true;
+    try {
+      const { status, body } = await call('post', '/curated', { body: { mintAddress: MINT } });
+      assert.strictEqual(status, 200);
+      assert.strictEqual(body.alreadyExists, true);
+      assert.deepStrictEqual(calls, []);
+    } finally {
+      alreadyCurated = false;
+    }
   });
 
   test('removing a token clears the cached leaderboard and featured King', async () => {

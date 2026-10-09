@@ -75,8 +75,16 @@ async function fetchDexScreenerData(mint) {
  *
  * Every step beyond the insert itself is non-critical: a token added while an upstream is down
  * is still added, and the periodic workers backfill whatever was missed.
+ *
+ * A mint already on the list is left as it is: { token, alreadyCurated: true } comes back
+ * without any enrichment, snapshot or cache drop, so the caller can say so.
  */
 async function addCuratedTokenFully(mintAddress) {
+  const already = async () => ({
+    token: await db.getCuratedToken(mintAddress).catch(() => null), dexScreenerEnriched: false, alreadyCurated: true,
+  });
+  if (await db.getCuratedToken(mintAddress).catch(() => null)) return already();
+
   // Fetch market cap before adding so we can record it at time of listing
   let mcapAtAdded = null;
   let marketData = null;
@@ -85,7 +93,8 @@ async function addCuratedTokenFully(mintAddress) {
     mcapAtAdded = marketData?.marketCap || null;
   } catch { /* non-critical — token can be added without mcap */ }
 
-  await db.addCuratedToken(mintAddress, mcapAtAdded);
+  // ON CONFLICT DO NOTHING: null when another request added it in the meantime
+  if (!(await db.addCuratedToken(mintAddress, mcapAtAdded))) return already();
 
   // Set initial ATH to the listing mcap (separate call — safe if column is missing)
   if (mcapAtAdded) {
@@ -128,7 +137,7 @@ async function addCuratedTokenFully(mintAddress) {
   // The home table's conviction leaderboard is cached; drop it so the new token shows up now.
   await cache.clearPattern('leaderboard:conviction:*').catch(() => {});
 
-  return { token, dexScreenerEnriched: !!dexData };
+  return { token, dexScreenerEnriched: !!dexData, alreadyCurated: false };
 }
 
 module.exports = { addCuratedTokenFully, fetchDexScreenerData, CURATED_LIST_KEY, invalidateCuratedList };

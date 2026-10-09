@@ -81,7 +81,10 @@ router.post('/', strictLimiter, requireAdmin, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid mint address' });
   }
 
-  const { token, dexScreenerEnriched } = await addCuratedTokenFully(mintAddress);
+  const { token, dexScreenerEnriched, alreadyCurated } = await addCuratedTokenFully(mintAddress);
+  if (alreadyCurated) {
+    return res.json({ success: true, alreadyExists: true, message: 'Token is already in the curated list', token });
+  }
 
   res.status(201).json({
     success: true,
