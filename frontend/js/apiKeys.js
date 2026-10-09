@@ -53,7 +53,7 @@ const apiKeysPage = {
   _storeSessionKey(key) {
     try {
       if (key) sessionStorage.setItem('cultApiKey', key);
-      else this._storeSessionKey(null);
+      else sessionStorage.removeItem('cultApiKey');
     } catch (e) { /* storage unavailable: the key still lives in memory for this page */ }
   },
 

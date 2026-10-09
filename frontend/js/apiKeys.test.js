@@ -112,3 +112,20 @@ test('Blocked session storage does not stop the page from loading', () => {
   const { page } = load({ requestError: new Error('unused'), blockSession: true });
   assert.ok(page);
 });
+
+test('Revoke removes the raw key from session storage', async () => {
+  const { page, ctx } = load({ requestError: new Error('unused') });
+  ctx.api.request = async () => ({ success: true });
+  page._storeSessionKey('cult_secret');
+  assert.strictEqual(ctx.sessionStorage.getItem('cultApiKey'), 'cult_secret');
+  await page.revokeKey();
+  assert.strictEqual(ctx.sessionStorage.getItem('cultApiKey'), null);
+  assert.strictEqual(page.currentKey, null);
+});
+
+test('A key that is gone on the server is removed from session storage', () => {
+  const { page, ctx } = load({ requestError: new Error('unused') });
+  page._storeSessionKey('cult_secret');
+  page._showKeyGone();
+  assert.strictEqual(ctx.sessionStorage.getItem('cultApiKey'), null);
+});
