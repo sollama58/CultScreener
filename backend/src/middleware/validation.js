@@ -1492,17 +1492,6 @@ async function validateBatchSubmissionSignature(req, res, next) {
   next();
 }
 
-/**
- * Create signature message for watchlist operations
- * @param {string} action - 'add' or 'remove'
- * @param {string} wallet - The wallet address
- * @param {string} tokenMint - The token mint address
- * @param {number} timestamp - Unix timestamp in milliseconds
- * @returns {string} The message to sign
- */
-function createWatchlistSignatureMessage(action, wallet, tokenMint, timestamp) {
-  return `HolDEX Watchlist: ${action} ${tokenMint} for ${wallet} at ${timestamp}`;
-}
 
 /**
  * Create signature message for sentiment votes
@@ -1543,72 +1532,6 @@ function createApiKeySignatureMessage(wallet, timestamp, action = 'register') {
   return `HolDEX API Key: ${action} for ${wallet} at ${timestamp}`;
 }
 
-/**
- * Middleware to validate wallet signature for watchlist operations
- * Signature is optional — if not provided, skip validation
- */
-async function validateWatchlistSignature(req, res, next) {
-  if (!req.body) return res.status(400).json({ error: 'Request body required' });
-  const { wallet, signature, signatureTimestamp } = req.body;
-
-  // Signature is required for write operations to prove wallet ownership
-  if (!signature || !signatureTimestamp) {
-    return res.status(400).json({
-      error: 'Wallet signature required',
-      message: 'Please sign with your wallet to verify ownership',
-      code: 'SIGNATURE_REQUIRED'
-    });
-  }
-
-  if (!wallet || !SOLANA_ADDRESS_REGEX.test(wallet)) {
-    return res.status(400).json({ error: 'Invalid wallet address' });
-  }
-
-  const now = Date.now();
-  const timestamp = parseInt(signatureTimestamp);
-
-  if (isNaN(timestamp)) {
-    return res.status(400).json({ error: 'Invalid timestamp', code: 'INVALID_TIMESTAMP' });
-  }
-
-  if (now - timestamp > SIGNATURE_EXPIRY_MS) {
-    return res.status(400).json({ error: 'Signature expired', message: 'Please sign a fresh request', code: 'SIGNATURE_EXPIRED' });
-  }
-
-  if (timestamp > now + 10000) {
-    return res.status(400).json({ error: 'Invalid timestamp', message: 'Signature timestamp is in the future', code: 'INVALID_TIMESTAMP' });
-  }
-
-  if (!Array.isArray(signature) || signature.length !== 64 || !signature.every(b => Number.isInteger(b) && b >= 0 && b <= 255)) {
-    return res.status(400).json({ error: 'Invalid signature format', code: 'INVALID_SIGNATURE_FORMAT' });
-  }
-
-  const tokenMint = req.body.tokenMint || '';
-  const action = req.method === 'DELETE' ? 'remove' : 'add';
-  const expectedMessage = createWatchlistSignatureMessage(action, wallet, tokenMint, timestamp);
-
-  // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
-  const sigKey = signature.join(',');
-
-  const isValid = verifyWalletSignature(expectedMessage, signature, wallet);
-
-  if (!isValid) {
-    return res.status(401).json({ error: 'Invalid signature', message: 'Wallet signature verification failed', code: 'INVALID_SIGNATURE' });
-  }
-
-  // Atomic check-and-mark: sets the key only if it doesn't exist (SET NX in Redis)
-  const alreadyUsed = await checkAndMarkSignature(sigKey, SIGNATURE_EXPIRY_MS);
-  if (alreadyUsed) {
-    return res.status(400).json({
-      error: 'Signature already used',
-      message: 'Each signature can only be used once',
-      code: 'SIGNATURE_REPLAY'
-    });
-  }
-
-  // Signature is valid - proceed
-  next();
-}
 
 /**
  * Middleware to validate wallet signature for sentiment votes
@@ -2042,11 +1965,9 @@ module.exports = {
   createSubmissionSignatureMessage,
   createBatchSubmissionSignatureMessage,
   createDataDeletionSignatureMessage,
-  createWatchlistSignatureMessage,
   createSentimentSignatureMessage,
   createCallSignatureMessage,
   createApiKeySignatureMessage,
-  validateWatchlistSignature,
   validateSentimentSignature,
   validateCallSignature,
   validateApiKeySignature: requireApiKeySignature('register'),

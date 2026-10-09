@@ -622,23 +622,21 @@ const api = {
       return api.request(`/api/watchlist/${wallet}`);
     },
 
-    // auth = { signature, signatureTimestamp } - the server requires a wallet
-    // signature over `HolDEX Watchlist: add|remove <mint> for <wallet> at <ts>`
-    // retries: 1 - the signature is single-use server-side, so a retry of the same body is
-    // always refused as SIGNATURE_REPLAY, even when the first attempt went through
-    async add(wallet, tokenMint, auth = {}) {
+    // No signature: the server takes watchlist writes for the connected wallet as they are.
+    // Add is idempotent, so the normal retries are safe.
+    async add(wallet, tokenMint) {
       return api.request('/api/watchlist', {
         method: 'POST',
-        retries: 1,
-        body: JSON.stringify({ wallet, tokenMint, ...auth })
+        body: JSON.stringify({ wallet, tokenMint })
       });
     },
 
-    async remove(wallet, tokenMint, auth = {}) {
+    // retries: 1 - a retried remove that already went through answers 404 'not in watchlist'
+    async remove(wallet, tokenMint) {
       return api.request('/api/watchlist', {
         method: 'DELETE',
         retries: 1,
-        body: JSON.stringify({ wallet, tokenMint, ...auth })
+        body: JSON.stringify({ wallet, tokenMint })
       });
     },
 
@@ -672,7 +670,7 @@ const api = {
     async cast(mint, sentimentType, wallet, auth = {}) {
       return api.request(`/api/sentiment/${mint}`, {
         method: 'POST',
-        retries: 1, // single-use signature: a retry is always a replay (see watchlist.add)
+        retries: 1, // single-use signature: a retry is always a replay
         body: JSON.stringify({ voterWallet: wallet, sentiment: sentimentType, ...auth })
       });
     }
