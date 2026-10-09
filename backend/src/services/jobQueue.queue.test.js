@@ -34,3 +34,13 @@ test('queued view counts get enough retries to survive the DB recovery window (a
   for (let i = 0; i < job.opts.attempts - 1; i++) span += delay * 2 ** i;
   assert.ok(span > 10 * 60 * 1000, `retry span ${span}ms`);
 });
+
+test('each view batch carries an id that is also its job id, so a resent add or re-run is applied once (audit #179)', async () => {
+  await jobQueue.incrementViewCount('MintB');
+  await jobQueue.flushViewCounts();
+  const jobs = added.filter((j) => j.name === 'batch-view-counts');
+  const job = jobs[jobs.length - 1];
+  assert.match(job.data.batchId, /^views-[0-9a-f-]{36}$/);
+  assert.strictEqual(job.opts.jobId, job.data.batchId);
+  assert.notStrictEqual(jobs[0].data.batchId, job.data.batchId, 'every flush gets a new id');
+});
