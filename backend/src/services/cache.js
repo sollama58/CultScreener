@@ -872,6 +872,30 @@ function createByteBudget({ limitBytes, windowMs, buckets = 24, now = Date.now }
 }
 
 /**
+ * One createByteBudget per key (e.g. per client), so one key spending its allowance leaves the
+ * others theirs. At most maxKeys budgets are kept; the least recently used is dropped first.
+ */
+function createKeyedByteBudget({ maxKeys = 5000, ...opts }) {
+  const budgets = new Map();
+  return {
+    forKey(key) {
+      let budget = budgets.get(key);
+      if (budget) {
+        budgets.delete(key);
+      } else {
+        budget = createByteBudget(opts);
+        if (budgets.size >= maxKeys) budgets.delete(budgets.keys().next().value);
+      }
+      budgets.set(key, budget);
+      return budget;
+    },
+    size() {
+      return budgets.size;
+    }
+  };
+}
+
+/**
  * createByteBudget, but counted in the cache itself (one INCRBY counter per slice) instead of
  * process memory. For a budget that guards what is written to that same cache: the count then
  * survives API restarts and deploys (a per-process count started from zero each time while the
@@ -908,5 +932,6 @@ module.exports = {
   TTL,
   keys,
   createByteBudget,
+  createKeyedByteBudget,
   createSharedByteBudget
 };

@@ -67,6 +67,21 @@ test('createByteBudget.record counts bytes even past the limit; exhausted() repo
   assert.strictEqual(budget.exhausted(), false);
 });
 
+test('createKeyedByteBudget gives each key its own allowance and bounds how many it keeps (audit #8)', () => {
+  const { createKeyedByteBudget } = require('./cache');
+  let t = 0;
+  const budgets = createKeyedByteBudget({ limitBytes: 1000, windowMs: 24000, buckets: 24, maxKeys: 2, now: () => t });
+  budgets.forKey('a').record(1200);
+  assert.strictEqual(budgets.forKey('a').exhausted(), true);
+  assert.strictEqual(budgets.forKey('b').exhausted(), false, 'one key spending its budget leaves the others theirs');
+  budgets.forKey('a'); // a is now the most recently used
+  budgets.forKey('c'); // over maxKeys: b, the least recently used, is dropped
+  assert.strictEqual(budgets.size(), 2);
+  assert.strictEqual(budgets.forKey('a').exhausted(), true, 'the recently used key keeps its count');
+  t = 24000;
+  assert.strictEqual(budgets.forKey('a').exhausted(), false);
+});
+
 test('createSharedByteBudget keeps its count in the store, so a restarted process sees it (audit #65)', async () => {
   const { createSharedByteBudget } = require('./cache');
   // A minimal store with the two calls the budget makes

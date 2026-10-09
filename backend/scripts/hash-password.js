@@ -12,7 +12,9 @@
 const crypto = require('crypto');
 const readline = require('readline');
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+// terminal follows stdin, not stdout: with stdout redirected to a file, readline would otherwise
+// leave the terminal in cooked mode and the kernel would echo the password itself.
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: Boolean(process.stdin.isTTY) });
 
 // Do not echo the password as it is typed: it would sit in the terminal scrollback (or a screen
 // share / recording) right above the hash. Everything readline writes after the prompt is dropped.
