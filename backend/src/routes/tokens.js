@@ -12,6 +12,7 @@ const holderPipeline = require('../services/holderPipeline');
 const holderCounts = require('../services/holderCounts');
 const priceChanges = require('../services/priceChanges');
 const { resolveMintDecimals } = require('../services/mintDecimals');
+const { inferSplBurn } = require('../services/splBurn');
 const axios = require('axios');
 const crypto = require('crypto');
 const { rateLimitedRequest } = require('../services/rateLimiter');
@@ -2295,29 +2296,10 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
 
 // Shared logic to build the full holder analytics result with LP/burn/lock flags
 function _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintData, tokenAuth, lpIndices, burntIndices, deadWalletBurnt, lockedAmount, decimals, mint) {
-  // SPL burn detection (pump.fun only)
-  const PUMP_FUN_AUTHORITIES = new Set([
-    'TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM',
-    '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
-    '39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg',
-  ]);
-
-  let splBurnt = 0;
-  let isPumpFun = false;
-  if (currentSupply && currentSupply > 0) {
-    const isPumpFunAuth = tokenAuth?.authorities?.some(a => PUMP_FUN_AUTHORITIES.has(a.address));
-    const isPumpFunMint = !isPumpFunAuth && decimals === 6 && mintData
-      && mintData.mintAuthority === null && mintData.freezeAuthority === null
-      && currentSupply > 0 && currentSupply <= 1000000000;
-    isPumpFun = !!(isPumpFunAuth || isPumpFunMint);
-    if (isPumpFun && decimals === 6) {
-      const diff = 1000000000 - currentSupply;
-      if (diff > 0) splBurnt = diff;
-    }
-  }
+  // SPL burn detection (pump.fun only: the one launch with a known original supply)
+  const { isPumpFun, splBurnt, supplyDenominator } = inferSplBurn({ currentSupply, decimals, tokenAuth });
 
   const burntAmount = splBurnt + deadWalletBurnt;
-  const supplyDenominator = isPumpFun ? 1000000000 : currentSupply;
   const supply = {
     total: currentSupply, burnt: burntAmount,
     burntPct: supplyDenominator > 0 && burntAmount > 0 ? (burntAmount / supplyDenominator) * 100 : 0,

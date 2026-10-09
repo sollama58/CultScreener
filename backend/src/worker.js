@@ -30,6 +30,7 @@ const solanaService = require('./services/solana');
 const heliusCredits = require('./services/heliusCredits');
 const { cache, TTL, keys } = require('./services/cache');
 const { BURN_WALLETS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('./constants');
+const { inferSplBurn } = require('./services/splBurn');
 
 // Allowed DEXes for similar-tokens anti-spoofing filter
 const SIMILAR_TOKEN_DEX_PREFIXES = ['raydium', 'pump', 'bonk'];
@@ -472,28 +473,10 @@ const jobProcessors = {
         }
       }
 
-      // Build full result with SPL burn detection
-      const PUMP_FUN_AUTHORITIES = new Set([
-        'TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM',
-        '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
-        '39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg',
-      ]);
-      let splBurnt = 0;
-      let isPumpFun = false;
-      if (currentSupply && currentSupply > 0) {
-        const isPumpFunAuth = tokenAuth?.authorities?.some(a => PUMP_FUN_AUTHORITIES.has(a.address));
-        const isPumpFunMint = !isPumpFunAuth && decimals === 6 && mintData
-          && mintData.mintAuthority === null && mintData.freezeAuthority === null
-          && currentSupply > 0 && currentSupply <= 1000000000;
-        isPumpFun = !!(isPumpFunAuth || isPumpFunMint);
-        if (isPumpFun && decimals === 6) {
-          const diff = 1000000000 - currentSupply;
-          if (diff > 0) splBurnt = diff;
-        }
-      }
+      // SPL burn detection (pump.fun only: the one launch with a known original supply)
+      const { isPumpFun, splBurnt, supplyDenominator } = inferSplBurn({ currentSupply, decimals, tokenAuth });
 
       const burntAmount = splBurnt + deadWalletBurnt;
-      const supplyDenominator = isPumpFun ? 1000000000 : currentSupply;
       const supply = {
         total: currentSupply, burnt: burntAmount,
         burntPct: supplyDenominator > 0 && burntAmount > 0 ? (burntAmount / supplyDenominator) * 100 : 0,
