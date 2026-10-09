@@ -86,6 +86,8 @@ test('Validation messages use the global toast', () => {
 test('Refresh details loads the key from the server (POST /api/keys/me)', async () => {
   const { page, el, ctx } = load({ requestError: new Error('unused') });
   const calls = [];
+  const signed = [];
+  ctx.wallet.signMessage = async (m) => { signed.push(m); return { signature: [1] }; };
   ctx.api.request = async (endpoint, opts) => {
     calls.push([endpoint, opts.method]);
     return { found: true, prefix: 'cult_abc', created_at: '2026-01-02T00:00:00Z', last_used_at: '2026-02-03T00:00:00Z', request_count: 42, is_active: true };
@@ -93,6 +95,8 @@ test('Refresh details loads the key from the server (POST /api/keys/me)', async 
   page.saveKeyMeta({ prefix: null, created_at: null, is_active: true, request_count: null, last_used_at: null, unknown: true });
   await page.refreshKeyMeta();
   assert.deepStrictEqual(calls, [['/api/keys/me', 'POST']]);
+  // The server checks POST /me against the 'view' action; any other text is refused.
+  assert.match(signed[0], /^HolDEX API Key: view for W1 at \d+$/);
   assert.strictEqual(el('existing-key').style.display, 'block');
   assert.strictEqual(el('key-prefix').textContent, 'cult_abc');
   assert.strictEqual(el('key-requests').textContent, (42).toLocaleString());

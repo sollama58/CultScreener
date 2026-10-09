@@ -167,6 +167,7 @@ const apiKeysPage = {
   // The signed text names the action (register, rotate, revoke, view): the server only accepts a
   // signature on the route whose action it names.
   async signForApi(action) {
+    if (!action) throw new Error('signForApi needs an action');
     const timestamp = Date.now();
     const message = `HolDEX API Key: ${action} for ${this.currentWallet} at ${timestamp}`;
     const sig = await wallet.signMessage(message);
@@ -184,7 +185,7 @@ const apiKeysPage = {
     const btn = document.getElementById('refresh-key-btn');
     this._setLoading(btn, true, 'Signing...');
     try {
-      const { signature, signatureTimestamp } = await this.signForApi();
+      const { signature, signatureTimestamp } = await this.signForApi('view');
       const info = await api.request('/api/keys/me', {
         method: 'POST',
         retries: 1, // the signature is single-use: a retry would only be refused as a replay
