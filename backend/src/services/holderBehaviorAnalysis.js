@@ -141,7 +141,25 @@ async function fetchSwapHistory(walletAddress, maxCount, cached) {
 // Run the full holder behavior analysis.
 // Called by the BullMQ worker via the compute-holder-behavior job.
 // Takes the top 50 holders, analyzes each wallet's last 100 swaps, then caches result.
+// Mints with an analysis running in this process. hb-pending is the dispatch dedupe,
+// but it vanishes with a Redis restart while the run carries on; a second job for
+// the same mint must not then buy every wallet's history again.
+const hbRunning = new Set();
+
 async function runHolderBehaviorAnalysis(mint) {
+  if (hbRunning.has(mint)) {
+    console.log(`[HB] ${mint.slice(0, 8)}: analysis already running here; skipped`);
+    return;
+  }
+  hbRunning.add(mint);
+  try {
+    await runHolderBehaviorAnalysisOnce(mint);
+  } finally {
+    hbRunning.delete(mint);
+  }
+}
+
+async function runHolderBehaviorAnalysisOnce(mint) {
   const pendingKey = `hb-pending:${mint}`;
   const resultKey  = `hb-analysis:${mint}`;
 

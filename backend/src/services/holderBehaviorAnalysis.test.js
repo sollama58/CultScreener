@@ -180,3 +180,21 @@ test('a run uses the snapshot holder list when one exists, minus LP wallets', as
   assert.strictEqual(result.holderCount, 3);
   assert.ok(!read.includes(list[0].wallet));
 });
+
+test('a second analysis of the same mint while one is running here is skipped (audit #108)', async () => {
+  stub('getTokenHolderSample', async () => ({ holders: holders(2) }));
+  stub('isTransactionHistoryAvailable', () => true);
+  let reads = 0;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  stub('getAccountTransactionsPage', async () => { reads++; await gate; return { txs: [], paginationToken: null }; });
+  const first = hb.runHolderBehaviorAnalysis(MINT);
+  await new Promise(r => setTimeout(r, 20));
+  await cache.set(`hb-pending:${MINT}`, 1, 60000); // a new run's flag, e.g. after a Redis restart
+  await hb.runHolderBehaviorAnalysis(MINT);
+  assert.strictEqual(reads, 2, 'the second run read nothing');
+  assert.ok(await cache.get(`hb-pending:${MINT}`), 'and left the flag to the running analysis');
+  release();
+  await first;
+  assert.ok(await cache.get(`hb-pending:${MINT}`) == null);
+});
