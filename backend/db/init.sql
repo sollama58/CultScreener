@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS sentiment_votes (
     UNIQUE(token_mint, voter_wallet)
 );
 
-CREATE INDEX IF NOT EXISTS idx_sentiment_votes_mint ON sentiment_votes(token_mint);
+-- No separate token_mint index: UNIQUE(token_mint, voter_wallet) serves those lookups, and
+-- initializeDatabase drops idx_sentiment_votes_mint, so creating it here rebuilt and dropped
+-- it on every deploy.
 
 -- =====================================================
 -- SENTIMENT TALLIES TABLE
@@ -111,11 +113,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger for tokens updated_at
-DROP TRIGGER IF EXISTS update_tokens_updated_at ON tokens;
-CREATE TRIGGER update_tokens_updated_at
-    BEFORE UPDATE ON tokens
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+-- Trigger for tokens updated_at. Created only when missing: DROP/CREATE TRIGGER takes
+-- ACCESS EXCLUSIVE on tokens, and this script runs on every build (postinstall), while
+-- the live service is reading that table.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                   WHERE tgname = 'update_tokens_updated_at' AND tgrelid = 'tokens'::regclass) THEN
+        CREATE TRIGGER update_tokens_updated_at
+            BEFORE UPDATE ON tokens
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 -- End of initialization script

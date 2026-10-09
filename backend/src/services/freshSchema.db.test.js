@@ -143,6 +143,8 @@ if (!DB_URL) {
     test('boot converts session columns left as TIMESTAMP by older versions', async () => {
       await db.pool.query('ALTER TABLE device_sessions ALTER COLUMN expires_at TYPE TIMESTAMP');
       await db.pool.query('ALTER TABLE admin_sessions ALTER COLUMN expires_at TYPE TIMESTAMP');
+      // An older version never recorded the schema it applied
+      await db.pool.query(`DELETE FROM app_settings WHERE key = 'schema_ddl_hash'`);
       assert.strictEqual(await db.initializeDatabase(), true);
       const { rows } = await db.pool.query(
         `SELECT table_name, column_name, data_type FROM information_schema.columns
@@ -187,6 +189,101 @@ if (!DB_URL) {
       assert.strictEqual(result.deleted.watchlist, 1);
       assert.ok(seen.length > 5);
       assert.deepStrictEqual(seen.filter(t => t !== 120000), []);
+    });
+  });
+
+  describe('schema step at boot', () => {
+    // A second connection into the same schema, to hold locks the way live traffic does
+    let other;
+    before(() => { other = new Pool({ connectionString: withOptions(DB_URL), max: 1 }); });
+    after(() => other.end());
+
+    test('records the schema it applied, and a restart with the same schema takes no table locks', async () => {
+      const { rows } = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.match(rows[0].value, /^[0-9a-f]{64}$/);
+      const holder = await other.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('LOCK TABLE tokens IN ACCESS SHARE MODE');
+        const started = Date.now();
+        assert.strictEqual(await db.initializeDatabase(), true);
+        // Used to queue an ACCESS EXCLUSIVE request behind this transaction (and every
+        // later tokens query behind that) on each start
+        assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+        assert.strictEqual(db.isReady(), true);
+      } finally {
+        await holder.query('ROLLBACK');
+        holder.release();
+      }
+    });
+
+    test('a changed schema waits at most a few seconds for a busy table, then retries', async () => {
+      await db.pool.query(`UPDATE app_settings SET value = 'older' WHERE key = 'schema_ddl_hash'`);
+      const holder = await other.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('LOCK TABLE tokens IN ACCESS SHARE MODE');
+        const started = Date.now();
+        assert.strictEqual(await db.initializeDatabase(), false);
+        const took = Date.now() - started;
+        assert.ok(took >= 4000 && took < 15000, `took ${took} ms`);
+      } finally {
+        await holder.query('ROLLBACK');
+        holder.release();
+      }
+      // Not recorded as applied, so the next attempt runs it
+      const { rows } = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.strictEqual(rows[0].value, 'older');
+      assert.strictEqual(await db.initializeDatabase(), true);
+      const again = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.match(again.rows[0].value, /^[0-9a-f]{64}$/);
+    });
+
+    test('token timestamps have a time zone, so conviction times are right whatever the session zone', async () => {
+      const MINT = 'FreshTz111111111111111111111111111111111111';
+      await db.pool.query('ALTER TABLE tokens ALTER COLUMN conviction_computed_at TYPE TIMESTAMP');
+      await db.pool.query('ALTER TABLE token_views ALTER COLUMN last_viewed_at TYPE TIMESTAMP');
+      await db.pool.query(`DELETE FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.strictEqual(await db.initializeDatabase(), true);
+      const { rows } = await db.pool.query(
+        `SELECT table_name, column_name, data_type FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND ((table_name = 'tokens' AND column_name IN ('pair_created_at', 'created_at', 'updated_at', 'conviction_computed_at'))
+             OR (table_name = 'token_views' AND column_name IN ('last_viewed_at', 'created_at')))`);
+      assert.strictEqual(rows.length, 6);
+      for (const r of rows) assert.strictEqual(r.data_type, 'timestamp with time zone', `${r.table_name}.${r.column_name}`);
+
+      await db.pool.query('INSERT INTO tokens (mint_address) VALUES ($1)', [MINT]);
+      await db.upsertConviction(MINT, { '1m': 50 }, 10, 10);
+      const token = await db.getToken(MINT);
+      // Was 9 hours in the future with a TIMESTAMP column in a Tokyo session
+      assert.ok(Math.abs(new Date(token.conviction_computed_at).getTime() - Date.now()) < 60_000);
+    });
+  });
+
+  describe('pool errors', () => {
+    test('an idle connection failing does not take the database offline', async () => {
+      assert.strictEqual(db.isReady(), true);
+      db.pool.emit('error', new Error('Connection terminated unexpectedly'));
+      assert.strictEqual(db.isReady(), true);
+      await new Promise(r => setTimeout(r, 100)); // the probe query succeeds
+      assert.strictEqual(db.isReady(), true);
+    });
+
+    test('a connection dropped mid-transaction fails that transaction, not the process', async () => {
+      const client = await db.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const pid = (await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+        await admin.query('SELECT pg_terminate_backend($1)', [pid]);
+        // Without a listener, pg's 'error' event on the checked-out client was an uncaught exception
+        await new Promise(r => setTimeout(r, 200));
+        await assert.rejects(client.query('SELECT 1'));
+      } finally {
+        client.release();
+      }
+      const { rows } = await db.pool.query('SELECT 1 AS ok');
+      assert.strictEqual(rows[0].ok, 1);
     });
   });
 
