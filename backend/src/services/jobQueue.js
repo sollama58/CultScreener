@@ -184,9 +184,9 @@ const RECURRING_JOBS = [
   // Curated prices 1, 7 and 30 days ago, for the home table's 7d/30d change (a few tokens per run)
   { id: 'refresh-curated-price-refs', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 15 * 60 * 1000 }, phaseMs: 194_000 },
   // Daily holder counts, 00:05 UTC
-  { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' } },
+  { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *' }, catchUp: true },
   // Daily Diamond Hands scores and the King of the Pill, 00:20 UTC
-  { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *' } },
+  { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *' }, catchUp: true },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
 ];
@@ -198,12 +198,22 @@ const RETIRED_JOBS = [
 ];
 
 /**
+ * True when a daily 'M H * * *' (UTC) pattern's slot for today has already passed.
+ */
+function dailySlotPassed(pattern, now = Date.now()) {
+  const m = /^(\d+) (\d+) \* \* \*$/.exec(pattern || '');
+  if (!m) return false;
+  const d = new Date(now);
+  return d.getUTCHours() * 60 + d.getUTCMinutes() >= parseInt(m[2], 10) * 60 + parseInt(m[1], 10);
+}
+
+/**
  * Make sure every recurring job is scheduled. Safe to call at any time and from
  * any process: the worker calls it at startup and then every few minutes, so the
  * schedules come back on their own if Redis restarts or evicts them (the free
  * Render Redis keeps no data across restarts). Returns how many are scheduled.
  */
-async function ensureRecurringJobs() {
+async function ensureRecurringJobs({ now = Date.now() } = {}) {
   if (!isInitialized && !initialize()) return 0;
   let scheduled = 0;
   for (const { id, queue: queueName } of RETIRED_JOBS) {
@@ -213,9 +223,20 @@ async function ensureRecurringJobs() {
       for (const j of (await queue.getRepeatableJobs()).filter(j => j.name === id)) await queue.removeRepeatableByKey(j.key);
     } catch (_) { /* nothing to remove */ }
   }
-  for (const { id, queue: queueName, repeat, phaseMs } of RECURRING_JOBS) {
+  for (const { id, queue: queueName, repeat, phaseMs, catchUp } of RECURRING_JOBS) {
     const queue = queues[queueName];
     try {
+      // A daily scheduler re-created after its slot (Redis lost it, e.g. a restart
+      // at 00:17) would next fire tomorrow, skipping today's run: run it once now.
+      // The job id makes that once per day; the jobs are safe to repeat.
+      if (catchUp && dailySlotPassed(repeat.pattern, now)) {
+        const existing = await queue.getJobScheduler(id).catch(() => true);
+        if (!existing) {
+          const day = new Date(now).toISOString().slice(0, 10);
+          await queue.add(id, { catchUp: true }, { jobId: `${id}-catchup-${day}` });
+          console.warn(`[JobQueue] ${id} schedule was missing after today's run time; queued a catch-up run`);
+        }
+      }
       // Drop schedules made by the older queue.add({ repeat }) API, which stored
       // them under a composite key instead of the scheduler id.
       const legacy = (await queue.getRepeatableJobs()).filter(j => j.name === id && j.key !== id);
@@ -519,6 +540,7 @@ module.exports = {
   addSearchJob,
   ensureRecurringJobs,
   RECURRING_JOBS,
+  dailySlotPassed,
   incrementViewCount,
   getBufferedViewCounts,
   flushViewCounts,
