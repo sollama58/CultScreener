@@ -393,7 +393,7 @@ async function getTokenInfo(mintAddress) {
       address: attrs.address,
       name: attrs.name || null,
       symbol: attrs.symbol || null,
-      decimals: attrs.decimals || 9,
+      decimals: Number.isInteger(attrs.decimals) ? attrs.decimals : 9,
       logoUri: normalizeLogoUri(attrs.image_url),
       logoURI: normalizeLogoUri(attrs.image_url),
       price: parseFloat(attrs.price_usd) || 0,
@@ -671,7 +671,7 @@ async function getTokenOverview(mintAddress) {
       address: tokenAddress,
       name: symbol, // Basic name from pool, Helius provides better metadata
       symbol: symbol,
-      decimals: 9, // Default, Helius provides accurate decimals
+      decimals: null, // Unknown from pools; Helius provides accurate decimals (a guessed 9 masked a real 0)
       logoUri: null, // Helius provides logos
       logoURI: null,
       price,
@@ -811,7 +811,7 @@ async function getTrendingTokens(options = {}) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           // Use token-level market cap if available (a quote-side pool publishes none)
@@ -903,7 +903,7 @@ async function getNewTokens(limit = 20, skipEnrichment = false, page = 1) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           if (info.marketCap) token.marketCap = info.marketCap;
@@ -994,7 +994,7 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
         if (info) {
           token.name = info.name || token.name;
           token.symbol = info.symbol || token.symbol;
-          token.decimals = info.decimals || token.decimals;
+          token.decimals = Number.isInteger(info.decimals) ? info.decimals : token.decimals;
           token.logoUri = info.logoUri || token.logoUri;
           token.logoURI = info.logoUri || token.logoURI;
           // Use token-level market cap if available (more accurate than pool-level)
@@ -1190,6 +1190,9 @@ async function getTokenPrice(mintAddress) {
 /**
  * Get liquidity pools for a token
  * Endpoint: /networks/{network}/tokens/{address}/pools
+ * Returns [] when the token has no pools (or is not indexed, 404) and null when the
+ * request failed (429, 5xx, timeout, open breaker), so callers don't cache a failure
+ * as an empty pool list.
  */
 async function getTokenPools(mintAddress, options = {}) {
   const { limit = 10 } = options;
@@ -1256,10 +1259,10 @@ async function getTokenPools(mintAddress, options = {}) {
     if (error.response?.status === 404) {
       console.warn(`[GeckoTerminal] getTokenPools: token not found on GeckoTerminal (${mintAddress.slice(0, 8)}...)`);
       errorCache.set(errorCacheKey, { expiry: Date.now() + ERROR_CACHE_TTL });
-    } else {
-      console.error('[GeckoTerminal] getTokenPools error:', error.message);
+      return [];
     }
-    return [];
+    console.error('[GeckoTerminal] getTokenPools error:', error.message);
+    return null;
   }
 }
 

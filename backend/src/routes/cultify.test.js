@@ -558,43 +558,67 @@ describe('GET /holder-behavior/analyze/:mint for a whitelisted wallet', () => {
   });
 });
 
-describe('GET /analyze/:mint DAS fallback decimals', () => {
+describe('GET /analyze/:mint with the RPC down', () => {
   let added;
-  let dasDecimals;
+  let dasCalls;
+  let snapshot;
   beforeEach(() => {
     added = [];
-    dasDecimals = [];
+    dasCalls = 0;
+    snapshot = null;
     db.isTokenAllowed = async () => true;
     solanaService.getTokenLargestAccounts = async () => null; // RPC down
     solanaService.getTokenSupply = async () => { throw new Error('rpc down'); };
-    solanaService.getTokenMetadata = async () => null;
-    solanaService.getTokenLargestAccountsDAS = async (mint, decimals) => {
-      dasDecimals.push(decimals);
-      return [{ address: 'acct1', wallet: 'owner1', uiAmount: 1234 / 10 ** decimals }];
+    solanaService.getTokenMetadata = async () => ({ decimals: 6 });
+    solanaService.getTokenLargestAccountsDAS = async () => {
+      dasCalls++;
+      return [{ address: 'acct1', wallet: 'owner1', uiAmount: 1 }];
     };
+    holderPipeline.getSnapshotHolderList = async (mint, opts) => (opts?.maxAgeMs === 24 * 3_600_000 ? snapshot : null);
     jobQueue.addAnalyticsJob = async (name, data) => { added.push({ name, data }); return { id: 'j' }; };
   });
 
-  test('unknown decimals: answers rpc_unavailable without caching or queueing raw units', async () => {
+  test('no recent snapshot: answers rpc_unavailable, never caches a DAS page as top holders', async () => {
     const r = await get(`/analyze/${MINT}`);
     assert.strictEqual(r.status, 200);
     assert.deepStrictEqual(r.body, { holders: [], totalSupply: null, metrics: null, supply: null, error: 'rpc_unavailable' });
-    assert.deepStrictEqual(dasDecimals, [], 'DAS not scaled with a guess');
+    assert.strictEqual(dasCalls, 0, 'unsorted DAS page not used');
     assert.strictEqual(store.has(`holder-analytics:${MINT}`), false);
     assert.strictEqual(store.has(`holder-classify-pending:${MINT}`), false);
     assert.strictEqual(added.length, 0);
   });
 
-  test('decimals from Helius metadata scale the DAS amounts and reach the worker job', async () => {
-    solanaService.getTokenMetadata = async () => ({ decimals: 6 });
+  test('a snapshot up to a day old stands in for the top holders', async () => {
+    snapshot = {
+      rawAccounts: [{ address: 'acct1', wallet: 'owner1', uiAmount: 500 }, { address: 'acct2', wallet: 'owner2', uiAmount: 100 }],
+      totalSupply: 1000,
+      decimals: 0,
+    };
     const r = await get(`/analyze/${MINT}`);
     assert.strictEqual(r.status, 200);
-    assert.deepStrictEqual(dasDecimals, [6]);
-    assert.strictEqual(r.body.holders[0].balance, 1234 / 1e6);
+    assert.deepStrictEqual(r.body.holders.map(h => h.address), ['owner1', 'owner2']);
+    assert.strictEqual(r.body.totalSupply, 1000);
+    assert.strictEqual(dasCalls, 0);
     const job = added.find(j => j.name === 'compute-holder-analytics');
     assert.ok(job, 'enrichment job queued');
-    assert.strictEqual(job.data.supplyDecimals, 6);
-    assert.strictEqual(job.data.usedDAS, true);
+    assert.strictEqual(job.data.supplyDecimals, 0, "the snapshot's own decimals, 0 included");
+    assert.strictEqual(job.data.usedDAS, true, 'snapshot accounts carry their wallets');
+  });
+});
+
+describe('GET /analyze/:mint decimals for the worker job', () => {
+  test('getTokenSupply failing: decimals come from the RPC accounts', async () => {
+    const added = [];
+    db.isTokenAllowed = async () => true;
+    solanaService.getTokenLargestAccounts = async () => [{ address: 'acct1', uiAmount: 5, decimals: 4 }];
+    solanaService.getTokenSupply = async () => { throw new Error('rpc down'); };
+    jobQueue.addAnalyticsJob = async (name, data) => { added.push({ name, data }); return { id: 'j' }; };
+    const r = await get(`/analyze/${MINT}`);
+    assert.strictEqual(r.status, 200);
+    const job = added.find(j => j.name === 'compute-holder-analytics');
+    assert.ok(job);
+    assert.strictEqual(job.data.supplyDecimals, 4);
+    assert.strictEqual(job.data.usedDAS, false);
   });
 });
 

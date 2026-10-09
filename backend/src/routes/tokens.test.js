@@ -1,7 +1,8 @@
 /**
  * /api/tokens routes against stubbed services (no network, no Postgres, in-memory cache):
  * list cache keys and trending pagination, pools cache poisoning, view recording for
- * curated tokens only, query-type 500s, holder-count range, and DAS decimals.
+ * curated tokens only, query-type 500s, holder-count range, DAS decimals, token detail and
+ * price caching of degraded results, and the holders fast path.
  */
 const { test, describe, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert');
@@ -47,7 +48,14 @@ function resetStubs() {
     helius: false,
     metaCalls: [],
     meta: null,
-    jupiterCalls: 0
+    jupiterCalls: 0,
+    jupPrice: null,
+    dbFail: {},
+    directIncrements: 0,
+    snapshot: null,
+    largestCalls: 0,
+    onLargest: null,
+    accountInfoCalls: 0
   });
 }
 resetStubs();
@@ -56,8 +64,10 @@ const dbBase = {
   pool: null,
   isReady: () => true,
   isTokenAllowed: async (m) => S.allowed.has(m),
-  getTokenViews: async () => 5,
-  incrementTokenViews: async () => 6,
+  getTokenViews: async () => { if (S.dbFail.views) throw new Error('db down'); return 5; },
+  incrementTokenViews: async () => { S.directIncrements++; return 6; },
+  getApprovedSubmissions: async () => { if (S.dbFail.submissions) throw new Error('db down'); return []; },
+  getCuratedToken: async () => { if (S.dbFail.curated) throw new Error('db down'); return null; },
   getTokenViewsBatch: async () => ({}),
   getSentimentBatch: async () => ({}),
   hasApprovedSubmissionsBatch: async () => new Set(),
@@ -73,12 +83,20 @@ stub('../services/database', new Proxy(dbStub, {
 const geckoBase = {
   getTrendingTokens: async ({ page }) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
   getNewTokens: async (_l, _s, page) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
-  getTokenPools: async (mint, { limit }) => { S.poolCalls.push(limit); return S.pools.slice(0, limit); },
-  getTokenOverview: async () => { if (S.overviewError) throw S.overviewError; return S.overview || null; },
+  getTokenPools: async (mint, { limit }) => { S.poolCalls.push(limit); return S.pools && S.pools.slice(0, limit); },
+  getTokenOverview: async () => {
+    if (S.overviewError) throw S.overviewError;
+    if (!S.overview) throw new Error('gecko 429');
+    return S.overview;
+  },
   OHLCV_TIMEFRAMES: { '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '12h': 1, '1d': 1 }
 };
 const geckoStub = stub('../services/geckoTerminal', { ...geckoBase });
-const jupiterBase = { getTrendingTokens: async () => { S.jupiterCalls++; return []; }, getTokenInfo: async () => null };
+const jupiterBase = {
+  getTrendingTokens: async () => { S.jupiterCalls++; return []; },
+  getTokenInfo: async () => null,
+  getTokenPrice: async (mint) => S.jupPrice || { price: 0, mintAddress: mint, error: true }
+};
 const jupiterStub = stub('../services/jupiter', { ...jupiterBase });
 const restore = (obj, base) => {
   for (const k of Object.keys(obj)) if (!(k in base)) delete obj[k];
@@ -90,7 +108,11 @@ stub('../services/solana', {
   getTokenMetadataBatch: async (mints) => { S.metaCalls.push([...mints]); return S.meta ? S.meta(mints) : {}; },
   getTokenSupply: async () => { if (!S.tokenSupply) throw new Error('rpc down'); return S.tokenSupply; },
   getTokenMetadata: async () => S.tokenMetadata,
-  getTokenLargestAccounts: async () => S.largest,
+  getTokenLargestAccounts: async (mint) => { S.largestCalls++; if (S.onLargest) await S.onLargest(mint); return S.largest; },
+  getAccountInfo: async () => { S.accountInfoCalls++; await new Promise(r => setTimeout(r, 20)); return null; },
+  getTokenAuthorities: async () => null,
+  getStreamflowLockedAmount: async () => 0,
+  getMultipleAccounts: async () => null,
   getTokenLargestAccountsDAS: async (mint, decimals) => { S.dasCalls.push(decimals); return S.largestDAS && S.largestDAS(decimals); },
   getTokenAccountsByOwner: async () => { if (!S.ownerAccounts) throw new Error('rpc down'); return S.ownerAccounts; }
 });
@@ -100,21 +122,26 @@ stub('../services/jobQueue', {
   addAnalyticsJob: async (name, data) => { S.jobs.push({ name, data }); return { id: 1 }; }
 });
 stub('../services/holderPipeline', {
-  getSnapshotHolderList: async () => null,
+  // S.snapshot = { ageMs, list }: honours maxAgeMs like the real one (default 8h)
+  getSnapshotHolderList: async (mint, opts = {}) => {
+    if (!S.snapshot) return null;
+    return S.snapshot.ageMs <= (opts.maxAgeMs ?? 8 * 3_600_000) ? S.snapshot.list : null;
+  },
   ensureSnapshot: async () => {},
   CONFIG: { refreshMs: 6 * 3_600_000 }
 });
 
-let base, server, holderCounts, cache;
+let base, server, holderCounts, cache, keys, tokensRouter;
 
 before(async () => {
   holderCounts = require('../services/holderCounts');
   holderCounts.getPoints = async () => [];
   holderCounts.getDisplayCounts = async () => ({});
-  ({ cache } = require('../services/cache'));
+  ({ cache, keys } = require('../services/cache'));
+  tokensRouter = require('./tokens');
   const app = express();
   app.use(express.json());
-  app.use('/api/tokens', require('./tokens'));
+  app.use('/api/tokens', tokensRouter);
   app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
   server = app.listen(0);
   await new Promise(r => server.once('listening', r));
@@ -448,15 +475,28 @@ describe('DAS fallbacks scale by the mint decimals', () => {
     } finally { axios.post = orig; }
   });
 
-  test('holders: RPC and supply down, decimals come from metadata', async () => {
+  test('holders: RPC down, a day-old snapshot stands in (never an unsorted DAS page)', async () => {
+    S.tokenMetadata = { decimals: 6 };
+    S.largestDAS = (d) => [{ address: 'acct1', wallet: WALLET, uiAmount: 5e12 / 10 ** d }];
+    S.snapshot = { ageMs: 20 * 3_600_000, list: {
+      rawAccounts: [{ address: 'big', wallet: WALLET, uiAmount: 9e6 }], totalSupply: 1e9, decimals: 6
+    } };
+    const r = await get(`/api/tokens/${CURATED}/holders`);
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(S.dasCalls, []);
+    assert.strictEqual(r.body.holders[0].balance, 9e6);
+    const job = S.jobs.find(j => j.name === 'compute-holder-analytics');
+    assert.strictEqual(job.data.supplyDecimals, 6);
+  });
+
+  test('holders: RPC down and no snapshot -> 503, not 20 arbitrary DAS accounts', async () => {
     S.tokenMetadata = { decimals: 6 };
     S.largestDAS = (d) => [{ address: 'acct1', wallet: WALLET, uiAmount: 5e12 / 10 ** d }];
     const r = await get(`/api/tokens/${CURATED}/holders`);
-    assert.strictEqual(r.status, 200);
-    assert.deepStrictEqual(S.dasCalls, [6]);
-    assert.strictEqual(r.body.holders[0].balance, 5e6);
-    const job = S.jobs.find(j => j.name === 'compute-holder-analytics');
-    assert.strictEqual(job.data.supplyDecimals, 6);
+    assert.strictEqual(r.status, 503);
+    assert.strictEqual(r.body.error, 'rpc_unavailable');
+    assert.deepStrictEqual(S.dasCalls, []);
+    assert.strictEqual(S.jobs.find(j => j.name === 'compute-holder-analytics'), undefined);
   });
 
   test('holders: decimals unknowable -> 503 instead of raw units', async () => {
@@ -483,4 +523,157 @@ describe('GET /:mint (detail) when GeckoTerminal fails', () => {
       assert.ok(meta && meta.value.geckoPartial);
     });
   }
+});
+
+describe('GET /:mint holders fast path', () => {
+  const big = [{ address: 'acct1', amount: '5000000', decimals: 6, uiAmount: 5 }];
+
+  test('supply down: the job gets the decimals the RPC accounts carry, not 0', async () => {
+    S.largest = big;
+    const r = await get(`/api/tokens/${CURATED}/holders`);
+    assert.strictEqual(r.status, 200);
+    const job = S.jobs.find(j => j.name === 'compute-holder-analytics');
+    assert.strictEqual(job.data.supplyDecimals, 6);
+  });
+
+  test('classification already pending: the fast result is still cached for the polls', async () => {
+    S.largest = big;
+    await cache.set(`holder-classify-pending:${CURATED}`, Date.now(), 120000);
+    await get(`/api/tokens/${CURATED}/holders`);
+    const second = await get(`/api/tokens/${CURATED}/holders`);
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(S.largestCalls, 1);
+    assert.strictEqual(S.jobs.find(j => j.name === 'compute-holder-analytics'), undefined);
+  });
+
+  test('a classified result written after the cache miss is not replaced or re-queued', async () => {
+    S.largest = big;
+    const full = { holders: [{ rank: 1, isLP: true }], supply: { total: 1 }, metrics: { top5Pct: 3 } };
+    // The worker finishes while this request is between its cache miss and its write
+    S.onLargest = async (mint) => { await cache.set(`holder-analytics:${mint}`, full, 60000); };
+    await get(`/api/tokens/${CURATED}/holders`);
+    assert.deepStrictEqual(await cache.get(`holder-analytics:${CURATED}`), full);
+    assert.strictEqual(S.jobs.find(j => j.name === 'compute-holder-analytics'), undefined);
+  });
+
+  test('inline classification: two same-tick callers run one classification', async () => {
+    const run = tokensRouter._classifyHoldersInline;
+    run(CURATED, [{ address: 'a', uiAmount: 1 }], 10, true, null, 'x1');
+    run(OTHER, [{ address: 'b', uiAmount: 1 }], 10, true, null, 'x2');
+    await new Promise(r => setTimeout(r, 60));
+    assert.strictEqual(S.accountInfoCalls, 1);
+  });
+});
+
+describe('GET /:mint degraded results', () => {
+  const entry = () => cache.backend.cache.get(keys.tokenInfo(CURATED));
+
+  test('a Gecko-partial result is retried after 30s, and cache hits do not extend that', async () => {
+    const first = await get(`/api/tokens/${CURATED}`);
+    assert.strictEqual(first.status, 200);
+    assert.strictEqual(first.body.geckoPartial, true);
+    const expiry = entry().expiry;
+    assert.ok(expiry - Date.now() <= 30_000);
+    await new Promise(r => setTimeout(r, 15));
+    await get(`/api/tokens/${CURATED}`);
+    assert.strictEqual(entry().expiry, expiry);
+  });
+
+  test('a failed DB side-read is cached for 30s, not the full 10 minutes', async () => {
+    S.overview = { name: 'Tok', symbol: 'TOK', price: 1 };
+    S.dbFail = { curated: true };
+    const r = await get(`/api/tokens/${CURATED}`);
+    assert.strictEqual(r.status, 200);
+    assert.ok(entry().expiry - Date.now() <= 30_000);
+  });
+
+  test('a complete result keeps the normal TTL', async () => {
+    S.overview = { name: 'Tok', symbol: 'TOK', price: 1 };
+    await get(`/api/tokens/${CURATED}`);
+    assert.ok(entry().expiry - Date.now() > 60_000);
+  });
+
+  test('a 0-decimal mint is reported with 0 decimals, not 9', async () => {
+    S.helius = true;
+    S.overview = { name: 'Tok', symbol: 'TOK', price: 1, decimals: null };
+    S.tokenMetadata = { name: 'Zero', symbol: 'ZRO', decimals: 0, supply: 1000 };
+    const r = await get(`/api/tokens/${CURATED}`);
+    assert.strictEqual(r.body.decimals, 0);
+  });
+
+  test('circulating supply leaves out locked and burn-wallet supply once classified', async () => {
+    S.overview = { name: 'Tok', symbol: 'TOK', price: 1 };
+    await cache.set(`holder-analytics:${CURATED}`, { supply: { total: 1000, locked: 400, deadWalletBurnt: 100 } }, 60000);
+    const r = await get(`/api/tokens/${CURATED}`);
+    assert.strictEqual(r.body.circulatingSupply, 500);
+  });
+});
+
+describe('GET /:mint/price', () => {
+  test('a failed Jupiter fallback is not cached as price 0', async () => {
+    const bad = await get(`/api/tokens/${CURATED}/price`);
+    assert.strictEqual(bad.status, 500);
+    S.jupPrice = { price: 2, priceChange24h: 1, mintAddress: CURATED };
+    const good = await get(`/api/tokens/${CURATED}/price`);
+    assert.strictEqual(good.body.price, 2);
+    // Market fields Jupiter can't supply are explicit nulls
+    assert.strictEqual(good.body.marketCap, null);
+    assert.strictEqual(good.body.volume24h, null);
+  });
+});
+
+describe('GET /:mint/pools upstream failure', () => {
+  test('a failed GeckoTerminal call is not cached as an empty pool list', async () => {
+    S.pools = null;
+    const bad = await get(`/api/tokens/${CURATED}/pools`);
+    assert.strictEqual(bad.status, 500);
+    S.pools = [{ address: 'p0' }];
+    const good = await get(`/api/tokens/${CURATED}/pools`);
+    assert.deepStrictEqual(good.body.map(p => p.address), ['p0']);
+  });
+});
+
+describe('POST /:mint/view read failure', () => {
+  test('a failed count read after buffering does not record the view twice', async () => {
+    S.dbFail = { views: true };
+    const r = await post(`/api/tokens/${CURATED}/view`);
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(S.viewIncrements, [CURATED]);
+    assert.strictEqual(S.directIncrements, 0);
+    assert.strictEqual(r.body.views, undefined);
+  });
+});
+
+// Last: these use up the per-IP holder/:wallet budget
+describe('GET /:mint/holder/:wallet cost', () => {
+  test('an empty RPC answer is a confirmed non-holder: no DAS call', async () => {
+    S.ownerAccounts = { value: [] };
+    const orig = axios.post;
+    let dasCalls = 0;
+    axios.post = async () => { dasCalls++; return { data: { result: { token_accounts: [] } } }; };
+    try {
+      const r = await get(`/api/tokens/${CURATED}/holder/${addr(5)}`);
+      assert.strictEqual(r.body.holdsToken, false);
+      assert.strictEqual(r.body.verified, true);
+      assert.strictEqual(dasCalls, 0);
+    } finally { axios.post = orig; }
+  });
+
+  test('percentageHeld is the share of total supply, at most 100', async () => {
+    S.ownerAccounts = { value: [{ account: { data: { parsed: { info: {
+      mint: CURATED, tokenAmount: { uiAmount: 50, decimals: 6 }
+    } } } } }] };
+    // Liquidity / price exceeds the supply: the old estimate went to 0 circulating
+    await cache.setWithTimestamp(keys.tokenInfo(CURATED), { supply: 1000, liquidity: 5000, price: 1, submissions: {} });
+    const r = await get(`/api/tokens/${CURATED}/holder/${addr(6)}`);
+    assert.strictEqual(r.body.percentageHeld, 5);
+    assert.strictEqual(r.body.decimals, 6);
+  });
+
+  test('lookups have their own small per-IP limit', async () => {
+    S.ownerAccounts = { value: [] };
+    let last;
+    for (let i = 0; i < 11; i++) last = await get(`/api/tokens/${CURATED}/holder/${addr(10 + i)}`);
+    assert.strictEqual(last.status, 429);
+  });
 });

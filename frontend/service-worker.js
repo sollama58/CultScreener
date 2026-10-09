@@ -87,6 +87,8 @@
 // tokenTable.js v9, conviction.js v23, tech.js v7, emerging.js v7, performance.js v29,
 // versus.js v18, mainViewTabs.js v3, home.css v2.
 const CACHE_VERSION = 'holdex-v87';
+// v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
+// subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const API_CACHE = `${CACHE_VERSION}-api`;

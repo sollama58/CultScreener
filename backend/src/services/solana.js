@@ -1144,20 +1144,22 @@ const STREAMFLOW_CACHE_TTL = TTL.DAY;
 // longer looked up don't stay in memory for the life of the process
 const _streamflowSweep = setInterval(() => {
   const now = Date.now();
-  for (const [mint, entry] of streamflowCache) if (entry.expiry <= now) streamflowCache.delete(mint);
+  for (const [key, entry] of streamflowCache) if (entry.expiry <= now) streamflowCache.delete(key);
 }, 10 * 60 * 1000);
 if (_streamflowSweep.unref) _streamflowSweep.unref();
 
 async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
-  // Check local cache first, then the shared cache
-  const cached = streamflowCache.get(mintAddress);
+  // Check local cache first, then the shared cache. Both are keyed by decimals too: the
+  // amount is scaled by them, so a call with wrong decimals must not answer later correct ones.
+  const localKey = `${mintAddress}:${decimals}`;
+  const cached = streamflowCache.get(localKey);
   if (cached && Date.now() < cached.expiry) {
     if (cached.error) throw new Error(`Streamflow lookup failed recently: ${cached.error}`);
     return cached.value;
   }
   const shared = await cache.get(`streamflow-locked:${mintAddress}:${decimals}`).catch(() => undefined);
   if (typeof shared === 'number') {
-    streamflowCache.set(mintAddress, { value: shared, expiry: Date.now() + 60 * 60 * 1000 });
+    streamflowCache.set(localKey, { value: shared, expiry: Date.now() + 60 * 60 * 1000 });
     return shared;
   }
 
@@ -1183,7 +1185,7 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
     ]);
 
     if (!result || result.length === 0) {
-      streamflowCache.set(mintAddress, { value: 0, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
+      streamflowCache.set(localKey, { value: 0, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
       await cache.set(`streamflow-locked:${mintAddress}:${decimals}`, 0, STREAMFLOW_CACHE_TTL).catch(() => {});
       return 0;
     }
@@ -1204,14 +1206,14 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
     }
 
     console.log(`[Solana] Streamflow locked for ${mintAddress}: ${totalLocked} (${result.length} contracts found)`);
-    streamflowCache.set(mintAddress, { value: totalLocked, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
+    streamflowCache.set(localKey, { value: totalLocked, expiry: Date.now() + STREAMFLOW_CACHE_TTL });
     await cache.set(`streamflow-locked:${mintAddress}:${decimals}`, totalLocked, STREAMFLOW_CACHE_TTL).catch(() => {});
     return totalLocked;
   } catch (error) {
     console.error('[Solana] getStreamflowLockedAmount error:', error.message);
     // Remember the failure briefly (5 min) to avoid hammering RPC, but report it:
     // a 0 here was cached by callers as "nothing locked" for hours
-    streamflowCache.set(mintAddress, { error: error.message, expiry: Date.now() + 5 * 60 * 1000 });
+    streamflowCache.set(localKey, { error: error.message, expiry: Date.now() + 5 * 60 * 1000 });
     throw error;
   }
 }
