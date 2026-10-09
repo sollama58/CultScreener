@@ -996,6 +996,10 @@ async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 
   }, deadlineMs + 10000);
   if (forceExit.unref) forceExit.unref();
 
+  // Stop the Telegram bot first, alongside the drain: Render starts the new worker
+  // before this one exits, and two processes long-polling one bot token get 409s
+  const botStopped = telegramBot.stopBot().catch(() => {});
+
   try {
     // Close all workers in parallel: none keeps picking up jobs while another drains
     let deadlineTimer;
@@ -1013,7 +1017,7 @@ async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 
     console.error('[Worker] Error closing workers:', err.message);
   }
 
-  await telegramBot.stopBot().catch(() => {});
+  await botStopped;
 
   // Only now: in-flight jobs used these sockets until their workers closed
   try { require('./services/httpAgent').destroy(); } catch (_) {}
