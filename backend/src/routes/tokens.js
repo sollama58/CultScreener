@@ -848,14 +848,16 @@ router.get('/search', searchLimiter, validateSearch, asyncHandler(async (req, re
               source: 'external'
             };
 
-            // Cache to local database for future lookups
-            db.upsertToken({
+            // Cache to local database for future lookups - curated mints only. Anyone can
+            // search any address, and every row written here would surface in local search
+            // and /:mint/similar for good (nothing prunes the tokens table).
+            db.isTokenAllowed(query).then(curated => curated && db.upsertToken({
               mintAddress: query,
               name: externalInfo.name,
               symbol: externalInfo.symbol,
               decimals: externalInfo.decimals,
               logoUri: externalInfo.logoUri
-            }).catch(err => {
+            })).catch(err => {
               console.warn('[Tokens] DB cache failed (non-critical):', err.code || 'unknown');
             });
           }
@@ -908,9 +910,10 @@ router.get('/search', searchLimiter, validateSearch, asyncHandler(async (req, re
 
     // 2. If local results are insufficient, fetch from external APIs in parallel
     if (results.length < MIN_SEARCH_RESULTS) try {
+      // Jupiter results carry no DEX, so a DEX-filtered search uses GeckoTerminal only
       const [geckoResults, jupiterResults] = await Promise.all([
         geckoService.searchTokens(query, MIN_SEARCH_RESULTS, dexPrefixes).catch(catchUnlessOverloaded([])),
-        jupiterService.searchTokens(query, MIN_SEARCH_RESULTS).catch(catchUnlessOverloaded([]))
+        dexFilter ? [] : jupiterService.searchTokens(query, MIN_SEARCH_RESULTS).catch(catchUnlessOverloaded([]))
       ]);
 
       // Merge results: GeckoTerminal first (free, no API key), then Jupiter
@@ -1149,8 +1152,10 @@ router.get('/leaderboard/conviction', asyncHandler(async (req, res) => {
   // getOrSet: concurrent misses (several viewers at expiry) share one computation
   const result = await cache.getOrSet(resultCacheKey, async () => {
     computed = true;
-    // Primary source: DB (persistent, survives cache expiry)
-    const { tokens: dbRows, total } = await db.getTopConvictionTokens(limit, offset, filters).catch(() => ({ tokens: [], total: 0 }));
+    // Primary source: DB (persistent, survives cache expiry). A failed read throws out of
+    // getOrSet, so nothing is cached: an empty board stored here blanked every home tab for
+    // the whole TTL after a momentary Postgres error.
+    const { tokens: dbRows, total } = await db.getTopConvictionTokens(limit, offset, filters);
 
     const tokens = dbRows.map(row => {
       let distribution = {};

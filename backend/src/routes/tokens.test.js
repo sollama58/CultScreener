@@ -41,12 +41,16 @@ function resetStubs() {
     dasCalls: [],
     ownerAccounts: null,
     dasTokenAccounts: null,
-    jobs: []
+    jobs: [],
+    helius: false,
+    metaCalls: [],
+    meta: null,
+    jupiterCalls: 0
   });
 }
 resetStubs();
 
-const dbStub = {
+const dbBase = {
   pool: null,
   isReady: () => true,
   isTokenAllowed: async (m) => S.allowed.has(m),
@@ -55,22 +59,31 @@ const dbStub = {
   getTokenViewsBatch: async () => ({}),
   getSentimentBatch: async () => ({}),
   hasApprovedSubmissionsBatch: async () => new Set(),
-  getTopConvictionTokens: async () => ({ tokens: [], total: 0 })
+  getTopConvictionTokens: async () => ({ tokens: [], total: 0 }),
+  getCuratedTokens: async () => [...S.allowed].map(m => ({ mintAddress: m }))
 };
+// Tests patch dbStub / geckoStub / jupiterStub; beforeEach restores the base versions
+const dbStub = { ...dbBase };
 stub('../services/database', new Proxy(dbStub, {
   get: (t, p) => (p in t ? t[p] : (p === 'then' ? undefined : async () => ({})))
 }));
-stub('../services/geckoTerminal', {
+const geckoBase = {
   getTrendingTokens: async ({ page }) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
   getNewTokens: async (_l, _s, page) => { S.geckoCalls.push(page); return S.trendingPages[page] || []; },
   getTokenPools: async (mint, { limit }) => { S.poolCalls.push(limit); return S.pools.slice(0, limit); },
   OHLCV_TIMEFRAMES: { '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '12h': 1, '1d': 1 }
-});
-stub('../services/jupiter', { getTrendingTokens: async () => [] });
+};
+const geckoStub = stub('../services/geckoTerminal', { ...geckoBase });
+const jupiterBase = { getTrendingTokens: async () => { S.jupiterCalls++; return []; } };
+const jupiterStub = stub('../services/jupiter', { ...jupiterBase });
+const restore = (obj, base) => {
+  for (const k of Object.keys(obj)) if (!(k in base)) delete obj[k];
+  Object.assign(obj, base);
+};
 stub('../services/solana', {
-  isHeliusConfigured: () => false,
+  isHeliusConfigured: () => S.helius,
   countCredits: () => {},
-  getTokenMetadataBatch: async () => ({}),
+  getTokenMetadataBatch: async (mints) => { S.metaCalls.push([...mints]); return S.meta ? S.meta(mints) : {}; },
   getTokenSupply: async () => { if (!S.tokenSupply) throw new Error('rpc down'); return S.tokenSupply; },
   getTokenMetadata: async () => S.tokenMetadata,
   getTokenLargestAccounts: async () => S.largest,
@@ -104,7 +117,13 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => server.close());
-beforeEach(async () => { resetStubs(); await cache.clear?.(); });
+beforeEach(async () => {
+  resetStubs();
+  restore(dbStub, dbBase);
+  restore(geckoStub, geckoBase);
+  restore(jupiterStub, jupiterBase);
+  await cache.clear?.();
+});
 
 const get = (p) => fetch(base + p).then(async r => ({ status: r.status, body: await r.json() }));
 const post = (p) => fetch(base + p, { method: 'POST' }).then(async r => ({ status: r.status, body: await r.json() }));
@@ -158,6 +177,40 @@ describe('GET /api/tokens (trending)', () => {
     S.trendingPages[2] = Array.from({ length: 20 }, (_, i) => tok(40 + i));
     const retry = await get('/api/tokens?limit=40&offset=20');
     assert.strictEqual(retry.body[0].address, addr(40));
+  });
+});
+
+describe('GET /api/tokens/leaderboard/conviction', () => {
+  test('a failed DB read is a 500 and is not cached as an empty board', async () => {
+    dbStub.getTopConvictionTokens = async () => { throw new Error('statement timeout'); };
+    const bad = await get('/api/tokens/leaderboard/conviction?limit=100&offset=0');
+    assert.strictEqual(bad.status, 500);
+    dbStub.getTopConvictionTokens = async () => ({ tokens: [{ mint_address: CURATED, name: 'Cult', symbol: 'CULT' }], total: 1 });
+    const good = await get('/api/tokens/leaderboard/conviction?limit=100&offset=0');
+    assert.strictEqual(good.status, 200);
+    assert.strictEqual(good.body.tokens.length, 1);
+  });
+});
+
+describe('GET /api/tokens/search', () => {
+  test('dex=1 leaves out Jupiter results (they carry no DEX)', async () => {
+    geckoStub.searchTokens = async () => [{ address: addr(20), name: 'Ray' }];
+    jupiterStub.searchTokens = async () => [{ address: addr(21), name: 'Orca only' }];
+    const r = await get('/api/tokens/search?q=bonk&dex=1');
+    assert.deepStrictEqual(r.body.map(t => t.address), [addr(20)]);
+    const all = await get('/api/tokens/search?q=bonk');
+    assert.ok(all.body.some(t => t.address === addr(21)));
+  });
+
+  test('an exact-address search stores only curated mints in the tokens table', async () => {
+    const upserts = [];
+    dbStub.getToken = async () => null;
+    dbStub.upsertToken = async (t) => { upserts.push(t.mintAddress); };
+    jupiterStub.getTokenInfo = async (m) => ({ name: `Name ${m.slice(0, 4)}`, symbol: 'X' });
+    await get(`/api/tokens/search?q=${OTHER}`);
+    await get(`/api/tokens/search?q=${CURATED}`);
+    await new Promise(r => setImmediate(r));
+    assert.deepStrictEqual(upserts, [CURATED]);
   });
 });
 
