@@ -33,19 +33,37 @@
     } catch {}
   }
 
-  // ── Pending burn recovery (survives tab close for 10 min) ────────────
+  // ── Pending burn recovery (survives tab close) ─────────────────────────
+  // localStorage, not sessionStorage: the record is the only copy of the burn's signature and
+  // its claim, and sessionStorage is gone when the tab closes (or a phone browser kills it)
+  // mid-confirmation. One entry per burn, kept until verified, refused (400/409) or found never
+  // to have landed - the backend accepts a claim at any age, so no 10-minute expiry
+  // (PENDING_MAX_AGE_MS only bounds records nothing can resolve). Written before the send, so
+  // past PENDING_NEVER_LANDED_MS a "not found" means the transaction never reached the chain.
   const PENDING_KEY = 'hb_pending_burn';
-  function savePending(sig, mint, walletAddr, claimSignature) {
-    try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ sig, mint, wallet: walletAddr, claimSignature, ts: Date.now() })); } catch {}
-  }
-  function clearPending() { try { sessionStorage.removeItem(PENDING_KEY); } catch {} }
-  function getPending() {
+  const PENDING_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  const PENDING_NEVER_LANDED_MS = 5 * 60 * 1000;
+  function readPending() {
     try {
-      const d = JSON.parse(sessionStorage.getItem(PENDING_KEY) || 'null');
-      if (!d || Date.now() - d.ts > 10 * 60 * 1000) { clearPending(); return null; }
-      return d;
-    } catch { return null; }
+      const d = JSON.parse(localStorage.getItem(PENDING_KEY) || '[]');
+      const list = Array.isArray(d) ? d : [d];
+      return list.filter(p => p && p.sig && p.mint && Date.now() - (p.ts || 0) < PENDING_MAX_AGE_MS);
+    } catch { return []; }
   }
+  function writePending(list) {
+    try {
+      if (list.length) localStorage.setItem(PENDING_KEY, JSON.stringify(list));
+      else localStorage.removeItem(PENDING_KEY);
+    } catch {}
+  }
+  function savePending(sig, mint, walletAddr, claimSignature) {
+    const list = readPending().filter(p => p.sig !== sig);
+    list.push({ sig, mint, wallet: walletAddr, claimSignature, ts: Date.now() });
+    writePending(list);
+  }
+  function clearPending(sig) { writePending(readPending().filter(p => p.sig !== sig)); }
+  // The oldest unverified burn for this mint
+  function getPending(mint) { return readPending().find(p => p.mint === mint) || null; }
 
   // ── Wallet ownership proofs (messages must match backend/src/routes/cultify.js) ──
   // A wallet address is public, so the backend only grants whitelist or burn access for one
@@ -88,6 +106,17 @@
   }
   function baseUrl() { return (typeof config !== 'undefined' && config.api?.baseUrl) || ''; }
   function walletAddr() { return (typeof wallet !== 'undefined' && wallet.connected) ? wallet.address : null; }
+  // Who is asking for access: a connected wallet (which can sign a proof), or a phone linked over
+  // Mobile Connect, whose device session is itself the proof (backend hasAccessProof accepts an
+  // X-Device-Session for that wallet), so it is not sent to the burn gate for paid access.
+  function accessViewer() {
+    const wa = walletAddr();
+    if (wa) return { address: wa, headers: {}, canSign: true };
+    const session = (typeof wallet !== 'undefined' && wallet.linked && wallet.linkedAddress &&
+      typeof deviceLink !== 'undefined') ? deviceLink.getSession() : null;
+    if (session) return { address: wallet.linkedAddress, headers: { 'X-Device-Session': session.token }, canSign: false };
+    return { address: null, headers: {}, canSign: false };
+  }
   function shortAddr(addr) { return addr ? addr.slice(0, 5) + '...' + addr.slice(-4) : '???'; }
 
   function formatDuration(ms) {
@@ -242,6 +271,10 @@
     const accountChanged = document.getElementById('hb-burn-btn') && !burnInProgress &&
       typeof wallet !== 'undefined' && wallet.address !== burnGateAddress;
     if (accountChanged) handleAnalyzeClick(burnGateMint);
+  });
+  // A phone link restored while the gate asks to connect: its device session may already prove access
+  window.addEventListener('walletLinked', () => {
+    if (burnGateMint && document.getElementById('hb-connect-btn')) handleAnalyzeClick(burnGateMint);
   });
 
   async function showBurnGate(mint) {
@@ -427,7 +460,14 @@
       // Sign the claim for this burn BEFORE sending it (declining burns nothing).
       // The transaction id is its first signature.
       setStatus('Sign claim in wallet...');
-      const claimSignature = await signBurnClaim(base58Encode(signed.signatures[0].signature), mint, wallet.address);
+      const txId = base58Encode(signed.signatures[0].signature);
+      const claimSignature = await signBurnClaim(txId, mint, wallet.address);
+
+      // Save pending BEFORE sending — protects against tab-close / network failure, and against
+      // a send whose answer is lost although the burn landed (a timed-out send the backend fails
+      // over and re-sends comes back 502 "already processed")
+      const signature = txId;
+      savePending(signature, mint, wallet.address, claimSignature);
 
       // Send
       setStatus('Sending...');
@@ -435,15 +475,16 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transaction: btoa(binary) })
-      });
-      if (!sendResp.ok) {
-        const e = await sendResp.json().catch(() => ({}));
-        throw new Error(e.error || 'Failed to send transaction');
+      }).catch(() => null);
+      if (!sendResp || !sendResp.ok) {
+        const e = sendResp ? await sendResp.json().catch(() => ({})) : {};
+        // 400 / 429 = refused before sending: nothing can have landed
+        if (sendResp && (sendResp.status === 400 || sendResp.status === 429)) {
+          clearPending(signature);
+          throw new Error(e.error || 'Failed to send transaction');
+        }
+        // Otherwise it may still have gone through: the confirmation poll below finds out
       }
-      const { signature } = await sendResp.json();
-
-      // Save pending immediately — protects against tab-close / network failure
-      savePending(signature, mint, wallet.address, claimSignature);
 
       // Confirm
       setStatus('Confirming...');
@@ -460,9 +501,18 @@
               break;
             }
           }
-        } catch (e) { if (e.message.includes('failed on-chain')) throw e; }
+        } catch (e) {
+          if (e.message.includes('failed on-chain')) {
+            clearPending(signature); // nothing was burned
+            throw new Error('Burn transaction failed on-chain. No tokens were burned — please try again.');
+          }
+        }
       }
-      if (!confirmed) throw new Error('Confirmation is taking longer than expected. Reload the page to retry.');
+      if (!confirmed) {
+        throw new Error(sendResp && sendResp.ok
+          ? 'Confirmation is taking longer than expected. Your burn is saved — reload the page to retry.'
+          : 'Could not confirm the transaction was sent. Do not burn again yet: wait a minute, then reload and press Analyze. If it landed, your burn is saved and will be verified.');
+      }
 
       // Switch to computing spinner before verify so the user sees progress
       setBody(computingHtml('Verifying burn...', 'Confirming with the backend...'));
@@ -498,14 +548,14 @@
 
         if (resp.ok) {
           saveToken(mint, data.accessToken);
-          clearPending();
+          clearPending(signature);
           return true;
         }
 
         // 409 = claimed by something else. Our own earlier claim (a lost response) is answered
         // with a fresh token above, so only a token already stored for this mint still counts.
         if (resp.status === 409) {
-          clearPending();
+          clearPending(signature);
           const stored = getToken(mint);
           if (stored) {
             const checkResp = await fetch(
@@ -525,7 +575,12 @@
         if (resp.status === 401) return false;
 
         // 400 = bad transaction — don't retry
-        if (resp.status === 400) { clearPending(); return false; }
+        if (resp.status === 400) { clearPending(signature); return false; }
+        // 404 = not on chain: "still confirming" soon after sending, "never landed" long after
+        if (resp.status === 404) {
+          const saved = readPending().find(p => p.sig === signature);
+          if (saved && Date.now() - saved.ts > PENDING_NEVER_LANDED_MS) { clearPending(signature); return false; }
+        }
         // 5xx / network — fall through to retry
 
       } catch {}
@@ -574,7 +629,8 @@
       }
 
       if (data.status === 'done') {
-        clearPending();
+        // (Pending burns are not cleared here: an unverified burn is cleared only by its own
+        // verification, never because this mint's results showed up through other access.)
         renderResults(data);
         showCachedNotice();
         return;
@@ -841,17 +897,29 @@
     // 1. One access check: a stored token is enough; otherwise a whitelisted wallet, or one with
     //    a burn on record, gets a token once it proves it is ours by signing
     const token = getToken(mint);
-    const wa = walletAddr();
+    const viewer = accessViewer();
+    const wa = viewer.address;
     if (token || wa) {
       const params = new URLSearchParams();
       if (token) params.set('token', token);
       if (wa) params.set('wallet', wa);
       const checkUrl = `${baseUrl()}/api/cultify/holder-behavior/check-access/${encodeURIComponent(mint)}?${params}`;
+      let resp = null;
+      let data = null;
       try {
-        let resp = await fetch(checkUrl);
-        let data = resp.ok ? await resp.json() : null;
-
-        if (data && !data.access && data.reason === 'signature_required' && wa) {
+        resp = await fetch(checkUrl, { headers: viewer.headers });
+        if (resp.ok) data = await resp.json();
+      } catch {}
+      // A rate limit, a deploy, a network drop says nothing about access: offer a retry. The
+      // burn gate here would ask a wallet that already paid (or is whitelisted) to burn again.
+      if (!data) {
+        showAccessLost(mint, resp && resp.status === 429
+          ? 'Too many requests right now. Wait a moment, then try again. If you already burned, your access is safe.'
+          : 'Could not check your access just now. Try again in a moment. If you already burned, your access is safe.');
+        return;
+      }
+      try {
+        if (!data.access && data.reason === 'signature_required' && wa && viewer.canSign) {
           showChecking('Sign the message in your wallet to confirm it is yours...');
           let proof;
           try {
@@ -887,12 +955,12 @@
     }
 
     // 2. Pending burn recovery
-    const pending = getPending();
-    if (pending && pending.mint === mint) {
+    const pending = getPending(mint);
+    if (pending) {
       showChecking('Recovering previous burn...');
       // A burn saved before claims were signed: sign now if the burning wallet is connected
       let claimSignature = pending.claimSignature;
-      if (!claimSignature && wa && wa === pending.wallet) {
+      if (!claimSignature && walletAddr() && walletAddr() === pending.wallet) {
         try { claimSignature = await signBurnClaim(pending.sig, pending.mint, pending.wallet); } catch {}
       }
       const ok = claimSignature
@@ -908,7 +976,7 @@
           : 'Could not verify your previous burn. Connect the wallet that made it, then retry.'));
         const errState = document.querySelector('.hb-error-state');
         if (errState) {
-          if (getPending()) {
+          if (getPending(mint)) {
             const retryBtn = document.createElement('button');
             retryBtn.className = 'cultify-burn-btn';
             retryBtn.style.marginTop = '0.5rem';
