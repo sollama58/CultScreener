@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { asyncHandler, requireDatabase, validateWalletSignature, validateWatchlistSignature, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
+const { asyncHandler, requireDatabase, validateWalletSignature, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { walletLimiter, strictLimiter, defaultLimiter } = require('../middleware/rateLimit');
 const { forgetWalletAccess } = require('../services/accessTokens');
 
@@ -57,7 +57,9 @@ router.get('/:wallet', defaultLimiter, asyncHandler(async (req, res) => {
 }));
 
 // POST /api/watchlist - Add token to watchlist
-router.post('/', walletLimiter, validateWatchlistSignature, asyncHandler(async (req, res) => {
+// No wallet signature: a watchlist is a low-stakes, public list (reads are public too), and a
+// signing prompt on every star click made the feature painful to use. walletLimiter bounds abuse.
+router.post('/', walletLimiter, asyncHandler(async (req, res) => {
   const wallet = req.body?.wallet;
   const tokenMint = req.body?.tokenMint;
 
@@ -91,8 +93,8 @@ router.post('/', walletLimiter, validateWatchlistSignature, asyncHandler(async (
   }
 }));
 
-// DELETE /api/watchlist - Remove token from watchlist
-router.delete('/', walletLimiter, validateWatchlistSignature, asyncHandler(async (req, res) => {
+// DELETE /api/watchlist - Remove token from watchlist (no signature, as for add)
+router.delete('/', walletLimiter, asyncHandler(async (req, res) => {
   const wallet = req.body?.wallet;
   const tokenMint = req.body?.tokenMint;
 

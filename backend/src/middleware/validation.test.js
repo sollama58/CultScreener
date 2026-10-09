@@ -147,16 +147,6 @@ describe('wallet-signature middlewares', () => {
       wrongAction: (wallet, ts) => validation.createDeviceLinkSignatureMessage(wallet, ts)
     },
     {
-      name: 'validateWatchlistSignature (add)', mw: validation.validateWatchlistSignature,
-      build: (wallet, ts, mint) => ({ method: 'POST', body: { wallet, tokenMint: mint, signatureTimestamp: ts }, message: validation.createWatchlistSignatureMessage('add', wallet, mint, ts) }),
-      wrongAction: (wallet, ts) => validation.createWatchlistSignatureMessage('remove', wallet, MINT, ts)
-    },
-    {
-      name: 'validateWatchlistSignature (remove)', mw: validation.validateWatchlistSignature,
-      build: (wallet, ts, mint) => ({ method: 'DELETE', body: { wallet, tokenMint: mint, signatureTimestamp: ts }, message: validation.createWatchlistSignatureMessage('remove', wallet, mint, ts) }),
-      wrongAction: (wallet, ts) => validation.createWatchlistSignatureMessage('add', wallet, MINT, ts)
-    },
-    {
       name: 'validateVoteSignature', mw: validation.validateVoteSignature,
       build: (wallet, ts) => ({ body: { submissionId: 42, voterWallet: wallet, voteType: 'up', signatureTimestamp: ts }, message: validation.createVoteSignatureMessage('up', 42, ts) }),
       wrongAction: (wallet, ts) => validation.createVoteSignatureMessage('down', 42, ts)

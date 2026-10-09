@@ -87,7 +87,9 @@
 // tokenTable.js v9, conviction.js v23, tech.js v7, emerging.js v7, performance.js v29,
 // versus.js v18, mainViewTabs.js v3, home.css v2.
 // v88: API key Refresh details signs the 'view' action - apiKeys.js v6.
-const CACHE_VERSION = 'holdex-v88';
+// v89: share link is https://holdex.live/share/<mint>, and watchlist add/remove no longer ask
+// for a wallet signature - api.js v19, watchlist.js v5, tokenDetail.js v37.
+const CACHE_VERSION = 'holdex-v89';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -102,7 +104,7 @@ const APP_SHELL = [
   '/css/home.css?v=2',
   '/css/token.css?v=9',
   '/js/config.js?v=5',
-  '/js/api.js?v=18',
+  '/js/api.js?v=19',
   '/js/deviceLink.js?v=4',
   '/js/wallet.js?v=7',
   '/js/tokenTable.js?v=10',
@@ -112,12 +114,12 @@ const APP_SHELL = [
   '/js/versus.js?v=18',
   '/js/mainViewTabs.js?v=3',
   '/js/kotp.js?v=7',
-  '/js/tokenDetail.js?v=36',
+  '/js/tokenDetail.js?v=37',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=3',
   '/js/tokenChart.js?v=9',
   '/js/holderChart.js?v=5',
-  '/js/watchlist.js?v=4',
+  '/js/watchlist.js?v=5',
   '/js/holderBehavior.js?v=12',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',

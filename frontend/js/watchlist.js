@@ -72,15 +72,6 @@ const watchlist = {
     return this.items.has(tokenMint);
   },
 
-  // Sign a watchlist write - the server rejects add/remove without a fresh
-  // wallet signature (validateWatchlistSignature / createWatchlistSignatureMessage)
-  async _sign(action, tokenMint) {
-    const signatureTimestamp = Date.now();
-    const message = `HolDEX Watchlist: ${action} ${tokenMint} for ${wallet.address} at ${signatureTimestamp}`;
-    const signed = await wallet.signMessage(message);
-    return { signature: signed.signature, signatureTimestamp };
-  },
-
   // Add token to watchlist
   async add(tokenMint) {
     if (!wallet.connected || !wallet.address) {
@@ -92,8 +83,7 @@ const watchlist = {
     }
 
     try {
-      const auth = await this._sign('add', tokenMint);
-      const result = await api.watchlist.add(wallet.address, tokenMint, auth);
+      const result = await api.watchlist.add(wallet.address, tokenMint);
 
       // A load already in flight (e.g. started by the connect above) may have read the list
       // before this add and would overwrite it: load again once it ends
@@ -124,8 +114,7 @@ const watchlist = {
     if (!wallet.connected || !wallet.address) return false;
 
     try {
-      const auth = await this._sign('remove', tokenMint);
-      await api.watchlist.remove(wallet.address, tokenMint, auth);
+      await api.watchlist.remove(wallet.address, tokenMint);
       this.items.delete(tokenMint);
       if (typeof toast !== 'undefined') toast.success('Removed from watchlist');
       this.updateButton(tokenMint, false);

@@ -160,11 +160,13 @@ const tokenDetail = {
     // Share button — copies a share URL with rich social media previews
     const shareBtn = document.getElementById('share-btn');
     const shareHandler = async () => {
-      // /share is served by the API (it renders the OG tags and redirects people
-      // to the token page); the static site has no /share route, so a holdex.live
-      // link would 404.
+      // The link is on holdex.live. The static site rewrites /share/* to the API's /share
+      // (render.yaml routes), which renders the OG tags for crawlers and sends people on to
+      // the token page. Local dev has no such rewrite, so it links the API directly.
       const apiBase = (typeof config !== 'undefined' && config.api?.baseUrl) || '';
-      const shareUrl = `${apiBase}/share/${encodeURIComponent(this.mint)}`;
+      const isLocal = /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+      const shareBase = isLocal ? apiBase : 'https://holdex.live';
+      const shareUrl = `${shareBase}/share/${encodeURIComponent(this.mint)}`;
       const copied = await utils.copyToClipboard(shareUrl);
       if (copied) toast.success('Share link copied to clipboard');
     };

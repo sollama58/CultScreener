@@ -118,6 +118,12 @@ services:
       - type: rewrite
         source: /about
         destination: /about.html
+      # Share links are https://holdex.live/share/<mint>. The page itself (OG tags for social
+      # previews, then a redirect to token.html) is rendered by the API, so the static site
+      # proxies it there; the browser and crawlers stay on holdex.live.
+      - type: rewrite
+        source: /share/*
+        destination: https://cultscreener-api.onrender.com/share/*
 
     headers:
       # Security headers. These sat in frontend/_headers, which Render ignores, so production
@@ -311,6 +317,8 @@ databases:
 #      and these as Rewrite:
 #        /community   ->  /community.html
 #        /about       ->  /about.html
+#        /share/*     ->  https://cultscreener-api.onrender.com/share/*
+#      (the last one is what makes holdex.live/share/<mint> links work)
 #      Settings > Headers - path /* for each, copying the values from the `headers:` block
 #      above (Content-Security-Policy, X-Content-Type-Options, X-Frame-Options,
 #      Referrer-Policy, Strict-Transport-Security, Permissions-Policy).
