@@ -123,9 +123,12 @@ const tokenChart = (() => {
   function fmtTick(t, tickType) {
     const d = new Date(t * 1000);
     // TickMarkType: 0 Year, 1 Month, 2 DayOfMonth, 3 Time, 4 TimeWithSeconds
-    if (tickType === 0) return String(d.getFullYear());
-    if (tickType === 1) return d.toLocaleString(undefined, { month: 'short' });
-    if (tickType === 2) return d.toLocaleString(undefined, { month: 'short', day: 'numeric' });
+    // Lightweight Charts places Year/Month/Day ticks on UTC boundaries, so label those
+    // in UTC too: in local time a tick on Oct 1 00:00 UTC reads "Sep" west of UTC.
+    // Time-of-day ticks stay in the viewer's zone, like the crosshair label.
+    if (tickType === 0) return String(d.getUTCFullYear());
+    if (tickType === 1) return d.toLocaleString(undefined, { month: 'short', timeZone: 'UTC' });
+    if (tickType === 2) return d.toLocaleString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
     return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
 
@@ -245,7 +248,8 @@ const tokenChart = (() => {
   }
 
   function shellHtml(info, prefs, canMcap) {
-    const logo = info.logo ? `<img class="tc-logo" src="${esc(info.logo)}" alt="" width="28" height="28" onerror="this.remove()">` : '';
+    // No inline onerror: the site CSP refuses inline handlers. open() attaches it.
+    const logo = info.logo ? `<img class="tc-logo" src="${esc(info.logo)}" alt="" width="28" height="28">` : '';
     return `
       <div class="tc-modal" role="dialog" aria-modal="true" aria-labelledby="tc-title">
         <div class="tc-head">
@@ -791,6 +795,8 @@ const tokenChart = (() => {
     root.className = 'tc-overlay';
     root.id = 'tc-overlay';
     root.innerHTML = shellHtml(info, prefs, !!info.supplyFactor);
+    const logoImg = root.querySelector('.tc-logo');
+    if (logoImg) logoImg.addEventListener('error', () => logoImg.remove(), { once: true });
     document.body.appendChild(root);
     document.body.classList.add('tc-open');
     state = { root, info, prefs, raw: [], candles: [], fetchSeq: 0, lastTf: null, chart: null, series: {}, opener: document.activeElement };
@@ -1053,5 +1059,5 @@ const tokenChart = (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 
-  return { open, close, loadLib, _test: { fmtValue, sma, ema, rsi, bollinger, normalizeCandles, mergeTail, normalizeHStyle, hexToRgba } };
+  return { open, close, loadLib, _test: { fmtTick, fmtValue, sma, ema, rsi, bollinger, normalizeCandles, mergeTail, normalizeHStyle, hexToRgba } };
 })();
