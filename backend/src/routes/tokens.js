@@ -2244,7 +2244,9 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
         const lpIndices = new Set();
         const burntIndices = new Set();
 
-        const streamflowPromise = solanaService.getStreamflowLockedAmount(mint, decimals).catch(() => 0);
+        // A failed Streamflow read is not "nothing locked": flagged, and cached briefly
+        let lockedUnknown = false;
+        const streamflowPromise = solanaService.getStreamflowLockedAmount(mint, decimals).catch(() => { lockedUnknown = true; return 0; });
 
         const walletToIndices = new Map();
         if (usedDAS) {
@@ -2283,7 +2285,8 @@ async function _classifyHoldersInline(mint, rawAccounts, totalSupply, usedDAS, s
 
         const lockedAmount = await streamflowPromise;
         const result = _buildFullHolderResult(rawAccounts, totalSupply, currentSupply, mintData, tokenAuth, lpIndices, burntIndices, deadWalletBurnt, lockedAmount, decimals, mint);
-        await cache.set(cacheKey, result, TTL.HOUR);
+        if (lockedUnknown) result.lockedUnknown = true;
+        await cache.set(cacheKey, result, lockedUnknown ? 15 * 60 * 1000 : TTL.HOUR);
       } catch (err) {
         console.error('[Tokens] Inline holder classify failed:', err.message);
       } finally {

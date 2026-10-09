@@ -19,6 +19,16 @@ const HB_HISTORY_TXS          = 1000;          // raw transactions read per wall
 const HB_HISTORY_PAGE         = 250;           // per call; Helius bills 10 credits per 100 returned, so ≤4 round trips
 const HB_ANALYSIS_CACHE_TTL   = 43200 * 1000; // 12 hours — holder behavior changes slowly
 const HB_PENDING_TTL          = 1800 * 1000; // 30 min — auto-expire if analysis crashes
+// A run where more than this share of wallets could not be read (Helius errors or
+// timeouts) is cached only briefly, so the next request re-reads the missing wallets
+// instead of every buyer getting the gutted result for 12 hours.
+const HB_MAX_FAILED_FRACTION  = 0.1;
+const HB_PARTIAL_CACHE_TTL    = 600 * 1000;   // 10 min
+// Pauses within a run (tests shorten them)
+const HB_RUN_CONFIG = {
+  batchDelayMs: 200,   // between batches of uncached wallets
+  retryDelayMs: 5000   // before the one retry of failed wallets
+};
 
 // ── fetchSwapHistory ─────────────────────────────────────────────────────────
 
@@ -98,6 +108,9 @@ async function fetchSwapHistory(walletAddress, maxCount, cached) {
 
   const results = [];
   let before = null;
+  // getTransactionsForAddress answers null when the read failed, and an array (maybe
+  // empty, as on a 404) when Helius answered. Only a read that ended on a real answer is cached.
+  let answered = false;
 
   while (results.length < maxCount) {
     const batchSize = Math.min(100, maxCount - results.length);
@@ -105,7 +118,15 @@ async function fetchSwapHistory(walletAddress, maxCount, cached) {
     if (before) opts.before = before;
 
     const txns = await solanaService.getTransactionsForAddress(walletAddress, opts);
-    if (!txns || txns.length === 0) break;
+    if (!txns) {
+      // Nothing read at all is a failed read, not "no swaps": the caller marks the
+      // wallet failed instead of counting it as a wallet that never traded
+      if (results.length === 0) throw new Error('swap history unavailable');
+      answered = false;
+      break;
+    }
+    answered = true;
+    if (txns.length === 0) break;
 
     results.push(...txns);
     if (txns.length < batchSize) break; // no more pages
@@ -113,7 +134,9 @@ async function fetchSwapHistory(walletAddress, maxCount, cached) {
   }
 
   const compact = results.map(tx => compactSwap(tx, walletAddress));
-  if (compact.length > 0) {
+  // Cache empty answers too (as the path above does), or a wallet with no swaps costs
+  // a 100-credit Enhanced call on every run. A null answer is not "no swaps": not cached.
+  if (answered || compact.length > 0) {
     await cache.set(swapCacheKey, compact, TTL.DAY);
   }
   return compact.map(c => expandSwap(c, walletAddress));
@@ -124,7 +147,25 @@ async function fetchSwapHistory(walletAddress, maxCount, cached) {
 // Run the full holder behavior analysis.
 // Called by the BullMQ worker via the compute-holder-behavior job.
 // Takes the top 50 holders, analyzes each wallet's last 100 swaps, then caches result.
+// Mints with an analysis running in this process. hb-pending is the dispatch dedupe,
+// but it vanishes with a Redis restart while the run carries on; a second job for
+// the same mint must not then buy every wallet's history again.
+const hbRunning = new Set();
+
 async function runHolderBehaviorAnalysis(mint) {
+  if (hbRunning.has(mint)) {
+    console.log(`[HB] ${mint.slice(0, 8)}: analysis already running here; skipped`);
+    return;
+  }
+  hbRunning.add(mint);
+  try {
+    await runHolderBehaviorAnalysisOnce(mint);
+  } finally {
+    hbRunning.delete(mint);
+  }
+}
+
+async function runHolderBehaviorAnalysisOnce(mint) {
   const pendingKey = `hb-pending:${mint}`;
   const resultKey  = `hb-analysis:${mint}`;
 
@@ -203,8 +244,9 @@ async function runHolderBehaviorAnalysis(mint) {
         };
       } catch (err) {
         console.warn(`[HB] Holder ${holder.address.slice(0, 8)} failed:`, err.message);
+        // `failed`: the history could not be read, which is not the same as no swaps
         return { rank: holder.rank, address: holder.address, percentage: holder.percentage,
-          swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [] };
+          swapsAnalyzed: 0, tokensTraded: 0, avgHoldTimeMs: null, pairs: [], failed: true };
       }
     };
 
@@ -226,19 +268,33 @@ async function runHolderBehaviorAnalysis(mint) {
     console.log(`[HB] ${mint.slice(0, 8)}: ${cachedEntries.length} cached, ${uncachedHolders.length} need Helius`);
 
     // The values just read are handed over, so nothing is fetched or parsed twice
-    const cachedRes = await Promise.all(cachedEntries.map(([h, v]) => processHolder(h, v)));
-    for (const r of cachedRes) accumulateResult(r);
+    const results = await Promise.all(cachedEntries.map(([h, v]) => processHolder(h, v)));
 
     // BATCH=6: 6 wallets at once, up to 4 history calls each. The Helius queue
     // (rateLimiter.js) still caps the request rate and the calls in flight.
     const BATCH = 6;
-    const BATCH_DELAY_MS = 200;
-    for (let i = 0; i < uncachedHolders.length; i += BATCH) {
-      if (i > 0) await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
-      const batch = uncachedHolders.slice(i, i + BATCH);
-      const batchRes = await Promise.all(batch.map(h => processHolder(h)));
-      for (const r of batchRes) accumulateResult(r);
+    const runBatches = async (holders) => {
+      const out = [];
+      for (let i = 0; i < holders.length; i += BATCH) {
+        if (i > 0) await new Promise(r => setTimeout(r, HB_RUN_CONFIG.batchDelayMs));
+        const batch = holders.slice(i, i + BATCH);
+        out.push(...await Promise.all(batch.map(h => processHolder(h))));
+      }
+      return out;
+    };
+    results.push(...await runBatches(uncachedHolders));
+
+    // One more try for the wallets whose read failed (a Helius blip or a backed-up queue);
+    // a timed-out read that finished late has cached its swaps by now
+    const failedIdx = results.map((r, i) => (r.failed ? i : -1)).filter(i => i >= 0);
+    if (failedIdx.length > 0) {
+      console.warn(`[HB] ${mint.slice(0, 8)}: retrying ${failedIdx.length} failed holder(s)`);
+      await new Promise(r => setTimeout(r, HB_RUN_CONFIG.retryDelayMs));
+      const byAddress = new Map(eligible.map(h => [h.address, h]));
+      const retried = await runBatches(failedIdx.map(i => byAddress.get(results[i].address)));
+      failedIdx.forEach((idx, j) => { results[idx] = retried[j]; });
     }
+    for (const r of results) accumulateResult(r);
 
     for (const [tm, agg] of Object.entries(tokenAgg)) {
       agg.holderCount = holderResults.filter(h => h.pairs.some(p => p.mint === tm)).length;
@@ -268,19 +324,23 @@ async function runHolderBehaviorAnalysis(mint) {
       .sort((a, b) => b.holderCount - a.holderCount)
       .slice(0, 200);
 
+    const failedCount = holderResults.filter(h => h.failed).length;
     const result = {
       status: 'done',
       analyzedAt: now,
       holderCount: eligible.length,
       analyzedCount: holderResults.filter(h => h.swapsAnalyzed > 0).length,
+      failedCount,
       totalSwapsAnalyzed: totalSwaps,
       overallAvgHoldTimeMs,
       holders: holderResults,
       tokenStats
     };
 
-    await cache.set(resultKey, result, HB_ANALYSIS_CACHE_TTL);
-    console.log(`[HB] Done for ${mint.slice(0, 8)}: ${result.analyzedCount}/${result.holderCount} holders, ${totalSwaps} swaps`);
+    const degraded = failedCount > eligible.length * HB_MAX_FAILED_FRACTION;
+    await cache.set(resultKey, result, degraded ? HB_PARTIAL_CACHE_TTL : HB_ANALYSIS_CACHE_TTL);
+    console.log(`[HB] Done for ${mint.slice(0, 8)}: ${result.analyzedCount}/${result.holderCount} holders, ${totalSwaps} swaps`
+      + (failedCount ? `, ${failedCount} failed${degraded ? ' (cached briefly)' : ''}` : ''));
   } catch (err) {
     console.error(`[HB] Analysis failed for ${mint.slice(0, 8)}:`, err.message);
     await cache.set(resultKey, { status: 'failed', error: err.message }, 300000).catch(() => {});
@@ -294,6 +354,8 @@ module.exports = {
   HB_MAX_SWAPS_PER_HOLDER,
   HB_ANALYSIS_CACHE_TTL,
   HB_PENDING_TTL,
+  HB_PARTIAL_CACHE_TTL,
+  HB_RUN_CONFIG,
   HB_EXCLUDED_MINTS,
   DIAMOND_HANDS_BUCKETS,
   fetchSwapHistory,

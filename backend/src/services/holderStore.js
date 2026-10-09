@@ -17,7 +17,7 @@ function pool() {
 /** Latest snapshot header for a mint, or null. */
 async function getLatestSnapshot(mint) {
   const { rows } = await pool().query(
-    `SELECT id, mint_address, taken_at, verified_at, complete, pages, account_count, holder_count,
+    `SELECT id, mint_address, taken_at, verified_at, checked_at, complete, pages, account_count, holder_count,
             decimals, supply, sample, sample_meta
        FROM holder_snapshots WHERE mint_address = $1
       ORDER BY taken_at DESC LIMIT 1`,
@@ -27,14 +27,14 @@ async function getLatestSnapshot(mint) {
 }
 
 /**
- * mint → when the latest snapshot was last known exact (ms): its taken_at, or a
- * later verified_at. Snapshots without a supply (written before supply/decimals
+ * mint → when the latest snapshot was last known current (ms): its taken_at, or a
+ * later verified_at or pre-check (checked_at). Snapshots without a supply (written before supply/decimals
  * were required) don't count, so the schedulers replace them on their next run.
  */
 async function getLatestSnapshotTimes(mints) {
   if (!mints || mints.length === 0) return {};
   const { rows } = await pool().query(
-    `SELECT DISTINCT ON (mint_address) mint_address, GREATEST(taken_at, verified_at) AS fresh_at, supply
+    `SELECT DISTINCT ON (mint_address) mint_address, GREATEST(taken_at, verified_at, checked_at) AS fresh_at, supply
        FROM holder_snapshots WHERE mint_address = ANY($1)
       ORDER BY mint_address, taken_at DESC`,
     [mints]
@@ -44,9 +44,14 @@ async function getLatestSnapshotTimes(mints) {
   return out;
 }
 
-/** A pre-check that read every account found the snapshot still exact at `at`. */
-async function markVerified(snapshotId, at) {
-  await pool().query('UPDATE holder_snapshots SET verified_at = $2 WHERE id = $1', [snapshotId, new Date(at)]);
+/**
+ * A pre-check found the snapshot unchanged at `at` (checked_at). When it read every
+ * account (`all`), the snapshot is also known exact then (verified_at).
+ */
+async function markVerified(snapshotId, at, { all = true } = {}) {
+  await pool().query(
+    `UPDATE holder_snapshots SET checked_at = $2${all ? ', verified_at = $2' : ''} WHERE id = $1`,
+    [snapshotId, new Date(at)]);
 }
 
 /** Top ranked entries of a snapshot. */

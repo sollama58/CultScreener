@@ -101,6 +101,16 @@ CREATE TABLE IF NOT EXISTS watchlist (
 );
 
 -- =====================================================
+-- HELIUS CREDITS PER DAY (services/heliusCredits.js)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS helius_credit_days (
+    day DATE PRIMARY KEY,
+    credits BIGINT NOT NULL DEFAULT 0,
+    calls BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- =====================================================
 -- FUNCTIONS & TRIGGERS
 -- =====================================================
 

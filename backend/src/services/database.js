@@ -636,6 +636,10 @@ async function initializeDatabase() {
       -- When a later pre-check last confirmed this snapshot still exact (every account
       -- unchanged). Newcomers at the next snapshot are dated from this, not taken_at.
       ALTER TABLE holder_snapshots ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP WITH TIME ZONE;
+      -- When a pre-check last found the snapshot's first page (and supply) unchanged.
+      -- For a one-page token that is verified_at too; for a bigger one it only keeps
+      -- the snapshot fresh for serving, without dating newcomers from it.
+      ALTER TABLE holder_snapshots ADD COLUMN IF NOT EXISTS checked_at TIMESTAMP WITH TIME ZONE;
       -- Finding failed/left rows to retry at snapshot time
       CREATE INDEX IF NOT EXISTS idx_holder_positions_mint_source
         ON holder_positions(mint_address, acquired_source);
@@ -683,6 +687,16 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS app_settings (
         key VARCHAR(100) PRIMARY KEY,
         value TEXT,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+
+      -- Helius credits per UTC day (services/heliusCredits.js adds each flush's totals).
+      -- The per-method detail lives in Redis; this keeps the month line through a
+      -- Redis restart or the eviction of past days' keys.
+      CREATE TABLE IF NOT EXISTS helius_credit_days (
+        day DATE PRIMARY KEY,
+        credits BIGINT NOT NULL DEFAULT 0,
+        calls BIGINT NOT NULL DEFAULT 0,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `;
