@@ -55,5 +55,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: backend/.node-version
-      # The frontend tests use only node:test, node:vm and fs, so there is nothing to install
+      # The frontend tests use only node:test, node:vm and fs, so there is nothing to install.
+      # The root test script lists each depth (frontend/*.test.js frontend/js/*.test.js); a
+      # test file in a new subdirectory needs its own pattern or it is silently skipped.
       - run: npm test

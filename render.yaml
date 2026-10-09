@@ -77,8 +77,10 @@ services:
 
       # Helius requests per second this process may start. Each process has its own
       # limiter, and the plan allows 50/s per key across all of them. During a deploy the
-      # old worker drains its jobs beside the new one, so the budget is: worker 35 (set on
-      # HolDEX-worker) + draining worker 5 (WORKER_DRAIN_HELIUS_RPS) + API 10 = 50.
+      # old worker drains its jobs beside the new one, so the budget is: worker 25 (set on
+      # HolDEX-worker) + draining worker 15 (WORKER_DRAIN_HELIUS_RPS) + API 10 = 50.
+      # The API's own zero-downtime overlap briefly adds another 10 (60 worst case); the
+      # API makes few Helius calls, so that short overlap is accepted rather than budgeted.
       - key: HELIUS_RPS
         value: "10"
 
@@ -211,8 +213,11 @@ services:
 
       # Helius requests per second (see HELIUS_RPS on HolDEX-api for the 50/s budget). Set
       # below the code default of 40 so a deploy's draining worker fits beside the new one.
+      # The drain rate (WORKER_DRAIN_HELIUS_RPS, default 15) is a trade-off: lower it and
+      # Helius-heavy jobs (large holder snapshots) drain slower, risk passing the 270s
+      # shutdown deadline and are re-run from the start by the new worker.
       - key: HELIUS_RPS
-        value: "35"
+        value: "25"
 
       # Helius credit controls (see services/holderPipeline.js). Curated tokens are
       # re-snapshotted every HOLDER_SNAPSHOT_REFRESH_HOURS, and only after a one-page

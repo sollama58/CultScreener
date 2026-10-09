@@ -85,8 +85,8 @@ const RATE_LIMITS = {
     // key and the API and worker processes each run their own limiter, so they must
     // add up to under 50, including during a deploy, when the old worker still drains
     // its jobs (at WORKER_DRAIN_HELIUS_RPS, see worker.js) beside the new one. render.yaml
-    // sets the worker to 35 and the API (few Helius calls now that holder data comes
-    // from snapshots) to 10: 35 + 5 draining + 10 = 50.
+    // sets the worker to 25 and the API (few Helius calls now that holder data comes
+    // from snapshots) to 10: 25 + 15 draining + 10 = 50.
     minInterval: Math.round(1000 / HELIUS_RPS),
     maxJitter: 10,
     // Per-1s-window cap from the same HELIUS_RPS, so it can't silently hold the

@@ -981,8 +981,10 @@ async function start() {
  */
 const SIGNAL_SHUTDOWN_MS = parseInt(process.env.WORKER_SHUTDOWN_DEADLINE_MS) || 270000;
 const CRASH_SHUTDOWN_MS = 10000;
-// Helius requests/s while draining (see shutdown); render.yaml budgets for it
-const DRAIN_HELIUS_RPS = parseInt(process.env.WORKER_DRAIN_HELIUS_RPS, 10) || 5;
+// Helius requests/s while draining (see shutdown); render.yaml budgets for it. Kept high
+// enough that a large holder snapshot (~2,500 DAS pages, ~170s at 15/s) still finishes
+// inside the shutdown deadline instead of being re-run from the start by the new worker.
+const DRAIN_HELIUS_RPS = parseInt(process.env.WORKER_DRAIN_HELIUS_RPS, 10) || 15;
 let shuttingDown = false;
 
 async function shutdown(signal, { deadlineMs = SIGNAL_SHUTDOWN_MS, exitCode = 0 } = {}) {
