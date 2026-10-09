@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const { cache, keys, TTL } = require('../services/cache');
-const { asyncHandler, requireDatabase, validateApiKey, sanitizeString } = require('../middleware/validation');
+const { asyncHandler, requireDatabase, validateApiKey, sanitizeSearchString } = require('../middleware/validation');
 
 router.use(requireDatabase);
 
@@ -16,20 +16,35 @@ router.use(validateApiKey);
 // GET /v1/leaderboard — Conviction token leaderboard
 // Query params: limit, offset, minConviction, minMcap, maxMcap, minSample, search
 router.get('/leaderboard', asyncHandler(async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+  const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 25), 100);
   const offset = Math.max(parseInt(req.query.offset) || 0, 0);
-  const minConviction = req.query.minConviction ? parseFloat(req.query.minConviction) : null;
-  const minMcap = req.query.minMcap ? parseFloat(req.query.minMcap) : null;
-  const maxMcap = req.query.maxMcap ? parseFloat(req.query.maxMcap) : null;
-  const minSample = req.query.minSample ? parseInt(req.query.minSample) : null;
-  const search = req.query.search ? sanitizeString(req.query.search, 100) : null;
 
-  // Build cache key from query params
+  // A filter that is present but not a number is rejected: NaN would otherwise reach the query
+  // (matching nothing, or a Postgres error) while serialising as null in the cache key, the same
+  // key as the unfiltered leaderboard.
+  const numeric = {};
+  for (const [name, parse] of [['minConviction', parseFloat], ['minMcap', parseFloat], ['maxMcap', parseFloat], ['minSample', parseInt]]) {
+    const raw = req.query[name];
+    if (raw == null || raw === '') { numeric[name] = null; continue; }
+    const v = typeof raw === 'string' ? parse(raw, 10) : NaN;
+    if (!Number.isFinite(v)) {
+      return res.status(400).json({ error: `Invalid ${name}: must be a number` });
+    }
+    numeric[name] = v;
+  }
+  const { minConviction, minMcap, maxMcap, minSample } = numeric;
+  // The search is a parameterized LIKE pattern, not HTML: HTML-encoding it (& -> &amp;) would
+  // make names containing & ' " < > unfindable
+  const search = typeof req.query.search === 'string' ? (sanitizeSearchString(req.query.search, 100) || null) : null;
+
+  // Build cache key from the validated values. The v1: segment keeps these entries ({data,total})
+  // apart from /api/tokens/leaderboard/conviction's ({tokens,total}) while still matching the
+  // leaderboard:conviction:* invalidation pattern.
   const filterObj = {
     minConviction, minMcap, maxMcap, minSample, search
   };
   const filterKey = JSON.stringify(filterObj);
-  const cacheKey = `leaderboard:conviction:${limit}:${offset}:${filterKey}`;
+  const cacheKey = `leaderboard:conviction:v1:${limit}:${offset}:${filterKey}`;
 
   // Try cache first
   const cached = await cache.get(cacheKey);

@@ -1894,6 +1894,7 @@ module.exports = {
   asyncHandler,
   requireDatabase,
   sanitizeString,
+  sanitizeSearchString,
   isValidUrl,
   validateUrlDomain,
   // API Key functions
