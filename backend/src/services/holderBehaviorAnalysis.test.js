@@ -88,13 +88,14 @@ test('legacy Enhanced path caches a wallet with no swaps', async () => {
   assert.strictEqual(calls, 1, 'the empty answer is reused, not re-bought at 100 credits');
 });
 
-test('legacy Enhanced path does not cache a failed read (null) as "no swaps"', async () => {
+test('legacy Enhanced path does not treat a failed read (null) as "no swaps"', async () => {
   let calls = 0;
   stub('isTransactionHistoryAvailable', () => false);
   stub('getTransactionsForAddress', async () => { calls++; return null; });
-  assert.deepStrictEqual(await hb.fetchSwapHistory(WALLET, 200), []);
+  // thrown, so the run marks the wallet failed and retries it
+  await assert.rejects(hb.fetchSwapHistory(WALLET, 200), /swap history unavailable/);
   assert.ok(await cache.get(`hb-swaps:v2:${WALLET}`) == null);
-  await hb.fetchSwapHistory(WALLET, 200);
+  await assert.rejects(hb.fetchSwapHistory(WALLET, 200));
   assert.strictEqual(calls, 2);
 });
 

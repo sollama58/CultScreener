@@ -108,8 +108,8 @@ async function fetchSwapHistory(walletAddress, maxCount, cached) {
 
   const results = [];
   let before = null;
-  // getTransactionsForAddress answers null on an error or a 404, and an array (maybe empty)
-  // when Helius answered. Only a read that ended on a real answer is cached.
+  // getTransactionsForAddress answers null when the read failed, and an array (maybe
+  // empty, as on a 404) when Helius answered. Only a read that ended on a real answer is cached.
   let answered = false;
 
   while (results.length < maxCount) {
@@ -118,7 +118,13 @@ async function fetchSwapHistory(walletAddress, maxCount, cached) {
     if (before) opts.before = before;
 
     const txns = await solanaService.getTransactionsForAddress(walletAddress, opts);
-    if (!txns) { answered = false; break; }
+    if (!txns) {
+      // Nothing read at all is a failed read, not "no swaps": the caller marks the
+      // wallet failed instead of counting it as a wallet that never traded
+      if (results.length === 0) throw new Error('swap history unavailable');
+      answered = false;
+      break;
+    }
     answered = true;
     if (txns.length === 0) break;
 

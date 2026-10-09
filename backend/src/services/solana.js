@@ -1090,7 +1090,7 @@ async function getTokenAuthorities(mintAddress) {
  * @param {Object} [options] - Query options
  * @param {number} [options.limit=100] - Max transactions to return (up to 100)
  * @param {string} [options.type] - Filter by transaction type (e.g. 'SWAP')
- * @returns {Promise<Array|null>} - Array of parsed transactions or null
+ * @returns {Promise<Array|null>} - Array of parsed transactions ([] on a 404), or null when the read failed
  */
 async function getTransactionsForAddress(walletAddress, { limit = 100, type, before } = {}) {
   if (!HELIUS_API_KEY) {
@@ -1118,8 +1118,9 @@ async function getTransactionsForAddress(walletAddress, { limit = 100, type, bef
     return response.data;
   } catch (error) {
     // 404 is expected for token accounts (ATAs) and program-owned addresses
-    // that don't have wallet-level transaction history — not an error
-    if (error.response && error.response.status === 404) return null;
+    // that don't have wallet-level transaction history — not an error: an empty
+    // answer, so callers can tell it from a failed read (null)
+    if (error.response && error.response.status === 404) return [];
     console.error(`[Solana] getTransactionsForAddress error for ${walletAddress.slice(0, 8)}...: ${error.response?.status || error.code || error.message}`);
     return null;
   }
