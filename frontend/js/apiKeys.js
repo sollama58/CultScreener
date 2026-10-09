@@ -154,9 +154,11 @@ const apiKeysPage = {
 
   // ── Signing helper ────────────────────────────────────────────────────────
 
-  async signForApi() {
+  // The signed text names the action (register, rotate, revoke, view): the server only accepts a
+  // signature on the route whose action it names.
+  async signForApi(action) {
     const timestamp = Date.now();
-    const message = `HolDEX API Key: register for ${this.currentWallet} at ${timestamp}`;
+    const message = `HolDEX API Key: ${action} for ${this.currentWallet} at ${timestamp}`;
     const sig = await wallet.signMessage(message);
     if (!sig || !sig.signature) throw new Error('Signature cancelled or failed');
     return { signature: sig.signature, signatureTimestamp: timestamp };
@@ -171,7 +173,7 @@ const apiKeysPage = {
     this._setLoading(btn, true, 'Signing...');
 
     try {
-      const { signature, signatureTimestamp } = await this.signForApi();
+      const { signature, signatureTimestamp } = await this.signForApi('register');
 
       const response = await api.request('/api/keys', {
         method: 'POST',
@@ -218,7 +220,7 @@ const apiKeysPage = {
     this._setLoading(btn, true, 'Signing...');
 
     try {
-      const { signature, signatureTimestamp } = await this.signForApi();
+      const { signature, signatureTimestamp } = await this.signForApi('rotate');
 
       const response = await api.request('/api/keys/rotate', {
         method: 'POST',
@@ -262,7 +264,7 @@ const apiKeysPage = {
     this._setLoading(btn, true, 'Revoking...');
 
     try {
-      const { signature, signatureTimestamp } = await this.signForApi();
+      const { signature, signatureTimestamp } = await this.signForApi('revoke');
 
       const response = await api.request('/api/keys/me', {
         method: 'DELETE',

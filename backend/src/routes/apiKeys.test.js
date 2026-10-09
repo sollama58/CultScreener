@@ -14,9 +14,23 @@ const validation = require('../middleware/validation');
 
 const origIsReady = db.isReady;
 const origGetApiKeyByWallet = db.getApiKeyByWallet;
+const origDeleteApiKey = db.deleteApiKey;
+const origCreateApiKey = db.createApiKey;
 db.isReady = () => true;
 const keysByWallet = new Map();
 db.getApiKeyByWallet = async (wallet) => keysByWallet.get(wallet) || null;
+db.deleteApiKey = async (wallet) => {
+  const row = keysByWallet.get(wallet);
+  if (!row || row.is_active === false) return null;
+  keysByWallet.delete(wallet);
+  return row;
+};
+db.createApiKey = async (wallet, hash, prefix) => {
+  if (keysByWallet.has(wallet)) return null;
+  const row = { key_prefix: prefix, created_at: new Date().toISOString(), is_active: true };
+  keysByWallet.set(wallet, row);
+  return row;
+};
 
 const router = require('./apiKeys');
 
@@ -29,14 +43,16 @@ const base = () => `http://127.0.0.1:${server.address().port}`;
 after(() => {
   db.isReady = origIsReady;
   db.getApiKeyByWallet = origGetApiKeyByWallet;
+  db.deleteApiKey = origDeleteApiKey;
+  db.createApiKey = origCreateApiKey;
   validation.stopSignatureCleanup();
   server.close();
 });
 
-function signedBody(keyPair) {
+function signedBody(keyPair, action = 'view') {
   const wallet = bs58.encode(keyPair.publicKey);
   const signatureTimestamp = Date.now();
-  const message = validation.createApiKeySignatureMessage(wallet, signatureTimestamp);
+  const message = validation.createApiKeySignatureMessage(wallet, signatureTimestamp, action);
   const signature = Array.from(nacl.sign.detached(new TextEncoder().encode(message), keyPair.secretKey));
   return { wallet, signature, signatureTimestamp };
 }
@@ -69,4 +85,60 @@ test('POST /api/keys/me without a signature is rejected', async () => {
   });
   assert.strictEqual(res.status, 400);
   assert.strictEqual((await res.json()).code, 'SIGNATURE_REQUIRED');
+});
+
+function send(method, path, body) {
+  return fetch(`${base()}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+}
+
+test('a signature for one API key action is refused by the others', async () => {
+  const kp = nacl.sign.keyPair();
+  const wallet = bs58.encode(kp.publicKey);
+  keysByWallet.set(wallet, { key_prefix: 'cult_old', created_at: '2026-01-01T00:00:00.000Z', is_active: true });
+
+  // A "register" signature (the wording a phishing page would copy) cannot rotate or revoke.
+  for (const [method, path] of [['POST', '/api/keys/rotate'], ['DELETE', '/api/keys/me'], ['POST', '/api/keys/me']]) {
+    const res = await send(method, path, signedBody(kp, 'register'));
+    assert.strictEqual(res.status, 401, `${method} ${path}`);
+    assert.strictEqual((await res.json()).code, 'INVALID_SIGNATURE');
+  }
+  assert.strictEqual(keysByWallet.get(wallet).key_prefix, 'cult_old');
+
+  const res = await send('POST', '/api/keys/rotate', signedBody(kp, 'rotate'));
+  assert.strictEqual(res.status, 200);
+  const data = await res.json();
+  assert.ok(data.key);
+  assert.notStrictEqual(keysByWallet.get(wallet).key_prefix, 'cult_old');
+});
+
+test('an admin-revoked key cannot be rotated or deleted and re-registered by its owner', async () => {
+  const kp = nacl.sign.keyPair();
+  const wallet = bs58.encode(kp.publicKey);
+  const revoked = { key_prefix: 'cult_rev', created_at: '2026-01-01T00:00:00.000Z', is_active: false };
+  keysByWallet.set(wallet, revoked);
+
+  let res = await send('POST', '/api/keys/rotate', signedBody(kp, 'rotate'));
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual((await res.json()).code, 'KEY_REVOKED');
+
+  res = await send('DELETE', '/api/keys/me', signedBody(kp, 'revoke'));
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual((await res.json()).code, 'KEY_REVOKED');
+
+  res = await send('POST', '/api/keys', signedBody(kp, 'register'));
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual(keysByWallet.get(wallet), revoked);
+});
+
+test('an active key can be deleted by its owner', async () => {
+  const kp = nacl.sign.keyPair();
+  const wallet = bs58.encode(kp.publicKey);
+  keysByWallet.set(wallet, { key_prefix: 'cult_act', created_at: '2026-01-01T00:00:00.000Z', is_active: true });
+  const res = await send('DELETE', '/api/keys/me', signedBody(kp, 'revoke'));
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(keysByWallet.has(wallet), false);
 });

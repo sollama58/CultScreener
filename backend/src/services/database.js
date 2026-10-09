@@ -1741,12 +1741,13 @@ async function revokeApiKey(ownerWallet) {
   return result.rows[0];
 }
 
-// Delete an API key (allows user to create a new one)
+// Delete an API key (allows user to create a new one). A key an admin revoked (is_active = false)
+// is left in place: it is a standing sanction, and removing it would let the owner register again.
 async function deleteApiKey(ownerWallet) {
   if (!pool) return null;
 
   const result = await pool.query(
-    `DELETE FROM api_keys WHERE owner_wallet = $1 RETURNING *`,
+    `DELETE FROM api_keys WHERE owner_wallet = $1 AND is_active IS NOT FALSE RETURNING *`,
     [ownerWallet]
   );
   return result.rows[0];

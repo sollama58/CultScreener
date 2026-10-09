@@ -1447,14 +1447,20 @@ function createCallSignatureMessage(mint, wallet, timestamp) {
   return `HolDEX Call: ${mint} by ${wallet} at ${timestamp}`;
 }
 
+// The actions an API-key signature can authorise. Each one signs its own verb, so a signature
+// given for one action (say "register") cannot be spent on another (rotate hands the caller the
+// new plaintext key; revoke breaks the owner's integrations).
+const API_KEY_ACTIONS = ['register', 'view', 'rotate', 'revoke'];
+
 /**
- * Create signature message for API key registration
+ * Create signature message for an API key action
  * @param {string} wallet - The wallet address
  * @param {number} timestamp - Unix timestamp in milliseconds
+ * @param {string} [action='register'] - One of API_KEY_ACTIONS
  * @returns {string} The message to sign
  */
-function createApiKeySignatureMessage(wallet, timestamp) {
-  return `HolDEX API Key: register for ${wallet} at ${timestamp}`;
+function createApiKeySignatureMessage(wallet, timestamp, action = 'register') {
+  return `HolDEX API Key: ${action} for ${wallet} at ${timestamp}`;
 }
 
 /**
@@ -1655,11 +1661,16 @@ async function validateCallSignature(req, res, next) {
 }
 
 /**
- * Middleware to validate wallet signature for API key registration
- * Signature is optional — if not provided, skip validation
+ * Middleware factory: validate a wallet signature for one API key action
+ * (see API_KEY_ACTIONS). The signed message names the action, so it must match the route.
  */
-async function validateApiKeySignature(req, res, next) {
-  const { wallet, signature, signatureTimestamp } = req.body;
+function requireApiKeySignature(action) {
+  if (!API_KEY_ACTIONS.includes(action)) throw new Error(`Unknown API key action: ${action}`);
+  return (req, res, next) => validateApiKeySignatureFor(action, req, res, next);
+}
+
+async function validateApiKeySignatureFor(action, req, res, next) {
+  const { wallet, signature, signatureTimestamp } = req.body || {};
 
   // Signature is required for write operations to prove wallet ownership
   if (!signature || !signatureTimestamp) {
@@ -1696,7 +1707,7 @@ async function validateApiKeySignature(req, res, next) {
   // Replay protection — rely solely on atomic check-and-mark below (avoids TOCTOU)
   const sigKey = signature.join(',');
 
-  const expectedMessage = createApiKeySignatureMessage(wallet, timestamp);
+  const expectedMessage = createApiKeySignatureMessage(wallet, timestamp, action);
   const isValid = verifyWalletSignature(expectedMessage, signature, wallet);
 
   if (!isValid) {
@@ -1922,7 +1933,9 @@ module.exports = {
   validateWatchlistSignature,
   validateSentimentSignature,
   validateCallSignature,
-  validateApiKeySignature,
+  validateApiKeySignature: requireApiKeySignature('register'),
+  requireApiKeySignature,
+  API_KEY_ACTIONS,
   SIGNATURE_EXPIRY_MS,
   // Admin functions
   generateAdminSessionToken,

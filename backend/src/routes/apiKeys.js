@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const {
-  asyncHandler, requireDatabase, validateApiKeySignature,
+  asyncHandler, requireDatabase, requireApiKeySignature,
   generateApiKey, hashApiKey, SOLANA_ADDRESS_REGEX
 } = require('../middleware/validation');
 const { strictLimiter, veryStrictLimiter } = require('../middleware/rateLimit');
@@ -21,6 +21,22 @@ function logApiKeyOperation(operation, wallet, result, details = {}) {
   );
 }
 
+// An admin revoke (PATCH /api/admin/api-keys/:id/revoke) only flips is_active, so the row stays
+// as a standing sanction. The owner must not be able to clear it themselves: deleting or rotating a
+// revoked row would let POST / (or rotate itself) issue a fresh active key straight away.
+function refuseIfRevoked(res, existingKey, operation, wallet) {
+  if (existingKey && existingKey.is_active === false) {
+    logApiKeyOperation(operation, wallet, 'rejected', { reason: 'key_revoked_by_admin' });
+    res.status(403).json({
+      error: 'API key revoked',
+      message: 'This API key was revoked by an administrator and cannot be replaced or deleted.',
+      code: 'KEY_REVOKED'
+    });
+    return true;
+  }
+  return false;
+}
+
 // ==========================================
 // API Key Registration (via wallet signature)
 // ==========================================
@@ -28,7 +44,7 @@ function logApiKeyOperation(operation, wallet, result, details = {}) {
 // POST /api/keys — Generate a new API key
 // Requires wallet signature to prove wallet ownership (one key per wallet)
 // Uses veryStrictLimiter to prevent key farming
-router.post('/', veryStrictLimiter, validateApiKeySignature, asyncHandler(async (req, res) => {
+router.post('/', veryStrictLimiter, requireApiKeySignature('register'), asyncHandler(async (req, res) => {
   const { wallet } = req.body;
 
   // Defensive: Validate wallet was verified by middleware
@@ -125,12 +141,12 @@ const getKeyInfo = asyncHandler(async (req, res) => {
     is_active: apiKey.is_active
   });
 });
-router.post('/me', validateApiKeySignature, getKeyInfo);
-router.get('/me', validateApiKeySignature, getKeyInfo);
+router.post('/me', requireApiKeySignature('view'), getKeyInfo);
+router.get('/me', requireApiKeySignature('view'), getKeyInfo);
 
 // DELETE /api/keys/me — Delete/revoke API key
 // Requires wallet signature (wallet must own the key)
-router.delete('/me', strictLimiter, validateApiKeySignature, asyncHandler(async (req, res) => {
+router.delete('/me', strictLimiter, requireApiKeySignature('revoke'), asyncHandler(async (req, res) => {
   const { wallet } = req.body;
 
   // Defensive: Validate wallet was verified by middleware
@@ -138,6 +154,8 @@ router.delete('/me', strictLimiter, validateApiKeySignature, asyncHandler(async 
     logApiKeyOperation('delete', wallet || 'invalid', 'rejected', { reason: 'invalid_wallet' });
     return res.status(400).json({ error: 'Invalid wallet address' });
   }
+
+  if (refuseIfRevoked(res, await db.getApiKeyByWallet(wallet), 'delete', wallet)) return;
 
   const deleted = await db.deleteApiKey(wallet);
 
@@ -163,7 +181,7 @@ router.delete('/me', strictLimiter, validateApiKeySignature, asyncHandler(async 
 // Requires wallet signature (wallet must own the key)
 // Returns new plaintext key
 // SECURITY: Uses strict rate limiting to prevent abuse
-router.post('/rotate', strictLimiter, validateApiKeySignature, asyncHandler(async (req, res) => {
+router.post('/rotate', strictLimiter, requireApiKeySignature('rotate'), asyncHandler(async (req, res) => {
   const { wallet } = req.body;
 
   // Defensive: Validate wallet was verified by middleware
@@ -182,6 +200,7 @@ router.post('/rotate', strictLimiter, validateApiKeySignature, asyncHandler(asyn
       code: 'NOT_FOUND'
     });
   }
+  if (refuseIfRevoked(res, existingKey, 'rotate', wallet)) return;
 
   // Delete old key
   const deleted = await db.deleteApiKey(wallet);
