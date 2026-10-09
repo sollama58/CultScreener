@@ -5,9 +5,14 @@ const crypto = require('crypto');
 // Database state
 let pool = null;
 let isConnected = false;
+// Set only once the schema block below has committed (or was found already applied), so
+// requests and jobs are never admitted against an older schema.
+let schemaReady = false;
 let connectionAttempts = 0;
 const MAX_CONNECTION_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 5000;
+// After MAX_CONNECTION_ATTEMPTS fast retries, keep trying at this pace instead of giving up
+const SLOW_RETRY_DELAY_MS = 60000;
 
 // Auto-approval thresholds based on market cap tiers
 // Lower mcap tokens need fewer votes (smaller communities)
@@ -94,6 +99,10 @@ function createPool() {
     connectionTimeoutMillis: 5000,          // Timeout for new connections (fail fast under load)
     statement_timeout: 30000,               // Kill queries running > 30s
     query_timeout: 30000,                   // Same as statement_timeout for safety
+    // The DB_POOL_MIN connections are never reaped; TCP keepalive finds one the network
+    // dropped silently, instead of the next query on it hanging for the full query_timeout.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
     allowExitOnIdle: false                  // Keep pool alive
   });
 }
@@ -103,9 +112,31 @@ pool = createPool();
 
 // Connection error handling
 if (pool) {
+  // pg-pool emits this for an idle client that has failed, after it has already dropped that
+  // client; the other connections are fine. Only a probe that fails too means the database is
+  // gone (one dead socket used to answer 503 on every DB route until the next recovery tick).
+  let probing = false;
   pool.on('error', (err) => {
     console.error('Unexpected database pool error:', err.message);
-    isConnected = false;
+    if (probing) return;
+    probing = true;
+    pool.query('SELECT 1')
+      .catch((probeErr) => {
+        // A pool checkout timeout only means every connection is busy (the database is
+        // answering them); treating it as an outage turned load into 503s on every DB route.
+        if (/timeout exceeded when trying to connect/.test(probeErr.message)) return;
+        isConnected = false;
+        console.error('[Database] Connection lost:', probeErr.message);
+      })
+      .finally(() => { probing = false; });
+  });
+
+  // A checked-out client has no 'error' listener of its own (pg-pool removes its idle listener
+  // on checkout), and pg emits 'error' when the connection drops mid-transaction; unhandled,
+  // that throws and takes the whole process down. The query in flight rejects with the same
+  // error, and release() discards a client that is no longer queryable, so nothing else to do.
+  pool.on('connect', (client) => {
+    client.on('error', () => {});
   });
 
   // Periodically check connection recovery (unref so it doesn't prevent process exit)
@@ -123,6 +154,25 @@ if (pool) {
   connectionRecoveryInterval.unref();
 }
 
+// The schema block below is applied only when its text changed since it last committed
+// (app_settings.schema_ddl_hash). Every ALTER TABLE takes ACCESS EXCLUSIVE even when the
+// column exists, and holds it to COMMIT, so re-running it on every start of the API and the
+// worker queued live queries behind it. To force a re-run (say, after hand-editing the
+// schema), delete that app_settings row and restart.
+const SCHEMA_HASH_KEY = 'schema_ddl_hash';
+// API and worker boot together: one applies the block, the other waits and then finds it done
+const SCHEMA_LOCK_KEY = 0x48534348; // arbitrary constant ('HSCH')
+// Give up on a lock the block waits for after this long (and retry), rather than leave the
+// locks it already holds blocking every query on those tables for the 30 s statement_timeout
+const SCHEMA_LOCK_TIMEOUT_MS = 5000;
+
+async function getAppliedSchemaHash(client) {
+  const { rows } = await client.query("SELECT to_regclass('app_settings') IS NOT NULL AS ok");
+  if (!rows[0].ok) return null;
+  const res = await client.query('SELECT value FROM app_settings WHERE key = $1', [SCHEMA_HASH_KEY]);
+  return res.rows[0]?.value || null;
+}
+
 // Initialize database tables with retry logic
 async function initializeDatabase() {
   if (!pool) {
@@ -131,14 +181,15 @@ async function initializeDatabase() {
   }
 
   connectionAttempts++;
-  console.log(`Database connection attempt ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}...`);
+  const attemptLabel = connectionAttempts <= MAX_CONNECTION_ATTEMPTS
+    ? `${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}` : `${connectionAttempts}`;
+  console.log(`Database connection attempt ${attemptLabel}...`);
 
   let client;
   try {
     client = await pool.connect();
-    await client.query('BEGIN');
 
-    await client.query(`
+    const schemaSql = `
       CREATE TABLE IF NOT EXISTS tokens (
         id SERIAL PRIMARY KEY,
         mint_address VARCHAR(44) UNIQUE NOT NULL,
@@ -146,13 +197,13 @@ async function initializeDatabase() {
         symbol VARCHAR(50),
         decimals INTEGER,
         logo_uri TEXT,
-        pair_created_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
+        pair_created_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
 
       -- Migrations for existing databases
-      ALTER TABLE tokens ADD COLUMN IF NOT EXISTS pair_created_at TIMESTAMP;
+      ALTER TABLE tokens ADD COLUMN IF NOT EXISTS pair_created_at TIMESTAMP WITH TIME ZONE;
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS price DECIMAL;
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS market_cap DECIMAL;
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS volume_24h DECIMAL;
@@ -162,7 +213,7 @@ async function initializeDatabase() {
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_1m DECIMAL;
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_data JSONB;
       ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_sample_size INTEGER;
-      ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_computed_at TIMESTAMP;
+      ALTER TABLE tokens ADD COLUMN IF NOT EXISTS conviction_computed_at TIMESTAMP WITH TIME ZONE;
       CREATE INDEX IF NOT EXISTS idx_tokens_conviction_1m ON tokens(conviction_1m DESC NULLS LAST) WHERE conviction_1m IS NOT NULL AND conviction_1m > 0;
       -- Composite index: conviction leaderboard query + staleness check (conviction_computed_at)
       CREATE INDEX IF NOT EXISTS idx_tokens_conviction_computed ON tokens(conviction_computed_at DESC NULLS LAST) WHERE conviction_computed_at IS NOT NULL;
@@ -214,7 +265,8 @@ async function initializeDatabase() {
         ALTER TABLE votes ADD COLUMN IF NOT EXISTS voter_percentage DECIMAL(12,6) DEFAULT 0;
         ALTER TABLE votes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
         ALTER TABLE vote_tallies ADD COLUMN IF NOT EXISTS weighted_score DECIMAL(10,2) DEFAULT 0;
-      EXCEPTION WHEN OTHERS THEN NULL;
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
+      WHEN OTHERS THEN NULL;
       END $$;
 
       -- Watchlist table for user favorites
@@ -290,7 +342,8 @@ async function initializeDatabase() {
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
         CREATE INDEX IF NOT EXISTS idx_tokens_name_lower_trgm ON tokens USING gin (LOWER(name) gin_trgm_ops);
         CREATE INDEX IF NOT EXISTS idx_tokens_symbol_lower_trgm ON tokens USING gin (LOWER(symbol) gin_trgm_ops);
-      EXCEPTION WHEN OTHERS THEN
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't fall back
+      WHEN OTHERS THEN
         -- pg_trgm might not be available on some hosts, fall back to btree indexes
         CREATE INDEX IF NOT EXISTS idx_tokens_name_lower ON tokens(LOWER(name) varchar_pattern_ops);
         CREATE INDEX IF NOT EXISTS idx_tokens_symbol_lower ON tokens(LOWER(symbol) varchar_pattern_ops);
@@ -355,11 +408,29 @@ async function initializeDatabase() {
         id SERIAL PRIMARY KEY,
         token_mint VARCHAR(44) UNIQUE NOT NULL,
         view_count INTEGER DEFAULT 0,
-        last_viewed_at TIMESTAMP DEFAULT NOW(),
-        created_at TIMESTAMP DEFAULT NOW()
+        last_viewed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
 
       CREATE INDEX IF NOT EXISTS idx_token_views_count ON token_views(view_count DESC);
+
+      -- Same for tokens and token_views, which db/init.sql always created WITH TIME ZONE and this
+      -- block created without, so the type depended on which ran first. conviction_computed_at
+      -- is written with NOW() and compared with Date.now(), which skewed by the zone difference.
+      DO $tokentz$
+      DECLARE col RECORD;
+      BEGIN
+        FOR col IN
+          SELECT table_name, column_name FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND ((table_name = 'tokens'
+                  AND column_name IN ('pair_created_at', 'created_at', 'updated_at', 'conviction_computed_at'))
+              OR (table_name = 'token_views' AND column_name IN ('last_viewed_at', 'created_at')))
+            AND data_type = 'timestamp without time zone'
+        LOOP
+          EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMP WITH TIME ZONE', col.table_name, col.column_name);
+        END LOOP;
+      END $tokentz$;
 
       -- Announcements table for admin-broadcast site-wide messages
       CREATE TABLE IF NOT EXISTS announcements (
@@ -470,7 +541,8 @@ async function initializeDatabase() {
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_at_added DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath DECIMAL;
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS mcap_ath_at TIMESTAMP WITH TIME ZONE;
-      EXCEPTION WHEN OTHERS THEN NULL;
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
+      WHEN OTHERS THEN NULL;
       END $mca$;
 
       -- Admin flags read by every curated-token query. db/migrate.js adds them too, but it only
@@ -487,7 +559,8 @@ async function initializeDatabase() {
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_at TIMESTAMP WITH TIME ZONE;
         -- Last refresh attempt, failed ones included; price_refs_at is when the refs were computed
         ALTER TABLE curated_tokens ADD COLUMN IF NOT EXISTS price_refs_tried_at TIMESTAMP WITH TIME ZONE;
-      EXCEPTION WHEN OTHERS THEN NULL;
+      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN RAISE; -- lock_timeout: fail the attempt, don't skip it
+      WHEN OTHERS THEN NULL;
       END $pref$;
 
       -- Daily holder count history — one row per token per day
@@ -612,10 +685,28 @@ async function initializeDatabase() {
         value TEXT,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-    `);
+    `;
+    const schemaHash = crypto.createHash('sha256').update(schemaSql).digest('hex');
 
-    await client.query('COMMIT');
+    if (await getAppliedSchemaHash(client) === schemaHash) {
+      console.log('Database schema up to date');
+    } else {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [SCHEMA_LOCK_KEY]);
+      // Re-read under the lock: the other process may have just applied it
+      if (await getAppliedSchemaHash(client) !== schemaHash) {
+        await client.query(`SET LOCAL lock_timeout = ${SCHEMA_LOCK_TIMEOUT_MS}`);
+        await client.query(schemaSql);
+        await client.query(
+          `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [SCHEMA_HASH_KEY, schemaHash]
+        );
+      }
+      await client.query('COMMIT');
+    }
     isConnected = true;
+    schemaReady = true;
     connectionAttempts = 0;
     console.log('Database initialized successfully');
 
@@ -628,15 +719,18 @@ async function initializeDatabase() {
     if (client) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore rollback errors */ }
     }
-    console.error(`Database connection failed (attempt ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}):`, error.message);
-    isConnected = false;
+    console.error(`Database connection failed (attempt ${attemptLabel}):`, error.message);
 
-    // Retry if we haven't exceeded max attempts
-    if (connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
-      console.log(`Retrying in ${RETRY_DELAY_MS / 1000} seconds...`);
-      setTimeout(() => initializeDatabase(), RETRY_DELAY_MS);
-    } else {
-      console.error('Max database connection attempts reached. Database features will be unavailable.');
+    // Keep retrying: isReady() stays false until the schema is in place, so giving up after a
+    // few attempts left the process serving nothing (or, before schemaReady, serving against
+    // the old schema) until someone restarted it. Fast at first, then once a minute.
+    if (!schemaReady) {
+      const delay = connectionAttempts < MAX_CONNECTION_ATTEMPTS ? RETRY_DELAY_MS : SLOW_RETRY_DELAY_MS;
+      if (connectionAttempts === MAX_CONNECTION_ATTEMPTS) {
+        console.error('Database still not initialized; database features are unavailable until it is. Retrying every minute.');
+      }
+      console.log(`Retrying in ${delay / 1000} seconds...`);
+      setTimeout(() => initializeDatabase(), delay).unref();
     }
     return false;
 
@@ -960,11 +1054,13 @@ async function getTopConvictionTokens(limit = 25, offset = 0, filters = {}) {
     : '';
 
   // One pass over the CTE: the window count is the total before LIMIT/OFFSET.
+  // mint_address breaks ties (every curated token without a score sits at 0) so pages,
+  // queried and cached separately, neither repeat nor skip tokens.
   const result = await pool.query(
     `${baseCte}
      SELECT *, COUNT(*) OVER() AS total_count_ FROM combined
      ${outerConditions}
-     ORDER BY conviction_1m DESC NULLS LAST
+     ORDER BY conviction_1m DESC NULLS LAST, mint_address
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     [...params, limit, offset]
   );
@@ -1570,18 +1666,36 @@ async function getPendingSubmissions(limit = 50) {
 // Watchlist operations
 // ==========================================
 
-// Atomic watchlist add with limit enforcement (prevents TOCTOU race condition)
+// Advisory lock namespaces (first key of the two-key form) for per-row serialisation
+const WATCHLIST_LOCK_NS = 0x57544c53; // 'WTLS'
+const SENTIMENT_LOCK_NS = 0x53454e54; // 'SENT'
+const lockKeyOf = (text) => crypto.createHash('sha256').update(text).digest().readInt32BE(0);
+
+// Watchlist add with limit enforcement. The count and the insert run under a per-wallet
+// lock: on their own, two concurrent adds both counted 99 and both inserted.
 async function addToWatchlistAtomic(walletAddress, tokenMint, maxItems = 100) {
   if (!pool) return { limitReached: true };
 
-  const result = await pool.query(
-    `INSERT INTO watchlist (wallet_address, token_mint)
-     SELECT $1::text, $2::text
-     WHERE (SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1::text) < $3::int
-     ON CONFLICT (wallet_address, token_mint) DO NOTHING
-     RETURNING *`,
-    [walletAddress, tokenMint, maxItems]
-  );
+  const client = await pool.connect();
+  let result;
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [WATCHLIST_LOCK_NS, lockKeyOf(walletAddress)]);
+    result = await client.query(
+      `INSERT INTO watchlist (wallet_address, token_mint)
+       SELECT $1::text, $2::text
+       WHERE (SELECT COUNT(*) FROM watchlist WHERE wallet_address = $1::text) < $3::int
+       ON CONFLICT (wallet_address, token_mint) DO NOTHING
+       RETURNING *`,
+      [walletAddress, tokenMint, maxItems]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   if (result.rows.length === 0) {
     const exists = await isInWatchlist(walletAddress, tokenMint);
     if (exists) return { wallet_address: walletAddress, token_mint: tokenMint, exists: true };
@@ -2355,7 +2469,8 @@ async function getTokenViewsBatch(tokenMints) {
     const result = await pool.query({
       text: `SELECT token_mint, view_count FROM token_views WHERE token_mint = ANY($1)`,
       values: [tokenMints],
-      statement_timeout: 5000 // 5 second timeout for view counts
+      // Per-query client timeout; statement_timeout is a connection setting and is ignored here
+      query_timeout: 5000 // 5 second timeout for view counts
     });
 
     const viewsMap = {};
@@ -2612,6 +2727,8 @@ async function getCallsByWallet(callerWallet, limit = 50, offset = 0) {
 
 // Delete all user data associated with a wallet (GDPR right to erasure)
 const GDPR_DELETE_TIMEOUT_MS = 120000;
+// Stands in for the wallet on rows that must outlive an erasure (not a valid address)
+const ERASED_WALLET = 'erased';
 
 async function deleteUserData(walletAddress) {
   if (!pool) return null;
@@ -2758,6 +2875,27 @@ async function deleteUserData(walletAddress) {
         [affectedMints]
       );
     }
+
+    // Linked devices: a paired phone kept acting as this wallet
+    const deviceSessions = await query(
+      'DELETE FROM device_sessions WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    counts.deviceSessions = deviceSessions.rowCount;
+
+    // Utility burns: anonymized, not deleted. The row's burn_signature is what stops the
+    // same burn from being claimed again, so it stays; the wallet goes.
+    const burns = await query(
+      'UPDATE cultify_burns SET wallet_address = $2 WHERE wallet_address = $1',
+      [walletAddress, ERASED_WALLET]
+    );
+    counts.utilityBurns = burns.rowCount;
+
+    const whitelist = await query(
+      'DELETE FROM utility_whitelist WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    counts.utilityWhitelist = whitelist.rowCount;
 
     await query('COMMIT');
 
@@ -3062,7 +3200,7 @@ async function repairDatabaseSchema() {
 
 // Check if database is ready for queries
 function isReady() {
-  return pool !== null && isConnected;
+  return pool !== null && isConnected && schemaReady;
 }
 
 // Check database health
@@ -3146,6 +3284,10 @@ async function castSentimentVote(tokenMint, voterWallet, sentiment) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // One vote change at a time per wallet and token. Two concurrent requests both read the
+    // same previous vote and each applied its tally delta, so the tally drifted from the votes.
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)',
+      [SENTIMENT_LOCK_NS, lockKeyOf(`${tokenMint}:${voterWallet}`)]);
 
     const existing = await client.query(
       'SELECT sentiment FROM sentiment_votes WHERE token_mint = $1 AND voter_wallet = $2',
@@ -3525,6 +3667,14 @@ async function removeCuratedToken(mintAddress) {
   // Stop carrying its holder snapshots; snapshot entries go with them (ON DELETE CASCADE)
   await pool.query('DELETE FROM holder_snapshots WHERE mint_address = $1', [mintAddress]).catch(() => {});
   await pool.query('DELETE FROM holder_positions WHERE mint_address = $1', [mintAddress]).catch(() => {});
+
+  // End its King of the Pill reign: the banner reads the open reign, and kept featuring the
+  // removed token (linking to a page that now answers 403) until the next daily crowning.
+  // The table is created lazily by services/kingOfPill.js, so it may not exist yet.
+  await pool.query(
+    "UPDATE kotp_reigns SET ended_on = (NOW() AT TIME ZONE 'UTC')::date WHERE mint_address = $1 AND ended_on IS NULL", // UTC days, as the crowning uses
+    [mintAddress]
+  ).catch(() => {});
 
   return result.rows[0];
 }

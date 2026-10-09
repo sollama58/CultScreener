@@ -34,6 +34,8 @@ if (!DB_URL) {
     process.env.DATABASE_URL = withOptions(DB_URL);
     delete process.env.REDIS_URL;
     db = require('./database');
+    // Not ready to serve until the schema step has committed
+    assert.strictEqual(db.isReady(), false);
     assert.strictEqual(await db.getInitializationPromise(), true);
   });
 
@@ -143,6 +145,8 @@ if (!DB_URL) {
     test('boot converts session columns left as TIMESTAMP by older versions', async () => {
       await db.pool.query('ALTER TABLE device_sessions ALTER COLUMN expires_at TYPE TIMESTAMP');
       await db.pool.query('ALTER TABLE admin_sessions ALTER COLUMN expires_at TYPE TIMESTAMP');
+      // An older version never recorded the schema it applied
+      await db.pool.query(`DELETE FROM app_settings WHERE key = 'schema_ddl_hash'`);
       assert.strictEqual(await db.initializeDatabase(), true);
       const { rows } = await db.pool.query(
         `SELECT table_name, column_name, data_type FROM information_schema.columns
@@ -187,6 +191,206 @@ if (!DB_URL) {
       assert.strictEqual(result.deleted.watchlist, 1);
       assert.ok(seen.length > 5);
       assert.deepStrictEqual(seen.filter(t => t !== 120000), []);
+    });
+
+    test('also ends linked devices, drops the whitelist entry and unlinks utility burns', async () => {
+      const WALLET = 'FreshGdprAll111111111111111111111111111111';
+      const MINT = 'FreshGdprAllMint11111111111111111111111111';
+      const SIG = 'FreshGdprBurnSig'.padEnd(88, '1');
+      await db.createDeviceSession('gdpr-pair', WALLET, new Date(Date.now() + 60_000));
+      await db.activateDeviceSession('gdpr-pair', 'gdpr-session');
+      await db.addWhitelistedWallet(WALLET, 'test');
+      await db.recordCultifyBurn(WALLET, MINT, SIG, '1000');
+      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), true);
+
+      const result = await db.deleteUserData(WALLET);
+      assert.strictEqual(result.deleted.deviceSessions, 1);
+      assert.strictEqual(result.deleted.utilityWhitelist, 1);
+      assert.strictEqual(result.deleted.utilityBurns, 1);
+
+      assert.strictEqual(await db.getDeviceSession('gdpr-session'), undefined);
+      assert.strictEqual(await db.isWalletWhitelisted(WALLET), false);
+      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), false);
+      assert.deepStrictEqual(await db.getCultifyBurnsByWallet(WALLET), []);
+      // The burn still can't be claimed a second time
+      assert.strictEqual(await db.isCultifySignatureUsed(SIG), true);
+    });
+  });
+
+  describe('schema step at boot', () => {
+    // A second connection into the same schema, to hold locks the way live traffic does
+    let other;
+    before(() => { other = new Pool({ connectionString: withOptions(DB_URL), max: 1 }); });
+    after(() => other.end());
+
+    test('records the schema it applied, and a restart with the same schema takes no table locks', async () => {
+      const { rows } = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.match(rows[0].value, /^[0-9a-f]{64}$/);
+      const holder = await other.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('LOCK TABLE tokens IN ACCESS SHARE MODE');
+        const started = Date.now();
+        assert.strictEqual(await db.initializeDatabase(), true);
+        // Used to queue an ACCESS EXCLUSIVE request behind this transaction (and every
+        // later tokens query behind that) on each start
+        assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+        assert.strictEqual(db.isReady(), true);
+      } finally {
+        await holder.query('ROLLBACK');
+        holder.release();
+      }
+    });
+
+    test('a changed schema waits at most a few seconds for a busy table, then retries', async () => {
+      await db.pool.query(`UPDATE app_settings SET value = 'older' WHERE key = 'schema_ddl_hash'`);
+      const holder = await other.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('LOCK TABLE tokens IN ACCESS SHARE MODE');
+        const started = Date.now();
+        assert.strictEqual(await db.initializeDatabase(), false);
+        const took = Date.now() - started;
+        assert.ok(took >= 4000 && took < 15000, `took ${took} ms`);
+      } finally {
+        await holder.query('ROLLBACK');
+        holder.release();
+      }
+      // Not recorded as applied, so the next attempt runs it
+      const { rows } = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.strictEqual(rows[0].value, 'older');
+      assert.strictEqual(await db.initializeDatabase(), true);
+      const again = await db.pool.query(`SELECT value FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.match(again.rows[0].value, /^[0-9a-f]{64}$/);
+    });
+
+    test('token timestamps have a time zone, so conviction times are right whatever the session zone', async () => {
+      const MINT = 'FreshTz111111111111111111111111111111111111';
+      await db.pool.query('ALTER TABLE tokens ALTER COLUMN conviction_computed_at TYPE TIMESTAMP');
+      await db.pool.query('ALTER TABLE token_views ALTER COLUMN last_viewed_at TYPE TIMESTAMP');
+      await db.pool.query(`DELETE FROM app_settings WHERE key = 'schema_ddl_hash'`);
+      assert.strictEqual(await db.initializeDatabase(), true);
+      const { rows } = await db.pool.query(
+        `SELECT table_name, column_name, data_type FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND ((table_name = 'tokens' AND column_name IN ('pair_created_at', 'created_at', 'updated_at', 'conviction_computed_at'))
+             OR (table_name = 'token_views' AND column_name IN ('last_viewed_at', 'created_at')))`);
+      assert.strictEqual(rows.length, 6);
+      for (const r of rows) assert.strictEqual(r.data_type, 'timestamp with time zone', `${r.table_name}.${r.column_name}`);
+
+      await db.pool.query('INSERT INTO tokens (mint_address) VALUES ($1)', [MINT]);
+      await db.upsertConviction(MINT, { '1m': 50 }, 10, 10);
+      const token = await db.getToken(MINT);
+      // Was 9 hours in the future with a TIMESTAMP column in a Tokyo session
+      assert.ok(Math.abs(new Date(token.conviction_computed_at).getTime() - Date.now()) < 60_000);
+    });
+  });
+
+  describe('pool errors', () => {
+    test('an idle connection failing does not take the database offline', async () => {
+      assert.strictEqual(db.isReady(), true);
+      db.pool.emit('error', new Error('Connection terminated unexpectedly'));
+      assert.strictEqual(db.isReady(), true);
+      await new Promise(r => setTimeout(r, 100)); // the probe query succeeds
+      assert.strictEqual(db.isReady(), true);
+    });
+
+    test('an idle connection failing while every connection is busy does not take the database offline', async () => {
+      const opts = db.pool.options;
+      const savedTimeout = opts.connectionTimeoutMillis;
+      opts.connectionTimeoutMillis = 200;
+      const held = [];
+      try {
+        while (db.pool.totalCount < opts.max || db.pool.idleCount > 0) held.push(await db.pool.connect());
+        db.pool.emit('error', new Error('Connection terminated unexpectedly'));
+        // The probe's checkout times out: the pool is busy, not the database gone
+        await new Promise(r => setTimeout(r, 500));
+        assert.strictEqual(db.isReady(), true);
+      } finally {
+        opts.connectionTimeoutMillis = savedTimeout;
+        for (const c of held) c.release();
+      }
+    });
+
+    test('a connection dropped mid-transaction fails that transaction, not the process', async () => {
+      const client = await db.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const pid = (await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+        await admin.query('SELECT pg_terminate_backend($1)', [pid]);
+        // Without a listener, pg's 'error' event on the checked-out client was an uncaught exception
+        await new Promise(r => setTimeout(r, 200));
+        await assert.rejects(client.query('SELECT 1'));
+      } finally {
+        client.release();
+      }
+      const { rows } = await db.pool.query('SELECT 1 AS ok');
+      assert.strictEqual(rows[0].ok, 1);
+    });
+  });
+
+  describe('concurrent writes', () => {
+    test('the watchlist cap holds against simultaneous adds', async () => {
+      const WALLET = 'FreshCap11111111111111111111111111111111111';
+      await db.pool.query(
+        `INSERT INTO watchlist (wallet_address, token_mint)
+         SELECT $1, 'CapMint' || g FROM generate_series(1, 98) g`, [WALLET]);
+      const results = await Promise.all([1, 2, 3, 4, 5].map(i => db.addToWatchlistAtomic(WALLET, `CapNew${i}`, 100)));
+      const { rows } = await db.pool.query('SELECT COUNT(*)::int AS n FROM watchlist WHERE wallet_address = $1', [WALLET]);
+      assert.strictEqual(rows[0].n, 100);
+      assert.strictEqual(results.filter(r => r.limitReached).length, 3);
+    });
+
+    test('simultaneous sentiment changes from one wallet keep the tally in step with the votes', async () => {
+      const WALLET = 'FreshSent1111111111111111111111111111111111';
+      for (let round = 0; round < 5; round++) {
+        const MINT = `FreshSentMint${round}`.padEnd(44, '1');
+        await db.castSentimentVote(MINT, WALLET, 'bullish');
+        // Toggle off and switch at once: both used to read 'bullish' and both applied a delta
+        await Promise.all([
+          db.castSentimentVote(MINT, WALLET, 'bullish'),
+          db.castSentimentVote(MINT, WALLET, 'bearish'),
+        ]);
+        const votes = await db.pool.query(
+          `SELECT COUNT(*) FILTER (WHERE sentiment = 'bullish')::int AS bullish,
+                  COUNT(*) FILTER (WHERE sentiment = 'bearish')::int AS bearish
+             FROM sentiment_votes WHERE token_mint = $1`, [MINT]);
+        const tally = await db.pool.query('SELECT bullish, bearish, score FROM sentiment_tallies WHERE token_mint = $1', [MINT]);
+        const { bullish, bearish } = votes.rows[0];
+        assert.deepStrictEqual(tally.rows[0], { bullish, bearish, score: bullish - bearish });
+      }
+    });
+  });
+
+  describe('conviction leaderboard paging', () => {
+    test('tokens tied on score come back once each, in a stable order', async () => {
+      const mints = ['E', 'B', 'D', 'A', 'C'].map(t => `FreshTie${t}`.padEnd(44, '1'));
+      for (const m of mints) await db.addCuratedToken(m);
+      const seen = [];
+      for (let offset = 0; ; offset++) {
+        const page = await db.getTopConvictionTokens(1, offset, { search: 'FreshTie' });
+        if (page.tokens.length === 0) break;
+        seen.push(page.tokens[0].mint_address);
+      }
+      assert.deepStrictEqual(seen, [...mints].sort());
+    });
+  });
+
+  describe('view counts', () => {
+    test('the 5-second limit is a per-query timeout node-postgres honours', async () => {
+      const configs = [];
+      const query = db.pool.query;
+      db.pool.query = function (config, values) {
+        configs.push(config);
+        return query.call(this, config, values);
+      };
+      try {
+        await db.getTokenViewsBatch(['FreshViews11111111111111111111111111111111']);
+      } finally {
+        db.pool.query = query;
+      }
+      assert.strictEqual(configs[0].query_timeout, 5000);
+      assert.strictEqual(configs[0].statement_timeout, undefined);
     });
   });
 
