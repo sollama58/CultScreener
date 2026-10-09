@@ -2845,9 +2845,11 @@ async function deleteUserData(walletAddress) {
       [walletAddress]
     );
 
-    // Delete API keys
+    // Delete API keys. A key an admin revoked (is_active = false) is kept: it is the record of
+    // that sanction, and dropping it would let the owner register a fresh key right after
+    // (the same rule deleteApiKey follows).
     await query(
-      'DELETE FROM api_keys WHERE owner_wallet = $1',
+      'DELETE FROM api_keys WHERE owner_wallet = $1 AND is_active IS NOT FALSE',
       [walletAddress]
     );
 

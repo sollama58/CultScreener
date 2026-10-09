@@ -236,6 +236,21 @@ if (!DB_URL) {
       // The burn still can't be claimed a second time
       assert.strictEqual(await db.isCultifySignatureUsed(SIG), true);
     });
+
+    test('keeps an admin-revoked API key, so the owner cannot register a fresh one after', async () => {
+      const REVOKED = 'FreshGdprRevoked1111111111111111111111111';
+      const ACTIVE = 'FreshGdprActiveKey11111111111111111111111';
+      const rev = await db.createApiKey(REVOKED, 'hash-gdpr-revoked', 'cult_gr');
+      await db.revokeApiKeyById(rev.id);
+      await db.createApiKey(ACTIVE, 'hash-gdpr-active', 'cult_ga');
+
+      await db.deleteUserData(REVOKED);
+      await db.deleteUserData(ACTIVE);
+
+      assert.strictEqual((await db.getApiKeyByWallet(REVOKED)).is_active, false);
+      assert.ok(!(await db.createApiKey(REVOKED, 'hash-gdpr-new', 'cult_gn')), 'no fresh key is issued');
+      assert.strictEqual(await db.getApiKeyByWallet(ACTIVE), undefined);
+    });
   });
 
   describe('schema step at boot', () => {
