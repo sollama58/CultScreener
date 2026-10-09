@@ -2700,6 +2700,8 @@ async function getCallsByWallet(callerWallet, limit = 50, offset = 0) {
 
 // Delete all user data associated with a wallet (GDPR right to erasure)
 const GDPR_DELETE_TIMEOUT_MS = 120000;
+// Stands in for the wallet on rows that must outlive an erasure (not a valid address)
+const ERASED_WALLET = 'erased';
 
 async function deleteUserData(walletAddress) {
   if (!pool) return null;
@@ -2846,6 +2848,27 @@ async function deleteUserData(walletAddress) {
         [affectedMints]
       );
     }
+
+    // Linked devices: a paired phone kept acting as this wallet
+    const deviceSessions = await query(
+      'DELETE FROM device_sessions WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    counts.deviceSessions = deviceSessions.rowCount;
+
+    // Utility burns: anonymized, not deleted. The row's burn_signature is what stops the
+    // same burn from being claimed again, so it stays; the wallet goes.
+    const burns = await query(
+      'UPDATE cultify_burns SET wallet_address = $2 WHERE wallet_address = $1',
+      [walletAddress, ERASED_WALLET]
+    );
+    counts.utilityBurns = burns.rowCount;
+
+    const whitelist = await query(
+      'DELETE FROM utility_whitelist WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    counts.utilityWhitelist = whitelist.rowCount;
 
     await query('COMMIT');
 

@@ -190,6 +190,29 @@ if (!DB_URL) {
       assert.ok(seen.length > 5);
       assert.deepStrictEqual(seen.filter(t => t !== 120000), []);
     });
+
+    test('also ends linked devices, drops the whitelist entry and unlinks utility burns', async () => {
+      const WALLET = 'FreshGdprAll111111111111111111111111111111';
+      const MINT = 'FreshGdprAllMint11111111111111111111111111';
+      const SIG = 'FreshGdprBurnSig'.padEnd(88, '1');
+      await db.createDeviceSession('gdpr-pair', WALLET, new Date(Date.now() + 60_000));
+      await db.activateDeviceSession('gdpr-pair', 'gdpr-session');
+      await db.addWhitelistedWallet(WALLET, 'test');
+      await db.recordCultifyBurn(WALLET, MINT, SIG, '1000');
+      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), true);
+
+      const result = await db.deleteUserData(WALLET);
+      assert.strictEqual(result.deleted.deviceSessions, 1);
+      assert.strictEqual(result.deleted.utilityWhitelist, 1);
+      assert.strictEqual(result.deleted.utilityBurns, 1);
+
+      assert.strictEqual(await db.getDeviceSession('gdpr-session'), undefined);
+      assert.strictEqual(await db.isWalletWhitelisted(WALLET), false);
+      assert.strictEqual(await db.hasCultifyAccess(WALLET, MINT), false);
+      assert.deepStrictEqual(await db.getCultifyBurnsByWallet(WALLET), []);
+      // The burn still can't be claimed a second time
+      assert.strictEqual(await db.isCultifySignatureUsed(SIG), true);
+    });
   });
 
   describe('schema step at boot', () => {

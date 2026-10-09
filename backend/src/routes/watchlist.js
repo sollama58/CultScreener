@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../services/database');
 const { asyncHandler, requireDatabase, validateWalletSignature, validateWatchlistSignature, SOLANA_ADDRESS_REGEX } = require('../middleware/validation');
 const { walletLimiter, strictLimiter, defaultLimiter } = require('../middleware/rateLimit');
+const { cache } = require('../services/cache');
 
 // All routes in this file require database access
 router.use(requireDatabase);
@@ -183,6 +184,25 @@ router.post('/check-batch', walletLimiter, asyncHandler(async (req, res) => {
 // ==========================================
 
 /**
+ * Drop what the cache holds for a wallet's paid utilities: the Holder Behavior "My Utilities"
+ * index, the per-wallet record of issued tokens, and the access tokens themselves (each one
+ * names its wallet). Rare, so a scan of the access keys is fine.
+ */
+async function forgetWalletAccess(wallet) {
+  const keys = [`hb:wallet-idx:${wallet}`];
+  for (const prefix of ['cultify', 'hb']) {
+    keys.push(...await cache.scanKeys(`${prefix}:access-by:${wallet}:*`));
+    const tokenKeys = await cache.scanKeys(`${prefix}:access:*`);
+    for (let i = 0; i < tokenKeys.length; i += 500) {
+      const batch = tokenKeys.slice(i, i + 500);
+      const values = await cache.mget(batch);
+      batch.forEach((key, j) => { if (values[j]?.wallet === wallet) keys.push(key); });
+    }
+  }
+  await cache.deleteMany(keys);
+}
+
+/**
  * DELETE /api/watchlist/user-data
  * Delete all user data associated with a wallet (GDPR compliance)
  * Requires wallet signature for security
@@ -190,8 +210,11 @@ router.post('/check-batch', walletLimiter, asyncHandler(async (req, res) => {
  * This endpoint deletes:
  * - Watchlist entries
  * - Votes (and updates affected tallies)
- * - API keys
- * - Anonymizes submissions (removes wallet association but keeps content)
+ * - API keys, token calls, sentiment votes
+ * - Linked device sessions and the utility whitelist entry
+ * - Cached utility access for the wallet
+ * - Anonymizes submissions and utility burns (removes wallet association but keeps the
+ *   content, and the burn signature that stops a burn from being claimed twice)
  */
 router.delete('/user-data',
   strictLimiter,
@@ -209,6 +232,9 @@ router.delete('/user-data',
       if (!result) {
         return res.status(500).json({ error: 'Failed to delete user data' });
       }
+      await forgetWalletAccess(wallet).catch(() => {
+        console.warn('[GDPR] Could not clear cached utility access');
+      });
 
       res.json({
         success: true,
@@ -224,3 +250,4 @@ router.delete('/user-data',
 );
 
 module.exports = router;
+module.exports.forgetWalletAccess = forgetWalletAccess; // for tests
