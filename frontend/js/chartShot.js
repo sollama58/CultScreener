@@ -1,7 +1,8 @@
 // Chart screenshots: a Lightweight Charts canvas framed with the token's logo, name and ticker
 // on top (plus a King of the Pill chip when the token wears the crown) and holdex.live
 // branding, copied to the clipboard or downloaded as a PNG.
-// Used by the Holders panel (holderChart.js) and the chart modal (tokenChart.js).
+// Used by the Holders panel (holderChart.js) and the chart modal (tokenChart.js); its copy,
+// download and drawing helpers also serve the King of the Pill share image (kotpShot.js).
 const chartShot = (() => {
   const BRAND_ICON = 'icons/icon.svg';
   const SITE = 'holdex.live';
@@ -263,8 +264,8 @@ const chartShot = (() => {
     return new Promise((resolve, reject) => c.toBlob(b => (b ? resolve(b) : reject(new Error('Could not export the image'))), 'image/png'));
   }
 
-  function filename(kind) {
-    const { symbol, name } = tokenText();
+  function filename(kind, token) {
+    const { symbol, name } = token || tokenText();
     const base = (symbol || name || 'token').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'token';
     const d = new Date();
     const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -289,35 +290,36 @@ const chartShot = (() => {
   /**
    * Copy the image to the clipboard. The clipboard write starts inside the click (Safari
    * requires it) with the image still rendering. Without image clipboard support, downloads.
+   * opts: {what: 'Chart image', token: {name, symbol}} for images that are not of the token page's token
    */
-  async function copy(make, kind) {
+  async function copy(make, kind, { what = 'Chart image', token } = {}) {
     const canClip = typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write;
     const pending = make();
     if (canClip) {
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': pending })]);
-        note('success', 'Chart image copied');
+        note('success', `${what} copied`);
         return;
       } catch (err) {
         console.warn('[chartShot] clipboard write failed:', err?.message);
       }
     }
     try {
-      saveBlob(await pending, filename(kind));
-      note('success', canClip ? 'Copy is blocked here, so the image was downloaded' : 'Chart image downloaded');
+      saveBlob(await pending, filename(kind, token));
+      note('success', canClip ? 'Copy is blocked here, so the image was downloaded' : `${what} downloaded`);
     } catch (err) {
       console.warn('[chartShot]', err);
-      note('error', 'Could not create the chart image');
+      note('error', `Could not create the ${what.toLowerCase()}`);
     }
   }
 
-  async function download(make, kind) {
+  async function download(make, kind, { what = 'Chart image', token } = {}) {
     try {
-      saveBlob(await make(), filename(kind));
-      note('success', 'Chart image downloaded');
+      saveBlob(await make(), filename(kind, token));
+      note('success', `${what} downloaded`);
     } catch (err) {
       console.warn('[chartShot]', err);
-      note('error', 'Could not create the chart image');
+      note('error', `Could not create the ${what.toLowerCase()}`);
     }
   }
 
@@ -326,5 +328,8 @@ const chartShot = (() => {
     download: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
   };
 
-  return { capture, copy, download, ICONS, _test: { filename } };
+  // Drawing helpers shared with the King of the Pill share image (kotpShot.js)
+  const draw = { cssVar, loadImage, roundRect, fitText, BRAND_ICON, SITE };
+
+  return { capture, copy, download, ICONS, draw, filename, _test: { filename } };
 })();

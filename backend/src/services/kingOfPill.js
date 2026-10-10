@@ -358,7 +358,7 @@ async function getCurrentKing({ now = Date.now() } = {}) {
   let score = num(reign.score), contenders = [];
   if (scoreDate) {
     const { rows } = await pool().query(
-      `SELECT s.mint_address, s.score, t.name, t.symbol
+      `SELECT s.mint_address, s.score, t.name, t.symbol, t.logo_uri
          FROM diamond_hands_scores s
          JOIN curated_tokens c ON c.mint_address = s.mint_address
          LEFT JOIN tokens t ON t.mint_address = s.mint_address
@@ -370,7 +370,7 @@ async function getCurrentKing({ now = Date.now() } = {}) {
       `SELECT score FROM diamond_hands_scores WHERE mint_address = $1 AND score_date = $2`, [reign.mint_address, scoreDate]);
     if (own.rows[0]?.score != null) score = num(own.rows[0].score);
     contenders = rows.filter(r => r.mint_address !== reign.mint_address).slice(0, MAX_CONTENDERS)
-      .map(r => ({ mintAddress: r.mint_address, name: r.name || null, symbol: r.symbol || null, score: num(r.score) }));
+      .map(r => ({ mintAddress: r.mint_address, name: r.name || null, symbol: r.symbol || null, logoUri: r.logo_uri || null, score: num(r.score) }));
   }
   // The reign day as of the latest scored day, not the wall clock: between midnight and
   // the 00:20 crowning (or while that job is failing) nothing has been decided for today,
