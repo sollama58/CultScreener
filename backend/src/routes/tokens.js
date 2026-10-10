@@ -1936,7 +1936,7 @@ router.get('/:mint/price', validateMint, requireAllowedToken, asyncHandler(async
 }));
 
 // GET /api/tokens/:mint/ohlcv - Get OHLCV data for candlestick charts
-// Feeds the token page's chart modal. ?interval=1m|5m|15m|1h|4h|12h|1d, ?limit=1..1000.
+// Feeds the token page's chart modal. ?interval=1m|5m|15m|1h|4h|12h|1d|1w, ?limit=1..1000.
 // Uses getOrSet for automatic caching with stampede prevention
 router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
