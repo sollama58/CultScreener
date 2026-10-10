@@ -1017,6 +1017,7 @@ async function searchTokens(query, limit = 20, allowedDexPrefixes = null) {
 
 // GeckoTerminal only serves these candle sizes:
 // minute (1, 5, 15), hour (1, 4, 12) and day (1). Anything else returns an error.
+// Weekly candles ('1w') have no native size: they are built from daily candles (weeksFromDays).
 const OHLCV_TIMEFRAMES = {
   '1m': { timeframe: 'minute', aggregate: 1 },
   '5m': { timeframe: 'minute', aggregate: 5 },
@@ -1024,9 +1025,39 @@ const OHLCV_TIMEFRAMES = {
   '1h': { timeframe: 'hour', aggregate: 1 },
   '4h': { timeframe: 'hour', aggregate: 4 },
   '12h': { timeframe: 'hour', aggregate: 12 },
-  '1d': { timeframe: 'day', aggregate: 1 }
+  '1d': { timeframe: 'day', aggregate: 1 },
+  '1w': { timeframe: 'day', aggregate: 1, weekly: true }
 };
 const OHLCV_MAX_LIMIT = 1000; // GeckoTerminal's per-request cap
+const DAY_SEC = 86400;
+const WEEK_SEC = 7 * DAY_SEC;
+const MONDAY_OFFSET_SEC = 4 * DAY_SEC; // the epoch fell on a Thursday; Jan 5 1970 was a Monday
+
+/**
+ * Fold daily candles (newest first, GeckoTerminal order) into weekly candles that open
+ * Monday 00:00 UTC, the week boundary TradingView uses. Returns newest first too.
+ * When the daily window was cut by the request limit (truncated), the oldest week may
+ * be missing its first days, so it is dropped rather than shown with a wrong open.
+ */
+function weeksFromDays(days, truncated = false) {
+  const weeks = new Map();
+  for (const d of [...days].sort((a, b) => a.timestamp - b.timestamp)) {
+    const sec = Math.floor(d.timestamp / 1000);
+    const start = Math.floor((sec - MONDAY_OFFSET_SEC) / WEEK_SEC) * WEEK_SEC + MONDAY_OFFSET_SEC;
+    const w = weeks.get(start);
+    if (!w) {
+      weeks.set(start, { timestamp: start * 1000, open: d.open, high: d.high, low: d.low, close: d.close, volume: Number(d.volume) || 0 });
+    } else {
+      w.high = Math.max(w.high, d.high);
+      w.low = Math.min(w.low, d.low);
+      w.close = d.close;
+      w.volume += Number(d.volume) || 0;
+    }
+  }
+  const out = [...weeks.values()];
+  if (truncated && out.length > 1) out.shift();
+  return out.reverse();
+}
 
 /**
  * Map an interval like '15m' or '4h' to GeckoTerminal's timeframe + aggregate.
@@ -1105,13 +1136,15 @@ async function getOHLCV(mintAddress, options = {}) {
       rememberPool(mintAddress, poolAddress, side);
     }
 
-    const { timeframe, aggregate } = ohlcvTimeframe(interval);
+    const { timeframe, aggregate, weekly } = ohlcvTimeframe(interval);
+    // Weekly: ask for seven daily candles per week (plus one, so a full window shows it was cut)
+    const upstreamLimit = weekly ? Math.min(limit * 7 + 1, OHLCV_MAX_LIMIT) : limit;
 
     const ohlcvResponse = await geckoRequest(() =>
       geckoAxios.get(`/networks/${NETWORK}/pools/${poolAddress}/ohlcv/${timeframe}`, {
         params: {
           aggregate,
-          limit,
+          limit: upstreamLimit,
           currency: 'usd',
           token: side
         }
@@ -1127,7 +1160,7 @@ async function getOHLCV(mintAddress, options = {}) {
 
     // Transform to standard format
     // GeckoTerminal format: [timestamp, open, high, low, close, volume], newest first
-    const data = ohlcvList.map(candle => ({
+    const candles = ohlcvList.map(candle => ({
       timestamp: candle[0] * 1000, // Convert to milliseconds
       open: candle[1],
       high: candle[2],
@@ -1135,6 +1168,9 @@ async function getOHLCV(mintAddress, options = {}) {
       close: candle[4],
       volume: candle[5]
     }));
+    const data = weekly
+      ? weeksFromDays(candles, ohlcvList.length >= upstreamLimit).slice(0, limit)
+      : candles;
 
     return {
       mintAddress,
@@ -1496,6 +1532,7 @@ module.exports = {
   searchTokens,
   getOHLCV,
   ohlcvTimeframe,
+  weeksFromDays,
   poolSideForMint,
   OHLCV_TIMEFRAMES,
   getPriceHistory,
