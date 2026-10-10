@@ -89,7 +89,9 @@
 // v88: API key Refresh details signs the 'view' action - apiKeys.js v6.
 // v89: share link is https://holdex.live/share/<mint>, and watchlist add/remove no longer ask
 // for a wallet signature - api.js v19, watchlist.js v5, tokenDetail.js v37.
-const CACHE_VERSION = 'holdex-v89';
+// v90: Share button for the King of the Pill (King only, or King + runners-up) - new
+// js/kotpShot.js, chartShot.js v4, kotp.js v8, home.css v3.
+const CACHE_VERSION = 'holdex-v90';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -101,7 +103,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=26',
-  '/css/home.css?v=2',
+  '/css/home.css?v=3',
   '/css/token.css?v=9',
   '/js/config.js?v=5',
   '/js/api.js?v=19',
@@ -113,10 +115,11 @@ const APP_SHELL = [
   '/js/emerging.js?v=7',
   '/js/versus.js?v=18',
   '/js/mainViewTabs.js?v=3',
-  '/js/kotp.js?v=7',
+  '/js/kotpShot.js?v=1',
+  '/js/kotp.js?v=8',
   '/js/tokenDetail.js?v=37',
   '/js/chartDrawings.js?v=1',
-  '/js/chartShot.js?v=3',
+  '/js/chartShot.js?v=4',
   '/js/tokenChart.js?v=9',
   '/js/holderChart.js?v=5',
   '/js/watchlist.js?v=5',

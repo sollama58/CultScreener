@@ -69,7 +69,22 @@
       '</span>' +
       '<span class="kotp-tooltip-box">' + tooltipText(token) + '</span>';
     wrap.innerHTML = '';
-    wrap.appendChild(el);
+    var row = document.createElement('div');
+    row.className = 'kotp-row';
+    row.appendChild(el);
+    // Share image of the King (js/kotpShot.js), beside the banner rather than inside the link
+    if (typeof kotpShot !== 'undefined' && typeof chartShot !== 'undefined') {
+      var shareBtn = document.createElement('button');
+      shareBtn.type = 'button';
+      shareBtn.className = 'kotp-share-btn';
+      shareBtn.title = 'Share the King of the Pill';
+      shareBtn.setAttribute('aria-label', 'Share the King of the Pill');
+      shareBtn.setAttribute('aria-haspopup', 'dialog');
+      shareBtn.innerHTML = SHARE_ICON + '<span>Share</span>';
+      shareBtn.addEventListener('click', function () { openShare(token, shareBtn); });
+      row.appendChild(shareBtn);
+    }
+    wrap.appendChild(row);
 
     // Attached rather than written as an onerror="" attribute. The page's CSP has no
     // 'unsafe-inline' or 'unsafe-hashes' in script-src, so an inline event handler is refused
@@ -114,6 +129,141 @@
       if (!el.contains(e.target)) el.classList.remove('kotp-tt-open');
     }, { passive: true });
   }
+
+  var SHARE_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>';
+  var MODE_KEY = 'holdex.kotpShareMode';
+
+  function savedMode() {
+    try { return localStorage.getItem(MODE_KEY) === 'podium' ? 'podium' : 'king'; } catch (e) { return 'king'; }
+  }
+
+  // holdex.live/share/<mint> unfurls with the token's preview card and sends people on to its
+  // page (see tokenDetail.js). Local dev has no /share rewrite, so it links the API directly.
+  function shareLink(mint) {
+    var isLocal = /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+    return (isLocal ? apiBase : 'https://holdex.live') + '/share/' + encodeURIComponent(mint);
+  }
+
+  // The share dialog: a preview of the image, King only or King + runners-up, and copy,
+  // download, native share (phones) and copy link.
+  function openShare(token, opener) {
+    var withRunners = kotpShot.hasRunners(token);
+    var mode = withRunners ? savedMode() : 'king';
+    var sym = token.symbol ? '$' + token.symbol : (token.name || 'the King');
+    var who = { name: token.name, symbol: token.symbol };
+    var canFiles = false;
+    try {
+      canFiles = !!(navigator.canShare && typeof File !== 'undefined' &&
+        navigator.canShare({ files: [new File([''], 'k.png', { type: 'image/png' })] }));
+    } catch (e) { canFiles = false; }
+
+    var overlay = document.createElement('div');
+    overlay.className = 'kotp-share-overlay';
+    overlay.innerHTML =
+      '<div class="kotp-share-panel" role="dialog" aria-modal="true" aria-labelledby="kotp-share-title">' +
+        '<div class="kotp-share-head">' +
+          '<h2 id="kotp-share-title">Share the King of the Pill</h2>' +
+          '<button type="button" class="kotp-share-close" aria-label="Close">&times;</button>' +
+        '</div>' +
+        (withRunners
+          ? '<div class="kotp-share-toggle" role="group" aria-label="What the image shows">' +
+              '<button type="button" data-mode="king">King only</button>' +
+              '<button type="button" data-mode="podium">King + runners-up</button>' +
+            '</div>'
+          : '') +
+        '<div class="kotp-share-preview" aria-live="polite"><span class="kotp-share-loading">Drawing the image…</span></div>' +
+        '<div class="kotp-share-actions">' +
+          '<button type="button" class="kotp-share-action primary" data-act="copy">' + chartShot.ICONS.copy + '<span>Copy image</span></button>' +
+          '<button type="button" class="kotp-share-action" data-act="download">' + chartShot.ICONS.download + '<span>Download</span></button>' +
+          (canFiles ? '<button type="button" class="kotp-share-action" data-act="native">' + SHARE_ICON + '<span>Share…</span></button>' : '') +
+          '<button type="button" class="kotp-share-action" data-act="link">' + LINK_ICON + '<span>Copy link</span></button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    document.body.classList.add('kotp-share-open');
+
+    var preview = overlay.querySelector('.kotp-share-preview');
+    var canvas = null;
+    var drawing = null;
+    var seq = 0;
+
+    function draw() {
+      var mine = ++seq;
+      overlay.querySelectorAll('[data-mode]').forEach(function (b) {
+        b.setAttribute('aria-pressed', b.dataset.mode === mode ? 'true' : 'false');
+      });
+      drawing = kotpShot.render(token, mode).then(function (c) {
+        if (mine !== seq) return c;
+        canvas = c;
+        c.className = 'kotp-share-canvas';
+        c.setAttribute('role', 'img');
+        c.setAttribute('aria-label', mode === 'podium'
+          ? 'King of the Pill image: ' + sym + ' with the two runners-up'
+          : 'King of the Pill image: ' + sym);
+        preview.innerHTML = '';
+        preview.appendChild(c);
+        return c;
+      });
+      return drawing;
+    }
+
+    // The blob for the image on screen (the drawing in flight when the toggle just moved)
+    function make() {
+      return drawing.then(function (c) { return kotpShot.toBlob(c || canvas); });
+    }
+
+    function kind() { return mode === 'podium' ? 'king-of-the-pill-top3' : 'king-of-the-pill'; }
+
+    function close() {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      document.body.classList.remove('kotp-share-open');
+      if (opener) opener.focus();
+    }
+
+    function onKey(e) {
+      if (e.key === 'Escape') close();
+    }
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) return close();
+      var t = e.target.closest('button');
+      if (!t) return;
+      if (t.classList.contains('kotp-share-close')) return close();
+      if (t.dataset.mode && t.dataset.mode !== mode) {
+        mode = t.dataset.mode;
+        try { localStorage.setItem(MODE_KEY, mode); } catch (err) { /* private mode */ }
+        draw();
+        return;
+      }
+      var act = t.dataset.act;
+      if (act === 'copy') chartShot.copy(make, kind(), { what: 'King of the Pill image', token: who });
+      else if (act === 'download') chartShot.download(make, kind(), { what: 'King of the Pill image', token: who });
+      else if (act === 'link') utils.copyToClipboard(shareLink(token.mintAddress || ''), false).then(function (ok) {
+        if (ok && typeof toast !== 'undefined') toast.success('Share link copied');
+      });
+      else if (act === 'native') {
+        make().then(function (blob) {
+          var file = new File([blob], chartShot.filename(kind(), who), { type: 'image/png' });
+          return navigator.share({ files: [file], title: 'King of the Pill: ' + sym, text: sym + ' is King of the Pill on HolDEX', url: shareLink(token.mintAddress || '') });
+        }).catch(function (err) {
+          if (err && err.name === 'AbortError') return;
+          console.warn('[kotp] share failed:', err && err.message);
+          if (typeof toast !== 'undefined') toast.error('Could not share the image');
+        });
+      }
+    });
+    document.addEventListener('keydown', onKey);
+
+    draw().catch(function (err) {
+      console.warn('[kotp] share image failed:', err);
+      preview.innerHTML = '<span class="kotp-share-loading">Could not draw the image</span>';
+    });
+    var first = overlay.querySelector('[data-mode="' + mode + '"]') || overlay.querySelector('[data-act="copy"]');
+    if (first) first.focus();
+  }
+
+  var LINK_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 
   // One request shared with the table chips (tokenTable.js) when api.js is loaded
   var pending = (typeof api !== 'undefined' && api.kingOfPill)

@@ -1395,7 +1395,8 @@ router.get('/king-of-pill', asyncHandler(async (req, res) => {
       if (king) {
         mint = king.mint;
         kotp = { mode: 'auto', score: king.score, scoreDate: king.scoreDate, reignDay: king.reignDay, crownedOn: king.crownedOn,
-                 contenders: king.contenders.map(c => ({ name: c.name, symbol: c.symbol, score: c.score })) };
+                 // Mint and logo for the runners-up in the King of the Pill share image (kotp.js)
+                 contenders: king.contenders.map(c => ({ mintAddress: c.mintAddress, name: c.name, symbol: c.symbol, logoUri: c.logoUri, score: c.score })) };
       }
     }
     if (!mint) return null;
