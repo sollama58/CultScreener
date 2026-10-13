@@ -4898,6 +4898,17 @@ select:focus {
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+/* Below this width the right-pinned donation line would run into the centered
+   footer content, so drop it onto its own centered line underneath. */
+@media (max-width: 1600px) {
+  .footer-donation {
+    position: static;
+    transform: none;
+    display: block;
+    text-align: center;
+    margin-top: 0.4rem;
+  }
+}
 
 .footer-content {
   max-width: 1440px;
