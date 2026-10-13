@@ -72,6 +72,21 @@ if (!DB_URL) {
     assert.strictEqual(await views(MINT), 4);
   });
 
+  test('views land in hourly buckets that give the recent count per token', async () => {
+    const A = 'ViewHoursMintA11111111111111111111111111111';
+    const B = 'ViewHoursMintB11111111111111111111111111111';
+    await jobProcessors['batch-view-counts']({ data: { batchId: 'views-hours-1', updates: [{ tokenMint: A, count: 3 }] } });
+    const { flushViewCountsDirect } = require('./jobQueue');
+    await flushViewCountsDirect([{ tokenMint: A, count: 2 }, { tokenMint: B, count: 1 }], 'views-hours-2');
+    await db.incrementTokenViews(B);
+    // A bucket from two days ago is outside the last day, and pruned after the keep window
+    await db.pool.query(`INSERT INTO token_view_hours (token_mint, hour, view_count) VALUES ($1, date_trunc('hour', NOW()) - INTERVAL '48 hours', 50)`, [B]);
+    assert.deepStrictEqual(await db.getRecentViewCounts([A, B, 'NoViews']), { [A]: 5, [B]: 2 });
+    assert.deepStrictEqual(await db.getRecentViewCounts([B], 3 * 24 * 3_600_000), { [B]: 52 });
+    assert.strictEqual(await db.pruneViewHours(24 * 3_600_000), 1);
+    assert.deepStrictEqual(await db.getRecentViewCounts([B], 3 * 24 * 3_600_000), { [B]: 2 });
+  });
+
   test('a batch queued before batch ids existed is applied as before', async () => {
     const MINT = 'ViewBatchMint222222222222222222222222222222';
     await jobProcessors['batch-view-counts']({ data: { updates: [{ tokenMint: MINT, count: 4 }] } });

@@ -2050,6 +2050,10 @@ router.post('/:mint/view', validateMint, requireAllowedToken, viewLimiter, async
 
   // Use job queue for batched view counting (non-blocking)
   // Falls back to direct DB write if job queue not available
+  // A view on a token whose holder data has gone stale (quiet tokens refresh only
+  // daily) asks for a fresh snapshot now. Never holds up the response.
+  if (solanaService.isHeliusConfigured()) holderPipeline.refreshIfStaleOnView(mint).catch(() => {});
+
   let bufferedCount = 0;
   let buffered = false;
   try {
@@ -2565,11 +2569,14 @@ router.get('/:mint/holder-count', validateMint, requireAllowedToken, asyncHandle
   if (cached) return res.json(cached);
 
   const points = await holderCounts.getPoints(mint);
+  // This token's current schedule, which follows its recent page views
+  const interval = (await holderPipeline.getRefreshIntervals([mint]).catch(() => ({})))[mint]
+    || holderPipeline.CONFIG.refreshMs;
   const result = {
     mint,
     ...holderCounts.buildHolderSeries(points, { range }),
     dustUsd: holderCounts.DUST_USD,
-    refreshHours: Math.round(holderPipeline.CONFIG.refreshMs / 3_600_000),
+    refreshHours: Math.round(interval / 3_600_000),
   };
   // New points clear this key (holderCounts.clearSeriesCache); the TTL only
   // bounds how stale the change stats' "now" can get.

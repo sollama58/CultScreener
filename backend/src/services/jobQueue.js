@@ -430,6 +430,9 @@ async function flushViewCountsDirect(viewUpdates, batchId = null) {
           view_count = token_views.view_count + EXCLUDED.view_count,
           last_viewed_at = NOW()
       `, [mints, counts]);
+      // The total is in: a lost hourly bucket only delays a snapshot, so don't retry the batch for it
+      await database.recordViewHours(mints, counts)
+        .catch(err => console.warn('[JobQueue] token_view_hours write failed:', err.message));
 
       successfulMints.push(...mints);
     } catch (err) {

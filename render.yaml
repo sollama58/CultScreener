@@ -241,8 +241,9 @@ services:
         value: "25"
 
       # Helius credit controls (see services/holderPipeline.js). Curated tokens are
-      # re-snapshotted every HOLDER_SNAPSHOT_REFRESH_HOURS, and only after a one-page
-      # pre-check finds a change.
+      # re-snapshotted every HOLDER_SNAPSHOT_REFRESH_HOURS when their pages are busy,
+      # stepping out to HOLDER_SNAPSHOT_IDLE_HOURS (default 24) when nobody viewed them
+      # in the last day, and only after a one-page pre-check finds a change.
       - key: HOLDER_SNAPSHOT_REFRESH_HOURS
         value: "4"
 

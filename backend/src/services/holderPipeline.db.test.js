@@ -753,6 +753,55 @@ if (!DB_URL) {
       }
     });
 
+    test('the refresh interval follows recent page views', () => {
+      const { refreshMs, idleMs } = pipeline.CONFIG;
+      assert.strictEqual(pipeline.refreshIntervalFor(250), refreshMs);
+      assert.strictEqual(pipeline.refreshIntervalFor(20), refreshMs);
+      assert.strictEqual(pipeline.refreshIntervalFor(19), 8 * HOUR);
+      assert.strictEqual(pipeline.refreshIntervalFor(5), 8 * HOUR);
+      assert.strictEqual(pipeline.refreshIntervalFor(1), 12 * HOUR);
+      assert.strictEqual(pipeline.refreshIntervalFor(0), idleMs);
+      assert.strictEqual(pipeline.refreshIntervalFor(undefined), idleMs);
+    });
+
+    test('a quiet token is due once per idle interval, a busy one every refresh interval', () => {
+      const t = 1_800_000_000_000;
+      const { refreshMs, idleMs } = pipeline.CONFIG;
+      const ticks = (interval) => {
+        let freshAt = t;
+        let n = 0;
+        for (let h = 1; h <= 48; h++) {
+          if (pipeline.isRefreshDue('QuietMint', freshAt, t + h * HOUR, interval)) { n++; freshAt = t + h * HOUR; }
+        }
+        return n;
+      };
+      assert.strictEqual(ticks(idleMs), 48 * HOUR / idleMs);
+      assert.strictEqual(ticks(refreshMs), 48 * HOUR / refreshMs);
+    });
+
+    test('a page view asks for a snapshot only when the data is stale, once per check window', async () => {
+      const realAdd = jobQueue.addAnalyticsJob;
+      const added = [];
+      jobQueue.addAnalyticsJob = async (name, data) => { added.push({ name, data }); return { id: 1 }; };
+      const VIEWED = 'ViewStaleMint1111111111111111111111111111';
+      try {
+        // No snapshot at all: stale
+        assert.strictEqual(await pipeline.refreshIfStaleOnView(VIEWED), true);
+        assert.deepStrictEqual(added.map(a => a.name), ['snapshot-holders']);
+        // Checked recently: no second lookup or snapshot inside the window
+        await cache.delete(`holder-snapshot-pending:${VIEWED}`);
+        assert.strictEqual(await pipeline.refreshIfStaleOnView(VIEWED), false);
+        // MINT has a fresh snapshot: nothing to do
+        await cache.delete(`holder-view-check:${MINT}`);
+        assert.strictEqual(await pipeline.refreshIfStaleOnView(MINT), false);
+        assert.strictEqual(added.length, 1);
+      } finally {
+        jobQueue.addAnalyticsJob = realAdd;
+        await cache.delete(`holder-snapshot-pending:${VIEWED}`);
+        await cache.delete(`holder-view-check:${VIEWED}`);
+      }
+    });
+
     test('a program-owned account is not a person', () => {
       assert.strictEqual(pipeline.isProgramOwned({ owner: '11111111111111111111111111111111' }), false);
       assert.strictEqual(pipeline.isProgramOwned({ owner: 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m' }), true);
