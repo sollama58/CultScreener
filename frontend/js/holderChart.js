@@ -199,7 +199,6 @@ const holderChart = (() => {
 
   function draw() {
     if (!st.chart) return;
-    st.series.actual.applyOptions({ title: lineLabel() });
     const { actual, est, caps } = seriesData();
     st.caps = new Set(caps);
     st.estTimes = new Set(est.map(p => p.time));
