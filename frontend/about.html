@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=26">
+  <link rel="stylesheet" href="css/styles.css?v=27">
   <style>
     .about-content {
       max-width: 800px;
@@ -183,7 +183,7 @@
         <h2>How It Works</h2>
 
         <h3>Conviction Score</h3>
-        <p>The conviction percentage shown on the main leaderboard is the <strong>&gt;1 Month diamond hands rate</strong>. It measures what percentage of the top 250 holders have been holding a token continuously for more than 30 days.</p>
+        <p>The conviction percentage shown on the main leaderboard is the <strong>&gt;1 Month diamond hands rate</strong>. It measures what percentage of the top 250 holders <small class="dh-cutoff">(&gt;0.01% Supply)</small> have been holding a token continuously for more than 30 days.</p>
         <ul>
           <li><strong>ELITE (75%+)</strong> &mdash; 3 out of 4 holders are long-term diamond hands</li>
           <li><strong>HIGH (50%+)</strong> &mdash; Majority of holders are committed</li>
@@ -202,8 +202,8 @@
         </ul>
         <p>The hold time is <code>now - streakStart</code>.</p>
 
-        <h3>Top 250 Holders</h3>
-        <p>Diamond hands are measured on the <strong>Top 250 Holders</strong> in the latest snapshot: the 250 largest wallets that each hold at least <strong>0.01% of supply</strong>, with LP and burn wallets left out. A token with fewer wallets above that line is measured on all of them. The percentages describe these top holders, not every wallet that holds the token.</p>
+        <h3>Top 250 Holders <small class="dh-cutoff">(&gt;0.01% Supply)</small></h3>
+        <p>Diamond hands are measured on the <strong>Top 250 Holders</strong> <small class="dh-cutoff">(&gt;0.01% Supply)</small> in the latest snapshot: the 250 largest wallets that each hold at least <strong>0.01% of supply</strong>, with LP and burn wallets left out. A token with fewer wallets above that line is measured on all of them. The percentages describe these top holders, not every wallet that holds the token.</p>
 
         <h3>Diamond Hands Distribution</h3>
         <p>The Diamond Hands section on each token page shows what percentage of holders have held for at least 6h, 24h, 3d, 1w, 1M, 3M, 6M, 9M and 1yr. The share of supply held by those wallets is computed too.</p>

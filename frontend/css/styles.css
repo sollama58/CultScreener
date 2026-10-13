@@ -3253,6 +3253,13 @@ select:focus {
   font-family: var(--font-mono);
 }
 
+/* The Top 250 Holders supply cutoff, kept quieter than the label it follows */
+.dh-cutoff {
+  font-size: 0.85em;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
 .diamond-hands-bars {
   display: flex;
   flex-direction: column;

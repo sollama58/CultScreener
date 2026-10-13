@@ -1826,7 +1826,7 @@ const tokenDetail = {
             }
           } else {
             const sampleEl = document.getElementById('diamond-hands-sample');
-            if (sampleEl && !data.computed) sampleEl.textContent = `Top ${total} Holders: ${analyzed} analyzed (partial)`;
+            if (sampleEl && !data.computed) sampleEl.textContent = `Top ${total} Holders (>0.01% Supply): ${analyzed} analyzed (partial)`;
           }
         }
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Done: sample=${data.sampleSize}, analyzed=${data.analyzed}`);
@@ -1860,10 +1860,13 @@ const tokenDetail = {
       if (data.computed) {
         // resolved: wallets the distribution actually rests on (some of the top
         // holders could not be dated: left since the snapshot, or history unreadable)
-        const label = `Top ${data.sampleSize} Holders`;
         sampleEl.textContent = typeof data.resolved === 'number' && data.resolved < data.sampleSize
-          ? `${label} (${data.resolved} measured)`
-          : label;
+          ? `Top ${data.sampleSize} Holders (${data.resolved} measured) `
+          : `Top ${data.sampleSize} Holders `;
+        const cutoff = document.createElement('span');
+        cutoff.className = 'dh-cutoff';
+        cutoff.textContent = '(>0.01% Supply)';
+        sampleEl.appendChild(cutoff);
         sampleEl.title = data.sampleMethod
           ? 'The largest holders with at least 0.01% of supply, up to 250 (LP and burn wallets excluded). Percentages are rounded. Hold time counts from when the wallet last went from zero to holding in this wallet; selling out and buying back starts a new streak.'
           : '';
