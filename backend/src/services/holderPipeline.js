@@ -39,9 +39,15 @@ const CONFIG = {
   // page is paid for, so a failure there used to throw the whole read away and the
   // job retry bought every page again; two 1-credit calls are worth waiting for.
   lpCheckRetryMs: [2000, 5000, 10000],
-  // Curated tokens are re-snapshotted this often (the hourly job checks staleness).
-  // Under 6h, new holders are still dated from consecutive snapshots.
+  // Curated tokens are re-snapshotted this often when their pages are busy (the
+  // hourly job checks staleness). Under 6h, new holders are still dated from
+  // consecutive snapshots.
   refreshMs: envInt('HOLDER_SNAPSHOT_REFRESH_HOURS', 4) * 3_600_000,
+  // ...and this often when nobody opened their page in the last viewWindowMs. A
+  // full snapshot of a big token is hundreds of DAS pages, and most curated
+  // tokens go hours without a view. Once a day keeps one holder-count point a day.
+  idleMs: envInt('HOLDER_SNAPSHOT_IDLE_HOURS', 24) * 3_600_000,
+  viewWindowMs: 24 * 3_600_000,
   // A backfill job keeps going until every wallet is settled or this much time has
   // passed, then re-queues itself. Re-queueing after every few dozen wallets put
   // each token back at the end of the shared job queue, behind every other job.
@@ -96,7 +102,46 @@ const CONFIG = {
   backfillLockTtl: 10 * 60 * 1000,                           // > backfillRunMs plus the slowest wallet
   backfillFailCooldown: 60 * 1000,                           // > BullMQ's retry backoff
   staleSnapshotMs: 24 * 3_600_000,                           // routes ask for a fresh one past this
+  // A page view on a token whose data is older than this asks for a snapshot
+  // straight away, so a quiet token is never shown far out of date; checked at
+  // most once per viewCheckMs per token.
+  viewStaleMs: Math.max(6, 2 * envInt('HOLDER_SNAPSHOT_REFRESH_HOURS', 4)) * 3_600_000,
+  viewCheckMs: 10 * 60 * 1000,
 };
+
+// Refresh interval by page views in the last viewWindowMs: the busiest tokens get
+// refreshMs, untouched ones idleMs, and the rest step between (never outside the two)
+const VIEW_TIERS = [
+  { minViews: 20, hours: null },   // refreshMs
+  { minViews: 5, hours: 8 },
+  { minViews: 1, hours: 12 },
+];
+
+function refreshIntervalFor(views) {
+  const n = Number(views) || 0;
+  const lo = CONFIG.refreshMs;
+  const hi = Math.max(lo, CONFIG.idleMs);
+  for (const t of VIEW_TIERS) {
+    if (n >= t.minViews) return t.hours == null ? lo : Math.min(hi, Math.max(lo, t.hours * 3_600_000));
+  }
+  return hi;
+}
+
+/**
+ * Each mint's refresh interval (ms) from its recent page views. A failed view
+ * read falls back to refreshMs, the old fixed schedule, rather than idling.
+ */
+async function getRefreshIntervals(mints) {
+  const out = {};
+  let views = null;
+  try {
+    views = await require('./database').getRecentViewCounts(mints, CONFIG.viewWindowMs);
+  } catch (err) {
+    console.warn('[Holders] Recent view counts unavailable, using the busy schedule:', err.message);
+  }
+  for (const mint of mints) out[mint] = views ? refreshIntervalFor(views[mint]) : CONFIG.refreshMs;
+  return out;
+}
 
 const keys = {
   result: mint => `diamond-hands:${mint}`,
@@ -160,20 +205,35 @@ async function snapshotFreshAt(mint, snap) {
 
 /**
  * Whether a mint is due for its periodic refresh. Each mint has its own fixed
- * refreshMs-aligned schedule (offset by a hash of the mint), so curated tokens
+ * interval-aligned schedule (offset by a hash of the mint), so curated tokens
  * come due spread across the hourly ticks instead of all in the same one.
  *
  * @param {string} mint
  * @param {number|undefined} freshAt when its data was last known current (ms)
+ * @param {number} now
+ * @param {number} intervalMs its refresh interval (refreshIntervalFor)
  */
-function refreshOffset(mint) {
-  return parseInt(crypto.createHash('sha256').update(mint).digest('hex').slice(0, 12), 16) % CONFIG.refreshMs;
+function refreshOffset(mint, intervalMs) {
+  return parseInt(crypto.createHash('sha256').update(mint).digest('hex').slice(0, 12), 16) % intervalMs;
 }
 
-function isRefreshDue(mint, freshAt, now = Date.now()) {
+function isRefreshDue(mint, freshAt, now = Date.now(), intervalMs = CONFIG.refreshMs) {
   if (!freshAt) return true;
-  const off = refreshOffset(mint);
-  return Math.floor((now - off) / CONFIG.refreshMs) > Math.floor((freshAt - off) / CONFIG.refreshMs);
+  const off = refreshOffset(mint, intervalMs);
+  return Math.floor((now - off) / intervalMs) > Math.floor((freshAt - off) / intervalMs);
+}
+
+/**
+ * Called on a page view: ask for a snapshot now when the token's holder data is
+ * older than viewStaleMs, instead of leaving a quiet token on its idle schedule
+ * while someone looks at it. At most one check per token per viewCheckMs.
+ */
+async function refreshIfStaleOnView(mint) {
+  const first = await cache.setNX(`holder-view-check:${mint}`, Date.now(), CONFIG.viewCheckMs).catch(() => false);
+  if (!first) return false;
+  const times = await getFreshnessTimes([mint]);
+  if (times[mint] && Date.now() - times[mint] <= CONFIG.viewStaleMs) return false;
+  return ensureSnapshot(mint);
 }
 
 // ── Job dispatch (deduped with short-lived locks) ────────────────────────────
@@ -388,7 +448,7 @@ async function takeSnapshotRun(mint) {
       && (first.complete || Date.now() - new Date(prev.taken_at).getTime() < CONFIG.staleSnapshotMs);
     if (prevUsable && prevFingerprint && fingerprint === prevFingerprint) {
       const now = Date.now();
-      await cache.set(keys.snapshotVerified(mint), now, CONFIG.refreshMs * 2).catch(() => {});
+      await cache.set(keys.snapshotVerified(mint), now, Math.max(CONFIG.refreshMs, CONFIG.idleMs) * 2).catch(() => {});
       // One page was the whole list, so every account is known unchanged as of
       // now: newcomers at the next snapshot are dated from here, not from the
       // old taken_at, which kept them out of the 6h window and sent them to
@@ -1037,7 +1097,7 @@ async function getHoldTimes(mint, wallets) {
  * Top holders from the latest snapshot, shaped like the rawAccounts the
  * compute-holder-analytics job takes. Null when there is no recent snapshot.
  */
-async function getSnapshotHolderList(mint, { maxAgeMs = Math.max(6 * 3_600_000, 2 * CONFIG.refreshMs), limit = CONFIG.listN } = {}) {
+async function getSnapshotHolderList(mint, { maxAgeMs = CONFIG.viewStaleMs, limit = CONFIG.listN } = {}) {
   const snap = await store.getLatestSnapshot(mint);
   // A snapshot without a supply was written before supply/decimals were required;
   // its decimals can't be trusted, so callers fall back and a new one is taken.
@@ -1058,6 +1118,9 @@ async function getSnapshotHolderList(mint, { maxAgeMs = Math.max(6 * 3_600_000, 
 module.exports = {
   CONFIG,
   isRefreshDue,
+  refreshIntervalFor,
+  getRefreshIntervals,
+  refreshIfStaleOnView,
   ensureSnapshot,
   ensureBackfill,
   getFreshnessTimes,

@@ -104,6 +104,7 @@ const jobProcessors = {
     // Applied view-count batch ids only matter while BullMQ could still re-run that job
     await db.pool.query(`DELETE FROM view_count_batches WHERE processed_at < NOW() - INTERVAL '1 day'`)
       .catch(err => console.warn('[Worker] view_count_batches prune failed:', err.message));
+    await db.pruneViewHours().catch(err => console.warn('[Worker] token_view_hours prune failed:', err.message));
     console.log(`[Worker] Cleaned up ${count} expired sessions, ${devices} expired device sessions`);
 
     return { cleanedSessions: count, cleanedDeviceSessions: devices };
@@ -168,6 +169,7 @@ const jobProcessors = {
           view_count = token_views.view_count + EXCLUDED.view_count,
           last_viewed_at = NOW()
       `, [mints, counts]);
+      await db.recordViewHours(mints, counts, client);
 
       await client.query('COMMIT');
       console.log(`[Worker] View counts updated: ${updates.length} tokens`);
@@ -700,8 +702,8 @@ const jobProcessors = {
 
   /**
    * Daily safety net for holder count history. Points are written by holder
-   * snapshots (every HOLDER_SNAPSHOT_REFRESH_HOURS for curated tokens); any curated
-   * token with no point at all in the last day gets a snapshot queued. A capped
+   * snapshots (every 4h to 24h for curated tokens, by recent views); any curated
+   * token with no point at all in the last day or so gets a snapshot queued. A capped
    * token's points are never "complete", so they are not re-snapshotted for that
    * alone. No counting here, so every point in the history means the same thing.
    */
@@ -712,11 +714,14 @@ const jobProcessors = {
     const mints = (curatedTokens || []).map(t => t.mintAddress || t.mint_address).filter(Boolean);
     const latest = await holderCounts.getLatestPoints(mints).catch(() => ({}));
 
+    // Idle tokens are snapshotted every CONFIG.idleMs; give that schedule an hour's
+    // slack before stepping in, so the two don't both read the same token
+    const maxGapMs = Math.max(24 * 3600000, holderPipeline.CONFIG.idleMs + 3600000);
     let recorded = 0;
     let skipped  = 0;
     for (const mint of mints) {
       const p = latest[mint];
-      if (p && Date.now() - p.takenAt < 24 * 3600000) { skipped++; continue; }
+      if (p && Date.now() - p.takenAt < maxGapMs) { skipped++; continue; }
       if (await holderPipeline.ensureSnapshot(mint).catch(() => false)) recorded++;
     }
 
@@ -885,12 +890,16 @@ const jobProcessors = {
    * Runs every hour via BullMQ repeating job — replaces setInterval in app.js.
    */
   'warm-curated-conviction': async (job) => {
-    // Holder distributions move slowly, so curated tokens are re-snapshotted every
-    // HOLDER_SNAPSHOT_REFRESH_HOURS (default 4h; the job itself ticks hourly), each
-    // on its own schedule (holderPipeline.isRefreshDue) so they don't all come due
-    // in the same tick. Under 6h, new holders' hold times still come straight from
-    // consecutive snapshots. A snapshot whose cheap pre-check found nothing changed
-    // counts as fresh too.
+    // Holder distributions move slowly, so curated tokens are re-snapshotted on an
+    // interval set by their page views in the last day (holderPipeline.refreshIntervalFor):
+    // every HOLDER_SNAPSHOT_REFRESH_HOURS (default 4h) when busy, up to every
+    // HOLDER_SNAPSHOT_IDLE_HOURS (default 24h) when nobody looked. The job itself ticks
+    // hourly; each token is on its own schedule (holderPipeline.isRefreshDue) so they
+    // don't all come due in the same tick. A view on a token with older data asks for a
+    // snapshot straight away (holderPipeline.refreshIfStaleOnView). Under 6h, new
+    // holders' hold times still come straight from consecutive snapshots; past it the
+    // few newcomers in the sample are dated by the backfill. A snapshot whose cheap
+    // pre-check found nothing changed counts as fresh too.
     const holderPipeline = require('./services/holderPipeline');
 
     const curatedTokens = await db.getCuratedTokens().catch(() => []);
@@ -898,6 +907,7 @@ const jobProcessors = {
 
     const allMints = curatedTokens.map(t => t.mintAddress || t.mint_address).filter(Boolean);
     const snapshotTimes = await holderPipeline.getFreshnessTimes(allMints).catch(() => ({}));
+    const intervals = await holderPipeline.getRefreshIntervals(allMints);
     const dbRows   = await db.getTokensBatch(allMints).catch(() => []);
     const dbRowMap = {};
     for (const row of dbRows) dbRowMap[row.mint_address] = row;
@@ -905,7 +915,7 @@ const jobProcessors = {
     let triggered = 0;
     let refreshed = 0;
     for (const mint of allMints) {
-      if (!holderPipeline.isRefreshDue(mint, snapshotTimes[mint])) {
+      if (!holderPipeline.isRefreshDue(mint, snapshotTimes[mint], Date.now(), intervals[mint])) {
         // Fresh snapshot: run the backfill pass anyway. It finishes any hold-time
         // backfill that stopped (failed job, Redis restart, a snapshot landing
         // mid-run) and, with nothing left to backfill, re-stores diamond hands so

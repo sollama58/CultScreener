@@ -438,6 +438,15 @@ async function initializeDatabase() {
         processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
 
+      -- Page views per token per hour, for the last few days only (pruned by the worker's
+      -- cleanup-sessions job). Curated holder snapshots refresh by recent views.
+      CREATE TABLE IF NOT EXISTS token_view_hours (
+        token_mint VARCHAR(44) NOT NULL,
+        hour TIMESTAMP WITH TIME ZONE NOT NULL,
+        view_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (token_mint, hour)
+      );
+
       -- Announcements table for admin-broadcast site-wide messages
       CREATE TABLE IF NOT EXISTS announcements (
         id SERIAL PRIMARY KEY,
@@ -2465,7 +2474,41 @@ async function incrementTokenViews(tokenMint) {
      RETURNING view_count`,
     [tokenMint]
   );
+  await recordViewHours([tokenMint], [1]).catch(err => console.warn('[DB] token_view_hours write failed:', err.message));
   return result.rows[0]?.view_count || 0;
+}
+
+// Hourly view buckets behind getRecentViewCounts. `q` is the pool or a client
+// inside the caller's transaction, so the bucket and the total land together.
+const RECORD_VIEW_HOURS_SQL = `
+  INSERT INTO token_view_hours (token_mint, hour, view_count)
+  SELECT m, date_trunc('hour', NOW()), c FROM unnest($1::text[], $2::int[]) AS v(m, c)
+  ON CONFLICT (token_mint, hour) DO UPDATE SET
+    view_count = token_view_hours.view_count + EXCLUDED.view_count`;
+
+async function recordViewHours(mints, counts, q = pool) {
+  if (!q || !mints || mints.length === 0) return;
+  await q.query(RECORD_VIEW_HOURS_SQL, [mints, counts]);
+}
+
+/** Page views per mint over the last `windowMs` (whole hours), { mint: count }. */
+async function getRecentViewCounts(mints, windowMs = 24 * 3_600_000) {
+  if (!pool || !mints || mints.length === 0) return {};
+  const { rows } = await pool.query(
+    `SELECT token_mint, SUM(view_count)::int AS views FROM token_view_hours
+      WHERE token_mint = ANY($1) AND hour > NOW() - make_interval(secs => $2)
+      GROUP BY token_mint`,
+    [mints, Math.round(windowMs / 1000)]);
+  const out = {};
+  for (const r of rows) out[r.token_mint] = r.views;
+  return out;
+}
+
+async function pruneViewHours(keepMs = 8 * 24 * 3_600_000) {
+  if (!pool) return 0;
+  const { rowCount } = await pool.query(
+    'DELETE FROM token_view_hours WHERE hour < NOW() - make_interval(secs => $1)', [Math.round(keepMs / 1000)]);
+  return rowCount;
 }
 
 // Get view count for a token
@@ -3944,6 +3987,9 @@ module.exports = {
   deleteApiKeyById,
   // Token view tracking
   incrementTokenViews,
+  recordViewHours,
+  getRecentViewCounts,
+  pruneViewHours,
   getTokenViews,
   getTokenViewsBatch,
   getMostViewedTokens,

@@ -50,6 +50,15 @@ CREATE TABLE IF NOT EXISTS view_count_batches (
     processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Page views per token per hour, last few days only (pruned by cleanup-sessions);
+-- curated holder snapshots refresh by recent views
+CREATE TABLE IF NOT EXISTS token_view_hours (
+    token_mint VARCHAR(44) NOT NULL,
+    hour TIMESTAMP WITH TIME ZONE NOT NULL,
+    view_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (token_mint, hour)
+);
+
 -- =====================================================
 -- SENTIMENT VOTES TABLE
 -- Community bullish/bearish votes (one per wallet per token)

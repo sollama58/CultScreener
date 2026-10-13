@@ -14,6 +14,7 @@ const fakeDb = {
   ready: false,
   isReady() { return this.ready; },
   pool: { query: async (sql, [mints, counts]) => { writes.push(...mints.map((m, i) => [m, counts[i]])); } },
+  recordViewHours: async () => {},
 };
 const dbPath = path.join(__dirname, 'database.js');
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: fakeDb };
