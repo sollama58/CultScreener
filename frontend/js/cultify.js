@@ -1392,7 +1392,11 @@
       if (data.computed && data.distribution) {
         updateDiamondBars(data.distribution);
         if (sampleEl) {
-          sampleEl.textContent = `Top ${data.sampleSize} Holders`;
+          sampleEl.textContent = `Top ${data.sampleSize} Holders `;
+          const cutoff = document.createElement('span');
+          cutoff.className = 'dh-cutoff';
+          cutoff.textContent = '(>0.01% Supply)';
+          sampleEl.appendChild(cutoff);
         }
         finalizeDiamondBars();
         return;
