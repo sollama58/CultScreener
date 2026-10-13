@@ -802,6 +802,47 @@ if (!DB_URL) {
       }
     });
 
+    test('a holder count due every 4h keeps that cadence on the hourly tick', () => {
+      const t = 1_800_000_000_000;
+      assert.strictEqual(pipeline.isCountDue(undefined, t), true);
+      assert.strictEqual(pipeline.isCountDue(t - 3 * HOUR, t), false);
+      // the point taken a few minutes into a tick is due again on the 4th tick after
+      assert.strictEqual(pipeline.isCountDue(t - 4 * HOUR + 5 * 60 * 1000, t), true);
+    });
+
+    test('a holder count between snapshots leaves out the snapshot\'s LP wallets', async () => {
+      const real = solana.getHolderBalances;
+      // Its own instant: a point at a snapshot's time would replace that snapshot's point
+      const realNow = now;
+      now += 60 * 1000;
+      solana.getHolderBalances = async () => {
+        const balances = new Map();
+        for (const [w, h] of Object.entries(chain)) if (h.amount > 0n) balances.set(w, h.amount);
+        balances.set('NEWCOMER', 5n);
+        return { balances, accounts: balances.size, pages: 1, complete: true };
+      };
+      try {
+        const snap = await require('./holderStore').getLatestSnapshot(MINT);
+        const holderCounts = require('./holderCounts');
+        const before = (await holderCounts.getLatestPoints([MINT]))[MINT];
+        const r = await pipeline.refreshHolderCount(MINT);
+        assert.strictEqual(r.status, 'ok');
+        const after = (await holderCounts.getLatestPoints([MINT]))[MINT];
+        assert.ok(after.takenAt >= before.takenAt);
+        const lp = new Set(snap.sample_meta.lpWallets);
+        const expected = Object.entries(chain).filter(([w, h]) => h.amount > 0n && !lp.has(w)).length + 1;
+        assert.ok(lp.size > 0, 'fixture has an LP wallet');
+        assert.strictEqual(after.holders, expected);
+        const { rows } = await db.pool.query(
+          'SELECT source FROM holder_count_points WHERE mint_address = $1 ORDER BY taken_at DESC LIMIT 1', [MINT]);
+        assert.strictEqual(rows[0].source, 'count');
+      } finally {
+        solana.getHolderBalances = real;
+        await db.pool.query('DELETE FROM holder_count_points WHERE mint_address = $1 AND source = $2', [MINT, 'count']);
+        now = realNow;
+      }
+    });
+
     test('a program-owned account is not a person', () => {
       assert.strictEqual(pipeline.isProgramOwned({ owner: '11111111111111111111111111111111' }), false);
       assert.strictEqual(pipeline.isProgramOwned({ owner: 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m' }), true);

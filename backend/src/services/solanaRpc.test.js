@@ -87,6 +87,45 @@ describe('rpcCall', () => {
     assert.strictEqual(solana.isTransactionHistoryAvailable(), false);
   });
 
+  test('getHolderBalances follows getProgramAccountsV2 pages and sums each wallet', async () => {
+    const bs58 = require('bs58');
+    const MINT = 'So11111111111111111111111111111111111111112';
+    const owner = n => bs58.encode(Buffer.alloc(32, n));
+    const acct = (n, amount) => {
+      const b = Buffer.alloc(40);
+      b.fill(n, 0, 32);
+      b.writeBigUInt64LE(BigInt(amount), 32);
+      return { pubkey: `ta${n}_${amount}`, account: { data: [b.toString('base64'), 'base64'] } };
+    };
+    const realPost2 = axios.post;
+    for (const program of ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP7VVSmcHEu5jQ2xHFR4gwvKLATjv4o']) {
+      calls = [];
+      axios.post = async (url, body) => {
+        calls.push({ method: body.method, params: body.params });
+        if (body.method === 'getAccountInfo') return { data: { result: { value: { owner: program } } } };
+        const key = body.params[1].paginationKey;
+        if (!key) return { data: { result: { accounts: [acct(1, 5), acct(2, 0)], paginationKey: 'k2' } } };
+        return { data: { result: { accounts: [acct(1, 7), acct(3, 1)], paginationKey: null } } };
+      };
+      try {
+        const r = await solana.getHolderBalances(MINT);
+        assert.strictEqual(r.complete, true);
+        assert.strictEqual(r.pages, 2);
+        assert.strictEqual(r.accounts, 4);
+        assert.deepStrictEqual([...r.balances.entries()], [[owner(1), 12n], [owner(3), 1n]], 'zero balances left out');
+        const gpa = calls.filter(c => c.method === 'getProgramAccountsV2');
+        assert.strictEqual(gpa.length, 2);
+        assert.strictEqual(gpa[0].params[0], program);
+        assert.deepStrictEqual(gpa[0].params[1].dataSlice, { offset: 32, length: 40 });
+        assert.strictEqual(gpa[1].params[1].paginationKey, 'k2');
+        const sized = gpa[0].params[1].filters.some(f => f.dataSize === 165);
+        assert.strictEqual(sized, program.startsWith('Tokenkeg'), 'Token-2022 accounts have no fixed size');
+      } finally {
+        axios.post = realPost2;
+      }
+    }
+  });
+
   test('getAllTokenAccounts reads DAS pages several at a time and stops at the last one', async () => {
     calls = [];
     let inFlight = 0;

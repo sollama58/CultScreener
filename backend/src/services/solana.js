@@ -936,6 +936,68 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
   return { accounts, pages: lastPage, complete };
 }
 
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP7VVSmcHEu5jQ2xHFR4gwvKLATjv4o';
+const GPA_V2_LIMIT = 10000;
+
+/**
+ * Every wallet's balance of a mint, summed over its token accounts, from Helius
+ * getProgramAccountsV2: 1 credit per page of up to 10,000 accounts, where the DAS
+ * read behind holder snapshots is 10 credits per 1,000. Only owner and amount are
+ * downloaded (a 40-byte slice), and only the per-wallet totals are kept, so a big
+ * token's read stays small in memory. Used for holder counts between snapshots.
+ *
+ * @returns {Promise<{balances: Map<string, bigint>, accounts: number, pages: number, complete: boolean}>}
+ */
+async function getHolderBalances(mintAddress, { maxPages = 100 } = {}) {
+  if (!HELIUS_DAS_URL) throw new Error('Helius not configured');
+  const bs58 = require('bs58');
+  // The token program owns the mint; Token-2022 accounts are longer than 165 bytes
+  const mintInfo = await getAccountInfo(mintAddress);
+  const programId = mintInfo?.value?.owner;
+  if (programId !== TOKEN_PROGRAM && programId !== TOKEN_2022_PROGRAM) {
+    throw new Error(`Mint ${mintAddress.slice(0, 8)} is not owned by a token program (${programId || 'no account'})`);
+  }
+  const filters = [{ memcmp: { offset: 0, bytes: mintAddress } }];
+  if (programId === TOKEN_PROGRAM) filters.unshift({ dataSize: 165 });
+
+  const balances = new Map();
+  let accounts = 0;
+  let pages = 0;
+  let paginationKey = null;
+  do {
+    const config = { encoding: 'base64', filters, dataSlice: { offset: 32, length: 40 }, limit: GPA_V2_LIMIT };
+    if (paginationKey) config.paginationKey = paginationKey;
+    countCredits('getProgramAccountsV2', 1);
+    const response = await circuitBreakers.heliusDas.execute(() =>
+      withRpcRetry(() => rateLimitedRequest('helius', () =>
+        axios.post(HELIUS_DAS_URL, {
+          jsonrpc: '2.0', id: `holders-p${pages + 1}`, method: 'getProgramAccountsV2', params: [programId, config],
+        }, { timeout: 30000, headers: HELIUS_HEADERS, httpsAgent })
+      ), 'getHolderBalances')
+    );
+    if (response.data.error) {
+      const err = new Error(`getProgramAccountsV2: ${response.data.error.message || response.data.error.code}`);
+      err.rpcCode = response.data.error.code;
+      throw err;
+    }
+    const result = response.data.result || {};
+    const page = result.accounts || result.value?.accounts || [];
+    for (const a of page) {
+      const data = Buffer.from(a.account?.data?.[0] || '', 'base64');
+      if (data.length < 40) continue;
+      const amount = data.readBigUInt64LE(32);
+      if (amount <= 0n) continue;
+      const owner = bs58.encode(data.subarray(0, 32));
+      balances.set(owner, (balances.get(owner) || 0n) + amount);
+    }
+    accounts += page.length;
+    pages++;
+    paginationKey = result.paginationKey ?? result.value?.paginationKey ?? null;
+  } while (paginationKey && pages < maxPages);
+  return { balances, accounts, pages, complete: !paginationKey };
+}
+
 /**
  * One page of signatures for an address, newest first, optionally before a signature.
  */
@@ -1220,6 +1282,7 @@ async function getStreamflowLockedAmount(mintAddress, decimals = 0) {
 
 module.exports = {
   rpcCall,
+  getHolderBalances,
   getAccountInfo,
   getTokenAccountBalance,
   getTokenSupply,

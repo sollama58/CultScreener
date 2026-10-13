@@ -243,7 +243,8 @@ services:
       # Helius credit controls (see services/holderPipeline.js). Curated tokens are
       # re-snapshotted every HOLDER_SNAPSHOT_REFRESH_HOURS when their pages are busy,
       # stepping out to HOLDER_SNAPSHOT_IDLE_HOURS (default 24) when nobody viewed them
-      # in the last day, and only after a one-page pre-check finds a change.
+      # in the last day, and only after a one-page pre-check finds a change. Holder counts
+      # still refresh every HOLDER_COUNT_REFRESH_HOURS (default 4) from a cheap read.
       - key: HOLDER_SNAPSHOT_REFRESH_HOURS
         value: "4"
 

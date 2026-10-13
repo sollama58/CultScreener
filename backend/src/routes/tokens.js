@@ -2569,14 +2569,11 @@ router.get('/:mint/holder-count', validateMint, requireAllowedToken, asyncHandle
   if (cached) return res.json(cached);
 
   const points = await holderCounts.getPoints(mint);
-  // This token's current schedule, which follows its recent page views
-  const interval = (await holderPipeline.getRefreshIntervals([mint]).catch(() => ({})))[mint]
-    || holderPipeline.CONFIG.refreshMs;
   const result = {
     mint,
     ...holderCounts.buildHolderSeries(points, { range }),
     dustUsd: holderCounts.DUST_USD,
-    refreshHours: Math.round(interval / 3_600_000),
+    refreshHours: Math.round((holderPipeline.CONFIG.countRefreshMs || holderPipeline.CONFIG.refreshMs) / 3_600_000),
   };
   // New points clear this key (holderCounts.clearSeriesCache); the TTL only
   // bounds how stale the change stats' "now" can get.

@@ -48,6 +48,11 @@ const CONFIG = {
   // tokens go hours without a view. Once a day keeps one holder-count point a day.
   idleMs: envInt('HOLDER_SNAPSHOT_IDLE_HOURS', 24) * 3_600_000,
   viewWindowMs: 24 * 3_600_000,
+  // The holder count is refreshed this often for every curated token, busy or not,
+  // from a cheap read (getHolderBalances, ~1 credit per 10k accounts) between the
+  // full snapshots above
+  countRefreshMs: envInt('HOLDER_COUNT_REFRESH_HOURS', 4) * 3_600_000,
+  countLockTtl: 10 * 60 * 1000,
   // A backfill job keeps going until every wallet is settled or this much time has
   // passed, then re-queues itself. Re-queueing after every few dozen wallets put
   // each token back at the end of the shared job queue, behind every other job.
@@ -397,6 +402,55 @@ async function recordUnchangedPoint(mint, prev, now, checkedAll) {
   } catch (err) {
     console.warn(`[Holders] Count point failed for ${mint.slice(0, 8)}:`, err.message);
   }
+}
+
+/**
+ * Whether a mint's holder count is due for a refresh between snapshots: its latest
+ * point is older than countRefreshMs (less half an hour, so the hourly tick keeps
+ * the cadence instead of slipping an hour each time).
+ */
+function isCountDue(latestPointAt, now = Date.now()) {
+  return !latestPointAt || now - latestPointAt >= CONFIG.countRefreshMs - 30 * 60 * 1000;
+}
+
+async function ensureCountRefresh(mint) {
+  const acquired = await cache.setNX(`holder-count-pending:${mint}`, Date.now(), CONFIG.countLockTtl).catch(() => false);
+  if (!acquired) return false;
+  const job = await require('./jobQueue').addAnalyticsJob('refresh-holder-count', { mint },
+    { jobId: `holder-count-${mint}`, removeOnComplete: true, removeOnFail: true });
+  if (!job) await cache.delete(`holder-count-pending:${mint}`).catch(() => {});
+  return !!job;
+}
+
+/**
+ * Record a fresh holder count without a full snapshot. Uses the latest snapshot's
+ * LP wallets and decimals, so it counts the same wallets a snapshot would (burn, LP
+ * and program-owned left out). Worker only. Leaves the pending lock to expire on
+ * failure, as a cooldown.
+ */
+async function refreshHolderCount(mint) {
+  const snap = await store.getLatestSnapshot(mint);
+  // No snapshot yet: the first one records the count
+  if (!snap || snap.supply == null) {
+    await cache.delete(`holder-count-pending:${mint}`).catch(() => {});
+    return { status: 'no-snapshot' };
+  }
+  const { balances, accounts, pages, complete } = await solanaService.getHolderBalances(mint);
+  const takenAt = Date.now();
+  const holders = [];
+  for (const [wallet, amount] of balances) holders.push({ wallet, amount });
+  const lpWallets = snap.sample_meta?.lpWallets || [];
+  const exclude = new Set([...BURN_WALLETS, ...LP_PROGRAMS, ...LP_AUTHORITIES, ...lpWallets]);
+  const token = await require('./database').getToken(mint).catch(() => null);
+  const dustRaw = holderCounts.dustThresholdRaw({ priceUsd: token?.price, decimals: snap.decimals, supplyRaw: snap.supply });
+  const counts = holderCounts.countHolders(holders, { exclude, dustRaw });
+  await holderCounts.recordPoint(mint, {
+    takenAt, holders: counts.holders, dust: counts.dust, legacyCount: accounts, complete, source: 'count',
+  });
+  if (counts.holders > 0) await cache.set(`holder-total:${mint}`, counts.holders, TTL.HOLDER_COUNT).catch(() => {});
+  await cache.delete(`holder-count-pending:${mint}`).catch(() => {});
+  console.log(`[Holders] Count for ${mint.slice(0, 8)}: ${counts.holders} holders from ${accounts} accounts, ${pages} page(s)${complete ? '' : ' (capped)'}`);
+  return { status: 'ok', holders: counts.holders, pages, complete };
 }
 
 /**
@@ -1121,6 +1175,9 @@ module.exports = {
   refreshIntervalFor,
   getRefreshIntervals,
   refreshIfStaleOnView,
+  isCountDue,
+  ensureCountRefresh,
+  refreshHolderCount,
   ensureSnapshot,
   ensureBackfill,
   getFreshnessTimes,
