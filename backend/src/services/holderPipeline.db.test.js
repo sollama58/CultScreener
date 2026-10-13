@@ -126,7 +126,7 @@ if (!DB_URL) {
 
       const snap = await store.getLatestSnapshot(MINT);
       assert.strictEqual(snap.holder_count, 301);
-      assert.strictEqual(snap.sample_meta.method, 'stratified-v1');
+      assert.strictEqual(snap.sample_meta.method, 'top-v1');
       assert.deepStrictEqual(snap.sample_meta.lpWallets, ['POOL']);
       assert.ok(!snap.sample.some(s => s.wallet === 'POOL'));
       assert.strictEqual(snap.sample.length, 250);
@@ -843,7 +843,7 @@ if (!DB_URL) {
       const dh = await pipeline.getDiamondHands(MINT, { dispatch: false });
       assert.strictEqual(dh.computed, true);
       const { rows } = await db.pool.query('SELECT conviction_meta, conviction_sample_size FROM tokens WHERE mint_address = $1', [MINT]);
-      assert.strictEqual(rows[0].conviction_meta.method, 'stratified-v1');
+      assert.strictEqual(rows[0].conviction_meta.method, 'top-v1');
       assert.ok(rows[0].conviction_meta.supplyDistribution);
       // The stored sample size is the wallets the distribution rests on (audit #110)
       assert.strictEqual(rows[0].conviction_sample_size, dh.resolved);

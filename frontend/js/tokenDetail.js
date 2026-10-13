@@ -1826,7 +1826,7 @@ const tokenDetail = {
             }
           } else {
             const sampleEl = document.getElementById('diamond-hands-sample');
-            if (sampleEl && !data.computed) sampleEl.textContent = `${analyzed} of ${total} sampled holders analyzed (partial)`;
+            if (sampleEl && !data.computed) sampleEl.textContent = `Top ${total} Holders: ${analyzed} analyzed (partial)`;
           }
         }
         if (typeof config !== 'undefined' && config.app?.debug) console.log(`[DiamondHands] Done: sample=${data.sampleSize}, analyzed=${data.analyzed}`);
@@ -1858,16 +1858,14 @@ const tokenDetail = {
     const sampleEl = document.getElementById('diamond-hands-sample');
     if (sampleEl) {
       if (data.computed) {
-        // resolved: wallets the distribution actually rests on (some of the sample
-        // could not be dated: left since the snapshot, or history unreadable)
-        const measured = typeof data.resolved === 'number' && data.resolved < data.sampleSize
-          ? `${data.resolved} of ${data.sampleSize} sampled`
-          : `Sample of ${data.sampleSize}`;
-        sampleEl.textContent = data.holderCount
-          ? `${measured} across all ${data.holderCount.toLocaleString()} holders`
-          : `${measured} holders measured`;
+        // resolved: wallets the distribution actually rests on (some of the top
+        // holders could not be dated: left since the snapshot, or history unreadable)
+        const label = `Top ${data.sampleSize} Holders`;
+        sampleEl.textContent = typeof data.resolved === 'number' && data.resolved < data.sampleSize
+          ? `${label} (${data.resolved} measured)`
+          : label;
         sampleEl.title = data.sampleMethod
-          ? 'Top 50 holders plus random samples of the rest, weighted to the whole holder base. Percentages are rounded; a 250-wallet sample is accurate to within several points. Hold time counts from when the wallet last went from zero to holding in this wallet; selling out and buying back starts a new streak.'
+          ? 'The largest holders with at least 0.05% of supply, up to 250 (LP and burn wallets excluded). Percentages are rounded. Hold time counts from when the wallet last went from zero to holding in this wallet; selling out and buying back starts a new streak.'
           : '';
       } else {
         sampleEl.textContent = `${data.analyzed}/${data.totalCount || data.sampleSize} analyzed...`;
@@ -1934,7 +1932,7 @@ const tokenDetail = {
         else fillEl.className = 'diamond-bar-fill dh-low';
       }
       if (pctEl) {
-        // Whole percents: a 250-wallet sample does not support a decimal
+        // Whole percents: 250 wallets do not support a decimal
         pctEl.textContent = Math.round(pct) + '%';
         pctEl.classList.remove('dh-text-high', 'dh-text-mid', 'dh-text-low');
         if (pct >= 50) pctEl.classList.add('dh-text-high');

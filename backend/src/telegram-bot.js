@@ -141,7 +141,7 @@ function buildHelpMessage() {
     '📖 *HolDEX Bot Help*',
     '',
     '*What is conviction?*',
-    'The % of sampled holders who have held a token for *1 month or longer*\\. Higher conviction = stronger diamond hands\\.',
+    'The % of the top 250 holders who have held a token for *1 month or longer*\\. Higher conviction = stronger diamond hands\\.',
     '',
     '*Commands*',
     '`/start` — introduction & overview',

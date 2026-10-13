@@ -1392,9 +1392,7 @@
       if (data.computed && data.distribution) {
         updateDiamondBars(data.distribution);
         if (sampleEl) {
-          sampleEl.textContent = data.holderCount
-            ? `Sample of ${data.sampleSize} across all ${data.holderCount.toLocaleString()} holders`
-            : `${data.analyzed} of ${data.sampleSize} holders analyzed`;
+          sampleEl.textContent = `Top ${data.sampleSize} Holders`;
         }
         finalizeDiamondBars();
         return;
@@ -1418,7 +1416,7 @@
           sampleEl.textContent = `In queue: position ${queuePos} of ${queueTotal}`;
         } else if (hasProgress) {
           // Actively being analyzed (might also have queue position 1)
-          sampleEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} holders`;
+          sampleEl.textContent = `Analyzing... ${data.analyzed}/${data.sampleSize} top holders`;
         } else if (queuePos === 1) {
           // First in queue, sample loading
           sampleEl.textContent = 'Fetching holder data...';
