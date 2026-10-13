@@ -95,7 +95,7 @@ const SAMPLE_METHOD = 'top-v1';
 
 const DEFAULT_SAMPLE_OPTS = {
   size: 250,        // the largest holders measured
-  minShare: 5e-4,   // a wallet needs at least 0.05% of held supply to be measured
+  minShare: 1e-4,   // a wallet needs at least 0.01% of held supply to be measured
   dustShare: 1e-7,  // balances below 0.00001% of held supply are dust, not holders
 };
 
@@ -268,6 +268,7 @@ function rewindToStreakStart(balance, txs, { exhausted = false } = {}) {
 module.exports = {
   MAX_SNAPSHOT_GAP_MS,
   SAMPLE_METHOD,
+  DEFAULT_SAMPLE_OPTS,
   DEFAULT_SAMPLE_OPTS,
   toBigInt,
   aggregateHolders,

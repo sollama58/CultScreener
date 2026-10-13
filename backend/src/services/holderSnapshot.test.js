@@ -106,7 +106,7 @@ describe('selectSample', () => {
   });
 
   test('large holder base: the 250 largest holders, in rank order', () => {
-    // 1000 wallets, each ~0.1% of held supply: all clear the 0.05% floor
+    // 1000 wallets, each ~0.1% of held supply: all clear the 0.01% floor
     const { sample, meta } = selectSample(MINT, makeHolders(1000));
     assert.strictEqual(sample.length, 250);
     assert.deepStrictEqual(sample.map(s => s.rank), Array.from({ length: 250 }, (_, i) => i + 1));
@@ -115,11 +115,11 @@ describe('selectSample', () => {
     assert.strictEqual(meta.eligible, 1000);
   });
 
-  test('holders under 0.05% of held supply are not measured', () => {
+  test('holders under 0.01% of held supply are not measured', () => {
     const holders = [
-      { wallet: 'BIG', amount: 9_990n, rank: 1 },
-      { wallet: 'EDGE', amount: 5n, rank: 2 },  // exactly 0.05% of 10_000
-      { wallet: 'SMALL', amount: 4n, rank: 3 }, // under the floor, still a holder
+      { wallet: 'BIG', amount: 99_980n, rank: 1 },
+      { wallet: 'EDGE', amount: 10n, rank: 2 },  // exactly 0.01% of 100_000
+      { wallet: 'SMALL', amount: 9n, rank: 3 },  // under the floor, still a holder
       { wallet: 'SMALL2', amount: 1n, rank: 4 },
     ];
     const { sample, meta } = selectSample(MINT, holders);

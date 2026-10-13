@@ -20,7 +20,7 @@ const { cache, TTL } = require('./cache');
 const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID, DIAMOND_HANDS_BUCKETS } = require('../constants');
 const {
   aggregateHolders, newWalletAcquisition, selectSample, tokenAccountDelta, metaTokenAccountDelta,
-  holderFingerprint, rewindToStreakStart, toBigInt, SAMPLE_METHOD,
+  holderFingerprint, rewindToStreakStart, toBigInt, SAMPLE_METHOD, DEFAULT_SAMPLE_OPTS,
 } = require('./holderSnapshot');
 const { buildStratifiedDiamondHands } = require('./holderMetrics');
 const holderCounts = require('./holderCounts');
@@ -498,9 +498,10 @@ async function takeSnapshotRun(mint) {
     // token still gets a full snapshot at least once a day.
     const prevFingerprint = prev?.sample_meta?.fingerprint;
     const fingerprint = holderFingerprint(supply, first.accounts);
-    // A snapshot whose sample was drawn by an older method is redrawn, not kept.
+    // A snapshot whose sample was drawn by an older method or floor is redrawn, not kept.
     const prevUsable = prev && prev.supply != null && prev.decimals === decimals
       && prev.sample_meta?.method === SAMPLE_METHOD
+      && prev.sample_meta?.minShare === DEFAULT_SAMPLE_OPTS.minShare
       && (first.complete || Date.now() - new Date(prev.taken_at).getTime() < CONFIG.staleSnapshotMs);
     if (prevUsable && prevFingerprint && fingerprint === prevFingerprint) {
       const now = Date.now();

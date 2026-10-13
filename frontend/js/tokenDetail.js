@@ -1865,7 +1865,7 @@ const tokenDetail = {
           ? `${label} (${data.resolved} measured)`
           : label;
         sampleEl.title = data.sampleMethod
-          ? 'The largest holders with at least 0.05% of supply, up to 250 (LP and burn wallets excluded). Percentages are rounded. Hold time counts from when the wallet last went from zero to holding in this wallet; selling out and buying back starts a new streak.'
+          ? 'The largest holders with at least 0.01% of supply, up to 250 (LP and burn wallets excluded). Percentages are rounded. Hold time counts from when the wallet last went from zero to holding in this wallet; selling out and buying back starts a new streak.'
           : '';
       } else {
         sampleEl.textContent = `${data.analyzed}/${data.totalCount || data.sampleSize} analyzed...`;
