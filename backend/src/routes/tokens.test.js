@@ -128,7 +128,6 @@ stub('../services/holderPipeline', {
     return S.snapshot.ageMs <= (opts.maxAgeMs ?? 8 * 3_600_000) ? S.snapshot.list : null;
   },
   ensureSnapshot: async () => {},
-  getRefreshIntervals: async (mints) => Object.fromEntries(mints.map(m => [m, 6 * 3_600_000])),
   refreshIfStaleOnView: async () => false,
   CONFIG: { refreshMs: 6 * 3_600_000 }
 });

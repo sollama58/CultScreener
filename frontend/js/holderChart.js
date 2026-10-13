@@ -123,7 +123,7 @@ const holderChart = (() => {
     if (note) {
       const hrs = d?.refreshHours || 4;
       const est = d?.series?.[m]?.est?.length > 0;
-      note.textContent = `Unique wallets holding the token; burn and LP wallets excluded. Counted from a full holder snapshot about every ${hrs}h.` +
+      note.textContent = `Unique wallets holding the token; burn and LP wallets excluded. Recounted from the full holder list about every ${hrs}h.` +
         (est ? ' Dashed: estimated from older daily counts.' : '');
     }
   }

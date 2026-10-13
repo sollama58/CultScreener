@@ -652,6 +652,15 @@ const jobProcessors = {
    * Hold-time backfill for sampled and listed wallets whose streak start is unknown.
    * Bounded per run; re-queues itself until done, then stores diamond hands.
    */
+  /**
+   * Holder count between full snapshots (holderPipeline.refreshHolderCount).
+   */
+  'refresh-holder-count': async (job) => {
+    const { mint } = job.data;
+    if (!mint) return { error: 'No mint provided' };
+    return require('./services/holderPipeline').refreshHolderCount(mint);
+  },
+
   'backfill-holder-acquisitions': async (job) => {
     const { mint } = job.data;
     if (!mint) return { error: 'No mint provided' };
@@ -912,10 +921,17 @@ const jobProcessors = {
     const dbRowMap = {};
     for (const row of dbRows) dbRowMap[row.mint_address] = row;
 
+    // Holder counts stay on HOLDER_COUNT_REFRESH_HOURS for every token, from a cheap
+    // read between snapshots (holderPipeline.refreshHolderCount)
+    const latestPoints = await require('./services/holderCounts').getLatestPoints(allMints).catch(() => null);
+
     let triggered = 0;
     let refreshed = 0;
+    let counted = 0;
     for (const mint of allMints) {
       if (!holderPipeline.isRefreshDue(mint, snapshotTimes[mint], Date.now(), intervals[mint])) {
+        if (latestPoints && holderPipeline.isCountDue(latestPoints[mint]?.takenAt)
+            && await holderPipeline.ensureCountRefresh(mint).catch(() => false)) counted++;
         // Fresh snapshot: run the backfill pass anyway. It finishes any hold-time
         // backfill that stopped (failed job, Redis restart, a snapshot landing
         // mid-run) and, with nothing left to backfill, re-stores diamond hands so
@@ -926,8 +942,8 @@ const jobProcessors = {
       if (await holderPipeline.ensureSnapshot(mint)) triggered++;
     }
 
-    if (triggered > 0 || refreshed > 0) {
-      console.log(`[Worker] warm-curated-conviction: ${triggered} snapshots, ${refreshed} diamond hands refreshes, ${curatedTokens.length} curated tokens`);
+    if (triggered > 0 || refreshed > 0 || counted > 0) {
+      console.log(`[Worker] warm-curated-conviction: ${triggered} snapshots, ${counted} holder counts, ${refreshed} diamond hands refreshes, ${curatedTokens.length} curated tokens`);
     }
 
     // Update ATH market cap for curated tokens using current market cap from the tokens table.
