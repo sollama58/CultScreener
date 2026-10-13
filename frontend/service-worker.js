@@ -91,7 +91,8 @@
 // for a wallet signature - api.js v19, watchlist.js v5, tokenDetail.js v37.
 // v90: Share button for the King of the Pill (King only, or King + runners-up) - new
 // js/kotpShot.js, chartShot.js v4, kotp.js v8, home.css v3.
-const CACHE_VERSION = 'holdex-v90';
+// v91: Holders chart drops the "Holders" tag on its axis value label - holderChart.js v6.
+const CACHE_VERSION = 'holdex-v91';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -121,7 +122,7 @@ const APP_SHELL = [
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=4',
   '/js/tokenChart.js?v=9',
-  '/js/holderChart.js?v=5',
+  '/js/holderChart.js?v=6',
   '/js/watchlist.js?v=5',
   '/js/holderBehavior.js?v=12',
   '/js/announcements.js?v=2',
