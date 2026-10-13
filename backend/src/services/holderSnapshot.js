@@ -89,125 +89,55 @@ function newWalletAcquisition(prev, takenAt, maxGapMs = MAX_SNAPSHOT_GAP_MS) {
   return { acquiredAt: null, source: 'pending' };
 }
 
-// ── Representative sampling ──────────────────────────────────────────────────
+// ── Conviction sample ────────────────────────────────────────────────────────
 
-const SAMPLE_METHOD = 'stratified-v1';
+const SAMPLE_METHOD = 'top-v1';
 
 const DEFAULT_SAMPLE_OPTS = {
-  size: 250,        // total wallets to measure
-  topCount: 50,     // largest holders, always measured (they hold most of the supply)
-  midShare: 0.10,   // the "mid" stratum runs from rank topCount+1 to the top 10% of holders
+  size: 250,        // the largest holders measured
+  minShare: 5e-4,   // a wallet needs at least 0.05% of held supply to be measured
   dustShare: 1e-7,  // balances below 0.00001% of held supply are dust, not holders
 };
 
-// Stable pseudo-random key per (mint, wallet). Taking the k lowest keys from a
-// population is a uniform random sample of it ("bottom-k" sampling), and because
-// the key never changes, a wallet that stays in the population stays in the sample.
-// That keeps the sample representative while avoiding re-measuring new wallets
-// every run.
-function sampleKey(mint, wallet) {
-  return crypto.createHash('sha256').update(`${mint}:${wallet}`).digest('hex').slice(0, 13);
-}
-
-// The k entries with the lowest keys, lowest first (ties in list order, as a
-// stable sort would give). A bounded max-heap of k entries instead of sorting
-// the whole population: the tail stratum can be ~100k wallets for ~100 picks.
-function bottomK(mint, holders, k) {
-  if (k >= holders.length) return holders.slice();
-  if (k <= 0) return [];
-  const greater = (a, b) => (a.key > b.key || (a.key === b.key && a.i > b.i));
-  const heap = []; // max-heap: heap[0] is the largest kept entry
-  const siftDown = (j) => {
-    for (;;) {
-      const l = 2 * j + 1, r = l + 1;
-      let m = j;
-      if (l < heap.length && greater(heap[l], heap[m])) m = l;
-      if (r < heap.length && greater(heap[r], heap[m])) m = r;
-      if (m === j) return;
-      [heap[j], heap[m]] = [heap[m], heap[j]];
-      j = m;
-    }
-  };
-  for (let i = 0; i < holders.length; i++) {
-    const e = { h: holders[i], key: sampleKey(mint, holders[i].wallet), i };
-    if (heap.length < k) {
-      heap.push(e);
-      for (let j = heap.length - 1; j > 0;) {
-        const p = (j - 1) >> 1;
-        if (!greater(heap[j], heap[p])) break;
-        [heap[j], heap[p]] = [heap[p], heap[j]];
-        j = p;
-      }
-    } else if (greater(heap[0], e)) {
-      heap[0] = e;
-      siftDown(0);
-    }
-  }
-  return heap
-    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.i - b.i))
-    .map(x => x.h);
-}
-
 /**
- * Draw the conviction sample from a full holder list.
- *
- * Three strata by balance rank among eligible holders (LP, burn and dust removed):
- *   top  – the largest `topCount` holders, all measured;
- *   mid  – the rest of the top `midShare` of holders, random sample;
- *   tail – everyone else, random sample.
- * The random budget (size - top) is split evenly between mid and tail, and any
- * share a stratum can't use goes to the other. Each wallet carries its stratum, so
- * the distribution can be weighted back to the whole population.
+ * Draw the conviction sample from a full holder list: the largest `size` holders
+ * (LP, burn and dust removed) that each hold at least `minShare` of the held
+ * supply. Everyone in it is measured, so the distribution describes the top
+ * holders themselves, not the whole holder base.
  *
  * @param {string} mint
  * @param {Array<{wallet, amount: bigint, rank, tokenAccount}>} holders sorted desc
  * @param {{exclude?: Set<string>}} opts plus any DEFAULT_SAMPLE_OPTS override
  */
 function selectSample(mint, holders, opts = {}) {
-  const { size, topCount, midShare, dustShare } = { ...DEFAULT_SAMPLE_OPTS, ...opts };
+  const { size, minShare, dustShare } = { ...DEFAULT_SAMPLE_OPTS, ...opts };
   const exclude = opts.exclude || new Set();
 
   const candidates = (holders || []).filter(h => !exclude.has(h.wallet) && h.amount > 0n);
   const heldTotal = candidates.reduce((s, h) => s + h.amount, 0n);
-  // amount < heldTotal * dustShare, in integer math: amount * 1e7 < heldTotal for 1e-7
-  const dustDen = BigInt(Math.round(1 / dustShare));
-  const eligible = candidates.filter(h => h.amount * dustDen >= heldTotal);
-
-  const top = eligible.slice(0, topCount);
-  const midEnd = Math.max(top.length, Math.ceil(eligible.length * midShare));
-  const midPop = eligible.slice(top.length, midEnd);
-  const tailPop = eligible.slice(midEnd);
-
-  const budget = Math.max(0, size - top.length);
-  let midK = Math.min(midPop.length, Math.ceil(budget / 2));
-  let tailK = Math.min(tailPop.length, budget - midK);
-  midK = Math.min(midPop.length, budget - tailK); // hand tail's unused share back to mid
-
-  const sumAmount = list => list.reduce((s, h) => s + h.amount, 0n);
-  const strata = {
-    top:  { population: top.length,     amount: sumAmount(top).toString(),     sampled: top.length },
-    mid:  { population: midPop.length,  amount: sumAmount(midPop).toString(),  sampled: midK },
-    tail: { population: tailPop.length, amount: sumAmount(tailPop).toString(), sampled: tailK },
+  // amount >= heldTotal * share, in integer math: amount * 1e7 >= heldTotal for 1e-7
+  const atLeast = share => {
+    const den = BigInt(Math.round(1 / share));
+    return h => h.amount * den >= heldTotal;
   };
+  const eligible = candidates.filter(atLeast(dustShare));
+  const top = eligible.filter(atLeast(minShare)).slice(0, size);
 
-  const pick = (list, stratum) => list.map(h => ({
-    wallet: h.wallet, tokenAccount: h.tokenAccount || null, rank: h.rank, amount: h.amount.toString(), stratum,
+  const amount = top.reduce((s, h) => s + h.amount, 0n);
+  const sample = top.map(h => ({
+    wallet: h.wallet, tokenAccount: h.tokenAccount || null, rank: h.rank, amount: h.amount.toString(), stratum: 'top',
   }));
-  const sample = [
-    ...pick(top, 'top'),
-    ...pick(bottomK(mint, midPop, midK), 'mid'),
-    ...pick(bottomK(mint, tailPop, tailK), 'tail'),
-  ];
 
   return {
     sample,
     meta: {
       method: SAMPLE_METHOD,
       size: sample.length,
+      minShare,
       eligible: eligible.length,
       excluded: (holders || []).length - candidates.length,
       dust: candidates.length - eligible.length,
-      strata,
+      strata: { top: { population: top.length, amount: amount.toString(), sampled: top.length } },
     },
   };
 }
@@ -342,7 +272,6 @@ module.exports = {
   toBigInt,
   aggregateHolders,
   newWalletAcquisition,
-  sampleKey,
   selectSample,
   uiToRaw,
   tokenAccountDelta,

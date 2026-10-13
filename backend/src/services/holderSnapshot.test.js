@@ -1,11 +1,11 @@
 /**
- * Holder snapshot math: aggregation, new-wallet acquisition, stratified sampling,
+ * Holder snapshot math: aggregation, new-wallet acquisition, the conviction sample,
  * and the transfer-history rewind that finds when a holding streak began.
  */
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const {
-  aggregateHolders, newWalletAcquisition, selectSample, sampleKey, uiToRaw, tokenAccountDelta,
+  aggregateHolders, newWalletAcquisition, selectSample, uiToRaw, tokenAccountDelta,
   metaTokenAccountDelta, holderFingerprint, rewindToStreakStart, toBigInt, MAX_SNAPSHOT_GAP_MS,
 } = require('./holderSnapshot');
 
@@ -93,73 +93,44 @@ describe('newWalletAcquisition', () => {
 });
 
 describe('selectSample', () => {
-  // n holders with strictly decreasing balances, none of them dust
+  // n holders with strictly decreasing, nearly equal balances, none of them dust
   const makeHolders = n => Array.from({ length: n }, (_, i) => ({
     wallet: `W${String(i).padStart(6, '0')}`, tokenAccount: `T${i}`, amount: BigInt(1_000_000 + (n - i) * 1000), rank: i + 1,
   }));
 
-  test('small holder base: everyone eligible is measured', () => {
-    const holders = makeHolders(120);
-    const { sample, meta } = selectSample(MINT, holders);
+  test('small holder base: everyone above the floor is measured', () => {
+    const { sample, meta } = selectSample(MINT, makeHolders(120));
     assert.strictEqual(sample.length, 120);
-    assert.strictEqual(meta.method, 'stratified-v1');
-    assert.strictEqual(meta.strata.top.population, 50);
-    assert.strictEqual(meta.strata.top.sampled, 50);
-    assert.strictEqual(meta.strata.mid.population, 0);
-    assert.strictEqual(meta.strata.tail.population, 70);
-    assert.strictEqual(meta.strata.tail.sampled, 70);
+    assert.strictEqual(meta.method, 'top-v1');
+    assert.deepStrictEqual(meta.strata, { top: { population: 120, amount: meta.strata.top.amount, sampled: 120 } });
   });
 
-  test('large holder base: top 50 always, then an even random split between mid and tail', () => {
-    const holders = makeHolders(10_000);
-    const { sample, meta } = selectSample(MINT, holders);
+  test('large holder base: the 250 largest holders, in rank order', () => {
+    // 1000 wallets, each ~0.1% of held supply: all clear the 0.05% floor
+    const { sample, meta } = selectSample(MINT, makeHolders(1000));
     assert.strictEqual(sample.length, 250);
-    assert.deepStrictEqual(sample.filter(s => s.stratum === 'top').map(s => s.rank), Array.from({ length: 50 }, (_, i) => i + 1));
-    assert.strictEqual(meta.strata.mid.population, 950);   // ranks 51..1000 (top 10%)
-    assert.strictEqual(meta.strata.tail.population, 9000);
-    assert.strictEqual(meta.strata.mid.sampled, 100);
-    assert.strictEqual(meta.strata.tail.sampled, 100);
-    const mids = sample.filter(s => s.stratum === 'mid');
-    assert.ok(mids.every(s => s.rank > 50 && s.rank <= 1000));
-    assert.ok(sample.filter(s => s.stratum === 'tail').every(s => s.rank > 1000));
-    assert.strictEqual(new Set(sample.map(s => s.wallet)).size, 250);
+    assert.deepStrictEqual(sample.map(s => s.rank), Array.from({ length: 250 }, (_, i) => i + 1));
+    assert.ok(sample.every(s => s.stratum === 'top'));
+    assert.strictEqual(meta.strata.top.population, 250);
+    assert.strictEqual(meta.eligible, 1000);
   });
 
-  test('unused budget in one stratum goes to the other', () => {
-    // 50 top, mid = ranks 51..60 (10 wallets, top 10% of 600 is 60), tail = 540
-    const { meta } = selectSample(MINT, makeHolders(600));
-    assert.strictEqual(meta.strata.mid.sampled, 10);
-    assert.strictEqual(meta.strata.tail.sampled, 190);
+  test('holders under 0.05% of held supply are not measured', () => {
+    const holders = [
+      { wallet: 'BIG', amount: 9_990n, rank: 1 },
+      { wallet: 'EDGE', amount: 5n, rank: 2 },  // exactly 0.05% of 10_000
+      { wallet: 'SMALL', amount: 4n, rank: 3 }, // under the floor, still a holder
+      { wallet: 'SMALL2', amount: 1n, rank: 4 },
+    ];
+    const { sample, meta } = selectSample(MINT, holders);
+    assert.deepStrictEqual(sample.map(s => s.wallet), ['BIG', 'EDGE']);
+    assert.strictEqual(meta.eligible, 4);
+    assert.strictEqual(meta.strata.top.population, 2);
   });
 
-  test('the random strata are not just the largest holders', () => {
-    const { sample } = selectSample(MINT, makeHolders(10_000));
-    const tailRanks = sample.filter(s => s.stratum === 'tail').map(s => s.rank).sort((a, b) => a - b);
-    // a uniform sample of ranks 1001..10000 should reach well into the bottom half
-    assert.ok(tailRanks[tailRanks.length - 1] > 7000, `max tail rank ${tailRanks[tailRanks.length - 1]}`);
-    assert.ok(tailRanks[0] < 3000, `min tail rank ${tailRanks[0]}`);
-  });
-
-  test('deterministic for a mint, and a wallet that stays stays sampled', () => {
-    const holders = makeHolders(5000);
-    const a = selectSample(MINT, holders).sample.map(s => s.wallet);
-    const b = selectSample(MINT, holders).sample.map(s => s.wallet);
-    assert.deepStrictEqual(a, b);
-    // drop 100 unsampled tail holders: everyone sampled before is still sampled
-    const sampled = new Set(a);
-    const dropped = holders.filter(h => h.rank > 1000 && !sampled.has(h.wallet)).slice(0, 100).map(h => h.wallet);
-    const fewer = holders.filter(h => !dropped.includes(h.wallet)).map((h, i) => ({ ...h, rank: i + 1 }));
-    const c = new Set(selectSample(MINT, fewer).sample.filter(s => s.stratum === 'tail').map(s => s.wallet));
-    for (const w of a.filter(w => selectSample(MINT, holders).sample.find(s => s.wallet === w).stratum === 'tail')) {
-      assert.ok(c.has(w), `${w} dropped out of the tail sample`);
-    }
-  });
-
-  test('a different mint draws a different random sample', () => {
-    const holders = makeHolders(5000);
-    const a = selectSample(MINT, holders).sample.filter(s => s.stratum === 'tail').map(s => s.wallet);
-    const b = new Set(selectSample('OtherMint', holders).sample.filter(s => s.stratum === 'tail').map(s => s.wallet));
-    assert.ok(a.filter(w => b.has(w)).length < a.length / 2);
+  test('deterministic for the same holder list', () => {
+    const holders = makeHolders(800);
+    assert.deepStrictEqual(selectSample(MINT, holders), selectSample(MINT, holders));
   });
 
   test('excluded wallets (LP, burn) are left out and counted', () => {
@@ -185,11 +156,6 @@ describe('selectSample', () => {
   test('sample entries carry amount as a string and their stratum', () => {
     const { sample } = selectSample(MINT, makeHolders(3));
     assert.deepStrictEqual(sample[0], { wallet: 'W000000', tokenAccount: 'T0', rank: 1, amount: '1003000', stratum: 'top' });
-  });
-
-  test('sampleKey is stable and mint-specific', () => {
-    assert.strictEqual(sampleKey(MINT, 'A'), sampleKey(MINT, 'A'));
-    assert.notStrictEqual(sampleKey(MINT, 'A'), sampleKey('M2', 'A'));
   });
 });
 
