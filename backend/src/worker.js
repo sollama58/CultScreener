@@ -62,13 +62,34 @@ function getRedisConfig() {
 // page views re-queued it for the same list
 const holderAnalyticsTtl = () => require('./services/holderPipeline').CONFIG.refreshMs + 2 * TTL.HOUR;
 
-// Full holder snapshots running at once. Each pages DAS (several pages in flight)
-// and holds the whole account list in memory, then a long DB transaction; the
-// analytics queue's concurrency alone let ten run together on a 512 MB instance.
-// Snapshot jobs past the cap wait in BullMQ's delayed set, not in a worker slot.
+// Full-list holder reads running at once: snapshots and holder-count refreshes.
+// Each holds a mint's whole holder list in memory (a snapshot pages DAS with several
+// pages in flight, then a long DB transaction; a count refresh sums every wallet in
+// a map), so they share one cap. The analytics queue's concurrency alone let six
+// run together on a 512 MB instance and ran the worker out of heap. Jobs past the
+// cap wait in BullMQ's delayed set, not in a worker slot.
 const SNAPSHOT_MAX_CONCURRENT = parseInt(process.env.HOLDER_SNAPSHOT_MAX_CONCURRENT) || 3;
 const SNAPSHOT_SLOT_RETRY_MS = 15000;
 let activeSnapshots = 0;
+
+/**
+ * Run fn in one of the SNAPSHOT_MAX_CONCURRENT holder-read slots, or move the job
+ * back to the delayed set (renewing its per-mint lock first, so it isn't queued a
+ * second time while it waits) when all are taken.
+ */
+async function inHolderReadSlot(job, token, { lockKey, lockTtl }, fn) {
+  if (token && activeSnapshots >= SNAPSHOT_MAX_CONCURRENT) {
+    await cache.set(lockKey, Date.now(), lockTtl).catch(() => {});
+    await job.moveToDelayed(Date.now() + SNAPSHOT_SLOT_RETRY_MS + Math.floor(Math.random() * 5000), token);
+    throw new DelayedError();
+  }
+  activeSnapshots++;
+  try {
+    return await fn();
+  } finally {
+    activeSnapshots--;
+  }
+}
 
 // Most mints fetch-holder-counts-batch pages DAS for in one job
 const HOLDER_COUNT_SCANS_PER_JOB = 20;
@@ -602,19 +623,9 @@ const jobProcessors = {
     const { mint } = job.data;
     if (!mint) return { error: 'No mint provided' };
     const holderPipeline = require('./services/holderPipeline');
-    if (token && activeSnapshots >= SNAPSHOT_MAX_CONCURRENT) {
-      // Keep the per-mint lock while it waits, so it isn't queued a second time
-      await cache.set(`holder-snapshot-pending:${mint}`, Date.now(), holderPipeline.CONFIG.snapshotLockTtl).catch(() => {});
-      await job.moveToDelayed(Date.now() + SNAPSHOT_SLOT_RETRY_MS + Math.floor(Math.random() * 5000), token);
-      throw new DelayedError();
-    }
-    activeSnapshots++;
-    let result;
-    try {
-      result = await holderPipeline.takeSnapshot(mint);
-    } finally {
-      activeSnapshots--;
-    }
+    const result = await inHolderReadSlot(job, token,
+      { lockKey: `holder-snapshot-pending:${mint}`, lockTtl: holderPipeline.CONFIG.snapshotLockTtl },
+      () => holderPipeline.takeSnapshot(mint));
 
     // An unchanged holder list whose classification is still cached needs no re-run.
     // Only a full classification counts: the API's 2-minute fast result has no supply,
@@ -655,10 +666,13 @@ const jobProcessors = {
   /**
    * Holder count between full snapshots (holderPipeline.refreshHolderCount).
    */
-  'refresh-holder-count': async (job) => {
+  'refresh-holder-count': async (job, token) => {
     const { mint } = job.data;
     if (!mint) return { error: 'No mint provided' };
-    return require('./services/holderPipeline').refreshHolderCount(mint);
+    const holderPipeline = require('./services/holderPipeline');
+    return inHolderReadSlot(job, token,
+      { lockKey: `holder-count-pending:${mint}`, lockTtl: holderPipeline.CONFIG.countLockTtl },
+      () => holderPipeline.refreshHolderCount(mint));
   },
 
   'backfill-holder-acquisitions': async (job) => {

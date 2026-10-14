@@ -138,10 +138,11 @@ describe('rpcCall', () => {
       inFlight--;
       const page = body.params.page;
       const n = page <= 5 ? 1000 : page === 6 ? 10 : 0;
-      return { data: { result: { token_accounts: Array.from({ length: n }, (_, i) => ({ owner: `o${page}_${i}`, address: `a${page}_${i}`, amount: '1' })) } } };
+      return { data: { result: { token_accounts: Array.from({ length: n }, (_, i) => ({ owner: `o${page}_${i}`, address: `a${page}_${i}`, amount: '1', mint: 'Mint', frozen: false, delegated_amount: 0 })) } } };
     };
     try {
       const r = await solana.getAllTokenAccounts('Mint', { maxPages: 250, concurrency: 4 });
+      assert.deepStrictEqual(r.accounts[0], { owner: 'o1_0', address: 'a1_0', amount: '1' }, 'only the fields callers read are kept');
       assert.strictEqual(r.complete, true);
       assert.strictEqual(r.pages, 6);
       assert.strictEqual(r.accounts.length, 5010);
