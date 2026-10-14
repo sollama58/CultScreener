@@ -911,8 +911,12 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
       next++;
       try {
         const batch = await fetchPage(p);
-        got.set(p, batch);
         if (batch.length < 1000 && p < shortPage) shortPage = p;
+        // Keep only the three fields callers read. A raw DAS entry carries mint,
+        // delegation, frozen and extension fields too; held for every page until the
+        // read ends, a 250-page snapshot kept ~90 MB of them, several snapshots at
+        // once ran the worker out of heap.
+        got.set(p, batch.map(a => ({ owner: a.owner, address: a.address, amount: a.amount })));
       } catch (err) {
         failed.set(p, err);
       }
@@ -929,7 +933,8 @@ async function getAllTokenAccounts(mintAddress, { maxPages = 100, startPage = 1,
       throw failed.get(p);
     }
     const batch = got.get(p);
-    for (const a of batch) accounts.push({ owner: a.owner, address: a.address, amount: a.amount });
+    got.delete(p);
+    for (const a of batch) accounts.push(a);
     lastPage = p;
     if (batch.length < 1000) { complete = true; break; }
   }

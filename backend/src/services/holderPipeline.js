@@ -437,8 +437,9 @@ async function refreshHolderCount(mint) {
   }
   const { balances, accounts, pages, complete } = await solanaService.getHolderBalances(mint);
   const takenAt = Date.now();
-  const holders = [];
-  for (const [wallet, amount] of balances) holders.push({ wallet, amount });
+  // Counted straight off the map: a big token has hundreds of thousands of wallets,
+  // and building a second array of them added tens of MB to this job
+  const holders = (function* () { for (const [wallet, amount] of balances) yield { wallet, amount }; })();
   const lpWallets = snap.sample_meta?.lpWallets || [];
   const exclude = new Set([...BURN_WALLETS, ...LP_PROGRAMS, ...LP_AUTHORITIES, ...lpWallets]);
   const token = await require('./database').getToken(mint).catch(() => null);
