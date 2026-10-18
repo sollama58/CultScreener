@@ -157,8 +157,8 @@ const holderChart = (() => {
       handleScale: { axisPressedMouseMove: { price: false } },
       localization: { priceFormatter: fmtAxis, timeFormatter: fmtTime },
     });
-    const brandA = cssVar('--brand-a', '#e2581b');
-    const brandB = cssVar('--brand-b', '#ff8a3d');
+    const brandA = cssVar('--brand-a', '#963a18');
+    const brandB = cssVar('--brand-b', '#ad4a22');
     const fmt = { type: 'custom', formatter: fmtAxis, minMove: 1 };
     const est = chart.addSeries(LWC.LineSeries, {
       color: cssVar('--muted', '#868da0'), lineWidth: 2, lineStyle: 2, priceFormat: fmt,
@@ -310,7 +310,7 @@ const holderChart = (() => {
       detail: v == null ? '' : `${fmtCount(v)}${cur.complete === false ? '+' : ''}${chText}`,
       accent: ch ? (ch.delta >= 0 ? cssVar('--good-ink', '#4ade80') : cssVar('--bad-ink', '#ff8080')) : undefined,
       legend: [
-        { label: lineLabel(), color: cssVar('--brand-b', '#ff8a3d') },
+        { label: lineLabel(), color: cssVar('--brand-b', '#ad4a22') },
         ...(st.series.est.data().length ? [{ label: 'Estimated (older daily counts)', color: cssVar('--muted', '#868da0'), dashed: true }] : []),
       ],
     });

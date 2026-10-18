@@ -519,9 +519,9 @@ const tokenChart = (() => {
 
     if (prefs.style === 'line') {
       const s = chart.addSeries(LWC.AreaSeries, {
-        lineColor: cssVar('--brand-b', '#ff8a3d'),
-        topColor: 'rgba(255,138,61,0.28)',
-        bottomColor: 'rgba(255,138,61,0)',
+        lineColor: cssVar('--brand-b', '#ad4a22'),
+        topColor: 'rgba(173, 74, 34,0.28)',
+        bottomColor: 'rgba(173, 74, 34,0)',
         lineWidth: 2,
         priceFormat
       });

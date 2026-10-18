@@ -649,16 +649,16 @@ td.perf-current-pct {
   color: #fff;
   letter-spacing: -0.02em;
 }
-.psg-logo span { color: #ff9f66; }
+.psg-logo span { color: #c4825f; }
 .psg-subtitle { font-size: 0.72rem; color: #6b7280; margin-top: 2px; }
 .psg-sort-label {
   font-size: 0.7rem;
   font-weight: 600;
-  color: #ff9f66;
+  color: #c4825f;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  background: rgba(226, 88, 27,0.12);
-  border: 1px solid rgba(226, 88, 27,0.3);
+  background: rgba(150, 58, 24,0.12);
+  border: 1px solid rgba(150, 58, 24,0.3);
   border-radius: 4px;
   padding: 3px 8px;
 }
@@ -696,7 +696,7 @@ td.perf-current-pct {
   font-size: 0.6rem; color: #4b5563; letter-spacing: 0.03em;
   margin-top: 4px; display: flex; align-items: center; gap: 3px;
 }
-.psg-powered-by strong { color: #ff9f66; font-weight: 700; }
+.psg-powered-by strong { color: #c4825f; font-weight: 700; }
 .psg-pct {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
@@ -738,17 +738,17 @@ td.perf-current-pct {
 }
 .vsg-header {
   padding: 16px 20px 12px;
-  background: linear-gradient(135deg, rgba(226, 88, 27,0.1) 0%, transparent 70%);
+  background: linear-gradient(135deg, rgba(150, 58, 24,0.1) 0%, transparent 70%);
   border-bottom: 1px solid #1f2028;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
 }
 .vsg-logo { font-size: 1rem; font-weight: 700; color: #f3f4f6; letter-spacing: -0.02em; }
-.vsg-logo span { color: #ff9f66; }
+.vsg-logo span { color: #c4825f; }
 .vsg-subtitle { font-size: 0.72rem; color: #6b7280; margin-top: 2px; }
 .vsg-powered-by { font-size: 0.6rem; color: #4b5563; letter-spacing: 0.03em; margin-top: 3px; }
-.vsg-powered-by strong { color: #ff9f66; font-weight: 700; }
+.vsg-powered-by strong { color: #c4825f; font-weight: 700; }
 .vsg-date { font-size: 0.65rem; color: #4b5563; text-align: right; white-space: nowrap; }
 .vsg-benchmarks {
   display: flex;
