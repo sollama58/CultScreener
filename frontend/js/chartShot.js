@@ -113,8 +113,8 @@ const chartShot = (() => {
     const ink = cssVar('--ink', '#eef0f6');
     const ink2 = cssVar('--ink-2', '#aab1c2');
     const muted = cssVar('--muted', '#868da0');
-    const brandA = cssVar('--brand-a', '#8b5cf6');
-    const brandB = cssVar('--brand-b', '#3b82f6');
+    const brandA = cssVar('--brand-a', '#e2581b');
+    const brandB = cssVar('--brand-b', '#ff8a3d');
 
     const c = document.createElement('canvas');
     c.width = W;
@@ -125,8 +125,8 @@ const chartShot = (() => {
     ctx.fillStyle = cssVar('--page', '#07080c');
     ctx.fillRect(0, 0, W, H);
     const glow = ctx.createRadialGradient(W * 0.1, 0, 0, W * 0.1, 0, W * 0.7);
-    glow.addColorStop(0, 'rgba(139, 92, 246, 0.16)');
-    glow.addColorStop(1, 'rgba(139, 92, 246, 0)');
+    glow.addColorStop(0, 'rgba(226, 88, 27, 0.16)');
+    glow.addColorStop(1, 'rgba(226, 88, 27, 0)');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = cssVar('--surface-solid', '#11131a');

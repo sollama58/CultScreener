@@ -554,7 +554,7 @@ const versusPage = {
     ctx.arc(18, 18, 18, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1c22';
     ctx.fill();
-    ctx.fillStyle = '#9d7bff';
+    ctx.fillStyle = '#ff9f66';
     ctx.font = 'bold 16px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
