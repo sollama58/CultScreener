@@ -95,7 +95,8 @@
 // v92: flame brand colour (was violet/blue) - styles.css v28, home.css v4, token.css v10,
 // chartShot.js v5, cultify.js v24, holderBehavior.js v13, holderChart.js v7, kotpShot.js v2,
 // performance.js v30, tokenChart.js v10, tokenDetail.js v39, versus.js v19, new app icons.
-const CACHE_VERSION = 'holdex-v92';
+// v93: darker flame brand (toned down) - same files as v92, one version up each.
+const CACHE_VERSION = 'holdex-v93';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -106,9 +107,9 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // HTML files are intentionally omitted here — they use network-first so users
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
-  '/css/styles.css?v=28',
-  '/css/home.css?v=4',
-  '/css/token.css?v=10',
+  '/css/styles.css?v=29',
+  '/css/home.css?v=5',
+  '/css/token.css?v=11',
   '/js/config.js?v=5',
   '/js/api.js?v=19',
   '/js/deviceLink.js?v=4',
@@ -117,20 +118,20 @@ const APP_SHELL = [
   '/js/conviction.js?v=23',
   '/js/tech.js?v=7',
   '/js/emerging.js?v=7',
-  '/js/versus.js?v=19',
+  '/js/versus.js?v=20',
   '/js/mainViewTabs.js?v=3',
-  '/js/kotpShot.js?v=2',
+  '/js/kotpShot.js?v=3',
   '/js/kotp.js?v=8',
-  '/js/tokenDetail.js?v=39',
+  '/js/tokenDetail.js?v=40',
   '/js/chartDrawings.js?v=1',
-  '/js/chartShot.js?v=5',
-  '/js/tokenChart.js?v=10',
-  '/js/holderChart.js?v=7',
+  '/js/chartShot.js?v=6',
+  '/js/tokenChart.js?v=11',
+  '/js/holderChart.js?v=8',
   '/js/watchlist.js?v=5',
-  '/js/holderBehavior.js?v=13',
+  '/js/holderBehavior.js?v=14',
   '/js/announcements.js?v=2',
   '/js/pwa.js?v=3',
-  '/js/performance.js?v=30',
+  '/js/performance.js?v=31',
   '/icons/icon.svg',
 ];
 

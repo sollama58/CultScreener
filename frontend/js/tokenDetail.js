@@ -1559,7 +1559,7 @@ const tokenDetail = {
         border: tok('--border', 'rgba(255,255,255,0.07)'),
         tile: tok('--surface-2', '#171a23'),
         page: tok('--surface-solid', '#11131a'),
-        brand: tok('--brand-ink', '#ff9f66'),
+        brand: tok('--brand-ink', '#c4825f'),
       };
 
       // 1. Header bar: logo + name + price

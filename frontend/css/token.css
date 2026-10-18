@@ -151,7 +151,7 @@
   color: #fff;
   border-color: transparent;
   background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
-  box-shadow: 0 8px 24px -10px rgba(226, 88, 27, 0.7);
+  box-shadow: 0 8px 24px -10px rgba(150, 58, 24, 0.7);
 }
 .tp-btn-primary svg { color: #fff; }
 .tp-btn-primary:hover:not(:disabled) {
@@ -168,12 +168,12 @@
   font-weight: 600;
   border-color: color-mix(in srgb, var(--brand-a) 55%, transparent);
   background: var(--brand-wash);
-  box-shadow: 0 0 0 1px rgba(226, 88, 27, 0.12) inset, 0 8px 22px -12px rgba(226, 88, 27, 0.8);
+  box-shadow: 0 0 0 1px rgba(150, 58, 24, 0.12) inset, 0 8px 22px -12px rgba(150, 58, 24, 0.8);
 }
 .tp-btn-chart svg { color: var(--brand-ink); }
 .tp-btn-chart:hover:not(:disabled) {
   color: #fff;
-  background: rgba(226, 88, 27, 0.22);
+  background: rgba(150, 58, 24, 0.22);
   border-color: var(--brand-a);
 }
 
@@ -194,14 +194,14 @@
   overflow: hidden;
   border-color: color-mix(in srgb, var(--brand-a) 35%, var(--border));
   background:
-    radial-gradient(420px 140px at 100% 50%, rgba(255, 138, 61, 0.12), transparent 70%),
-    radial-gradient(360px 140px at 0% 0%, rgba(226, 88, 27, 0.14), transparent 70%),
+    radial-gradient(420px 140px at 100% 50%, rgba(173, 74, 34, 0.12), transparent 70%),
+    radial-gradient(360px 140px at 0% 0%, rgba(150, 58, 24, 0.14), transparent 70%),
     var(--surface);
   transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
 .tp-chart-cta:hover {
   border-color: color-mix(in srgb, var(--brand-a) 70%, transparent);
-  box-shadow: 0 14px 36px -18px rgba(226, 88, 27, 0.75);
+  box-shadow: 0 14px 36px -18px rgba(150, 58, 24, 0.75);
 }
 .tp-chart-cta:active { transform: translateY(1px); }
 .tp-chart-cta:focus-visible { outline: 2px solid var(--brand-b); outline-offset: 2px; }
@@ -229,7 +229,7 @@
   white-space: nowrap;
   border-radius: var(--radius-s);
   background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
-  box-shadow: 0 8px 24px -10px rgba(226, 88, 27, 0.7);
+  box-shadow: 0 8px 24px -10px rgba(150, 58, 24, 0.7);
 }
 .tp-chart-cta:hover .tp-chart-cta-go { filter: brightness(1.1); }
 @media (max-width: 720px) {
@@ -335,7 +335,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(520px 220px at 0% 0%, rgba(226, 88, 27, 0.12), transparent 70%);
+  background: radial-gradient(520px 220px at 0% 0%, rgba(150, 58, 24, 0.12), transparent 70%);
 }
 .tp-hero > * { position: relative; }
 
@@ -402,8 +402,8 @@
   font-weight: 600;
   padding: 3px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(226, 88, 27, 0.35);
-  background: rgba(226, 88, 27, 0.1);
+  border: 1px solid rgba(150, 58, 24, 0.35);
+  background: rgba(150, 58, 24, 0.1);
   color: var(--brand-ink);
   white-space: nowrap;
 }
@@ -579,7 +579,7 @@
   text-decoration: none;
 }
 
-.token-page .watchlist-btn-header.active { border-color: rgba(226, 88, 27, 0.45); }
+.token-page .watchlist-btn-header.active { border-color: rgba(150, 58, 24, 0.45); }
 .token-page .watchlist-btn-header.active svg { color: var(--brand-ink); }
 
 /* ---------- KPIs ---------- */
@@ -1301,7 +1301,7 @@
   border: 1px solid transparent;
   border-radius: var(--radius-s);
   background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
-  box-shadow: 0 8px 24px -10px rgba(226, 88, 27, 0.7);
+  box-shadow: 0 8px 24px -10px rgba(150, 58, 24, 0.7);
   cursor: pointer;
   transition: filter 0.15s, opacity 0.15s;
 }
@@ -1362,8 +1362,8 @@
   color: var(--brand-ink);
   padding: 2px 9px;
   border-radius: 999px;
-  border: 1px solid rgba(226, 88, 27, 0.35);
-  background: rgba(226, 88, 27, 0.1);
+  border: 1px solid rgba(150, 58, 24, 0.35);
+  background: rgba(150, 58, 24, 0.1);
   white-space: nowrap;
 }
 .hb-overlay .hb-share-btn {
