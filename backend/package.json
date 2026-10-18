@@ -25,7 +25,7 @@
     "token-viewer"
   ],
   "author": "The Sol Penguin",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
     "@solana/web3.js": "^1.87.0",
     "axios": "^1.20.0",
