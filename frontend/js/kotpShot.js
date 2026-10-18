@@ -169,8 +169,8 @@ const kotpShot = (() => {
     ctx.fillStyle = gold;
     ctx.fillRect(0, 0, W, H);
     const brand = ctx.createRadialGradient(W * 0.08, H, 0, W * 0.08, H, W * 0.6);
-    brand.addColorStop(0, 'rgba(139, 92, 246, 0.16)');
-    brand.addColorStop(1, 'rgba(139, 92, 246, 0)');
+    brand.addColorStop(0, 'rgba(226, 88, 27, 0.16)');
+    brand.addColorStop(1, 'rgba(226, 88, 27, 0)');
     ctx.fillStyle = brand;
     ctx.fillRect(0, 0, W, H);
     // A thin gold frame
@@ -189,8 +189,8 @@ const kotpShot = (() => {
     ctx.font = `700 24px ${font}`;
     const siteW = ctx.measureText(SITE).width;
     const grad = ctx.createLinearGradient(100, 0, 100 + siteW, 0);
-    grad.addColorStop(0, cssVar('--brand-a', '#8b5cf6'));
-    grad.addColorStop(1, cssVar('--brand-b', '#3b82f6'));
+    grad.addColorStop(0, cssVar('--brand-a', '#e2581b'));
+    grad.addColorStop(1, cssVar('--brand-b', '#ff8a3d'));
     ctx.fillStyle = grad;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
