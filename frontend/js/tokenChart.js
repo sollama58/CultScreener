@@ -351,8 +351,11 @@ const tokenChart = (() => {
     const mcap = Number(t.marketCap || t.mcap);
     // Implied circulating supply, so the chart can switch to market cap like the KPI card
     const supplyFactor = price > 0 && mcap > 0 ? mcap / price : null;
+    const launched = Date.parse(t.pairCreatedAt || '');
     return {
       mint,
+      // When the token started trading (the age badge's date), for paging the chart back to it
+      launchedAt: launched > 0 ? launched : null,
       name: t.name || '',
       symbol: t.symbol || '',
       // Reuse the hero logo, which already went through the image proxy and fallbacks
@@ -490,7 +493,8 @@ const tokenChart = (() => {
     try { while (chart.panes().length > 1) chart.removePane(chart.panes().length - 1); } catch { /* older API */ }
   }
 
-  function render(fit) {
+  // older: candles were added before the ones on screen (history paged back toward launch)
+  function render(fit, { older = false } = {}) {
     if (!state?.chart) return;
     const { chart, LWC, prefs, raw } = state;
     const factor = prefs.unit === 'mcap' && state.info.supplyFactor ? state.info.supplyFactor : 1;
@@ -498,8 +502,12 @@ const tokenChart = (() => {
     const candles = normalizeCandles(raw, factor);
     state.candles = candles;
     let prevRange = fit ? null : chart.timeScale().getVisibleLogicalRange();
+    // Older candles slide in from the left: keep the same candles in view
+    if (prevRange && older && candles.length > prevLen) {
+      const added = candles.length - prevLen;
+      prevRange = { from: prevRange.from + added, to: prevRange.to + added };
     // A refresh that adds candles keeps the view pinned to the newest one, as long as it was in view
-    if (prevRange && prevLen && candles.length > prevLen && prevRange.to >= prevLen - 1) {
+    } else if (prevRange && prevLen && candles.length > prevLen && prevRange.to >= prevLen - 1) {
       const added = candles.length - prevLen;
       prevRange = { from: prevRange.from + added, to: prevRange.to + added };
     }
@@ -536,6 +544,13 @@ const tokenChart = (() => {
       state.series.main = s;
     }
     state.draw?.attach(chart, state.series.main);
+    if (reachesLaunch() && LWC.createSeriesMarkers) {
+      try {
+        LWC.createSeriesMarkers(state.series.main, [{
+          time: candles[0].time, position: 'belowBar', shape: 'arrowUp', color: cssVar('--brand-b', '#ad4a22'), text: 'Launch'
+        }]);
+      } catch { /* markers unsupported */ }
+    }
 
     if (prefs.ind.vol) {
       const v = chart.addSeries(LWC.HistogramSeries, {
@@ -619,10 +634,22 @@ const tokenChart = (() => {
     return !!state.series.holders && state.prefs.hstyle.pane === 'pane';
   }
 
-  // Open on the most recent ~150 candles; Reset zooms out to everything we have
+  // The chart holds the token's whole history, back to its first trade: the server says its
+  // pool history starts in what we have, and that start is no later than the launch date
+  // the page shows (a chart pool opened after launch, with no earlier candles, does not count)
+  function reachesLaunch() {
+    const first = state.candles[0];
+    const launch = state.info.launchedAt;
+    return !!(state.complete && first && launch && first.time * 1000 <= launch + tfSeconds() * 1000);
+  }
+
+  // Open on the most recent ~150 candles, or on the whole history down to launch when it is
+  // short enough to read at once; Reset zooms out to everything we have
   function showRecent() {
     const n = state.candles.length;
-    if (n > 150) state.chart.timeScale().setVisibleLogicalRange({ from: n - 150, to: n + 4 });
+    // A little room on the left so the launch candle and its marker clear the edge
+    if (n <= FIT_ALL_BARS && reachesLaunch()) state.chart.timeScale().setVisibleLogicalRange({ from: -Math.max(4, n * 0.04), to: n + 4 });
+    else if (n > 150) state.chart.timeScale().setVisibleLogicalRange({ from: n - 150, to: n + 4 });
     else state.chart.timeScale().fitContent();
   }
 
@@ -695,6 +722,36 @@ const tokenChart = (() => {
   // ── Data ───────────────────────────────────────────────────────────────
   const FULL_LIMIT = 1000;
   const TAIL_LIMIT = 100;
+  // Paging back to launch: only when launch-to-now fits in this many candles of the picked
+  // timeframe (a 1m chart of a week-old token stays on its newest 1000), and never past the
+  // 180 days of candles the data provider serves
+  const HISTORY_MAX_BARS = 5000;
+  const HISTORY_MAX_PAGES = 4;
+  const HISTORY_MAX_AGE_MS = 179 * 86400 * 1000;
+  const FIT_ALL_BARS = 400;
+
+  // Candles from an older page folded in front of the ones we have (ours win on overlap).
+  // Returns { raw, added } with added = how many older candles came in.
+  function mergeOlder(raw, older) {
+    const ts = (c) => Number(c.timestamp);
+    const oldest = raw.reduce((m, c) => Math.min(m, ts(c) || Infinity), Infinity);
+    const add = (older || []).filter(c => ts(c) < oldest);
+    if (!add.length) return { raw, added: 0 };
+    const byTime = new Map();
+    for (const c of add) byTime.set(ts(c), c);
+    const merged = [...byTime.values(), ...raw].sort((a, b) => ts(a) - ts(b));
+    return { raw: merged, added: byTime.size };
+  }
+
+  // Whether to page back toward launch: the history we have stops short of it, and the
+  // candles from launch to now fit the budget for this timeframe
+  function wantsOlder({ raw, complete, launchedAt, tfSec, now = Date.now() }) {
+    if (complete || !launchedAt || !tfSec || !raw.length) return false;
+    const oldest = raw.reduce((m, c) => Math.min(m, Number(c.timestamp) || Infinity), Infinity);
+    if (!(oldest > launchedAt)) return false;
+    if (oldest <= now - HISTORY_MAX_AGE_MS) return false;
+    return (now - launchedAt) / 1000 / tfSec <= HISTORY_MAX_BARS;
+  }
 
   // Background refreshes fetch only the newest TAIL_LIMIT candles and fold them into the
   // ones we have (newer values win, same FULL_LIMIT window). Returns null when the tail
@@ -718,7 +775,7 @@ const tokenChart = (() => {
       if (have && (Number(c.volume) || 0) < (Number(have.volume) || 0)) continue;
       byTime.set(ts(c), c);
     }
-    return [...byTime.values()].sort((a, b) => ts(a) - ts(b)).slice(-FULL_LIMIT);
+    return [...byTime.values()].sort((a, b) => ts(a) - ts(b)).slice(-(HISTORY_MAX_BARS + FULL_LIMIT));
   }
 
   async function fetchCandles({ quiet = false, full = false } = {}) {
@@ -735,17 +792,22 @@ const tokenChart = (() => {
       const res = await api.request(`/api/tokens/${encodeURIComponent(state.info.mint)}/ohlcv?interval=${tf}&limit=${limit}`, { retries: 2, timeout: 20000 });
       if (stale()) return;
       const data = Array.isArray(res?.data) ? res.data : [];
+      const sameTf = state.lastTf === tf;
       if (tail) {
         const merged = mergeTail(state.raw, data);
         if (!merged) return fetchCandles({ quiet: true, full: true });
         if (merged === state.raw) return; // nothing new
         state.raw = merged;
+      } else if (quiet && sameTf && state.raw.length) {
+        // A background reload of the newest window keeps the older history already paged in
+        state.raw = mergeOlder(data, state.raw).raw;
       } else {
         state.raw = data;
+        state.complete = !!res?.complete;
       }
-      const fit = state.lastTf !== tf;
       state.lastTf = tf;
-      render(fit);
+      render(!sameTf);
+      if (!tail) loadOlder(owner, tf);
     } catch (err) {
       if (stale()) return;
       if (quiet && state.candles?.length) return; // keep the chart we have on a failed background refresh
@@ -753,6 +815,35 @@ const tokenChart = (() => {
         ? 'Charts are available for listed tokens only.'
         : 'Could not load chart data right now.';
       setMsg(msg, { retry: err?.code !== 'NOT_CURATED' });
+    }
+  }
+
+  // Page back through older candles until the chart reaches the token's launch (see
+  // wantsOlder). Runs after the newest window is on screen; each page is cached server-side
+  // for hours, so this costs the data provider a few requests per token, not per viewer.
+  async function loadOlder(owner, tf) {
+    // Its own counter: the 60s tail refresh must not cut paging short, a new full load must
+    const seq = owner.olderSeq = (owner.olderSeq || 0) + 1;
+    const stale = () => state !== owner || seq !== owner.olderSeq || owner.lastTf !== tf || owner.prefs.tf !== tf;
+    const tfSec = (TIMEFRAMES.find(t => t.id === tf) || {}).seconds;
+    for (let page = 0; page < HISTORY_MAX_PAGES; page++) {
+      if (stale() || !wantsOlder({ raw: owner.raw, complete: owner.complete, launchedAt: owner.info.launchedAt, tfSec })) return;
+      const oldest = owner.raw.reduce((m, c) => Math.min(m, Number(c.timestamp) || Infinity), Infinity);
+      let res;
+      try {
+        res = await api.request(`/api/tokens/${encodeURIComponent(owner.info.mint)}/ohlcv?interval=${tf}&limit=${FULL_LIMIT}&before=${Math.floor(oldest / 1000)}`, { retries: 1, timeout: 20000 });
+      } catch {
+        return; // keep the history we have
+      }
+      if (stale()) return;
+      const { raw, added } = mergeOlder(owner.raw, Array.isArray(res?.data) ? res.data : []);
+      owner.complete = !!res?.complete;
+      if (!added) {
+        if (owner.complete) render(false); // the launch marker may now apply
+        return;
+      }
+      owner.raw = raw;
+      render(false, { older: true });
     }
   }
 
@@ -800,7 +891,7 @@ const tokenChart = (() => {
     if (logoImg) logoImg.addEventListener('error', () => logoImg.remove(), { once: true });
     document.body.appendChild(root);
     document.body.classList.add('tc-open');
-    state = { root, info, prefs, raw: [], candles: [], fetchSeq: 0, lastTf: null, chart: null, series: {}, opener: document.activeElement };
+    state = { root, info, prefs, raw: [], candles: [], complete: false, fetchSeq: 0, lastTf: null, chart: null, series: {}, opener: document.activeElement };
     state.draw = createDrawings(info.mint);
     renderDrawTools();
     requestAnimationFrame(() => root.classList.add('tc-overlay--visible'));
@@ -1060,5 +1151,5 @@ const tokenChart = (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 
-  return { open, close, loadLib, _test: { fmtTick, fmtValue, sma, ema, rsi, bollinger, normalizeCandles, mergeTail, normalizeHStyle, hexToRgba } };
+  return { open, close, loadLib, _test: { fmtTick, fmtValue, sma, ema, rsi, bollinger, normalizeCandles, mergeTail, mergeOlder, wantsOlder, normalizeHStyle, hexToRgba } };
 })();

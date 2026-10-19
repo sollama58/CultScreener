@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { PublicKey } = require('@solana/web3.js');
 const { normalizeLogoUri } = require('./tokenImage');
 const { rateLimitedRequest, sleep, useGeckoFreeTierLimits } = require('./rateLimiter');
 const { circuitBreakers } = require('./circuitBreaker');
@@ -1081,18 +1082,129 @@ function poolSideForMint(pool, mintAddress) {
   return quoteId === `${NETWORK}_${mintAddress}` ? 'quote' : 'base';
 }
 
+// The public API and the Basic plan only serve the last 180 days of candles; asking for
+// anything older is a 401. Stay a day inside that so a page never straddles the edge.
+const OHLCV_HISTORY_SEC = 179 * DAY_SEC;
+const PUMP_FUN_PROGRAM = new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
+// A migrated bonding curve never trades again, so its candles can be kept for a day
+const CURVE_OHLCV_TTL = 24 * 60 * 60 * 1000;
+
+/** Candle length in seconds for a GeckoTerminal timeframe + aggregate. */
+function timeframeSeconds({ timeframe, aggregate }) {
+  const unit = timeframe === 'minute' ? 60 : timeframe === 'hour' ? 3600 : DAY_SEC;
+  return unit * (aggregate || 1);
+}
+
+/**
+ * The pump.fun bonding curve a token launched on, or null for a mint that did not come from
+ * pump.fun (their mints all end in "pump"). GeckoTerminal indexes the curve as its own pool,
+ * but a migrated token's deepest pool is the PumpSwap one, whose history starts at migration.
+ */
+function pumpCurveAddress(mintAddress) {
+  if (!String(mintAddress || '').endsWith('pump')) return null;
+  try {
+    const [curve] = PublicKey.findProgramAddressSync(
+      [Buffer.from('bonding-curve'), new PublicKey(mintAddress).toBuffer()],
+      PUMP_FUN_PROGRAM
+    );
+    return curve.toBase58();
+  } catch {
+    return null;
+  }
+}
+
+function candlesFromList(ohlcvList) {
+  // GeckoTerminal format: [timestamp, open, high, low, close, volume], newest first
+  return ohlcvList.map(candle => ({
+    timestamp: candle[0] * 1000, // Convert to milliseconds
+    open: candle[1],
+    high: candle[2],
+    low: candle[3],
+    close: candle[4],
+    volume: candle[5]
+  }));
+}
+
+/**
+ * Put a token's bonding-curve candles in front of its pool's, so a chart whose pool history
+ * starts at migration reaches back to launch. Both lists are newest first. The curve only
+ * counts when it hands over to this pool: its last candle within two candles (or 15 minutes)
+ * of the pool's first, at a price within 50x of it (a fresh token can run that far in the
+ * minutes after migrating; a wrong side or currency would be off by far more). A candle
+ * both share is merged.
+ */
+function stitchLaunchCandles(poolCandles, curveCandles, tfSec) {
+  if (!poolCandles.length || !curveCandles?.length) return poolCandles;
+  const first = poolCandles[poolCandles.length - 1];
+  const older = curveCandles.filter(c => c.timestamp <= first.timestamp)
+    .sort((a, b) => b.timestamp - a.timestamp);
+  if (!older.length) return poolCandles;
+  const handover = older[0];
+  if (first.timestamp - handover.timestamp > Math.max(2 * tfSec, 900) * 1000) return poolCandles;
+  const ratio = Number(first.open) / Number(handover.close);
+  if (!(ratio > 1 / 50 && ratio < 50)) return poolCandles;
+
+  const out = poolCandles.slice(0, -1);
+  if (handover.timestamp === first.timestamp) {
+    out.push({
+      timestamp: first.timestamp,
+      open: handover.open,
+      high: Math.max(first.high, handover.high),
+      low: Math.min(first.low, handover.low),
+      close: first.close,
+      volume: (Number(first.volume) || 0) + (Number(handover.volume) || 0)
+    });
+    return out.concat(older.slice(1));
+  }
+  out.push(first);
+  return out.concat(older);
+}
+
+/**
+ * Candles from the token's pump.fun bonding curve up to `beforeSec`, cached for a day
+ * (a 401 past the plan's history window or a 404 for an unindexed curve caches as none).
+ */
+async function launchCurveCandles(curveAddress, interval, beforeSec) {
+  const { timeframe, aggregate } = ohlcvTimeframe(interval);
+  return redisCache.getOrSet(`ohlcv-curve:${curveAddress}:${timeframe}:${aggregate}`, async () => {
+    try {
+      const response = await geckoRequest(() =>
+        geckoAxios.get(`/networks/${NETWORK}/pools/${curveAddress}/ohlcv/${timeframe}`, {
+          params: { aggregate, limit: OHLCV_MAX_LIMIT, currency: 'usd', token: 'base', before_timestamp: beforeSec }
+        }),
+        'getOHLCV:curve'
+      );
+      return candlesFromList(response.data.data?.attributes?.ohlcv_list || []);
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 401 || status === 404) return [];
+      throw err;
+    }
+  }, CURVE_OHLCV_TTL);
+}
+
 /**
  * Get OHLCV data for a token
  * First finds the top pool for the token, then fetches OHLCV
  * Endpoint: /networks/{network}/pools/{pool}/ohlcv/{timeframe}
  * Optimized: caches pool address to avoid repeated pool lookups
- * @param {Object} options - { interval = '1h', limit = 100 (max 1000) }
+ * @param {Object} options - { interval = '1h', limit = 100 (max 1000), before (unix seconds) }
+ * Returns { data, complete }: complete is true when the chart reaches the start of the
+ * token's trading history (its pool's first candle, or its launch curve's), so there is
+ * nothing older to page back to.
  */
 async function getOHLCV(mintAddress, options = {}) {
   const { interval = '1h' } = options;
   const limit = Math.min(Math.max(1, parseInt(options.limit) || 100), OHLCV_MAX_LIMIT);
+  const before = parseInt(options.before) > 0 ? parseInt(options.before) : null;
 
-  debugLog(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}`);
+  debugLog(`[GeckoTerminal] getOHLCV: ${mintAddress}, interval=${interval}, limit=${limit}, before=${before}`);
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Older than the plan serves: nothing to fetch, and nothing older either
+  if (before && before < nowSec - OHLCV_HISTORY_SEC) {
+    return { mintAddress, interval, data: [], complete: true };
+  }
 
   try {
     // Check pool address cache first (in-process, then Redis)
@@ -1136,7 +1248,8 @@ async function getOHLCV(mintAddress, options = {}) {
       rememberPool(mintAddress, poolAddress, side);
     }
 
-    const { timeframe, aggregate, weekly } = ohlcvTimeframe(interval);
+    const tf = ohlcvTimeframe(interval);
+    const { timeframe, aggregate, weekly } = tf;
     // Weekly: ask for seven daily candles per week (plus one, so a full window shows it was cut)
     const upstreamLimit = weekly ? Math.min(limit * 7 + 1, OHLCV_MAX_LIMIT) : limit;
 
@@ -1146,7 +1259,8 @@ async function getOHLCV(mintAddress, options = {}) {
           aggregate,
           limit: upstreamLimit,
           currency: 'usd',
-          token: side
+          token: side,
+          ...(before ? { before_timestamp: before } : {})
         }
       }),
       'getOHLCV'
@@ -1157,26 +1271,35 @@ async function getOHLCV(mintAddress, options = {}) {
     });
 
     const ohlcvList = ohlcvResponse.data.data?.attributes?.ohlcv_list || [];
+    let candles = candlesFromList(ohlcvList);
 
-    // Transform to standard format
-    // GeckoTerminal format: [timestamp, open, high, low, close, volume], newest first
-    const candles = ohlcvList.map(candle => ({
-      timestamp: candle[0] * 1000, // Convert to milliseconds
-      open: candle[1],
-      high: candle[2],
-      low: candle[3],
-      close: candle[4],
-      volume: candle[5]
-    }));
+    // A short answer means the pool's history starts inside this window, unless the window
+    // was cut by the plan's 180-day limit instead
+    const oldestSec = ohlcvList.length ? Math.min(...ohlcvList.map(c => c[0])) : null;
+    const complete = ohlcvList.length < upstreamLimit &&
+      (oldestSec == null || oldestSec > nowSec - OHLCV_HISTORY_SEC);
+
+    // A pump.fun token charted from the pool it migrated to: add its bonding-curve candles
+    const curve = complete && candles.length ? pumpCurveAddress(mintAddress) : null;
+    if (curve && curve !== poolAddress) {
+      const tfSec = timeframeSeconds(tf);
+      const curveCandles = await launchCurveCandles(curve, interval, oldestSec + tfSec).catch(err => {
+        debugLog('[GeckoTerminal] launch curve OHLCV failed:', err.message);
+        return [];
+      });
+      candles = stitchLaunchCandles(candles, curveCandles, tfSec);
+    }
+
     const data = weekly
-      ? weeksFromDays(candles, ohlcvList.length >= upstreamLimit).slice(0, limit)
+      ? weeksFromDays(candles, !complete).slice(0, limit)
       : candles;
 
     return {
       mintAddress,
       interval,
       poolAddress,
-      data
+      data,
+      complete
     };
   } catch (error) {
     console.error('[GeckoTerminal] getOHLCV error:', error.message);
@@ -1533,8 +1656,12 @@ module.exports = {
   getOHLCV,
   ohlcvTimeframe,
   weeksFromDays,
+  stitchLaunchCandles,
+  pumpCurveAddress,
+  timeframeSeconds,
   poolSideForMint,
   OHLCV_TIMEFRAMES,
+  OHLCV_HISTORY_SEC,
   getPriceHistory,
   getTokenPools,
   getCoinSocialLinks,

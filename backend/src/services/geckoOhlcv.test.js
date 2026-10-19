@@ -1,6 +1,9 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { ohlcvTimeframe, weeksFromDays, poolSideForMint, OHLCV_TIMEFRAMES, retryAfterMs } = require('./geckoTerminal');
+const {
+  ohlcvTimeframe, weeksFromDays, poolSideForMint, OHLCV_TIMEFRAMES, retryAfterMs,
+  stitchLaunchCandles, pumpCurveAddress, timeframeSeconds
+} = require('./geckoTerminal');
 const { RATE_LIMITS } = require('./rateLimiter');
 
 describe('ohlcvTimeframe', () => {
@@ -51,6 +54,55 @@ describe('weeksFromDays', () => {
     const weeks = weeksFromDays(days, true);
     assert.strictEqual(weeks.length, 1);
     assert.strictEqual(weeks[0].timestamp, Date.parse('2026-10-05T00:00:00Z'));
+  });
+});
+
+describe('timeframeSeconds', () => {
+  test('gives the candle length for each GeckoTerminal size', () => {
+    assert.strictEqual(timeframeSeconds(OHLCV_TIMEFRAMES['5m']), 300);
+    assert.strictEqual(timeframeSeconds(OHLCV_TIMEFRAMES['4h']), 14400);
+    assert.strictEqual(timeframeSeconds(OHLCV_TIMEFRAMES['1w']), 86400);
+  });
+});
+
+describe('pumpCurveAddress', () => {
+  test('derives the pump.fun bonding curve for a pump mint', () => {
+    assert.strictEqual(pumpCurveAddress('D3S6J9s1byrNBt3ZKwEDiPsNRqHtoEP8zQKdhyBdpump'), '78FjADbvKVgBonKtHDuDjuHUYa4UUAhVYkr2WurqDNEF');
+  });
+
+  test('is null for other mints and bad input', () => {
+    assert.strictEqual(pumpCurveAddress('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'), null);
+    assert.strictEqual(pumpCurveAddress('notakeypump'), null);
+    assert.strictEqual(pumpCurveAddress(undefined), null);
+  });
+});
+
+describe('stitchLaunchCandles', () => {
+  const T = 1_800_000_000_000;
+  const c = (min, open, close, volume = 1) => ({ timestamp: T + min * 60000, open, high: Math.max(open, close), low: Math.min(open, close), close, volume });
+  const pool = [c(10, 4, 5), c(5, 3, 4)]; // newest first, history starts at minute 5
+
+  test('puts the curve candles before the pool, merging the shared candle', () => {
+    const curve = [c(5, 2, 3, 2), c(0, 1, 2)];
+    assert.deepStrictEqual(stitchLaunchCandles(pool, curve, 300), [
+      c(10, 4, 5),
+      { timestamp: T + 5 * 60000, open: 2, high: 4, low: 2, close: 4, volume: 3 },
+      c(0, 1, 2)
+    ]);
+  });
+
+  test('ignores curve candles newer than the pool start', () => {
+    const curve = [c(10, 9, 9), c(0, 2, 3)];
+    assert.deepStrictEqual(stitchLaunchCandles(pool, curve, 300), [...pool, c(0, 2, 3)]);
+  });
+
+  test('leaves the pool alone when the curve did not hand over to it', () => {
+    // Ended long before the pool opened
+    assert.strictEqual(stitchLaunchCandles(pool, [c(-60, 2, 3)], 300), pool);
+    // A price nowhere near the pool's (wrong side or currency)
+    assert.strictEqual(stitchLaunchCandles(pool, [c(0, 1000, 1000)], 300), pool);
+    assert.strictEqual(stitchLaunchCandles(pool, [], 300), pool);
+    assert.deepStrictEqual(stitchLaunchCandles([], [c(0, 1, 2)], 300), []);
   });
 });
 
