@@ -96,7 +96,8 @@
 // chartShot.js v5, cultify.js v24, holderBehavior.js v13, holderChart.js v7, kotpShot.js v2,
 // performance.js v30, tokenChart.js v10, tokenDetail.js v39, versus.js v19, new app icons.
 // v93: darker flame brand (toned down) - same files as v92, one version up each.
-const CACHE_VERSION = 'holdex-v93';
+// v94: chart modal pages back to the token's launch - tokenChart.js v12.
+const CACHE_VERSION = 'holdex-v94';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -125,7 +126,7 @@ const APP_SHELL = [
   '/js/tokenDetail.js?v=40',
   '/js/chartDrawings.js?v=1',
   '/js/chartShot.js?v=6',
-  '/js/tokenChart.js?v=11',
+  '/js/tokenChart.js?v=12',
   '/js/holderChart.js?v=8',
   '/js/watchlist.js?v=5',
   '/js/holderBehavior.js?v=14',

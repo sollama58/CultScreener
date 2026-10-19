@@ -1936,7 +1936,8 @@ router.get('/:mint/price', validateMint, requireAllowedToken, asyncHandler(async
 }));
 
 // GET /api/tokens/:mint/ohlcv - Get OHLCV data for candlestick charts
-// Feeds the token page's chart modal. ?interval=1m|5m|15m|1h|4h|12h|1d|1w, ?limit=1..1000.
+// Feeds the token page's chart modal. ?interval=1m|5m|15m|1h|4h|12h|1d|1w, ?limit=1..1000,
+// ?before=<unix seconds> for older candles.
 // Uses getOrSet for automatic caching with stampede prevention
 router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async (req, res) => {
   const { mint } = req.params;
@@ -1951,15 +1952,28 @@ router.get('/:mint/ohlcv', validateMint, requireAllowedToken, asyncHandler(async
   // Only two sizes are cached so callers can't fan the cache out with arbitrary limits
   const limit = parseInt(req.query.limit) > 100 ? 1000 : 100;
 
-  const cacheKey = `ohlcv:${mint}:${normalizedInterval}:${limit}`;
+  // ?before=<unix seconds> pages back through older candles (the chart reaching back to a
+  // token's launch). It is rounded up to a 500-candle grid so every viewer paging the same
+  // token asks for the same few pages, and those pages hold settled candles, so they cache
+  // for hours. A page that would reach the newest candles is just the latest window.
+  const tfSec = geckoService.timeframeSeconds(geckoService.ohlcvTimeframe(normalizedInterval));
+  let before = null;
+  const rawBefore = parseInt(req.query.before);
+  if (limit === 1000 && rawBefore > 0) {
+    const grid = 500 * tfSec;
+    const aligned = Math.ceil(rawBefore / grid) * grid;
+    if (aligned < Math.floor(Date.now() / 1000) - grid) before = aligned;
+  }
+
+  const cacheKey = `ohlcv:${mint}:${normalizedInterval}:${limit}${before ? `:b${before}` : ''}`;
   // Minute candles go stale quickly; hour/day candles can sit for the full OHLCV TTL.
   // 2 minutes, not 1: the chart modal polls every 60s, so a 60s TTL made nearly every
   // poll an upstream GeckoTerminal request per (mint, interval).
-  const cacheTTL = normalizedInterval.endsWith('m') ? 2 * TTL.MEDIUM : TTL.OHLCV;
+  const cacheTTL = before ? 6 * TTL.HOUR : normalizedInterval.endsWith('m') ? 2 * TTL.MEDIUM : TTL.OHLCV;
 
   try {
     const ohlcvData = await cache.getOrSet(cacheKey, async () => {
-      const result = await geckoService.getOHLCV(mint, { interval: normalizedInterval, limit });
+      const result = await geckoService.getOHLCV(mint, { interval: normalizedInterval, limit, before });
       // Don't cache a failed upstream call as an empty chart for the whole TTL
       if (result.error) {
         const err = new Error(result.error);

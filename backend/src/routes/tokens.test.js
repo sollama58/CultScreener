@@ -32,6 +32,7 @@ function resetStubs() {
     allowed: new Set([CURATED]),
     trendingPages: {},
     geckoCalls: [],
+    ohlcvCalls: [],
     pools: [],
     poolCalls: [],
     viewIncrements: [],
@@ -89,6 +90,9 @@ const geckoBase = {
     if (!S.overview) throw new Error('gecko 429');
     return S.overview;
   },
+  getOHLCV: async (mint, opts) => { S.ohlcvCalls.push(opts); return { mintAddress: mint, interval: opts.interval, data: [], complete: false }; },
+  ohlcvTimeframe: (iv) => iv,
+  timeframeSeconds: (iv) => ({ '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400 })[iv],
   OHLCV_TIMEFRAMES: { '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '12h': 1, '1d': 1 }
 };
 const geckoStub = stub('../services/geckoTerminal', { ...geckoBase });
@@ -445,6 +449,29 @@ describe('query parameter types', () => {
   test('repeated ohlcv interval is a 400, not a 500', async () => {
     const r = await get(`/api/tokens/${CURATED}/ohlcv?interval=1h&interval=4h`);
     assert.strictEqual(r.status, 400);
+  });
+
+  test('ohlcv before= is rounded up to a 500-candle grid and cached on its own', async () => {
+    const grid = 500 * 300;
+    const raw = Math.floor(Date.now() / 1000) - 3000 * 300 + 7;
+    const r = await get(`/api/tokens/${CURATED}/ohlcv?interval=5m&limit=1000&before=${raw}`);
+    assert.strictEqual(r.status, 200);
+    const opts = S.ohlcvCalls.at(-1);
+    assert.strictEqual(opts.before, Math.ceil(raw / grid) * grid);
+    assert.strictEqual(opts.before % grid, 0);
+    assert.ok(opts.before >= raw);
+    // A neighbouring raw value on the same grid step is a cache hit, not a second upstream call
+    const calls = S.ohlcvCalls.length;
+    await get(`/api/tokens/${CURATED}/ohlcv?interval=5m&limit=1000&before=${raw + 60}`);
+    assert.strictEqual(S.ohlcvCalls.length, calls);
+  });
+
+  test('ohlcv before= inside the newest window, or on a 100-candle request, is ignored', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await get(`/api/tokens/${CURATED}/ohlcv?interval=1h&limit=1000&before=${now - 100 * 3600}`);
+    assert.strictEqual(S.ohlcvCalls.at(-1).before, null);
+    await get(`/api/tokens/${CURATED}/ohlcv?interval=4h&limit=100&before=${now - 900 * 14400}`);
+    assert.strictEqual(S.ohlcvCalls.at(-1).before, null);
   });
 
   test('object conviction search is ignored, not a 500', async () => {

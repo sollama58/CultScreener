@@ -81,3 +81,35 @@ test('fmtTick labels year/month/day ticks by their UTC date (price and holder ch
     if (prevTz === undefined) delete process.env.TZ; else process.env.TZ = prevTz;
   }
 });
+
+test('mergeOlder puts older candles first and keeps ours on overlap', () => {
+  const { mergeOlder } = loadTokenChart()._test;
+  const c = (t, close) => ({ timestamp: t, open: 1, high: 1, low: 1, close });
+  const ours = [c(300, 'ours'), c(400, 'ours')];
+  const { raw, added } = mergeOlder(ours, [c(100, 'old'), c(200, 'old'), c(300, 'page')]);
+  assert.strictEqual(added, 2);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(raw.map(x => [x.timestamp, x.close]))), [[100, 'old'], [200, 'old'], [300, 'ours'], [400, 'ours']]);
+  const none = mergeOlder(ours, [c(300, 'page')]);
+  assert.strictEqual(none.added, 0);
+  assert.strictEqual(none.raw, ours);
+});
+
+test('wantsOlder pages back only when launch is out of reach but within budget', () => {
+  const { wantsOlder } = loadTokenChart()._test;
+  const now = Date.UTC(2026, 9, 19);
+  const day = 86400 * 1000;
+  const raw = [{ timestamp: now - 3 * day }];
+  const base = { raw, complete: false, launchedAt: now - 10 * day, tfSec: 300, now };
+  // 10 days of 5m candles = 2880, inside the 5000 budget
+  assert.strictEqual(wantsOlder(base), true);
+  // Server says the history already starts here
+  assert.strictEqual(wantsOlder({ ...base, complete: true }), false);
+  // Already back to launch
+  assert.strictEqual(wantsOlder({ ...base, launchedAt: now - 4 * day, raw: [{ timestamp: now - 5 * day }] }), false);
+  // 10 days of 1m candles = 14400: keep the newest window
+  assert.strictEqual(wantsOlder({ ...base, tfSec: 60 }), false);
+  // Launch date unknown
+  assert.strictEqual(wantsOlder({ ...base, launchedAt: null }), false);
+  // Past the provider's 180 days
+  assert.strictEqual(wantsOlder({ ...base, tfSec: 14400, launchedAt: now - 400 * day, raw: [{ timestamp: now - 179.5 * day }] }), false);
+});
