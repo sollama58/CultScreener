@@ -195,6 +195,8 @@ const RECURRING_JOBS = [
   { id: 'newpairs-recheck', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 30 * 60 * 1000 }, phaseMs: 412_000 },
   // New Pairs: top-50 holder checks for the shortlist (Helius, under the feature's daily cap)
   { id: 'newpairs-holders', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 30 * 60 * 1000 }, phaseMs: 536_000 },
+  // New Pairs: archive and delete tokens past the 14-day window, 00:35 UTC
+  { id: 'newpairs-prune', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '35 0 * * *', tz: 'UTC' }, catchUp: true },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
 ];

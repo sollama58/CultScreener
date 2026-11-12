@@ -209,7 +209,7 @@ if (!DB_URL) {
       };
       await market.refreshMarket();
       let tally = await market.scoreActive();
-      assert.deepStrictEqual(tally, { scored: 2, rugged: 1, pending: 2, unlisted: 1 });
+      assert.deepStrictEqual(tally, { scored: 2, rugged: 1, pending: 2, unlisted: 1, marks: 0 });
 
       const big = await row(BIG);
       assert.ok(Number(big.score) > 0 && Number(big.score) <= 100, `score ${big.score}`);
@@ -241,6 +241,41 @@ if (!DB_URL) {
       const after = await row(BIG);
       assert.strictEqual(after.holders_pending, false);
       assert.ok(after.score_parts.terms.retention > 0.8);
+    });
+
+    test('scoreActive: stores a mark as a token passes 1 day, once, and none when it is first seen too late', async () => {
+      assert.deepStrictEqual((await row(BIG)).marks, {}, 'an hour after bonding no mark is due');
+      clock = T0 + DAY + 20 * MIN;
+      await market.refreshMarket();
+      let tally = await market.scoreActive({ loadSamples: async () => new Map() });
+      assert.strictEqual(tally.marks, 2);                  // BIG and SMALL
+      const big = await row(BIG);
+      assert.deepStrictEqual(Object.keys(big.marks), ['1']);
+      const mark = big.marks['1'];
+      assert.strictEqual(mark.at, clock);
+      assert.strictEqual(mark.ageH, 24.4);
+      assert.strictEqual(mark.score, Number(big.score));
+      assert.strictEqual(mark.holders, 1500);
+      assert.strictEqual(mark.mcap, 180000);
+      assert.strictEqual(mark.rugged, false);
+      assert.strictEqual(mark.f.holders, 1500);
+      assert.ok(mark.f.netBuyerRatio > 0 && !('retention12' in mark.f), 'the features the scorer had, nothing null');
+      assert.strictEqual((await row(SMALL)).marks['1'].rugged, true);
+
+      // Scored again inside the same mark's window: the first mark stays
+      clock += HOUR;
+      jupRows[BIG] = { ...jupRows[BIG], holderCount: 1700 };
+      await market.refreshMarket();
+      tally = await market.scoreActive({ loadSamples: async () => new Map() });
+      assert.strictEqual(tally.marks, 0);
+      assert.strictEqual((await row(BIG)).marks['1'].holders, 1500);
+
+      // Day 3 was missed by more than 12 hours (worker down): not filled in with late data
+      clock = T0 + 3 * DAY + 13 * HOUR;
+      await market.refreshMarket();
+      tally = await market.scoreActive({ loadSamples: async () => new Map() });
+      assert.strictEqual(tally.marks, 0);
+      assert.deepStrictEqual(Object.keys((await row(BIG)).marks), ['1']);
     });
   });
 }

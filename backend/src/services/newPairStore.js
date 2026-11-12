@@ -86,6 +86,30 @@ function ensureSchema() {
       ALTER TABLE newpair_tokens
         ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMP WITH TIME ZONE;
+      -- What the scorer saw as a token passed 1, 3, 7 and 14 days (newPairReplay.js)
+      ALTER TABLE newpair_tokens ADD COLUMN IF NOT EXISTS marks JSONB NOT NULL DEFAULT '{}';
+      -- One small row per token that was listed, written when it ages out at 14 days
+      -- (newPairPrune.js) and kept 180 days: the data the score weights are tuned on.
+      CREATE TABLE IF NOT EXISTS newpair_archive (
+        mint_address VARCHAR(44) PRIMARY KEY,
+        detector VARCHAR(32),
+        launchpad VARCHAR(32),
+        name VARCHAR(200),
+        symbol VARCHAR(50),
+        graduated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        archived_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        marks JSONB NOT NULL DEFAULT '{}',
+        final_score NUMERIC(5,1),
+        final_holders INTEGER,
+        final_mcap DOUBLE PRECISION,
+        final_liquidity DOUBLE PRECISION,
+        first_mcap DOUBLE PRECISION,
+        peak_mcap DOUBLE PRECISION,
+        rugged BOOLEAN NOT NULL DEFAULT FALSE,
+        hidden BOOLEAN NOT NULL DEFAULT FALSE,
+        promoted BOOLEAN NOT NULL DEFAULT FALSE
+      );
+      CREATE INDEX IF NOT EXISTS idx_newpair_archive_archived ON newpair_archive(archived_at);
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_score ON newpair_tokens(score DESC NULLS LAST) WHERE status = 'active';
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_market_due ON newpair_tokens(next_market_at) WHERE status = 'active';
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_recheck_due ON newpair_tokens(next_recheck_at) WHERE status = 'below_floor';

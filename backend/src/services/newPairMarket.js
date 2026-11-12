@@ -34,6 +34,7 @@ const { rateLimitedRequest, sleep } = require('./rateLimiter');
 const store = require('./newPairStore');
 const { LAUNCHPAD_LABELS } = require('./newPairLaunchpads');
 const { buildFeatures, scoreToken, authoritiesOpen } = require('./newPairScore');
+const { dueMarks, buildMark } = require('./newPairReplay');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -381,10 +382,10 @@ function createMarket({
     const at = now();
     const floors = await getFloors();
     const { rows: tokens } = await pool().query(
-      `SELECT id, graduated_at, holder_count, mcap, liquidity, peak_mcap, market FROM newpair_tokens
+      `SELECT id, graduated_at, holder_count, mcap, liquidity, peak_mcap, market, marks FROM newpair_tokens
        WHERE status = 'active' AND market_at IS NOT NULL AND (scored_at IS NULL OR scored_at < market_at)
        ORDER BY scored_at NULLS FIRST LIMIT $1`, [limit]);
-    if (tokens.length === 0) return { scored: 0, rugged: 0, pending: 0, unlisted: 0 };
+    if (tokens.length === 0) return { scored: 0, rugged: 0, pending: 0, unlisted: 0, marks: 0 };
     const ids = tokens.map(t => t.id);
     // 8 six-hour windows plus the 24h look-back, with slack for point timing
     const { rows: pointRows } = await pool().query(
@@ -398,14 +399,21 @@ function createMarket({
     }
     const samples = await loadSamples(ids);
     const out = [];
-    const tally = { scored: 0, rugged: 0, pending: 0, unlisted: 0 };
+    const tally = { scored: 0, rugged: 0, pending: 0, unlisted: 0, marks: 0 };
     for (const t of tokens) {
       const token = { graduatedAt: new Date(t.graduated_at).getTime(), holders: t.holder_count, mcap: t.mcap, liquidity: t.liquidity, peakMcap: t.peak_mcap, market: t.market };
       const features = buildFeatures(token, series.get(t.id) || [], samples.get(t.id) || null, { now: at, minLiquidity: floors.minLiquidity });
       const r = scoreToken(features);
       const unlisted = authoritiesOpen(token) ? 'authority_enabled' : null;
+      // What the scorer saw as the token passed 1, 3, 7 and 14 days, kept for the replay
+      const ageMs = at - token.graduatedAt;
+      const marks = {};
+      for (const day of dueMarks(ageMs, t.marks)) {
+        marks[day] = buildMark({ at, ageMs, score: r.score, rugged: r.rugged, features, holders: t.holder_count, mcap: t.mcap, liquidity: t.liquidity });
+        tally.marks++;
+      }
       out.push({
-        id: t.id, score: r.score, rugged: r.rugged, pending: r.pending, unlisted,
+        id: t.id, score: r.score, rugged: r.rugged, pending: r.pending, unlisted, marks,
         parts: { quality: r.quality, confidence: r.confidence, risk: r.risk, coverage: r.coverage, terms: r.terms, riskParts: r.riskParts,
           growth24: features.growth24 == null ? null : Math.round(features.growth24 * 10) / 10 },
       });
@@ -416,8 +424,8 @@ function createMarket({
     }
     await pool().query(
       `UPDATE newpair_tokens t SET score = r.score, score_parts = r.parts, rugged = r.rugged, holders_pending = r.pending,
-         unlisted_reason = r.unlisted, scored_at = to_timestamp($2 / 1000.0)
-       FROM jsonb_to_recordset($1::jsonb) AS r(id bigint, score numeric, rugged boolean, pending boolean, unlisted text, parts jsonb)
+         unlisted_reason = r.unlisted, scored_at = to_timestamp($2 / 1000.0), marks = t.marks || r.marks
+       FROM jsonb_to_recordset($1::jsonb) AS r(id bigint, score numeric, rugged boolean, pending boolean, unlisted text, parts jsonb, marks jsonb)
        WHERE t.id = r.id`, [JSON.stringify(out), at]);
     return tally;
   }
