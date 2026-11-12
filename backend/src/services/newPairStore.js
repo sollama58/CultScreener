@@ -70,6 +70,15 @@ function ensureSchema() {
         ADD COLUMN IF NOT EXISTS recheck_step SMALLINT NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS next_recheck_at TIMESTAMP WITH TIME ZONE,
         ADD COLUMN IF NOT EXISTS last_point_at TIMESTAMP WITH TIME ZONE;
+      -- Score (newPairScore.js), written by newPairMarket.scoreActive
+      ALTER TABLE newpair_tokens
+        ADD COLUMN IF NOT EXISTS score NUMERIC(5,1),
+        ADD COLUMN IF NOT EXISTS score_parts JSONB,
+        ADD COLUMN IF NOT EXISTS scored_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS rugged BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS holders_pending BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS unlisted_reason VARCHAR(32);
+      CREATE INDEX IF NOT EXISTS idx_newpair_tokens_score ON newpair_tokens(score DESC NULLS LAST) WHERE status = 'active';
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_market_due ON newpair_tokens(next_market_at) WHERE status = 'active';
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_recheck_due ON newpair_tokens(next_recheck_at) WHERE status = 'below_floor';
       -- The stored series growth and steadiness are computed from (hourly for a

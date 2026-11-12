@@ -11,6 +11,8 @@
  *   refreshMarket   (newpairs-market, every 10 min) re-reads every active token,
  *                   updates its row and appends to its stored series (newpair_points:
  *                   hourly for the first 3 days, then every 3 hours).
+ *   scoreActive     (same job, after the refresh) scores every token whose data
+ *                   changed, with newPairScore.js.
  *
  * Status of a token: new → active | below_floor → active | (deleted).
  * An active token stays listed for its whole 14 days even if it later falls under the
@@ -31,6 +33,7 @@ const { httpsAgent } = require('./httpAgent');
 const { rateLimitedRequest, sleep } = require('./rateLimiter');
 const store = require('./newPairStore');
 const { LAUNCHPAD_LABELS } = require('./newPairLaunchpads');
+const { buildFeatures, scoreToken, authoritiesOpen } = require('./newPairScore');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -367,7 +370,58 @@ function createMarket({
     return tally;
   }
 
-  return { fileNewTokens, recheck, refreshMarket };
+  /**
+   * Score every active token whose data changed since it was last scored (the ones
+   * this run refreshed). Pure math over stored rows: no upstream call.
+   * `loadSamples(ids)` → Map<tokenId, sample> supplies the latest top-50 sample per
+   * token once the holder tier exists; without it every token is "holders pending".
+   */
+  async function scoreActive({ loadSamples = async () => new Map(), limit = 10_000 } = {}) {
+    await store.ensureSchema();
+    const at = now();
+    const floors = await getFloors();
+    const { rows: tokens } = await pool().query(
+      `SELECT id, graduated_at, holder_count, mcap, liquidity, peak_mcap, market FROM newpair_tokens
+       WHERE status = 'active' AND market_at IS NOT NULL AND (scored_at IS NULL OR scored_at < market_at)
+       ORDER BY scored_at NULLS FIRST LIMIT $1`, [limit]);
+    if (tokens.length === 0) return { scored: 0, rugged: 0, pending: 0, unlisted: 0 };
+    const ids = tokens.map(t => t.id);
+    // 8 six-hour windows plus the 24h look-back, with slack for point timing
+    const { rows: pointRows } = await pool().query(
+      `SELECT token_id, at, holder_count FROM newpair_points
+       WHERE token_id = ANY($1) AND holder_count IS NOT NULL AND at >= to_timestamp($2 / 1000.0) ORDER BY token_id, at`,
+      [ids, at - 52 * HOUR]);
+    const series = new Map();
+    for (const p of pointRows) {
+      if (!series.has(p.token_id)) series.set(p.token_id, []);
+      series.get(p.token_id).push({ at: new Date(p.at).getTime(), holders: p.holder_count });
+    }
+    const samples = await loadSamples(ids);
+    const out = [];
+    const tally = { scored: 0, rugged: 0, pending: 0, unlisted: 0 };
+    for (const t of tokens) {
+      const token = { graduatedAt: new Date(t.graduated_at).getTime(), holders: t.holder_count, mcap: t.mcap, liquidity: t.liquidity, peakMcap: t.peak_mcap, market: t.market };
+      const features = buildFeatures(token, series.get(t.id) || [], samples.get(t.id) || null, { now: at, minLiquidity: floors.minLiquidity });
+      const r = scoreToken(features);
+      const unlisted = authoritiesOpen(token) ? 'authority_enabled' : null;
+      out.push({
+        id: t.id, score: r.score, rugged: r.rugged, pending: r.pending, unlisted,
+        parts: { quality: r.quality, confidence: r.confidence, risk: r.risk, coverage: r.coverage, terms: r.terms, riskParts: r.riskParts },
+      });
+      tally.scored++;
+      if (r.rugged) tally.rugged++;
+      if (r.pending) tally.pending++;
+      if (unlisted) tally.unlisted++;
+    }
+    await pool().query(
+      `UPDATE newpair_tokens t SET score = r.score, score_parts = r.parts, rugged = r.rugged, holders_pending = r.pending,
+         unlisted_reason = r.unlisted, scored_at = to_timestamp($2 / 1000.0)
+       FROM jsonb_to_recordset($1::jsonb) AS r(id bigint, score numeric, rugged boolean, pending boolean, unlisted text, parts jsonb)
+       WHERE t.id = r.id`, [JSON.stringify(out), at]);
+    return tally;
+  }
+
+  return { fileNewTokens, recheck, refreshMarket, scoreActive };
 }
 
 let shared = null;
@@ -377,6 +431,7 @@ module.exports = {
   fileNewTokens: (o) => instance().fileNewTokens(o),
   recheck: (o) => instance().recheck(o),
   refreshMarket: (o) => instance().refreshMarket(o),
+  scoreActive: (o) => instance().scoreActive(o),
   createMarket, mapJupiter, mapDexScreener, parseFloors, aboveFloors, nextRecheck, getFloors,
   DEFAULT_FLOORS, RECHECK_AT_MS, SETTINGS_KEY,
 };

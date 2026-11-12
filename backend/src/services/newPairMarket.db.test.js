@@ -199,5 +199,48 @@ if (!DB_URL) {
       assert.strictEqual(new Date((await row(BIG)).next_market_at).getTime(), new Date(before.next_market_at).getTime());
       jupFails = false;
     });
+
+    test('scoreActive: scores refreshed tokens once, marks rugged and pending, and unlists open authorities', async () => {
+      clock += HOUR;
+      jupRows[BIG] = {
+        mcap: 180000, liquidity: 30000, holderCount: 1500,
+        stats24h: { buyVolume: 60000, sellVolume: 40000, numTraders: 200, numNetBuyers: 100, priceChange: 10 },
+        audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: false },
+      };
+      await market.refreshMarket();
+      let tally = await market.scoreActive();
+      assert.deepStrictEqual(tally, { scored: 2, rugged: 1, pending: 2, unlisted: 1 });
+
+      const big = await row(BIG);
+      assert.ok(Number(big.score) > 0 && Number(big.score) <= 100, `score ${big.score}`);
+      assert.strictEqual(big.rugged, false);
+      assert.strictEqual(big.holders_pending, true);
+      assert.strictEqual(big.unlisted_reason, 'authority_enabled');
+      assert.strictEqual(new Date(big.scored_at).getTime(), clock);
+      assert.ok(big.score_parts.terms.breadth > 0);
+      assert.ok('growth' in big.score_parts.terms, 'holder growth comes from the stored series');
+      assert.strictEqual(big.score_parts.riskParts.rug, 1);
+
+      const small = await row(SMALL);    // fell under the liquidity floor after listing
+      assert.strictEqual(small.rugged, true);
+      assert.strictEqual(small.score_parts.riskParts.rug, 0.25);
+      assert.strictEqual(small.unlisted_reason, null);
+
+      // Nothing changed since: nothing to score
+      tally = await market.scoreActive();
+      assert.strictEqual(tally.scored, 0);
+
+      // A top-50 sample (the holder tier, PR 4) lifts "pending" on the next refresh
+      clock += 10 * MIN;
+      await market.refreshMarket();
+      const id = big.id;
+      tally = await market.scoreActive({
+        loadSamples: async () => new Map([[id, { takenAt: clock - HOUR, top1: 3, top10: 18, top50: 40, devPct: 0.5, dustShare: 0.2, retention12: 0.9 }]]),
+      });
+      assert.strictEqual(tally.scored, 1);
+      const after = await row(BIG);
+      assert.strictEqual(after.holders_pending, false);
+      assert.ok(after.score_parts.terms.retention > 0.8);
+    });
   });
 }
