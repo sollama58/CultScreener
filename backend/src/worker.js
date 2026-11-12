@@ -766,9 +766,13 @@ const jobProcessors = {
    * Jupiter (DexScreener if Jupiter fails) and append to its stored series. No Helius.
    */
   'newpairs-market': () => newPairsJob('market', 9 * 60 * 1000, async () => {
-    const r = await require('./services/newPairMarket').refreshMarket({ deadline: Date.now() + 8 * 60 * 1000 });
+    const market = require('./services/newPairMarket');
+    const r = await market.refreshMarket({ deadline: Date.now() + 8 * 60 * 1000 });
     console.log(`[NewPairs] market: due=${r.due} refreshed=${r.refreshed} live=${r.live} under_floor=${r.underFloor} missing=${r.missing} points=${r.points} source=${r.source} jupiter_calls=${r.jupiterCalls} dexscreener_calls=${r.dexScreenerCalls}${r.error ? ` error=${r.error}` : ''}`);
-    return r;
+    // Score what was just refreshed (pure math over stored rows)
+    const scored = await market.scoreActive();
+    console.log(`[NewPairs] scored=${scored.scored} rugged=${scored.rugged} holders_pending=${scored.pending} unlisted=${scored.unlisted}`);
+    return { ...r, scored };
   }),
 
   /**
