@@ -288,6 +288,16 @@ const circuitBreakers = {
     isFailure: isHeliusFailure
   }),
 
+  // Free public RPCs for New Pairs discovery (freeRpc.js). Separate from solanaRpc so
+  // public endpoints failing can never open the breaker the Helius chain runs behind.
+  // freeRpc.js rotates endpoints itself and reports one failure per exhausted rotation.
+  freeRpc: new CircuitBreaker({
+    name: 'freeRpc',
+    failureThreshold: 3,
+    resetTimeout: 60000,
+    isFailure: (error) => !error.isOverloaded && error.rpcCode == null
+  }),
+
   solanaRpc: new CircuitBreaker({
     name: 'solanaRpc',
     failureThreshold: 3, // RPC failures are more critical

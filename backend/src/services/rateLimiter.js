@@ -112,6 +112,17 @@ const RATE_LIMITS = {
     maxQueueSize: 200,
     queueTimeout: 15000
   },
+  // Free public Solana RPCs, used only by New Pairs discovery (freeRpc.js). Its own
+  // queue, so a slow or throttling public endpoint never holds a Helius call.
+  freeRpc: {
+    minInterval: 250,    // 4 requests/sec across all endpoints
+    maxJitter: 50,
+    burstLimit: 4,
+    burstWindow: 1000,
+    useQueue: true,
+    maxQueueSize: 100,
+    queueTimeout: 30000
+  },
   // CoinGecko's public (keyless) API, used by the SOL price fallback: about 30/min
   coingeckoPublic: {
     minInterval: 2000,

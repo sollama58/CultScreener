@@ -187,6 +187,8 @@ const RECURRING_JOBS = [
   { id: 'record-holder-counts', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '5 0 * * *', tz: 'UTC' }, catchUp: true },
   // Daily Diamond Hands scores and the King of the Pill, 00:20 UTC
   { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *', tz: 'UTC' }, catchUp: true },
+  // New Pairs: read newly graduated tokens off the launchpad markers (no-op unless NEWPAIRS_ENABLED)
+  { id: 'newpairs-discover', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 5 * 60 * 1000 }, phaseMs: 151_000 },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
 ];

@@ -248,6 +248,29 @@ services:
       - key: HOLDER_SNAPSHOT_REFRESH_HOURS
         value: "4"
 
+      # New Pairs (Emerging Cults finder), discovery stage: services/newPairDiscover.js.
+      # The newpairs-discover job (every 5 min) stores every token that graduated from a
+      # launchpad. It reads public RPCs for free through its own client (freeRpc.js, never
+      # the Helius chain) and uses Helius only for the first 14-day backfill (about 4,700
+      # credits, once), a catch-up after long downtime, and as a paced fallback when the
+      # public RPCs fail (about 500 credits a day while that lasts).
+      # NEWPAIRS_ENABLED: anything but "true" turns the whole feature's jobs into no-ops.
+      # NEWPAIRS_HELIUS_DAILY_CREDITS: hard cap per UTC day for everything New Pairs
+      #   spends on Helius, kept in Postgres (newpair_credit_days). 10,000 a day is the
+      #   300,000 a month the feature was given.
+      # NEWPAIRS_DISCOVERY_SOURCE: auto (free, Helius as above) | free (never Helius; no
+      #   backfill) | helius (never the public RPCs).
+      # Optional, not set here: NEWPAIRS_DETECTORS (comma list of pumpfun, meteora-dbc,
+      #   launchlab; default all) and NEWPAIRS_RPC_URLS (comma list of https public RPC
+      #   URLs, default publicnode then api.mainnet-beta; a Helius URL is refused).
+      # `node scripts/newpairs/probe.js` in the worker's shell checks all of it from Render.
+      - key: NEWPAIRS_ENABLED
+        value: "true"
+      - key: NEWPAIRS_HELIUS_DAILY_CREDITS
+        value: "10000"
+      - key: NEWPAIRS_DISCOVERY_SOURCE
+        value: auto
+
       # HolDEX info bot (backend/src/telegram-bot.js — the /TryConviction bot, NOT
       # TrenchScanner's alert bot). worker.js starts it only when a token is present, so leaving
       # this unset simply disables the bot. Both vars must be set together: without API_BASE_URL
