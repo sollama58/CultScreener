@@ -36,11 +36,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="css/styles.css?v=29">
-  <link rel="stylesheet" href="css/home.css?v=5">
+  <link rel="stylesheet" href="css/home.css?v=6">
 
   <!-- Preload critical scripts so the browser fetches them during HTML parsing -->
   <link rel="preload" href="js/config.js?v=5" as="script">
-  <link rel="preload" href="js/api.js?v=19" as="script">
+  <link rel="preload" href="js/api.js?v=20" as="script">
   <link rel="preload" href="js/wallet.js?v=7" as="script">
   <link rel="preload" href="js/conviction.js?v=23" as="script">
 </head>
@@ -109,6 +109,11 @@
       <button class="main-view-tab" id="tab-emerging" role="tab" aria-selected="false" aria-controls="view-emerging" data-view="emerging" tabindex="-1">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22V12"/><path d="M12 12C12 8 9 5 4 5c0 4 3 7 8 7z"/><path d="M12 14c0-4 3-7 8-7 0 4-3 7-8 7z"/></svg>
         <span>Emerging</span>
+      </button>
+      <!-- Hidden until the New Pairs API answers (mainViewTabs.js); it is off until NEWPAIRS_PUBLIC is set. -->
+      <button class="main-view-tab" id="tab-newpairs" role="tab" aria-selected="false" aria-controls="view-newpairs" data-view="newpairs" tabindex="-1" hidden>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/><path d="M11 8v6M8 11h6"/></svg>
+        <span>New Pairs</span>
       </button>
       <button class="main-view-tab" id="tab-versus" role="tab" aria-selected="false" aria-controls="view-versus" data-view="versus" tabindex="-1">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
@@ -289,6 +294,72 @@
       </div>
     </section>
 
+    <!-- New Pairs View (the Emerging Cults finder; js/newPairs.js) -->
+    <section id="view-newpairs" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-newpairs">
+      <h2 class="sr-only">New pairs ranked by holder quality</h2>
+      <div class="terminal-toolbar">
+        <div class="terminal-search-wrap">
+          <svg class="terminal-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="text" id="newpairs-search" placeholder="" maxlength="100" autocomplete="off" class="terminal-search" aria-label="Search new pairs by name, ticker or mint">
+        </div>
+        <div class="terminal-status-inline">
+          <span class="terminal-dot"></span>
+          <span id="newpairs-status-text">CONNECTING...</span>
+        </div>
+      </div>
+      <div class="np-controls">
+        <div class="np-group" role="group" aria-label="Bonded within">
+          <span class="perf-sort-label">Bonded in last</span>
+          <button type="button" class="perf-sort-btn np-window" data-window="3d" aria-pressed="false">3d</button>
+          <button type="button" class="perf-sort-btn np-window active" data-window="7d" aria-pressed="true">7d</button>
+          <button type="button" class="perf-sort-btn np-window" data-window="14d" aria-pressed="false">14d</button>
+        </div>
+        <label class="np-field">
+          <span class="perf-sort-label">Sort</span>
+          <select id="newpairs-sort" class="np-select">
+            <option value="score" selected>Score</option>
+            <option value="newest">Newest bonded</option>
+            <option value="mcap">Market cap</option>
+            <option value="holders">Holders</option>
+            <option value="growth">Holder growth</option>
+          </select>
+        </label>
+        <label class="np-field">
+          <span class="sr-only">Launchpad</span>
+          <select id="newpairs-launchpad" class="np-select">
+            <option value="">All launchpads</option>
+          </select>
+        </label>
+        <button type="button" class="perf-sort-btn np-toggle" id="newpairs-checked" aria-pressed="false" title="Only tokens whose top 50 holders have been checked">Holders checked</button>
+        <button type="button" class="perf-sort-btn np-toggle" id="newpairs-rugged" aria-pressed="false" title="Also show tokens down 80% from their peak or with liquidity under the floor">Show rugged</button>
+      </div>
+      <p class="np-meta" id="newpairs-meta" aria-live="polite"></p>
+
+      <div class="community-table-container terminal-table-container">
+        <table class="token-table community-table conviction-table terminal-table np-table" data-sort="score">
+          <thead>
+            <tr>
+              <th scope="col" class="cell-rank">#</th>
+              <th scope="col" class="cell-token">Token</th>
+              <th scope="col" class="np-cell-score" title="0 to 100, mostly from holder signals. Select a score to see how it is built.">Score</th>
+              <th scope="col" class="cell-mcap">MCap</th>
+              <th scope="col" class="np-cell-liq">Liquidity</th>
+              <th scope="col" class="np-cell-holders" title="Holder count and its change over the last 24 hours">Holders</th>
+              <th scope="col" class="np-cell-top10" title="Share of supply held by the 10 largest wallets">Top 10</th>
+              <th scope="col" class="np-cell-ret" title="Share of top holders still holding 12 hours later">Retention</th>
+              <th scope="col" class="np-cell-vol">Vol 24h</th>
+              <th scope="col" class="np-cell-ages" title="How long ago each kind of data was read">Updated</th>
+            </tr>
+          </thead>
+          <tbody id="newpairs-table-body"></tbody>
+        </table>
+      </div>
+      <div id="newpairs-tip" class="np-tip" role="tooltip" hidden></div>
+    </section>
+
     <!-- Performance Leaderboard View -->
     <section id="view-performance" class="community-section conviction-section terminal-section" style="display:none;" role="tabpanel" aria-labelledby="tab-performance">
       <h2 class="sr-only">Performance since listing</h2>
@@ -419,7 +490,7 @@
   </footer>
 
   <script src="js/config.js?v=5"></script>
-  <script src="js/api.js?v=19"></script>
+  <script src="js/api.js?v=20"></script>
   <script src="js/announcements.js?v=2"></script>
   <script src="js/deviceLink.js?v=4"></script>
   <script src="js/wallet.js?v=7"></script>
@@ -428,9 +499,10 @@
   <script src="js/conviction.js?v=23"></script>
   <script src="js/tech.js?v=7"></script>
   <script src="js/emerging.js?v=7"></script>
+  <script src="js/newPairs.js?v=1"></script>
   <script src="js/performance.js?v=31"></script>
   <script src="js/versus.js?v=20"></script>
-  <script src="js/mainViewTabs.js?v=3"></script>
+  <script src="js/mainViewTabs.js?v=4"></script>
   <script src="js/pwa.js?v=3"></script>
   <script src="js/chartShot.js?v=6"></script>
   <script src="js/kotpShot.js?v=3"></script>

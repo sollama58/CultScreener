@@ -15,6 +15,7 @@
     performance: document.getElementById('view-performance'),
     tech: document.getElementById('view-tech'),
     emerging: document.getElementById('view-emerging'),
+    newpairs: document.getElementById('view-newpairs'),
     versus: document.getElementById('view-versus')
   };
   var loaded = { diamond: true };
@@ -23,6 +24,7 @@
     if (view === 'performance' && typeof performancePage !== 'undefined') return performancePage;
     if (view === 'tech' && typeof techPage !== 'undefined') return techPage;
     if (view === 'emerging' && typeof emergingPage !== 'undefined') return emergingPage;
+    if (view === 'newpairs' && typeof newPairsPage !== 'undefined') return newPairsPage;
     return null;
   }
 
@@ -32,6 +34,7 @@
     if (view === 'performance' && typeof performancePage !== 'undefined') performancePage.init();
     if (view === 'tech' && typeof techPage !== 'undefined') techPage.init();
     if (view === 'emerging' && typeof emergingPage !== 'undefined') emergingPage.init();
+    if (view === 'newpairs' && typeof newPairsPage !== 'undefined') newPairsPage.init();
     if (view === 'versus' && typeof versusPage !== 'undefined') versusPage.init();
   }
 
@@ -62,6 +65,8 @@
   function show(view, opts) {
     opts = opts || {};
     var tab = null;
+    // A tab that is still hidden (New Pairs before its API answered) cannot be opened.
+    if (!tabs.some(function (t) { return t.dataset.view === view && !t.hidden; })) return;
     tabs.forEach(function (t) {
       var on = t.dataset.view === view;
       t.classList.toggle('active', on);
@@ -93,7 +98,7 @@
     }
   }
 
-  tabs.forEach(function (tab, i) {
+  tabs.forEach(function (tab) {
     tab.addEventListener('click', function () {
       show(tab.dataset.view, { fromUser: true, updateHash: true });
     });
@@ -101,10 +106,13 @@
     tab.addEventListener('focus', function () { warm(tab.dataset.view); });
     tab.addEventListener('keydown', function (e) {
       var next = null;
-      if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
-      else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
-      else if (e.key === 'Home') next = tabs[0];
-      else if (e.key === 'End') next = tabs[tabs.length - 1];
+      // Arrow keys step over a hidden tab
+      var open = tabs.filter(function (t) { return !t.hidden; });
+      var at = open.indexOf(tab);
+      if (e.key === 'ArrowRight') next = open[(at + 1) % open.length];
+      else if (e.key === 'ArrowLeft') next = open[(at - 1 + open.length) % open.length];
+      else if (e.key === 'Home') next = open[0];
+      else if (e.key === 'End') next = open[open.length - 1];
       if (!next) return;
       e.preventDefault();
       next.focus();
@@ -116,7 +124,21 @@
   // Object.prototype member, match no tab, and leave every tab deselected.
   var fromHash = location.hash.replace('#', '');
   var hashOk = Object.prototype.hasOwnProperty.call(panels, fromHash) && panels[fromHash];
-  show(hashOk ? fromHash : 'diamond', { animate: false });
+  var hashTab = hashOk ? document.getElementById('tab-' + fromHash) : null;
+  show(hashOk && hashTab && !hashTab.hidden ? fromHash : 'diamond', { animate: false });
+
+  // New Pairs ships hidden: its API answers 404 until NEWPAIRS_PUBLIC is on. One request on
+  // page load decides (the list itself, which the tab then reuses), so visitors never see a tab
+  // that opens onto an error. A #newpairs link opens the tab once it is known to be there.
+  var newPairsTab = document.getElementById('tab-newpairs');
+  if (newPairsTab && newPairsTab.hidden && typeof newPairsPage !== 'undefined') {
+    newPairsPage.probe().then(function (available) {
+      if (!available) return;
+      newPairsTab.hidden = false;
+      if (fromHash === 'newpairs') show('newpairs', { animate: false });
+      else placeIndicator(activeTab(), false);
+    });
+  }
 
   // Tab widths change when the web font arrives and when the window resizes.
   if (document.fonts && document.fonts.ready) {

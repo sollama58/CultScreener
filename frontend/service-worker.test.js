@@ -171,3 +171,14 @@ test('image-proxy and wallet-keyed API reads are passed through, never stored', 
   const res = await respond(handlers, { url: `${API}/api/tokens/MINT`, method: 'GET', destination: '' });
   assert.ok(res, 'public token reads still go through the API cache');
 });
+
+test('New Pairs API responses are passed through, never stored', async () => {
+  const { handlers, caches } = load();
+  for (const url of [`${API}/api/new-pairs?window=7d`, `${API}/api/new-pairs/SomeMint1111`]) {
+    const res = await respond(handlers, { url, method: 'GET', destination: '' });
+    assert.strictEqual(res, null, 'the worker does not answer; the browser fetches it');
+  }
+  for (const store of caches.stores.values()) {
+    assert.ok(![...store.m.keys()].some(u => u.includes('/api/new-pairs')));
+  }
+});

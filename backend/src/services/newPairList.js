@@ -92,6 +92,8 @@ async function buildList(windowKey = DEFAULT_WINDOW, { now = Date.now() } = {}) 
     generatedAt: new Date(now).toISOString(),
     total: count.rows[0].total, rugged: count.rows[0].rugged, shown: rows.length,
     floors: { marketCap: floors.minMcap, liquidity: floors.minLiquidity },
+    // For the score breakdown the tab draws from each row's terms
+    weights: PARAMS.weights,
     tokens: rows.map((r, i) => ({ rank: i + 1, ...shapeRow(r, now) })),
   };
 }
