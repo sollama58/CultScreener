@@ -123,6 +123,14 @@ const RATE_LIMITS = {
     maxQueueSize: 100,
     queueTimeout: 30000
   },
+  // DexScreener's keyless token endpoint (300/min documented), the New Pairs market
+  // fallback when Jupiter fails. Kept far below the limit: 2 a second.
+  dexScreener: {
+    minInterval: 500,
+    maxJitter: 50,
+    burstLimit: 2,
+    burstWindow: 1000
+  },
   // CoinGecko's public (keyless) API, used by the SOL price fallback: about 30/min
   coingeckoPublic: {
     minInterval: 2000,

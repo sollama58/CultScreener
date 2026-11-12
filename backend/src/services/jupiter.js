@@ -635,6 +635,31 @@ async function getTokenMetrics(mintAddress) {
   }
 }
 
+// Batch reads come from background jobs that run again in minutes: one quick retry on a
+// 429, then let the job's own fallback or next run deal with it.
+const BATCH_RETRY_CONFIG = { maxRetries: 1, baseDelay: 3000, maxDelay: 5000, backoffMultiplier: 2 };
+const BATCH_MAX_MINTS = 100;
+
+/**
+ * Raw Token API V2 rows for up to 100 mints in one request (/tokens/v2/search takes a
+ * comma-separated list). Rows come back in Jupiter's order and only for mints it knows;
+ * rows for anything that was not asked for are dropped. Throws when the request fails,
+ * so a caller can tell "Jupiter is down" from "Jupiter does not know these".
+ * @param {string[]} mints
+ * @returns {Promise<Object[]>}
+ */
+async function getTokensBatch(mints) {
+  const wanted = [...new Set((mints || []).filter(Boolean))];
+  if (wanted.length === 0) return [];
+  if (wanted.length > BATCH_MAX_MINTS) throw new Error(`getTokensBatch: at most ${BATCH_MAX_MINTS} mints per call`);
+  const response = await jupiterRequest(() =>
+    client.get('/tokens/v2/search', { params: { query: wanted.join(',') }, timeout: 15000 }),
+  undefined, BATCH_RETRY_CONFIG);
+  const rows = Array.isArray(response.data) ? response.data : [];
+  const set = new Set(wanted);
+  return rows.filter(row => row && set.has(tokenAddressOf(row)));
+}
+
 /**
  * Mint address of a Token API row. V2 rows name it `id`; older shapes used address/mint.
  */
@@ -734,6 +759,8 @@ module.exports = {
   getNewTokens,
   getTokenPrice,
   getTokenPrices,
+  getTokensBatch,
+  BATCH_MAX_MINTS,
   getTokenHolderCount,
   getTokenMetrics,
   getPriceHistory,
