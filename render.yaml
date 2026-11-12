@@ -60,6 +60,12 @@ services:
       - key: DB_POOL_MIN
         value: "2"
 
+      # New Pairs (Emerging Cults finder) public routes, /api/new-pairs. Anything but
+      # "true" makes them answer 404 and the New Pairs tab hide itself; the worker jobs
+      # (NEWPAIRS_ENABLED on HolDEX-worker) and the admin preview do not depend on it.
+      - key: NEWPAIRS_PUBLIC
+        value: "false"
+
       # Application settings
       - key: NODE_ENV
         value: production

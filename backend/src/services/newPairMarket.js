@@ -406,7 +406,8 @@ function createMarket({
       const unlisted = authoritiesOpen(token) ? 'authority_enabled' : null;
       out.push({
         id: t.id, score: r.score, rugged: r.rugged, pending: r.pending, unlisted,
-        parts: { quality: r.quality, confidence: r.confidence, risk: r.risk, coverage: r.coverage, terms: r.terms, riskParts: r.riskParts },
+        parts: { quality: r.quality, confidence: r.confidence, risk: r.risk, coverage: r.coverage, terms: r.terms, riskParts: r.riskParts,
+          growth24: features.growth24 == null ? null : Math.round(features.growth24 * 10) / 10 },
       });
       tally.scored++;
       if (r.rugged) tally.rugged++;
