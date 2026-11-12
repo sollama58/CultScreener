@@ -724,6 +724,32 @@ const jobProcessors = {
   },
 
   /**
+   * New Pairs discovery (services/newPairDiscover.js): store every token that
+   * graduated from a launchpad since the last run. Off unless NEWPAIRS_ENABLED=true.
+   * Reads public RPCs for free; Helius only for the first backfill, a long catch-up
+   * or as a paced fallback, under the feature's own daily credit cap. One run at a
+   * time (the lock outlives a run that overlaps the next tick), and it never throws:
+   * a retry would only repeat the same reads.
+   */
+  'newpairs-discover': async () => {
+    if (process.env.NEWPAIRS_ENABLED !== 'true') return { skipped: 'NEWPAIRS_ENABLED is not true' };
+    const lockKey = 'newpairs:discover:lock';
+    if (!(await cache.setNX(lockKey, Date.now(), 4 * 60 * 1000))) return { skipped: 'previous run still going' };
+    try {
+      const result = await require('./services/newPairDiscover').run({ timeBudgetMs: 200_000 });
+      for (const d of result.detectors) {
+        console.log(`[NewPairs] ${d.detector}: source=${d.source} read=${d.read} found=${d.found} unhandled=${d.unhandled} credits=${d.credits}${d.error ? ` error=${d.error}` : ''}`);
+      }
+      return result;
+    } catch (err) {
+      console.error('[NewPairs] discovery failed:', err.message);
+      return { error: err.message };
+    } finally {
+      await cache.delete(lockKey).catch(() => {});
+    }
+  },
+
+  /**
    * Daily safety net for holder count history. Points are written by holder
    * snapshots (every 4h to 24h for curated tokens, by recent views); any curated
    * token with no point at all in the last day or so gets a snapshot queued. A capped

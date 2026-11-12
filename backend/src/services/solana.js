@@ -15,9 +15,12 @@ const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 // Note: the api-key query param appears in error logs when the full RPC URL
 // is logged. Use log filtering or the Authorization header form if key
 // exposure in logs is a concern for your threat model.
-// Helius only: never a free or public RPC (project rule). The public mainnet
-// RPC used to be the outage failover; it answers getTransactionsForAddress with
+// Helius only: rpcCall never talks to a free or public RPC (project rule). The public
+// mainnet RPC used to be the outage failover; it answers getTransactionsForAddress with
 // -32601, which latched the hold-time backfill onto the 100-credit legacy path.
+// The one user of free RPCs is New Pairs discovery, through its own client
+// (freeRpc.js) with its own endpoints, limiter and breaker: nothing here fails over
+// to it, and it is never added to this list.
 const RPC_ENDPOINTS = [
   // Primary: Helius with key in URL (if configured)
   HELIUS_API_KEY && `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
@@ -1074,10 +1077,10 @@ async function withBigPageSlot(fn) {
 
 /**
  * One page of an account's succeeded transactions with full meta (pre/post token
- * balances), newest first, via getTransactionsForAddress.
+ * balances), newest first unless sortOrder is 'asc', via getTransactionsForAddress.
  * @returns {Promise<{txs: Array, paginationToken: string|null}>}
  */
-async function getAccountTransactionsPage(address, { limit = 100, paginationToken, sortOrder = 'desc' } = {}) {
+async function getAccountTransactionsPage(address, { limit = 100, paginationToken, sortOrder = 'desc', filters, maxSupportedTransactionVersion = 0 } = {}) {
   if (!isTransactionHistoryAvailable()) throw new Error('getTransactionsForAddress not available');
   const opts = {
     transactionDetails: 'full',
@@ -1087,8 +1090,9 @@ async function getAccountTransactionsPage(address, { limit = 100, paginationToke
     // and continue in large pages.
     limit: Math.max(1, Math.min(1000, limit)),
     encoding: 'json',
-    maxSupportedTransactionVersion: 0,
-    filters: { status: 'succeeded' },
+    maxSupportedTransactionVersion,
+    // Extra filters (slot or blockTime ranges) narrow the page; status stays succeeded
+    filters: { ...(filters || {}), status: 'succeeded' },
   };
   if (paginationToken) opts.paginationToken = paginationToken;
   try {
