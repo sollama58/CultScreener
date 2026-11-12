@@ -259,6 +259,11 @@ services:
       # data and holder counts, with DexScreener as the fallback. Neither needs a key and
       # neither touches Helius. If JUPITER_API_KEY is ever set on this service, the jobs
       # use it and stop pacing themselves for the keyless tier.
+      # The holder tier (services/newPairHolders.js: newpairs-holders every 30 min) is
+      # the one job that spends Helius by design: about 4 credits per check of a
+      # shortlisted token (the 50 best scores), roughly 1,000 a day. It stops 600 credits
+      # short of the daily cap so discovery's fallback always has room. Setting
+      # NEWPAIRS_HOLDERS_DRY_RUN=true makes it log what it would check and spend nothing.
       # NEWPAIRS_ENABLED: anything but "true" turns the whole feature's jobs into no-ops.
       # NEWPAIRS_HELIUS_DAILY_CREDITS: hard cap per UTC day for everything New Pairs
       #   spends on Helius, kept in Postgres (newpair_credit_days). 10,000 a day is the

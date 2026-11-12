@@ -776,6 +776,20 @@ const jobProcessors = {
   }),
 
   /**
+   * New Pairs top-50 holder tier (services/newPairHolders.js): check who holds the
+   * shortlisted tokens that are due (every 6h in a token's first 3 days, then every
+   * 12h). The only New Pairs job that spends Helius credits by design: about 4 a
+   * check, one token at a time, under the feature's daily cap.
+   */
+  'newpairs-holders': () => newPairsJob('holders', 8 * 60 * 1000, async () => {
+    const r = await require('./services/newPairHolders').run({ deadline: Date.now() + 6 * 60 * 1000 });
+    console.log(`[NewPairs] holders: shortlist=${r.shortlist} due=${r.due} checked=${r.checked} failed=${r.failed} credits=${r.credits}${r.dryRun ? ' (dry run)' : ''}${r.stopped ? ` stopped=${r.stopped}` : ''}`);
+    // The new samples change scores now, not at the next market run
+    const scored = r.checked ? await require('./services/newPairMarket').scoreActive() : { scored: 0 };
+    return { ...r, scored: scored.scored };
+  }),
+
+  /**
    * New Pairs: another look at tokens that graduated below the floors (+1h, +6h, +24h,
    * +3d), so a late bloomer still gets listed. No Helius.
    */
