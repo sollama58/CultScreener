@@ -97,7 +97,9 @@
 // performance.js v30, tokenChart.js v10, tokenDetail.js v39, versus.js v19, new app icons.
 // v93: darker flame brand (toned down) - same files as v92, one version up each.
 // v94: chart modal pages back to the token's launch - tokenChart.js v12.
-const CACHE_VERSION = 'holdex-v94';
+// v95: New Pairs tab on the home page (hidden until its API is on) - new js/newPairs.js,
+// api.js v20, mainViewTabs.js v4, home.css v6.
+const CACHE_VERSION = 'holdex-v95';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -109,10 +111,10 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 // always get fresh markup (which references versioned ?v=N asset URLs).
 const APP_SHELL = [
   '/css/styles.css?v=29',
-  '/css/home.css?v=5',
+  '/css/home.css?v=6',
   '/css/token.css?v=11',
   '/js/config.js?v=5',
-  '/js/api.js?v=19',
+  '/js/api.js?v=20',
   '/js/deviceLink.js?v=4',
   '/js/wallet.js?v=7',
   '/js/tokenTable.js?v=10',
@@ -120,7 +122,8 @@ const APP_SHELL = [
   '/js/tech.js?v=7',
   '/js/emerging.js?v=7',
   '/js/versus.js?v=20',
-  '/js/mainViewTabs.js?v=3',
+  '/js/mainViewTabs.js?v=4',
+  '/js/newPairs.js?v=1',
   '/js/kotpShot.js?v=3',
   '/js/kotp.js?v=8',
   '/js/tokenDetail.js?v=40',
@@ -172,6 +175,9 @@ const NO_STORE_API_PATTERNS = [
   /^\/api\/tokens\/[^/]+\/ohlcv/,
   /^\/api\/tokens\/[^/]+\/price$/,
   /^\/api\/cultify\//,
+  // New Pairs: every figure is shown with its age and the server caches the list for a minute;
+  // an offline copy would be a ranking of week-old tokens nobody can act on.
+  /^\/api\/new-pairs(\/|$)/,
   // Proxied logos: images (up to a few MB) that evicted cached JSON from the 50-entry API_CACHE.
   // The browser's HTTP cache already keeps them.
   /^\/api\/image-proxy/,

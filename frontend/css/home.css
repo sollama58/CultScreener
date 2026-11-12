@@ -862,3 +862,222 @@ td.perf-current-pct {
   /* ── Performance share button — keep accessible but compact ── */
   .perf-share-btn { padding: 0.4rem 0.7rem; font-size: 0.72rem; }
 }
+
+/* ── New Pairs tab (js/newPairs.js) ─────────────────── */
+/* The tab button ships hidden; .main-view-tab sets display, which would beat the attribute. */
+.main-view-tab[hidden] { display: none; }
+
+.np-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.np-group, .np-field { display: flex; align-items: center; gap: 0.35rem; }
+.np-select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0.3rem 1.6rem 0.3rem 0.7rem;
+  background-color: var(--surface-2);
+  /* chevron */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none' stroke='%23aab1c2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1 1 4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--ink-2);
+  font-family: var(--font);
+  font-size: 0.78rem;
+  font-weight: 500;
+  max-width: 11rem;
+  cursor: pointer;
+}
+.np-select:hover { border-color: var(--border-strong); color: var(--ink); }
+.np-select:focus-visible, .np-score:focus-visible { outline: 2px solid var(--brand-b); outline-offset: 1px; }
+.np-meta {
+  margin: 0 0 0.6rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* Columns */
+.terminal-table thead th.np-cell-liq,
+.terminal-table thead th.np-cell-holders,
+.terminal-table thead th.np-cell-top10,
+.terminal-table thead th.np-cell-ret,
+.terminal-table thead th.np-cell-vol,
+.terminal-table thead th.np-cell-ages { text-align: right; }
+.np-cell-liq, .np-cell-holders, .np-cell-top10, .np-cell-ret, .np-cell-vol, .np-cell-ages {
+  text-align: right;
+  white-space: nowrap;
+}
+.np-cell-score { min-width: 92px; }
+.np-row--rugged { opacity: 0.55; }
+
+/* Token cell: ticker, launchpad and bonded chip on a second line that may wrap */
+.np-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 6px;
+  min-width: 0;
+}
+.np-pad {
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  background: var(--surface-3);
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-chip {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+.np-chip--curated { color: var(--brand-ink); background: var(--brand-wash); }
+.np-chip--rugged { color: var(--bad-ink); background: var(--bad-wash); }
+
+/* Score: number over a thin bar. Hollow bar and number until the top 50 holders were checked. */
+.np-score {
+  -webkit-appearance: none;
+  appearance: none;
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 76px;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: help;
+}
+.np-score-num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 0.92rem; font-weight: 700; line-height: 1; }
+.np-score-bar {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.np-score-bar i { display: block; height: 100%; border-radius: 2px; background: var(--brand-a); }
+.np-score-note { font-size: 10px; line-height: 1; color: var(--text-muted); white-space: nowrap; }
+.np-score--pending .np-score-num { color: var(--ink-2); font-weight: 500; }
+.np-score--pending .np-score-bar { background: none; box-shadow: inset 0 0 0 1px var(--border-strong); }
+.np-score--pending .np-score-bar i { background: none; box-shadow: inset 0 0 0 1px var(--brand-a); }
+.np-score--stale .np-score-note { color: var(--warn); }
+
+/* Holders: count with the velocity arrow, the 24h change underneath */
+.np-chg {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  color: var(--text-muted);
+}
+.np-chg.up { color: var(--good-ink); }
+.np-chg.down { color: var(--bad-ink); }
+
+/* Updated: one chip per kind of data, coloured by its age. Phones get one dot. */
+.np-ages { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.np-age {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.np-age b { font-family: var(--font); font-size: 9px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-muted); }
+.np-age--amber { color: var(--warn); background: var(--warn-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent); }
+.np-age--old, .np-age--none { color: var(--text-muted); opacity: 0.75; }
+.np-age--old { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-muted) 60%, transparent); }
+.np-dot { display: none; width: 9px; height: 9px; border-radius: 50%; background: var(--good-ink); }
+.np-dot--amber { background: var(--warn); }
+.np-dot--old { background: none; box-shadow: inset 0 0 0 2px var(--text-muted); }
+
+/* Score breakdown, fixed to the viewport by newPairs.showTip */
+.np-tip {
+  position: fixed;
+  z-index: 60;
+  width: min(330px, calc(100vw - 16px));
+  padding: 0.7rem 0.8rem;
+  background: var(--surface-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-lg);
+  color: var(--ink);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.np-tip[hidden] { display: none; }
+.np-tip p { margin: 0.3rem 0 0; }
+.np-tip-head { display: flex; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; font-size: 0.82rem; }
+.np-tip-head span { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-tip-terms { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.np-tip-terms th { padding: 1px 0; font-weight: 500; text-align: left; color: var(--ink-2); }
+.np-tip-terms td { padding: 1px 0 1px 8px; font-family: var(--mono); text-align: right; white-space: nowrap; }
+.np-tip-terms td:last-child { color: var(--ink); font-weight: 600; }
+.np-tip-dim, .np-tip-note, .np-tip-ages { color: var(--text-muted); }
+.np-tip-ages { padding-top: 0.35rem; border-top: 1px solid var(--border); }
+
+@media (max-width: 1100px) {
+  .np-table .np-cell-vol { display: none; }
+}
+@media (max-width: 900px) {
+  .np-table .np-cell-ret, .np-table .np-cell-top10 { display: none; }
+}
+/* Phones: #, token, score, market cap, holders and one freshness dot */
+@media (max-width: 768px) {
+  .np-table .np-cell-liq { display: none; }
+  .np-table .cell-mcap { display: table-cell; min-width: 0; }
+  .np-table .np-age { display: none; }
+  .np-table .np-dot { display: inline-block; }
+  .np-table .np-cell-ages { width: 16px; padding-left: 0; }
+  .np-table thead th.np-cell-ages { font-size: 0; }
+  .np-cell-score { min-width: 0; }
+  .np-score { min-width: 54px; }
+  .np-pad { max-width: 84px; }
+}
+@media (max-width: 480px) {
+  .np-table .cell-token { min-width: 0; }
+  /* Chips drop under the name so the row fits 390px without scrolling sideways */
+  .np-table .tt-name-line { flex-wrap: wrap; gap: 3px 6px; }
+  .np-table .tt-token { gap: 8px; }
+  .np-score-note { white-space: normal; }
+  .np-table td, .np-table th { padding-left: 3px; padding-right: 3px; }
+  .np-table .tt-vel { width: 10px; height: 10px; }
+  .np-table .cell-rank { width: 22px; min-width: 22px; }
+  .np-table .tt-rank { min-width: 18px; padding: 0 2px; }
+  .np-table .tt-logo { width: 22px; height: 22px; }
+  .np-table .tt-name { max-width: 92px; }
+  .np-table .np-pad { max-width: 72px; }
+  .np-score { min-width: 46px; }
+  .np-table .tt-holders { gap: 3px; }
+  .np-table .cell-mcap, .np-table .np-cell-holders { font-size: 0.72rem; letter-spacing: -0.02em; }
+  .np-controls { gap: 0.4rem; }
+  .np-select { max-width: 8.5rem; }
+}

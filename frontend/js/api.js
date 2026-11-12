@@ -616,6 +616,21 @@ const api = {
     }
   },
 
+  // New Pairs (the Emerging Cults finder): one ranked list per window. The server rebuilds it
+  // at most once a minute, so a minute here costs nothing in freshness; ages on the page keep
+  // ticking from the read times in the payload. One attempt: a 404 NEWPAIRS_DISABLED is the
+  // normal answer while the feature is off, and the tab has its own retry.
+  newPairs: {
+    async list(window = '7d') {
+      return apiCache.getOrFetch(
+        `newpairs:list:${window}`,
+        () => api.request(`/api/new-pairs?window=${encodeURIComponent(window)}`, { retries: 1, noGlobalBackoff: true }),
+        60 * 1000,
+        true
+      );
+    }
+  },
+
   // Watchlist endpoints
   watchlist: {
     async get(wallet) {

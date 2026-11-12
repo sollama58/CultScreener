@@ -84,6 +84,7 @@ if (!DB_URL) {
       const mine = r.tokens.filter(t => ALL.includes(t.mint));
       assert.deepStrictEqual(mine.map(t => t.mint), [TOP, CUR, PENDING, RUGGED]);
       assert.deepStrictEqual(r.floors, { marketCap: 25000, liquidity: 5000 });
+      assert.strictEqual(r.weights.retention, 0.15, 'the tab builds its score breakdown from these');
       assert.strictEqual(r.window, '7d');
       assert.ok(r.total >= 4 && r.rugged >= 1);
       assert.strictEqual(r.scoredAt, new Date(NOW - 3 * 60_000).toISOString());
