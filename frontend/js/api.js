@@ -628,6 +628,17 @@ const api = {
         60 * 1000,
         true
       );
+    },
+
+    // One token for the lite page (pair.html): { curated: true } for a curated mint, the full
+    // payload otherwise, 404 NOT_LISTED when the finder does not list it.
+    async token(mint) {
+      return apiCache.getOrFetch(
+        `newpairs:token:${mint}`,
+        () => api.request(`/api/new-pairs/${encodeURIComponent(mint)}`, { retries: 1, noGlobalBackoff: true }),
+        60 * 1000,
+        true
+      );
     }
   },
 

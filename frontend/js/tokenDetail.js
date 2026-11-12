@@ -83,6 +83,13 @@ const tokenDetail = {
     } catch (error) {
       console.error('Failed to initialize token page:', error.message);
       if (error.code === 'NOT_CURATED') {
+        // A New Pairs token has a lite page; send a token.html link for one there. Any other
+        // answer (not listed, the feature off, a network error) keeps the message below.
+        const listed = await api.newPairs.token(this.mint).catch(() => null);
+        if (listed && listed.curated === false) {
+          window.location.replace(`pair.html?mint=${encodeURIComponent(this.mint)}`);
+          return;
+        }
         this.showError('This token is not available on HolDEX. Only curated tokens listed on the leaderboard can be viewed.', 'Token Not Available');
       } else {
         this.showError('Failed to load token data. Please try again.');
