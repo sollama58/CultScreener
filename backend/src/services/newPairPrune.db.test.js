@@ -38,11 +38,13 @@ if (!DB_URL) {
     await db.pool.query(`DELETE FROM newpair_credit_days WHERE source = 'prune-test'`);
   };
   async function seed(m, ageMs, { status = 'active', score = 50, hidden = false, rugged = false } = {}) {
-    await store.insertGraduations('pumpfun', 'Pump.fun', [{ mint: m, graduatedAt: NOW - ageMs, signature: `sig${m.slice(5, 6)}`, slot: 7 }]);
+    // One INSERT with the final status and a market refresh that is never due: the other
+    // New Pairs suites run at the same time and count every 'new' or due 'active' row
     await db.pool.query(
-      `UPDATE newpair_tokens SET status = $2, name = 'Tok', symbol = 'TOK', score = $3, hidden = $4, rugged = $5, marks = $6,
-         holder_count = 1500, mcap = 120000, liquidity = 30000, peak_mcap = 400000 WHERE mint_address = $1`,
-      [m, status, score, hidden, rugged, JSON.stringify(MARKS)]);
+      `INSERT INTO newpair_tokens (mint_address, detector, launchpad, graduated_at, graduated_source, status, next_market_at, name, symbol,
+         score, hidden, rugged, marks, holder_count, mcap, liquidity, peak_mcap)
+       VALUES ($1, 'pumpfun', 'Pump.fun', to_timestamp($2 / 1000.0), 'onchain:pumpfun', $3, 'infinity', 'Tok', 'TOK', $4, $5, $6, $7, 1500, 120000, 30000, 400000)`,
+      [m, NOW - ageMs, status, score, hidden, rugged, JSON.stringify(MARKS)]);
     return (await db.pool.query('SELECT id FROM newpair_tokens WHERE mint_address = $1', [m])).rows[0].id;
   }
   const left = async () => (await db.pool.query('SELECT mint_address FROM newpair_tokens WHERE mint_address = ANY($1) ORDER BY 1', [ALL])).rows.map(r => r.mint_address);

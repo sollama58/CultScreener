@@ -41,7 +41,7 @@ if (!DB_URL) {
   async function seed(m, { score, status = 'active', rugged = false }) {
     await store.insertGraduations('pumpfun', 'Pump.fun', [{ mint: m, graduatedAt: NOW - 20 * HOUR, signature: `adm${m.slice(5, 6)}`, slot: 9 }]);
     await db.pool.query(
-      `UPDATE newpair_tokens SET status = $2, name = $3, score = $4, rugged = $5, mcap = 100000, liquidity = 20000, holder_count = 900,
+      `UPDATE newpair_tokens SET status = $2, next_market_at = 'infinity', name = $3, score = $4, rugged = $5, mcap = 100000, liquidity = 20000, holder_count = 900,
          market_at = to_timestamp($6 / 1000.0), scored_at = to_timestamp($6 / 1000.0), score_parts = $7 WHERE mint_address = $1`,
       [m, status, `Adm ${m.slice(5, 6)}`, score, rugged, NOW - 5 * 60_000, JSON.stringify({ quality: 0.7, confidence: 0.9, risk: 1, terms: { growth: 0.7 }, riskParts: {} })]);
   }
