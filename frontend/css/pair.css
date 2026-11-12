@@ -1,0 +1,109 @@
+/* Lite page for a New Pairs token (pair.html, js/pairDetail.js). Layout and panels come from
+   token.css; this file adds only what the lite page has that the full page does not. */
+
+/* Age label on every block: green-grey when fresh, amber when getting old, struck out when old */
+.pd-age {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.pd-age::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--good-ink);
+}
+.pd-age--amber { color: var(--warn); }
+.pd-age--amber::before { background: var(--warn); }
+.pd-age--old::before, .pd-age--none::before { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.pd-age-line { margin-top: 6px; text-align: right; }
+
+.pd-dim { color: var(--muted); }
+.pd-chg { font-family: var(--mono); font-size: 0.8em; font-weight: 600; white-space: nowrap; }
+.pd-chg.up { color: var(--good-ink); }
+.pd-chg.down { color: var(--bad-ink); }
+.pd-chg.flat { color: var(--muted); }
+
+.pd-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.pd-pill-bad { color: var(--bad-ink); background: var(--bad-wash); border-color: color-mix(in srgb, var(--bad-ink) 35%, transparent); }
+.pair-page .tp-address { overflow-wrap: anywhere; }
+.pair-page .tp-name-row h1 { overflow-wrap: anywhere; }
+
+.pd-notice {
+  margin: 18px 0 0;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+  border-radius: var(--radius-s);
+  background: var(--warn-wash);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pd-notice strong { color: var(--ink); }
+
+.pair-page .tp-kpi-value { font-size: 22px; }
+.pd-columns { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+
+/* Score */
+.pd-score-top { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+.pd-score { font-size: 44px; font-weight: 700; line-height: 1; letter-spacing: -0.03em; color: var(--ink); }
+.pd-score-of { color: var(--ink-2); font-size: 13px; }
+.pd-state { margin: 10px 0 0; color: var(--warn); font-size: 13px; }
+.pd-terms { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 13px; }
+.pd-terms th, .pd-terms td { padding: 6px 0 6px 10px; text-align: right; white-space: nowrap; }
+.pd-terms th:first-child { padding-left: 0; text-align: left; font-weight: 500; color: var(--ink-2); }
+.pd-terms thead th { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); }
+.pd-terms tbody tr + tr th, .pd-terms tbody tr + tr td { border-top: 1px solid var(--border); }
+.pd-bar-cell { width: 34%; }
+.pd-bar { display: block; height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.pd-bar i { display: block; height: 100%; border-radius: 3px; background: var(--brand-a); }
+.pd-row-missing td { text-align: left; color: var(--muted); font-style: italic; white-space: normal; }
+.pd-mults { margin: 14px 0 0; display: grid; gap: 8px; }
+.pd-mults > div { display: grid; grid-template-columns: 110px 48px minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: 13px; }
+.pd-mults dt { color: var(--ink-2); font-weight: 500; }
+.pd-mults dd { margin: 0; }
+
+/* Stored readings as lines */
+.pd-chart + .pd-chart { margin-top: 22px; }
+.pd-chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.pd-chart-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.pd-chart svg { display: block; width: 100%; height: 120px; border-radius: var(--radius-s); background: var(--surface-2); }
+.pd-chart path { fill: none; stroke: var(--brand-ink); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.pd-chart-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+
+/* Top holders */
+.pd-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.pd-stats > div { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2); }
+.pd-stats dt { font-size: 11px; color: var(--muted); }
+.pd-stats dd { margin: 4px 0 0; font-size: 18px; font-weight: 700; color: var(--ink); }
+.pd-note { margin: 12px 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.pd-table-wrap { max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-s); }
+.pd-holders { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pd-holders th, .pd-holders td { padding: 7px 10px; text-align: left; white-space: nowrap; }
+.pd-holders thead th { position: sticky; top: 0; background: var(--surface-solid); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.pd-holders tbody tr + tr td { border-top: 1px solid var(--border); }
+.pd-holders a { color: var(--ink); text-decoration: none; }
+.pd-holders a:hover, .pd-exited a:hover { text-decoration: underline; }
+.pd-new { margin-left: 4px; padding: 2px 5px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--good-ink); background: var(--good-wash); }
+.pd-exited { margin: 12px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); }
+.pd-exited a { color: var(--ink-2); }
+.pd-subhead { margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+
+@media (max-width: 900px) {
+  .pd-columns { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .pair-page .tp-hero-top { flex-direction: column; }
+  .pd-age-line { text-align: left; }
+  .pair-page .tp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .pair-page .tp-kpi { padding: 14px; }
+  .pair-page .tp-kpi-value { font-size: 18px; }
+  .pd-bar-cell { display: none; }
+  .pd-mults > div { grid-template-columns: 96px 40px minmax(0, 1fr); }
+  .pd-score { font-size: 36px; }
+}

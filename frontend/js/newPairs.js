@@ -39,6 +39,8 @@ const newPairsPage = {
     market: [30 * 60 * 1000, 2 * 60 * 60 * 1000],
     holders: [30 * 60 * 1000, 2 * 60 * 60 * 1000],
     top50: [14 * 60 * 60 * 1000, 36 * 60 * 60 * 1000],
+    // A stored chart reading (pair.html): one an hour for three days, then one every three hours
+    reading: [4 * 60 * 60 * 1000, 8 * 60 * 60 * 1000],
   },
   AGE_LABELS: { market: ['Mkt', 'Price, market cap, liquidity and volume'], holders: ['Hold', 'Holder count'], top50: ['Top50', 'Top-50 holder check'] },
 
