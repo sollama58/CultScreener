@@ -2,7 +2,9 @@
  * New Pairs storage: the tokens discovery found, where each detector has read up to,
  * and the Helius credits the feature has spent per day.
  *
- *   newpair_tokens       one row per graduated mint (the first graduation seen wins)
+ *   newpair_tokens       one row per graduated mint (the first graduation seen wins),
+ *                        with the identity and market columns the cheap tier fills
+ *   newpair_points       the stored price / market cap / liquidity / holder series
  *   newpair_detectors    per detector: cursor (last transaction read), run health
  *   newpair_credit_days  credits per UTC day and source. The daily cap is checked
  *                        against this table, not Redis: the free Render Redis keeps
@@ -23,7 +25,11 @@ function pool() {
 let schemaReady = null;
 function ensureSchema() {
   if (!schemaReady) {
+    // One multi-statement query is one implicit transaction, so the advisory lock is
+    // held to its end: the API and the worker (or two test files) starting together
+    // can't race each other's CREATE TABLE IF NOT EXISTS.
     schemaReady = pool().query(`
+      SELECT pg_advisory_xact_lock(7426001);
       CREATE TABLE IF NOT EXISTS newpair_tokens (
         id BIGSERIAL PRIMARY KEY,
         mint_address VARCHAR(44) NOT NULL UNIQUE,
@@ -39,6 +45,45 @@ function ensureSchema() {
       );
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_graduated ON newpair_tokens(graduated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_status ON newpair_tokens(status, graduated_at DESC);
+      -- Cheap tier (newPairMarket.js): identity and market data from Jupiter
+      ALTER TABLE newpair_tokens
+        ADD COLUMN IF NOT EXISTS name VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS symbol VARCHAR(32),
+        ADD COLUMN IF NOT EXISTS logo_uri TEXT,
+        ADD COLUMN IF NOT EXISTS decimals SMALLINT,
+        ADD COLUMN IF NOT EXISTS jup_launchpad VARCHAR(32),
+        ADD COLUMN IF NOT EXISTS dev_wallet VARCHAR(44),
+        ADD COLUMN IF NOT EXISTS token_program VARCHAR(44),
+        ADD COLUMN IF NOT EXISTS graduated_pool VARCHAR(44),
+        ADD COLUMN IF NOT EXISTS price_usd DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS mcap DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS liquidity DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS holder_count INTEGER,
+        ADD COLUMN IF NOT EXISTS peak_mcap DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS peak_mcap_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS market JSONB,
+        ADD COLUMN IF NOT EXISTS market_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS market_source VARCHAR(16),
+        ADD COLUMN IF NOT EXISTS holders_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS active_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS next_market_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS recheck_step SMALLINT NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS next_recheck_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS last_point_at TIMESTAMP WITH TIME ZONE;
+      CREATE INDEX IF NOT EXISTS idx_newpair_tokens_market_due ON newpair_tokens(next_market_at) WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS idx_newpair_tokens_recheck_due ON newpair_tokens(next_recheck_at) WHERE status = 'below_floor';
+      -- The stored series growth and steadiness are computed from (hourly for a
+      -- token's first 3 days, then every 3 hours)
+      CREATE TABLE IF NOT EXISTS newpair_points (
+        token_id BIGINT NOT NULL REFERENCES newpair_tokens(id) ON DELETE CASCADE,
+        at TIMESTAMP WITH TIME ZONE NOT NULL,
+        price_usd DOUBLE PRECISION,
+        mcap DOUBLE PRECISION,
+        liquidity DOUBLE PRECISION,
+        holder_count INTEGER,
+        source VARCHAR(16),
+        PRIMARY KEY (token_id, at)
+      );
       CREATE TABLE IF NOT EXISTS newpair_detectors (
         id VARCHAR(24) PRIMARY KEY,
         cursor_sig VARCHAR(90),

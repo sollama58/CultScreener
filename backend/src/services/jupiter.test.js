@@ -49,6 +49,20 @@ describe('Token API V2 rows', () => {
     assert.strictEqual(calls.find(c => c.url === '/price/v3'), undefined);
   });
 
+  test('getTokensBatch sends one comma-separated query and drops rows that were not asked for', async () => {
+    const other = 'Bar1111111111111111111111111111111111111111';
+    calls.length = 0;
+    const rows = await jupiter.getTokensBatch([MINT, other, MINT, null]);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].params.query, `${MINT},${other}`);
+    assert.deepStrictEqual(rows.map(r => r.id), [MINT]);
+    assert.strictEqual(rows[0].holderCount, 1234); // raw row, not the formatted one
+    assert.deepStrictEqual(await jupiter.getTokensBatch([]), []);
+    await assert.rejects(() => jupiter.getTokensBatch(Array.from({ length: 101 }, (_, i) => `m${i}`)), /at most 100/);
+    // A row for a mint nobody asked about never comes back
+    assert.deepStrictEqual(await jupiter.getTokensBatch([other]), []);
+  });
+
   test('getTokenInfo matches the row by id and keeps its name', async () => {
     const info = await jupiter.getTokenInfo(MINT);
     assert.strictEqual(info.name, 'Foo Coin');

@@ -189,6 +189,10 @@ const RECURRING_JOBS = [
   { id: 'crown-king-of-pill', queue: QUEUE_NAMES.ANALYTICS, repeat: { pattern: '20 0 * * *', tz: 'UTC' }, catchUp: true },
   // New Pairs: read newly graduated tokens off the launchpad markers (no-op unless NEWPAIRS_ENABLED)
   { id: 'newpairs-discover', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 5 * 60 * 1000 }, phaseMs: 151_000 },
+  // New Pairs: Jupiter market data and holder counts for every listed token (no Helius)
+  { id: 'newpairs-market', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 10 * 60 * 1000 }, phaseMs: 263_000 },
+  // New Pairs: another look at tokens that graduated below the floors
+  { id: 'newpairs-recheck', queue: QUEUE_NAMES.ANALYTICS, repeat: { every: 30 * 60 * 1000 }, phaseMs: 412_000 },
   // Expired admin sessions, at :00 and :30
   { id: 'cleanup-sessions', queue: QUEUE_NAMES.MAINTENANCE, repeat: { pattern: '0,30 * * * *' } },
 ];

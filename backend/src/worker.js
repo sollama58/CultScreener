@@ -102,6 +102,25 @@ const SCHEDULE_CHECK_MS = 5 * 60 * 1000;
 let scheduleCheckTimer = null;
 
 // Job processors
+/**
+ * Wrapper for the New Pairs jobs: off unless NEWPAIRS_ENABLED=true, one run of each at
+ * a time (the lock outlives a run that overlaps the next tick), and never throws,
+ * because a BullMQ retry would only repeat the same reads minutes before the next run.
+ */
+async function newPairsJob(name, lockMs, fn) {
+  if (process.env.NEWPAIRS_ENABLED !== 'true') return { skipped: 'NEWPAIRS_ENABLED is not true' };
+  const lockKey = `newpairs:${name}:lock`;
+  if (!(await cache.setNX(lockKey, Date.now(), lockMs))) return { skipped: 'previous run still going' };
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`[NewPairs] ${name} failed:`, err.message);
+    return { error: err.message };
+  } finally {
+    await cache.delete(lockKey).catch(() => {});
+  }
+}
+
 const jobProcessors = {
   // ==========================================
   // Maintenance Jobs
@@ -731,23 +750,36 @@ const jobProcessors = {
    * time (the lock outlives a run that overlaps the next tick), and it never throws:
    * a retry would only repeat the same reads.
    */
-  'newpairs-discover': async () => {
-    if (process.env.NEWPAIRS_ENABLED !== 'true') return { skipped: 'NEWPAIRS_ENABLED is not true' };
-    const lockKey = 'newpairs:discover:lock';
-    if (!(await cache.setNX(lockKey, Date.now(), 4 * 60 * 1000))) return { skipped: 'previous run still going' };
-    try {
-      const result = await require('./services/newPairDiscover').run({ timeBudgetMs: 200_000 });
-      for (const d of result.detectors) {
-        console.log(`[NewPairs] ${d.detector}: source=${d.source} read=${d.read} found=${d.found} unhandled=${d.unhandled} credits=${d.credits}${d.error ? ` error=${d.error}` : ''}`);
-      }
-      return result;
-    } catch (err) {
-      console.error('[NewPairs] discovery failed:', err.message);
-      return { error: err.message };
-    } finally {
-      await cache.delete(lockKey).catch(() => {});
+  'newpairs-discover': () => newPairsJob('discover', 4 * 60 * 1000, async () => {
+    const result = await require('./services/newPairDiscover').run({ timeBudgetMs: 170_000 });
+    for (const d of result.detectors) {
+      console.log(`[NewPairs] ${d.detector}: source=${d.source} read=${d.read} found=${d.found} unhandled=${d.unhandled} credits=${d.credits}${d.error ? ` error=${d.error}` : ''}`);
     }
-  },
+    // First Jupiter read of what was just found: name, market data, above the floors or not
+    const filed = await require('./services/newPairMarket').fileNewTokens();
+    console.log(`[NewPairs] filed: active=${filed.active} below_floor=${filed.below} deleted=${filed.deleted} waiting=${filed.waiting} jupiter_calls=${filed.calls}${filed.error ? ` error=${filed.error}` : ''}`);
+    return { ...result, filed };
+  }),
+
+  /**
+   * New Pairs cheap tier (services/newPairMarket.js): re-read every listed token from
+   * Jupiter (DexScreener if Jupiter fails) and append to its stored series. No Helius.
+   */
+  'newpairs-market': () => newPairsJob('market', 9 * 60 * 1000, async () => {
+    const r = await require('./services/newPairMarket').refreshMarket({ deadline: Date.now() + 8 * 60 * 1000 });
+    console.log(`[NewPairs] market: due=${r.due} refreshed=${r.refreshed} live=${r.live} under_floor=${r.underFloor} missing=${r.missing} points=${r.points} source=${r.source} jupiter_calls=${r.jupiterCalls} dexscreener_calls=${r.dexScreenerCalls}${r.error ? ` error=${r.error}` : ''}`);
+    return r;
+  }),
+
+  /**
+   * New Pairs: another look at tokens that graduated below the floors (+1h, +6h, +24h,
+   * +3d), so a late bloomer still gets listed. No Helius.
+   */
+  'newpairs-recheck': () => newPairsJob('recheck', 10 * 60 * 1000, async () => {
+    const r = await require('./services/newPairMarket').recheck();
+    console.log(`[NewPairs] recheck: now_active=${r.active} still_below=${r.below} deleted=${r.deleted} jupiter_calls=${r.calls}${r.error ? ` error=${r.error}` : ''}`);
+    return r;
+  }),
 
   /**
    * Daily safety net for holder count history. Points are written by holder
