@@ -80,6 +80,12 @@ function ensureSchema() {
         ADD COLUMN IF NOT EXISTS rugged BOOLEAN NOT NULL DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS holders_pending BOOLEAN NOT NULL DEFAULT TRUE,
         ADD COLUMN IF NOT EXISTS unlisted_reason VARCHAR(32);
+      -- Set from the admin panel: a hidden token stays stored and tracked but is off the
+      -- public list and the holder shortlist. Its own column, because unlisted_reason is
+      -- rewritten by every scoring run.
+      ALTER TABLE newpair_tokens
+        ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMP WITH TIME ZONE;
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_score ON newpair_tokens(score DESC NULLS LAST) WHERE status = 'active';
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_market_due ON newpair_tokens(next_market_at) WHERE status = 'active';
       CREATE INDEX IF NOT EXISTS idx_newpair_tokens_recheck_due ON newpair_tokens(next_recheck_at) WHERE status = 'below_floor';

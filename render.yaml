@@ -65,6 +65,11 @@ services:
       # (NEWPAIRS_ENABLED on HolDEX-worker) and the admin preview do not depend on it.
       - key: NEWPAIRS_PUBLIC
         value: "false"
+      # The ceiling for the finder's daily Helius credits, as on the worker (keep the two the
+      # same). The API only reads it: the admin panel's New Pairs settings can lower the day's
+      # figure but refuse anything above this.
+      - key: NEWPAIRS_HELIUS_DAILY_CREDITS
+        value: "10000"
 
       # Application settings
       - key: NODE_ENV

@@ -340,6 +340,22 @@
     .admin-table th.num, .admin-table td.num { text-align: right; font-family: var(--font-mono); font-size: 0.78rem; }
     .credits-note { font-size: 0.72rem; color: var(--text-dim); margin-top: 0.75rem; line-height: 1.6; }
 
+    /* New Pairs tab */
+    .np-scroll { overflow-x: auto; }
+    .np-table { width: 100%; white-space: nowrap; }
+    .np-table td { vertical-align: top; }
+    .np-name { font-weight: 600; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+    .np-sub { font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); }
+    .np-marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+    .np-mark { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 5px; border-radius: 5px; background: var(--bg-tertiary); color: var(--text-secondary); }
+    .np-mark-warn { color: var(--yellow); }
+    .np-mark-err, .np-err { color: var(--red); }
+    .np-row-hidden { opacity: 0.55; }
+    .np-actions button + button { margin-left: 6px; }
+    .np-settings { display: grid; gap: 0.6rem; max-width: 320px; }
+    .np-settings label { display: grid; gap: 0.25rem; font-size: 0.78rem; color: var(--text-secondary); }
+    .np-settings input { padding: 0.4rem 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-family: var(--font-mono); font-size: 0.82rem; }
+    .np-status { font-size: 0.75rem; }
     .section-title {
       font-size: 0.92rem;
       font-weight: 600;
@@ -404,6 +420,7 @@
         <button class="admin-tab" data-tab="submissions">Submissions</button>
         <button class="admin-tab" data-tab="whitelist">Whitelist</button>
         <button class="admin-tab" data-tab="api-keys">API Keys</button>
+        <button class="admin-tab" data-tab="newpairs">New Pairs</button>
         <button class="admin-tab" data-tab="credits">Helius Credits</button>
         <button class="admin-tab" data-tab="health">System Health</button>
       </div>
@@ -590,6 +607,49 @@
       </div>
 
       <!-- Helius Credits -->
+      <!-- New Pairs (Emerging Cults finder): preview, credits, detectors, settings -->
+      <div id="tab-newpairs" class="tab-panel">
+        <div class="credits-head">
+          <div class="section-title" style="margin:0;">New Pairs</div>
+          <div class="credits-controls"><button class="btn btn-sm" id="np-refresh">Refresh</button></div>
+        </div>
+        <div id="np-stats" class="admin-stats"></div>
+
+        <div class="credits-tables">
+          <div>
+            <div class="credits-chart-title">Helius credits <span class="credits-dim">(last 7 days, UTC)</span></div>
+            <div class="credits-scroll"><table class="admin-table">
+              <thead><tr><th>Day</th><th class="num">Discovery</th><th class="num">Holder checks</th><th class="num">Total</th></tr></thead>
+              <tbody id="np-credits-body"><tr><td colspan="4" class="empty-msg">Loading...</td></tr></tbody>
+            </table></div>
+          </div>
+          <div>
+            <div class="credits-chart-title">Settings</div>
+            <form id="np-settings-form" class="np-settings">
+              <label>Market cap floor ($)<input type="number" id="np-set-mcap" min="0" step="1000" required></label>
+              <label>Liquidity floor ($)<input type="number" id="np-set-liq" min="0" step="500" required></label>
+              <label>Holder shortlist (10 to 200)<input type="number" id="np-set-shortlist" min="10" max="200" step="1" required></label>
+              <label>Helius credits a day<input type="number" id="np-set-credits" min="0" step="100" required></label>
+              <div class="credits-dim np-status" id="np-set-credits-max"></div>
+              <div><button class="btn btn-sm" type="submit">Save settings</button> <span id="np-settings-status" class="np-status"></span></div>
+            </form>
+          </div>
+        </div>
+
+        <div class="credits-chart-title" style="margin-top:1.25rem;">Detectors <span class="credits-dim">(one per launchpad program)</span></div>
+        <div class="credits-scroll"><table class="admin-table">
+          <thead><tr><th>Detector</th><th>Last good run</th><th>Read up to</th><th>Source</th><th class="num">Found</th><th class="num">Miss rate</th><th>Last error</th></tr></thead>
+          <tbody id="np-detectors-body"><tr><td colspan="7" class="empty-msg">Loading...</td></tr></tbody>
+        </table></div>
+
+        <div class="credits-chart-title" style="margin-top:1.25rem;">Ranked preview <span class="credits-dim" id="np-count"></span></div>
+        <div class="np-scroll"><table class="admin-table np-table">
+          <thead><tr><th class="num">#</th><th>Token</th><th>Actions</th><th class="num">Score</th><th class="num" title="Weighted mean of the terms that have data">Qual</th><th class="num" title="Confidence: 0.5 at bonding, 1 after 72 hours">Conf</th><th class="num" title="Product of the risk factors; hover a value for which fired">Risk</th><th class="num" title="Holder growth">Grow</th><th class="num" title="Steady growth">Stdy</th><th class="num" title="Holder base">Base</th><th class="num" title="Buyer breadth">Brd</th><th class="num" title="Retention">Ret</th><th class="num" title="Spread">Sprd</th><th class="num" title="Dev holding">Dev</th><th class="num" title="Activity">Act</th><th class="num" title="Price trend">Trnd</th><th class="num" title="Buy pressure">Pres</th><th class="num">MCap</th><th class="num">Liq</th><th class="num">Holders</th></tr></thead>
+          <tbody id="np-body"><tr><td colspan="20" class="empty-msg">Loading...</td></tr></tbody>
+        </table></div>
+        <div class="credits-dim np-status" style="margin-top:0.6rem;">Hide takes a token off the public list and the holder shortlist; it stays stored. Promote adds it to the curated list.</div>
+      </div>
+
       <div id="tab-credits" class="tab-panel">
         <div class="credits-head">
           <div class="section-title" style="margin:0;">Helius credit spend</div>
@@ -644,7 +704,7 @@
 
   <script src="js/config.js?v=5"></script>
   <script src="js/api.js?v=21"></script>
-  <script src="js/admin.js?v=21"></script>
+  <script src="js/admin.js?v=22"></script>
   <script src="js/pwa.js?v=3"></script>
 </body>
 </html>
