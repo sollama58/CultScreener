@@ -31,6 +31,7 @@ const store = require('./newPairStore');
 const holderCounts = require('./holderCounts');
 const { BURN_WALLETS, LP_PROGRAMS, LP_AUTHORITIES, SYSTEM_PROGRAM_ID } = require('../constants');
 const { VAULT_AUTHORITIES } = require('./newPairLaunchpads');
+const settings = require('./newPairSettings');
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -213,10 +214,10 @@ function createHolders({
   env = process.env,
   log = console,
 } = {}) {
-  const intEnv = (v, fallback) => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : fallback; };
   /** Credits the holder tier may still spend today. */
   async function creditsLeft() {
-    const cap = intEnv(env.NEWPAIRS_HELIUS_DAILY_CREDITS, 10_000);
+    // The admin panel can lower the day's figure; the env var is the ceiling (newPairSettings)
+    const cap = await settings.dailyCap(env);
     return Math.max(0, cap - DISCOVERY_RESERVE) - await store.creditsSpentToday(now());
   }
 
@@ -257,7 +258,7 @@ function createHolders({
       `SELECT t.id, t.mint_address, t.graduated_at, t.score, t.price_usd, t.dev_wallet,
          (SELECT MAX(taken_at) FROM newpair_holder_samples s WHERE s.token_id = t.id) AS last_sample_at
        FROM newpair_tokens t
-       WHERE t.status = 'active' AND NOT t.rugged AND t.unlisted_reason IS NULL AND t.score IS NOT NULL
+       WHERE t.status = 'active' AND NOT t.rugged AND NOT t.hidden AND t.unlisted_reason IS NULL AND t.score IS NOT NULL
        ORDER BY t.score DESC, t.id LIMIT $1`, [size]);
     return rows.map(r => ({
       id: r.id, mint: r.mint_address, graduatedAt: new Date(r.graduated_at).getTime(), score: Number(r.score),
@@ -269,9 +270,10 @@ function createHolders({
    * Check the shortlisted tokens that are due, best first, until the run's limits or
    * the day's budget stop it. Never throws.
    */
-  async function run({ shortlistSize = 50, maxChecks = 20, deadline = Infinity, dryRun = env.NEWPAIRS_HOLDERS_DRY_RUN === 'true' } = {}) {
+  async function run({ shortlistSize, maxChecks = 20, deadline = Infinity, dryRun = env.NEWPAIRS_HOLDERS_DRY_RUN === 'true' } = {}) {
     await store.ensureSchema();
     const tally = { shortlist: 0, due: 0, checked: 0, failed: 0, credits: 0, stopped: null, dryRun };
+    if (shortlistSize == null) shortlistSize = (await settings.get(env)).shortlistSize;
     const shortlist = await loadShortlist(shortlistSize);
     const due = prioritize(shortlist, now());
     tally.shortlist = shortlist.length;

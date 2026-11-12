@@ -79,6 +79,9 @@ router.get('/helius-credits', asyncHandler(async (req, res) => {
   res.json(usage);
 }));
 
+// New Pairs (Emerging Cults finder): preview, hide, promote, settings
+router.use('/new-pairs', require('./adminNewPairs'));
+
 router.get('/stats', asyncHandler(async (req, res) => {
   const stats = await db.getAdminStats();
   res.json(stats);

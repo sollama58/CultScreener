@@ -15,6 +15,7 @@ const admin = {
     this.bindWhitelistActions();
     this.bindApiKeyActions();
     this.bindCreditsActions();
+    this.bindNewPairsActions();
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
@@ -192,6 +193,7 @@ const admin = {
       case 'whitelist': this.loadWhitelist(); break;
       case 'api-keys': this.loadApiKeys(); break;
       case 'credits': this.loadCredits(); break;
+      case 'newpairs': this.loadNewPairs(); break;
       case 'health': this.loadHealth(); break;
     }
   },
@@ -1242,6 +1244,164 @@ const admin = {
       if (typeof toast !== 'undefined') toast.success('API key deleted');
     } catch (err) {
       if (typeof toast !== 'undefined') toast.error(err.message);
+    }
+  },
+
+  // ── New Pairs (Emerging Cults finder) ─────────
+  // The ranked preview with every score term, whether or not the public list is on, plus the
+  // finder's Helius spend against its daily cap, each detector's health, and the settings.
+  // Token names and tickers are creator-written: every one goes through esc().
+
+  NP_TERMS: ['growth', 'steady', 'base', 'breadth', 'retention', 'spread', 'dev', 'activity', 'trend', 'pressure'],
+  NP_RISKS: ['wash', 'sybil', 'whale', 'bundle', 'rug'],
+
+  bindNewPairsActions() {
+    const refresh = document.getElementById('np-refresh');
+    if (refresh) refresh.addEventListener('click', () => this.loadNewPairs());
+    const form = document.getElementById('np-settings-form');
+    if (form) form.addEventListener('submit', (e) => { e.preventDefault(); this.saveNewPairsSettings(); });
+    const body = document.getElementById('np-body');
+    if (body) {
+      body.addEventListener('click', (e) => {
+        const btn = e.target.closest ? e.target.closest('button[data-np]') : null;
+        if (!btn) return;
+        if (btn.dataset.np === 'hide') this.setNewPairHidden(btn.dataset.mint, btn.dataset.hidden !== 'true');
+        else if (btn.dataset.np === 'promote') this.promoteNewPair(btn.dataset.mint, btn.dataset.name);
+      });
+    }
+  },
+
+  npAgo(iso) {
+    if (!iso) return 'never';
+    const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (!isFinite(min)) return '--';
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min}m ago`;
+    if (min < 48 * 60) return `${Math.floor(min / 60)}h ago`;
+    return `${Math.floor(min / 1440)}d ago`;
+  },
+
+  async loadNewPairs() {
+    const stats = document.getElementById('np-stats');
+    if (!this.newPairs) stats.innerHTML = '<div class="empty-msg">Loading New Pairs...</div>';
+    try {
+      this.newPairs = await this.request('/api/admin/new-pairs');
+      this.renderNewPairs(this.newPairs);
+    } catch (err) {
+      stats.innerHTML = `<div class="empty-msg">Error: ${this.esc(err.message)}</div>`;
+    }
+  },
+
+  renderNewPairs(d) {
+    const card = (label, value, sub, subClass = '') => `<div class="admin-stat-card"><div class="label">${this.esc(label)}</div>` +
+      `<div class="value">${value}</div>${sub ? `<div class="sub ${subClass}">${sub}</div>` : ''}</div>`;
+    const c = d.counts;
+    const cr = d.credits;
+    const usedPct = cr.cap > 0 ? Math.round((cr.spentToday / cr.cap) * 100) : (cr.spentToday > 0 ? 100 : 0);
+    document.getElementById('np-stats').innerHTML = [
+      card('Public list', d.public ? 'On' : 'Off', d.public ? 'visitors see the tab' : 'NEWPAIRS_PUBLIC is not "true"', d.public ? '' : 'warn'),
+      card('Listed', this.fmtNum(c.active - c.hidden - c.unlisted), `${this.fmtNum(c.hidden)} hidden · ${this.fmtNum(c.rugged)} rugged · ${this.fmtNum(c.unlisted)} unlisted`),
+      card('Holders checked', this.fmtNum(c.holdersChecked), `of ${this.fmtNum(c.active)} active`),
+      card('Below the floors', this.fmtNum(c.belowFloor), `${this.fmtNum(c.waiting)} waiting for a first look`),
+      card('Helius today', this.fmtNum(cr.spentToday), `${usedPct}% of ${this.fmtNum(cr.cap)} · ${this.fmtNum(cr.left)} left`, usedPct >= 100 ? 'err' : usedPct >= 80 ? 'warn' : ''),
+      card('Last scored', this.esc(this.npAgo(c.scoredAt)), `market read ${this.esc(this.npAgo(c.marketAt))}`),
+    ].join('');
+
+    document.getElementById('np-credits-body').innerHTML = cr.days.length
+      ? cr.days.map(day => `<tr><td>${this.esc(day.day)}${day.day === cr.today ? ' (today)' : ''}</td>` +
+        `<td class="num">${this.fmtNum(day.sources['newpairs:discover'] || 0)}</td><td class="num">${this.fmtNum(day.sources['newpairs:holders'] || 0)}</td>` +
+        `<td class="num">${this.fmtNum(day.total)}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="empty-msg">No Helius credits spent in the last 7 days.</td></tr>';
+
+    document.getElementById('np-detectors-body').innerHTML = d.detectors.map(x => {
+      const miss = x.missRate == null ? '--' : `${(x.missRate * 100).toFixed(1)}%`;
+      return `<tr><td>${this.esc(x.id)}</td><td>${this.esc(this.npAgo(x.lastOkAt))}</td><td>${this.esc(this.npAgo(x.cursorTime))}</td>` +
+        `<td>${this.esc(x.lastSource || '--')}</td><td class="num">${this.fmtNum(x.found)}</td><td class="num" title="${this.fmtNum(x.unhandled)} migrations it could not read">${miss}</td>` +
+        `<td class="${x.lastError ? 'np-err' : ''}">${this.esc(x.lastError || 'none')}</td></tr>`;
+    }).join('');
+
+    const s = d.settings;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    set('np-set-mcap', s.minMcap);
+    set('np-set-liq', s.minLiquidity);
+    set('np-set-shortlist', s.shortlistSize);
+    set('np-set-credits', s.dailyCredits);
+    const max = document.getElementById('np-set-credits-max');
+    if (max) max.textContent = `At most ${this.fmtNum(s.maxDailyCredits)}, set by NEWPAIRS_HELIUS_DAILY_CREDITS.`;
+
+    const f2 = v => (typeof v === 'number' && isFinite(v) ? v.toFixed(2) : '--');
+    const money = v => (v == null ? '--' : `$${this.fmtCompact(Number(v))}`);
+    document.getElementById('np-count').textContent = `${d.tokens.length} active tokens bonded in the last 14 days, best score first`;
+    document.getElementById('np-body').innerHTML = d.tokens.length ? d.tokens.map(t => {
+      const marks = [
+        t.hidden ? '<span class="np-mark np-mark-warn">hidden</span>' : '',
+        t.rugged ? '<span class="np-mark np-mark-err">rugged</span>' : '',
+        t.curated ? '<span class="np-mark">curated</span>' : '',
+        t.unlistedReason ? `<span class="np-mark np-mark-warn">${this.esc(t.unlistedReason)}</span>` : '',
+        t.scoreState === 'holders_pending' ? '<span class="np-mark">holders pending</span>' : t.scoreState === 'holders_stale' ? '<span class="np-mark np-mark-warn">holders stale</span>' : '',
+      ].join('');
+      const terms = this.NP_TERMS.map(k => `<td class="num">${f2((t.terms || {})[k])}</td>`).join('');
+      const risks = this.NP_RISKS.filter(k => (t.riskParts || {})[k] < 1).map(k => `${k} ×${f2(t.riskParts[k])}`).join(', ');
+      const name = t.name || t.symbol || t.mint;
+      return `<tr class="${t.hidden ? 'np-row-hidden' : ''}">
+        <td class="num">${t.rank}</td>
+        <td><div class="np-name">${this.esc(t.name || '--')} <span class="credits-dim">${this.esc(t.symbol ? `$${t.symbol}` : '')}</span></div>
+          <div class="np-sub"><span title="${this.esc(t.mint)}">${this.esc(t.mint.slice(0, 6))}…${this.esc(t.mint.slice(-4))}</span> · ${this.esc(t.launchpad || '--')} · bonded ${this.esc(this.npAgo(t.graduatedAt))}</div>
+          <div class="np-marks">${marks}</div></td>
+        <td class="np-actions">
+          <button class="btn btn-sm" data-np="hide" data-mint="${this.esc(t.mint)}" data-hidden="${t.hidden ? 'true' : 'false'}">${t.hidden ? 'Show' : 'Hide'}</button>
+          ${t.curated ? '' : `<button class="btn btn-sm" data-np="promote" data-mint="${this.esc(t.mint)}" data-name="${this.esc(name)}">Promote</button>`}
+        </td>
+        <td class="num"><strong>${t.score == null ? '--' : Number(t.score).toFixed(1)}</strong></td>
+        <td class="num">${f2(t.quality)}</td><td class="num">${f2(t.confidence)}</td>
+        <td class="num" title="${this.esc(risks || 'no risk flags')}">${f2(t.risk)}</td>
+        ${terms}
+        <td class="num">${money(t.marketCap)}</td><td class="num">${money(t.liquidity)}</td><td class="num">${t.holders == null ? '--' : this.fmtNum(t.holders)}</td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="${10 + this.NP_TERMS.length}" class="empty-msg">No active New Pairs tokens yet. The worker lists a token once it is above the floors.</td></tr>`;
+  },
+
+  async setNewPairHidden(mint, hidden) {
+    try {
+      await this.request(`/api/admin/new-pairs/${encodeURIComponent(mint)}`, { method: 'PATCH', body: JSON.stringify({ hidden }) });
+      toast.success(hidden ? 'Hidden from the public list' : 'Back on the public list');
+      await this.loadNewPairs();
+    } catch (err) {
+      toast.error(`Could not ${hidden ? 'hide' : 'show'} the token: ${err.message}`);
+    }
+  },
+
+  async promoteNewPair(mint, name) {
+    // Promoting starts the curated pipeline for the token (its holder analysis spends Helius
+    // credits outside the finder's cap), so it asks first.
+    if (!confirm(`Add "${name}" to the curated list? This starts full holder analysis for it.`)) return;
+    try {
+      const r = await this.request(`/api/admin/new-pairs/${encodeURIComponent(mint)}/promote`, { method: 'POST' });
+      toast.success(r.alreadyCurated ? 'Already curated' : 'Added to the curated list');
+      await this.loadNewPairs();
+    } catch (err) {
+      toast.error(`Could not promote the token: ${err.message}`);
+    }
+  },
+
+  async saveNewPairsSettings() {
+    const read = id => Number(document.getElementById(id).value);
+    const body = {
+      minMcap: read('np-set-mcap'), minLiquidity: read('np-set-liq'),
+      shortlistSize: read('np-set-shortlist'), dailyCredits: read('np-set-credits'),
+    };
+    const status = document.getElementById('np-settings-status');
+    try {
+      await this.request('/api/admin/new-pairs/settings', { method: 'PUT', body: JSON.stringify(body) });
+      status.textContent = 'Saved. The worker uses the new values from its next run.';
+      status.style.color = 'var(--green)';
+      toast.success('New Pairs settings saved');
+      await this.loadNewPairs();
+    } catch (err) {
+      // The server's message names the field and its range
+      status.textContent = `Not saved: ${err.message}`;
+      status.style.color = 'var(--red)';
+      toast.error(`Settings not saved: ${err.message}`);
     }
   },
 

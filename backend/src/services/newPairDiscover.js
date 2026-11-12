@@ -93,7 +93,8 @@ function createDiscovery({
   env = process.env,
   log = console,
 } = {}) {
-  const dailyCap = () => intEnv(env.NEWPAIRS_HELIUS_DAILY_CREDITS, 10_000);
+  // The admin panel can lower the day's figure; the env var is the ceiling (newPairSettings)
+  const dailyCap = () => require('./newPairSettings').dailyCap(env);
   const mode = () => (['free', 'helius'].includes(env.NEWPAIRS_DISCOVERY_SOURCE) ? env.NEWPAIRS_DISCOVERY_SOURCE : 'auto');
   // Some transactions are version 1 and a page containing one is refused when the
   // caller supports only 0. Start at 1; drop to 0 for good if the endpoint rejects it.
@@ -203,9 +204,10 @@ function createDiscovery({
     for (;;) {
       if (now() > deadline || read >= HELIUS_MAX_TX_PER_RUN) return;
       const spent = await store.creditsSpentToday(now());
-      if (spent + GTFA_MIN_CREDITS > dailyCap()) {
+      const cap = await dailyCap();
+      if (spent + GTFA_MIN_CREDITS > cap) {
         tally.capped = true;
-        throw new Error(`daily Helius cap reached (${spent} of ${dailyCap()} credits)`);
+        throw new Error(`daily Helius cap reached (${spent} of ${cap} credits)`);
       }
       let page;
       try {

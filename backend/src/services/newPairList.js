@@ -30,7 +30,7 @@ const iso = (v) => (v ? new Date(v).toISOString() : null);
 const num = (v) => (v == null ? null : Number(v));
 
 // What a listed token is: found, above the floors at some point, scored, authorities off
-const LISTED = `t.status = 'active' AND t.unlisted_reason IS NULL AND t.score IS NOT NULL`;
+const LISTED = `t.status = 'active' AND t.unlisted_reason IS NULL AND NOT t.hidden AND t.score IS NOT NULL`;
 const SELECT = `
   SELECT t.*, c.mint_address IS NOT NULL AS curated, COALESCE(c.is_emerging_cult, FALSE) AS emerging_cult,
     s.id AS sample_id, s.taken_at AS sample_at, s.holder_count AS sample_holders, s.dust_count AS sample_dust,
@@ -108,7 +108,7 @@ async function buildToken(mint, { now = Date.now() } = {}) {
   const r = rows[0];
   // A curated token has its own full page, whether or not the finder also lists it
   if (r?.curated || (!r && await db.isTokenAllowed(mint).catch(() => false))) return { curated: true, mint };
-  if (!r || r.status !== 'active' || r.unlisted_reason || r.score == null) return null;
+  if (!r || r.status !== 'active' || r.unlisted_reason || r.hidden || r.score == null) return null;
 
   const [history, entries, prevEntries, series, rank] = await Promise.all([
     pool().query(`SELECT taken_at, holder_count, dust_count, top1_pct, top10_pct, top50_pct, dev_pct, retention12, new_in, exits, complete
@@ -164,4 +164,4 @@ async function buildToken(mint, { now = Date.now() } = {}) {
   };
 }
 
-module.exports = { buildList, buildToken, shapeRow, WINDOWS, DEFAULT_WINDOW, LIST_CAP };
+module.exports = { buildList, buildToken, shapeRow, SELECT, WINDOWS, DEFAULT_WINDOW, LIST_CAP };
