@@ -39,6 +39,9 @@ const DETECTORS = {
     // racing it (about one per graduation) succeed without doing anything.
     poolPrograms: ['pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'],
     dexIds: ['pumpswap'],
+    // The bonding curve and the PumpSwap pool are program-owned accounts with data,
+    // which the holder check's owner test already catches.
+    vaultAuthorities: [],
     instructions: {
       [discriminator('migrate_v2')]: { name: 'migrate_v2', mint: 2, quote: 3 },
       [discriminator('migrate')]: { name: 'migrate', mint: 2, quote: 14 },
@@ -57,6 +60,14 @@ const DETECTORS = {
     marker: 'A8gMrEPJkacWkcb3DGwtJwTe16HktSEfvwtuDh2MCtck',
     poolPrograms: ['cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'],
     dexIds: ['meteora-damm-v2'],
+    // Owners of the token accounts that hold the pooled supply. They are PDAs with no
+    // account data, so the owner-program test can't see them. Read off three
+    // migrations (2026-11-11): the first owns the vault the migration creates, the
+    // second the curve vault that existed before it.
+    vaultAuthorities: [
+      'HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC', // Meteora DAMM v2 pool authority
+      'FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM', // Meteora DBC pool authority
+    ],
     instructions: {
       [discriminator('migration_damm_v2')]: { name: 'migration_damm_v2', mint: 13, quote: 14 },
     },
@@ -72,6 +83,9 @@ const DETECTORS = {
     marker: 'RAYpQbFNq9i3mu6cKpTKKRwwHFDeK5AuZz8xvxUrCgw',
     poolPrograms: ['CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C'],
     dexIds: ['raydium'],
+    // The LaunchLab curve vault's owner (two migrations, 2026-11-11). The Raydium
+    // CPMM authority that owns the new pool vault is already in constants.js.
+    vaultAuthorities: ['WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh'],
     instructions: {
       [discriminator('migrate_to_cpswap')]: { name: 'migrate_to_cpswap', mint: 1, quote: 2 },
     },
@@ -99,4 +113,7 @@ function enabledDetectors(value = process.env.NEWPAIRS_DETECTORS) {
   return wanted.map(id => DETECTORS[id]).filter(Boolean);
 }
 
-module.exports = { DETECTORS, LAUNCHPAD_LABELS, WSOL, discriminator, enabledDetectors };
+/** Every launchpad vault authority: never a holder, whatever token it shows up in. */
+const VAULT_AUTHORITIES = new Set(Object.values(DETECTORS).flatMap(d => d.vaultAuthorities));
+
+module.exports = { VAULT_AUTHORITIES, DETECTORS, LAUNCHPAD_LABELS, WSOL, discriminator, enabledDetectors };

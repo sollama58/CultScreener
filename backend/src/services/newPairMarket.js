@@ -374,9 +374,9 @@ function createMarket({
    * Score every active token whose data changed since it was last scored (the ones
    * this run refreshed). Pure math over stored rows: no upstream call.
    * `loadSamples(ids)` → Map<tokenId, sample> supplies the latest top-50 sample per
-   * token once the holder tier exists; without it every token is "holders pending".
+   * token (newPairHolders.js); a token without one is "holders pending".
    */
-  async function scoreActive({ loadSamples = async () => new Map(), limit = 10_000 } = {}) {
+  async function scoreActive({ loadSamples = (ids) => require('./newPairHolders').loadLatestSamples(ids), limit = 10_000 } = {}) {
     await store.ensureSchema();
     const at = now();
     const floors = await getFloors();

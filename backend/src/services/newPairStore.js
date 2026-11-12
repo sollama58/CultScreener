@@ -5,6 +5,8 @@
  *   newpair_tokens       one row per graduated mint (the first graduation seen wins),
  *                        with the identity and market columns the cheap tier fills
  *   newpair_points       the stored price / market cap / liquidity / holder series
+ *   newpair_holder_samples, newpair_holder_entries
+ *                        top-50 holder checks for shortlisted tokens
  *   newpair_detectors    per detector: cursor (last transaction read), run health
  *   newpair_credit_days  credits per UTC day and source. The daily cap is checked
  *                        against this table, not Redis: the free Render Redis keeps
@@ -92,6 +94,35 @@ function ensureSchema() {
         holder_count INTEGER,
         source VARCHAR(16),
         PRIMARY KEY (token_id, at)
+      );
+      -- Top-50 holder tier (newPairHolders.js). One header row per check; the wallet
+      -- rows are kept for each token's newest two samples only.
+      CREATE TABLE IF NOT EXISTS newpair_holder_samples (
+        id BIGSERIAL PRIMARY KEY,
+        token_id BIGINT NOT NULL REFERENCES newpair_tokens(id) ON DELETE CASCADE,
+        taken_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        holder_count INTEGER,
+        dust_count INTEGER,
+        accounts INTEGER,
+        pages SMALLINT,
+        complete BOOLEAN NOT NULL DEFAULT TRUE,
+        top1_pct REAL,
+        top10_pct REAL,
+        top50_pct REAL,
+        dev_pct REAL,
+        retention12 REAL,
+        new_in SMALLINT,
+        exits SMALLINT,
+        equal_bags BOOLEAN NOT NULL DEFAULT FALSE,
+        credits SMALLINT
+      );
+      CREATE INDEX IF NOT EXISTS idx_newpair_holder_samples_token ON newpair_holder_samples(token_id, taken_at DESC);
+      CREATE TABLE IF NOT EXISTS newpair_holder_entries (
+        sample_id BIGINT NOT NULL REFERENCES newpair_holder_samples(id) ON DELETE CASCADE,
+        rank SMALLINT NOT NULL,
+        wallet VARCHAR(44) NOT NULL,
+        amount NUMERIC(40,0) NOT NULL,
+        PRIMARY KEY (sample_id, rank)
       );
       CREATE TABLE IF NOT EXISTS newpair_detectors (
         id VARCHAR(24) PRIMARY KEY,
