@@ -36,7 +36,7 @@ if (!DB_URL) {
   async function seed(m, { ageH, score, status = 'active', rugged = false, pending = true, unlisted = null, mcap = 100000, peak = 125000 }) {
     await store.insertGraduations('pumpfun', 'Pump.fun', [{ mint: m, graduatedAt: NOW - ageH * HOUR, signature: `sig${m.slice(5, 6)}`, slot: 7 }]);
     await db.pool.query(
-      `UPDATE newpair_tokens SET status = $2, name = $3, symbol = 'SYM', logo_uri = 'https://img.example/x.png', score = $4, rugged = $5,
+      `UPDATE newpair_tokens SET status = $2, next_market_at = 'infinity', name = $3, symbol = 'SYM', logo_uri = 'https://img.example/x.png', score = $4, rugged = $5,
          holders_pending = $6, unlisted_reason = $7, price_usd = 0.0001, mcap = $8, peak_mcap = $9, liquidity = 20000, holder_count = 1500,
          market = $10, market_at = to_timestamp($11 / 1000.0), holders_at = to_timestamp($11 / 1000.0), scored_at = to_timestamp($12 / 1000.0),
          score_parts = $13

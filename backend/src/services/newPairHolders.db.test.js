@@ -67,7 +67,7 @@ if (!DB_URL) {
       await clean();
       await store.insertGraduations('pumpfun', 'Pump.fun', ALL.map((m, i) => ({ mint: m, graduatedAt: T0 - 10 * HOUR, signature: `s${i}`, slot: 1 })));
       await db.pool.query(
-        `UPDATE newpair_tokens SET status = 'active', price_usd = 0.01, market_at = to_timestamp($2 / 1000.0), scored_at = to_timestamp($2 / 1000.0),
+        `UPDATE newpair_tokens SET status = 'active', next_market_at = 'infinity', price_usd = 0.01, market_at = to_timestamp($2 / 1000.0), scored_at = to_timestamp($2 / 1000.0),
            score = CASE mint_address WHEN $3 THEN 9990 WHEN $4 THEN 9980 ELSE 9999 END / 100.0,
            rugged = (mint_address = $5), dev_wallet = $6, mcap = 100000, liquidity = 20000, holder_count = 500
          WHERE mint_address = ANY($1)`, [ALL, T0, A, B, RUG, w(3)]);

@@ -800,6 +800,17 @@ const jobProcessors = {
   }),
 
   /**
+   * New Pairs, daily: tokens past the 14-day window get one archive row (their marks
+   * and outcome, kept 180 days for tuning the weights) and are deleted with their
+   * points and holder samples. Postgres only.
+   */
+  'newpairs-prune': () => newPairsJob('prune', 10 * 60 * 1000, async () => {
+    const r = await require('./services/newPairPrune').run();
+    console.log(`[NewPairs] prune: archived=${r.archived} deleted=${r.deleted} archive_expired=${r.archiveExpired}`);
+    return r;
+  }),
+
+  /**
    * Daily safety net for holder count history. Points are written by holder
    * snapshots (every 4h to 24h for curated tokens, by recent views); any curated
    * token with no point at all in the last day or so gets a snapshot queued. A capped
