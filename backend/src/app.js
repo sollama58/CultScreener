@@ -33,6 +33,7 @@ const deviceRoutes = require('./routes/device');
 const { validateDeviceSession } = require('./middleware/validation');
 const healthRoutes = require('./routes/health');
 const curatedRoutes = require('./routes/curated');
+const newPairRoutes = require('./routes/newPairs');
 const adminRoutes = require('./routes/admin');
 const sentimentRoutes = require('./routes/sentiment');
 const shareRoutes = require('./routes/share');
@@ -781,6 +782,8 @@ app.use('/api/watchlist', watchlistRoutes);
 // so an absent or stale header just means "not linked" rather than an error.
 app.use('/api/device', validateDeviceSession, deviceRoutes);
 app.use('/api/curated', curatedRoutes);
+// Emerging Cults finder (read-only; answers 404 until NEWPAIRS_PUBLIC=true)
+app.use('/api/new-pairs', newPairRoutes);
 app.use(ADMIN_ROUTE_PREFIX, adminRoutes);
 app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/cultify', cultifyRoutes);
