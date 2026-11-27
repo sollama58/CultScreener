@@ -121,7 +121,6 @@ test('Login reloads the tab that is still active', async () => {
 
 const NP_MINT = 'NpMint'.padEnd(44, '1');
 const npPreview = (over = {}) => ({
-  public: false,
   counts: { waiting: 4, belowFloor: 120, active: 3, hidden: 1, rugged: 1, unlisted: 0, holdersChecked: 2, scoredAt: new Date().toISOString(), marketAt: new Date().toISOString() },
   credits: { today: '2026-11-12', spentToday: 8200, cap: 10000, maxCap: 10000, left: 1800, days: [{ day: '2026-11-12', total: 8200, sources: { 'newpairs:holders': 7900, 'newpairs:discover': 300 } }] },
   detectors: [{ id: 'pumpfun', lastOkAt: new Date().toISOString(), cursorTime: new Date().toISOString(), lastSource: 'free', lastError: '<b>429</b>', found: 90, unhandled: 10, missRate: 0.1 }],
@@ -146,7 +145,6 @@ test('New Pairs: the preview escapes creator-written text and shows credits, det
   const stats = el('np-stats').innerHTML;
   assert.ok(stats.includes('82% of 10,000') && stats.includes('1,800 left'));
   assert.ok(stats.includes('class="sub warn"'), '80% of the cap or more is flagged');
-  assert.ok(stats.includes('NEWPAIRS_PUBLIC'));
   const detectors = el('np-detectors-body').innerHTML;
   assert.ok(detectors.includes('10.0%') && !detectors.includes('<b>429</b>'));
   assert.ok(el('np-credits-body').innerHTML.includes('7,900'));

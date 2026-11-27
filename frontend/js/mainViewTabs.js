@@ -65,7 +65,7 @@
   function show(view, opts) {
     opts = opts || {};
     var tab = null;
-    // A tab that is still hidden (New Pairs before its API answered) cannot be opened.
+    // A hidden tab cannot be opened.
     if (!tabs.some(function (t) { return t.dataset.view === view && !t.hidden; })) return;
     tabs.forEach(function (t) {
       var on = t.dataset.view === view;
@@ -89,6 +89,11 @@
     var page = opts.fromUser ? pageFor(view) : null;
     if (page && page._loadFailed && !page._loading) page.loadData();
     placeIndicator(tab, opts.animate !== false);
+    // The header has a link for this page and one for its New Pairs tab: mark the one on screen
+    var navLinks = document.querySelectorAll('#main-nav .nav-link[href="/"], #main-nav .nav-link[href="/#newpairs"]');
+    Array.prototype.forEach.call(navLinks, function (link) {
+      link.classList.toggle('active', (link.getAttribute('href') === '/#newpairs') === (view === 'newpairs'));
+    });
     if (tab.scrollIntoView && bar.scrollWidth > bar.clientWidth) {
       tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
@@ -127,18 +132,12 @@
   var hashTab = hashOk ? document.getElementById('tab-' + fromHash) : null;
   show(hashOk && hashTab && !hashTab.hidden ? fromHash : 'diamond', { animate: false });
 
-  // New Pairs ships hidden: its API answers 404 until NEWPAIRS_PUBLIC is on. One request on
-  // page load decides (the list itself, which the tab then reuses), so visitors never see a tab
-  // that opens onto an error. A #newpairs link opens the tab once it is known to be there.
-  var newPairsTab = document.getElementById('tab-newpairs');
-  if (newPairsTab && newPairsTab.hidden && typeof newPairsPage !== 'undefined') {
-    newPairsPage.probe().then(function (available) {
-      if (!available) return;
-      newPairsTab.hidden = false;
-      if (fromHash === 'newpairs') show('newpairs', { animate: false });
-      else placeIndicator(activeTab(), false);
-    });
-  }
+  // The header's New Pairs link is /#newpairs. Followed from this page it only changes the
+  // hash, so open the tab here; from any other page the block above does it on load.
+  window.addEventListener('hashchange', function () {
+    var view = location.hash.replace('#', '') || 'diamond';
+    if (Object.prototype.hasOwnProperty.call(panels, view) && panels[view]) show(view, { animate: true });
+  });
 
   // Tab widths change when the web font arrives and when the window resizes.
   if (document.fonts && document.fonts.ready) {

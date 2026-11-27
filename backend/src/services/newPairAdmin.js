@@ -1,6 +1,5 @@
 /**
- * New Pairs, as the admin panel sees it: the ranked preview (hidden tokens included,
- * whether or not NEWPAIRS_PUBLIC is on), today's Helius spend against the cap, each
+ * New Pairs, as the admin panel sees it: the ranked preview (hidden tokens included), today's Helius spend against the cap, each
  * detector's health, and the two things an admin can do to a token: hide it, or
  * promote it to the curated list.
  *
@@ -65,7 +64,6 @@ async function preview({ now = Date.now(), env = process.env } = {}) {
 
   return {
     generatedAt: new Date(now).toISOString(),
-    public: env.NEWPAIRS_PUBLIC === 'true',
     counts: {
       waiting: c.waiting, belowFloor: c.below_floor, active: c.active, hidden: c.hidden, rugged: c.rugged,
       unlisted: c.unlisted, holdersChecked: c.holders_checked, scoredAt: iso(c.scored_at), marketAt: iso(c.market_at),

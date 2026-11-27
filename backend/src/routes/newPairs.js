@@ -7,8 +7,7 @@
  * services/newPairList.js behind it, calls an upstream: a request is a cache read, or
  * on a miss a few Postgres queries shared by everyone asking at once.
  *
- * NEWPAIRS_PUBLIC must be "true" for these to answer. Until then they return 404, the
- * tab hides itself, and only the admin preview shows the list.
+ * Always open: the NEWPAIRS_PUBLIC switch was removed on 2026-11-27 at the owner's request.
  */
 const express = require('express');
 const router = express.Router();
@@ -21,10 +20,6 @@ const TOKEN_TTL_MS = 60_000;
 // getOrSet does not store null: a mint the finder does not list is cached as this
 const NOT_LISTED = { notListed: true };
 
-router.use((req, res, next) => {
-  if (process.env.NEWPAIRS_PUBLIC === 'true') return next();
-  res.status(404).json({ error: 'New Pairs is not available yet', code: 'NEWPAIRS_DISABLED' });
-});
 router.use(requireDatabase);
 
 // GET /api/new-pairs?window=3d|7d|14d

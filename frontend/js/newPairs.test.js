@@ -205,14 +205,3 @@ test('the summary line gives the window, the floors, the rugged count and the sc
   assert.strictEqual(text, '288 of 400 tokens bonded in the last 14 days · above $50000 market cap and $10000 liquidity · best 300 loaded · 12 rugged · scored 5m ago');
   assert.ok(page.metaText({ window: '7d', total: 0, shown: 0, rugged: 0 }, 0, NOW).endsWith('not scored yet'));
 });
-
-test('probe: the tab is offered only when the API returned a list, and asks once', async () => {
-  const off = load(async () => { const e = new Error('off'); e.status = 404; e.code = 'NEWPAIRS_DISABLED'; throw e; });
-  assert.strictEqual(await off.page.probe(), false);
-  const on = load(async () => ({ window: '7d', tokens: [] }));
-  assert.strictEqual(await on.page.probe(), true);
-  await on.page.probe();
-  assert.deepStrictEqual(on.calls, ['7d']);
-  const odd = load(async () => ({ error: 'unexpected' }));
-  assert.strictEqual(await odd.page.probe(), false);
-});

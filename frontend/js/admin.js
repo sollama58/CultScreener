@@ -1299,7 +1299,6 @@ const admin = {
     const cr = d.credits;
     const usedPct = cr.cap > 0 ? Math.round((cr.spentToday / cr.cap) * 100) : (cr.spentToday > 0 ? 100 : 0);
     document.getElementById('np-stats').innerHTML = [
-      card('Public list', d.public ? 'On' : 'Off', d.public ? 'visitors see the tab' : 'NEWPAIRS_PUBLIC is not "true"', d.public ? '' : 'warn'),
       card('Listed', this.fmtNum(c.active - c.hidden - c.unlisted), `${this.fmtNum(c.hidden)} hidden · ${this.fmtNum(c.rugged)} rugged · ${this.fmtNum(c.unlisted)} unlisted`),
       card('Holders checked', this.fmtNum(c.holdersChecked), `of ${this.fmtNum(c.active)} active`),
       card('Below the floors', this.fmtNum(c.belowFloor), `${this.fmtNum(c.waiting)} waiting for a first look`),
