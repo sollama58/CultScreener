@@ -103,12 +103,12 @@ let scheduleCheckTimer = null;
 
 // Job processors
 /**
- * Wrapper for the New Pairs jobs: off unless NEWPAIRS_ENABLED=true, one run of each at
+ * Wrapper for the New Pairs jobs: always on (the NEWPAIRS_ENABLED switch was removed on
+ * 2026-11-27 at the owner's request), one run of each at
  * a time (the lock outlives a run that overlaps the next tick), and never throws,
  * because a BullMQ retry would only repeat the same reads minutes before the next run.
  */
 async function newPairsJob(name, lockMs, fn) {
-  if (process.env.NEWPAIRS_ENABLED !== 'true') return { skipped: 'NEWPAIRS_ENABLED is not true' };
   const lockKey = `newpairs:${name}:lock`;
   if (!(await cache.setNX(lockKey, Date.now(), lockMs))) return { skipped: 'previous run still going' };
   try {
@@ -744,7 +744,7 @@ const jobProcessors = {
 
   /**
    * New Pairs discovery (services/newPairDiscover.js): store every token that
-   * graduated from a launchpad since the last run. Off unless NEWPAIRS_ENABLED=true.
+   * graduated from a launchpad since the last run.
    * Reads public RPCs for free; Helius only for the first backfill, a long catch-up
    * or as a paced fallback, under the feature's own daily credit cap. One run at a
    * time (the lock outlives a run that overlaps the next tick), and it never throws:

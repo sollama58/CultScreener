@@ -60,11 +60,7 @@ services:
       - key: DB_POOL_MIN
         value: "2"
 
-      # New Pairs (Emerging Cults finder) public routes, /api/new-pairs. Anything but
-      # "true" makes them answer 404 and the New Pairs tab hide itself; the worker jobs
-      # (NEWPAIRS_ENABLED on HolDEX-worker) and the admin preview do not depend on it.
-      - key: NEWPAIRS_PUBLIC
-        value: "false"
+      # New Pairs (Emerging Cults finder). Its public routes (/api/new-pairs) are always on.
       # The ceiling for the finder's daily Helius credits, as on the worker (keep the two the
       # same). The API only reads it: the admin panel's New Pairs settings can lower the day's
       # figure but refuse anything above this.
@@ -275,7 +271,7 @@ services:
       # shortlisted token (the 50 best scores), roughly 1,000 a day. It stops 600 credits
       # short of the daily cap so discovery's fallback always has room. Setting
       # NEWPAIRS_HOLDERS_DRY_RUN=true makes it log what it would check and spend nothing.
-      # NEWPAIRS_ENABLED: anything but "true" turns the whole feature's jobs into no-ops.
+      # The jobs always run: there is no on/off switch.
       # NEWPAIRS_HELIUS_DAILY_CREDITS: hard cap per UTC day for everything New Pairs
       #   spends on Helius, kept in Postgres (newpair_credit_days). 10,000 a day is the
       #   300,000 a month the feature was given.
@@ -285,8 +281,6 @@ services:
       #   launchlab; default all) and NEWPAIRS_RPC_URLS (comma list of https public RPC
       #   URLs, default publicnode then api.mainnet-beta; a Helius URL is refused).
       # `node scripts/newpairs/probe.js` in the worker's shell checks all of it from Render.
-      - key: NEWPAIRS_ENABLED
-        value: "true"
       - key: NEWPAIRS_HELIUS_DAILY_CREDITS
         value: "10000"
       - key: NEWPAIRS_DISCOVERY_SOURCE

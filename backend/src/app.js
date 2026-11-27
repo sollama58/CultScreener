@@ -782,7 +782,7 @@ app.use('/api/watchlist', watchlistRoutes);
 // so an absent or stale header just means "not linked" rather than an error.
 app.use('/api/device', validateDeviceSession, deviceRoutes);
 app.use('/api/curated', curatedRoutes);
-// Emerging Cults finder (read-only; answers 404 until NEWPAIRS_PUBLIC=true)
+// Emerging Cults finder (read-only, public)
 app.use('/api/new-pairs', newPairRoutes);
 app.use(ADMIN_ROUTE_PREFIX, adminRoutes);
 app.use('/api/sentiment', sentimentRoutes);

@@ -30,7 +30,7 @@ if (!DB_URL) {
   const mint = (c) => `NpAdm${c}`.padEnd(43, '1');
   const [GOOD, HIDE, RUG, BELOW] = ['A', 'B', 'C', 'D'].map(mint);
   const ALL = [GOOD, HIDE, RUG, BELOW];
-  const ENV = { NEWPAIRS_HELIUS_DAILY_CREDITS: '8000', NEWPAIRS_PUBLIC: 'false' };
+  const ENV = { NEWPAIRS_HELIUS_DAILY_CREDITS: '8000' };
 
   const clean = async () => {
     await store.ensureSchema();
@@ -67,7 +67,6 @@ if (!DB_URL) {
       assert.deepStrictEqual(mine.map(t => t.mint), [GOOD, HIDE, RUG], 'active tokens only, best first, rugged included');
       assert.strictEqual(mine[0].quality, 0.7);
       assert.strictEqual(mine[0].hidden, false);
-      assert.strictEqual(p.public, false);
       assert.ok(p.counts.active >= 3 && p.counts.belowFloor >= 1 && p.counts.rugged >= 1);
       assert.strictEqual(p.credits.today, '2035-03-10');
       assert.strictEqual(p.credits.spentToday, 1500);

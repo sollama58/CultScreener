@@ -7,9 +7,6 @@
 // count, top-50 holder check) and the Updated column shows all three, re-drawn every minute so
 // an open tab does not keep saying "2m" for an hour.
 //
-// The tab button ships hidden. The API answers 404 NEWPAIRS_DISABLED until NEWPAIRS_PUBLIC is
-// turned on, and mainViewTabs.js shows the tab only after probe() got a list.
-//
 // Token names, tickers, logos and launchpad labels are creator-written text: everything goes
 // through tokenTable.esc before it reaches innerHTML.
 
@@ -29,7 +26,6 @@ const newPairsPage = {
   _loaded: false,
   _loading: false,
   _loadFailed: false,
-  _probe: null,
   _tick: null,
   _tipFor: null,
 
@@ -318,14 +314,6 @@ const newPairsPage = {
   },
 
   // ── Page ────────────────────────────────────────────────────────────────────────────────
-
-  /** True when the API serves the list (NEWPAIRS_PUBLIC on). The answer is kept for init(). */
-  probe() {
-    if (!this._probe) {
-      this._probe = api.newPairs.list(this.window).then(d => !!(d && Array.isArray(d.tokens)), () => false);
-    }
-    return this._probe;
-  },
 
   init() {
     if (this._loaded) return;

@@ -101,7 +101,7 @@
 // api.js v20, mainViewTabs.js v4, home.css v6.
 // v96: lite page for New Pairs tokens - new pair.html, js/pairDetail.js, css/pair.css;
 // token.html sends a New Pairs mint there - api.js v21, tokenDetail.js v41.
-const CACHE_VERSION = 'holdex-v96';
+const CACHE_VERSION = 'holdex-v97';
 // v86: token page keeps '--' for market data a price-only retry can't fill, and Circulating
 // subtracts locked and burn-wallet supply - tokenDetail.js v36.
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
@@ -125,8 +125,8 @@ const APP_SHELL = [
   '/js/tech.js?v=7',
   '/js/emerging.js?v=7',
   '/js/versus.js?v=20',
-  '/js/mainViewTabs.js?v=4',
-  '/js/newPairs.js?v=2',
+  '/js/mainViewTabs.js?v=5',
+  '/js/newPairs.js?v=3',
   '/js/pairDetail.js?v=1',
   '/js/kotpShot.js?v=3',
   '/js/kotp.js?v=8',

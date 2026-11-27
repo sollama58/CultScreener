@@ -58,23 +58,19 @@ describe('/api/new-pairs', () => {
   });
   after(() => new Promise(resolve => server.close(resolve)));
   beforeEach(async () => {
-    process.env.NEWPAIRS_PUBLIC = 'true';
     dbReady = true;
     calls.list.length = 0; calls.token.length = 0;
     for (const w of ['3d', '7d', '14d']) await cache.delete(`newpairs:list:${w}`);
     for (const m of [LISTED, CURATED, UNKNOWN]) await cache.delete(`newpairs:token:${m}`);
   });
 
-  test('closed until NEWPAIRS_PUBLIC is true: 404 with a code the tab can read, and nothing is built', async () => {
-    for (const value of [undefined, 'false', '1', 'TRUE']) {
+  test('open with no switch: the list answers whatever NEWPAIRS_PUBLIC says', async () => {
+    const before = process.env.NEWPAIRS_PUBLIC;
+    for (const value of [undefined, 'false']) {
       if (value === undefined) delete process.env.NEWPAIRS_PUBLIC; else process.env.NEWPAIRS_PUBLIC = value;
-      for (const url of ['', `/${LISTED}`]) {
-        const r = await get(url);
-        assert.strictEqual(r.status, 404);
-        assert.strictEqual(r.body.code, 'NEWPAIRS_DISABLED');
-      }
+      assert.strictEqual((await get('')).status, 200);
     }
-    assert.strictEqual(calls.list.length + calls.token.length, 0);
+    if (before === undefined) delete process.env.NEWPAIRS_PUBLIC; else process.env.NEWPAIRS_PUBLIC = before;
   });
 
   test('list: default window 7d, the three windows accepted, anything else is a 400', async () => {
